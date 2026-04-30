@@ -407,10 +407,12 @@ const Calibration = () => {
     }
   }, [deviceType]);
 
-  // Load default port when device type changes
+  // Load default port when device type changes (skip when arriving from a tile —
+  // the robot-record prefill above wins)
   useEffect(() => {
     const loadDefaultPort = async () => {
       if (!deviceType) return;
+      if (robotName) return;
 
       try {
         const robotType = deviceType === "robot" ? "follower" : "leader";
@@ -431,7 +433,7 @@ const Calibration = () => {
     };
 
     loadDefaultPort();
-  }, [deviceType]);
+  }, [deviceType, robotName]);
 
   const handleDeviceTypeChange = async (next: string) => {
     setDeviceType(next);

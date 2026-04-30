@@ -1,15 +1,21 @@
 import React, { useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Check, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 
 interface AddRobotPickerProps {
   hiddenNames: string[];
@@ -24,81 +30,135 @@ const AddRobotPicker: React.FC<AddRobotPickerProps> = ({
   onCreateNew,
   isLoading,
 }) => {
-  const [selected, setSelected] = useState("");
-  const [newName, setNewName] = useState("");
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
 
-  const handleAdd = async () => {
-    const trimmed = newName.trim();
-    if (trimmed) {
-      const ok = await onCreateNew(trimmed);
-      if (ok) {
-        setNewName("");
-        setSelected("");
-      }
-      return;
-    }
-    if (selected) {
-      onAddExisting(selected);
-      setSelected("");
-    }
+  const trimmed = query.trim();
+  const matchesExisting = hiddenNames.some(
+    (n) => n.toLowerCase() === trimmed.toLowerCase()
+  );
+  const canCreate = trimmed.length > 0 && !matchesExisting;
+
+  const reset = () => {
+    setQuery("");
+    setOpen(false);
   };
 
-  const canAdd = newName.trim().length > 0 || selected.length > 0;
+  const handlePickExisting = (name: string) => {
+    onAddExisting(name);
+    reset();
+  };
+
+  const handleCreate = async () => {
+    if (!trimmed) return;
+    const ok = await onCreateNew(trimmed);
+    if (ok) reset();
+  };
 
   return (
-    <div className="bg-gray-800/50 rounded-lg p-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
+    <div className="bg-gray-800/50 rounded-lg p-4 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-4 items-end">
       <div className="space-y-2">
-        <Label className="text-sm font-medium text-gray-300">
-          Existing Robots
-        </Label>
-        <Select value={selected} onValueChange={setSelected} disabled={isLoading}>
-          <SelectTrigger className="bg-gray-800 border-gray-700 text-white">
-            <SelectValue
-              placeholder={
-                isLoading
+        <Label className="text-sm font-medium text-gray-300">Robot</Label>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              role="combobox"
+              aria-expanded={open}
+              disabled={isLoading}
+              className="w-full justify-between bg-gray-800 border-gray-700 text-white hover:bg-gray-700 hover:text-white font-normal"
+            >
+              <span className="truncate text-gray-400">
+                {isLoading
                   ? "Loading..."
-                  : hiddenNames.length === 0
-                  ? "No hidden robots"
-                  : "Select a robot"
-              }
-            />
-          </SelectTrigger>
-          <SelectContent className="bg-gray-800 border-gray-700">
-            {hiddenNames.map((name) => (
-              <SelectItem
-                key={name}
-                value={name}
-                className="text-white hover:bg-gray-700"
-              >
-                {name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+                  : "Select an existing robot or type a new name"}
+              </span>
+              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            className="p-0 bg-gray-800 border-gray-700 text-white"
+            style={{ width: "var(--radix-popover-trigger-width)" }}
+            align="start"
+          >
+            <Command className="bg-gray-800">
+              <CommandInput
+                placeholder="Search or type new name..."
+                value={query}
+                onValueChange={setQuery}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && canCreate) {
+                    e.preventDefault();
+                    handleCreate();
+                  }
+                }}
+                className="text-white"
+              />
+              <CommandList>
+                {hiddenNames.length === 0 && !canCreate && (
+                  <CommandEmpty className="py-4 text-sm text-gray-400 text-center">
+                    No hidden robots. Type a name to create one.
+                  </CommandEmpty>
+                )}
+                {hiddenNames.length > 0 && (
+                  <CommandGroup heading="Existing">
+                    {hiddenNames.map((name) => (
+                      <CommandItem
+                        key={name}
+                        value={name}
+                        onSelect={() => handlePickExisting(name)}
+                        className="text-white aria-selected:bg-gray-700"
+                      >
+                        <Check
+                          className={cn(
+                            "mr-2 h-4 w-4",
+                            matchesExisting &&
+                              name.toLowerCase() === trimmed.toLowerCase()
+                              ? "opacity-100"
+                              : "opacity-0"
+                          )}
+                        />
+                        {name}
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                )}
+                {canCreate && (
+                  <CommandGroup heading={hiddenNames.length > 0 ? "New" : undefined}>
+                    <CommandItem
+                      value={`__create__${trimmed}`}
+                      onSelect={handleCreate}
+                      className="text-white aria-selected:bg-gray-700"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Create &quot;{trimmed}&quot;
+                    </CommandItem>
+                  </CommandGroup>
+                )}
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
       </div>
 
-      <div className="space-y-2">
-        <Label className="text-sm font-medium text-gray-300">
-          New Robot Name
-        </Label>
-        <Input
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="e.g., left-arm"
-          className="bg-gray-800 border-gray-700 text-white"
-        />
-      </div>
-
-      <div className="space-y-2 flex flex-col justify-end">
-        <Button
-          onClick={handleAdd}
-          disabled={!canAdd}
-          className="bg-blue-500 hover:bg-blue-600 text-white"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Add Robot
-        </Button>
-      </div>
+      <Button
+        onClick={() => {
+          if (canCreate) {
+            handleCreate();
+          } else if (matchesExisting) {
+            handlePickExisting(
+              hiddenNames.find(
+                (n) => n.toLowerCase() === trimmed.toLowerCase()
+              )!
+            );
+          }
+        }}
+        disabled={!canCreate && !matchesExisting}
+        className="bg-blue-500 hover:bg-blue-600 text-white"
+      >
+        <Plus className="w-4 h-4 mr-2" />
+        Add Robot
+      </Button>
     </div>
   );
 };

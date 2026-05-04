@@ -3,23 +3,32 @@ import { useNavigate } from "react-router-dom";
 import { Bot } from "lucide-react";
 import { useApi } from "@/contexts/ApiContext";
 import { useToast } from "@/hooks/use-toast";
-import { useRobots, RobotRecord } from "@/hooks/useRobots";
+import { RobotRecord } from "@/hooks/useRobots";
 import RobotTile from "./RobotTile";
 import AddRobotPicker from "./AddRobotPicker";
 
-const RobotConfigManager: React.FC = () => {
+interface RobotConfigManagerProps {
+  visibleRecords: RobotRecord[];
+  hiddenNames: string[];
+  isLoading: boolean;
+  addToSession: (name: string) => void;
+  removeFromSession: (name: string) => void;
+  createRobot: (name: string) => Promise<boolean>;
+  deleteRobot: (name: string) => Promise<boolean>;
+}
+
+const RobotConfigManager: React.FC<RobotConfigManagerProps> = ({
+  visibleRecords,
+  hiddenNames,
+  isLoading,
+  addToSession,
+  removeFromSession,
+  createRobot,
+  deleteRobot,
+}) => {
   const navigate = useNavigate();
   const { baseUrl, fetchWithHeaders } = useApi();
   const { toast } = useToast();
-  const {
-    visibleRecords,
-    hiddenNames,
-    isLoading,
-    addToSession,
-    removeFromSession,
-    createRobot,
-    deleteRobot,
-  } = useRobots();
 
   const handleConfigure = (name: string) => {
     navigate("/calibration", { state: { robot_name: name } });

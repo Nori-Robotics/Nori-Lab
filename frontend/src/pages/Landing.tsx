@@ -9,8 +9,8 @@ import RecordingModal from "@/components/landing/RecordingModal";
 
 import { Action } from "@/components/landing/types";
 import UsageInstructionsModal from "@/components/landing/UsageInstructionsModal";
-import { useApi } from "@/contexts/ApiContext";
 import { useHfAuth } from "@/contexts/HfAuthContext";
+import { useRobots } from "@/hooks/useRobots";
 import { CameraConfig } from "@/components/recording/CameraConfiguration";
 import { isHostedSpace } from "@/lib/isHostedSpace";
 
@@ -18,23 +18,21 @@ const ON_SPACE = isHostedSpace();
 
 const Landing = () => {
   const [showUsageModal, setShowUsageModal] = useState(ON_SPACE);
-
-  const { baseUrl, fetchWithHeaders } = useApi();
   const { auth } = useHfAuth();
 
-  // Recording state (kept as-is — out of scope this round)
+  const {
+    visibleRecords,
+    hiddenNames,
+    isLoading: isLoadingRobots,
+    addToSession,
+    removeFromSession,
+    createRobot,
+    deleteRobot,
+  } = useRobots();
+
+  // Recording modal state
   const [showRecordingModal, setShowRecordingModal] = useState(false);
-  const [recordLeaderPort, setRecordLeaderPort] = useState(
-    "/dev/tty.usbmodem5A460816421"
-  );
-  const [recordFollowerPort, setRecordFollowerPort] = useState(
-    "/dev/tty.usbmodem5A460816621"
-  );
-  const [recordLeaderConfig, setRecordLeaderConfig] = useState("");
-  const [recordFollowerConfig, setRecordFollowerConfig] = useState("");
-  const [leaderConfigs, setLeaderConfigs] = useState<string[]>([]);
-  const [followerConfigs, setFollowerConfigs] = useState<string[]>([]);
-  const [isLoadingConfigs, setIsLoadingConfigs] = useState(false);
+  const [selectedRobotName, setSelectedRobotName] = useState("");
   const [datasetName, setDatasetName] = useState("");
   const [singleTask, setSingleTask] = useState("");
   const [numEpisodes, setNumEpisodes] = useState(5);
@@ -65,27 +63,8 @@ const Landing = () => {
     };
   }, []);
 
-  const loadConfigs = async () => {
-    setIsLoadingConfigs(true);
-    try {
-      const response = await fetchWithHeaders(`${baseUrl}/get-configs`);
-      const data = await response.json();
-      setLeaderConfigs(data.leader_configs || []);
-      setFollowerConfigs(data.follower_configs || []);
-    } catch (error) {
-      toast({
-        title: "Error Loading Configs",
-        description: "Could not load calibration configs from the backend.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoadingConfigs(false);
-    }
-  };
-
   const handleRecordingClick = () => {
     setShowRecordingModal(true);
-    loadConfigs();
   };
 
   const handleRecordingModalClose = (open: boolean) => {
@@ -101,11 +80,27 @@ const Landing = () => {
   const handleInferenceClick = () => navigate("/inference");
 
   const handleStartRecording = async () => {
-    if (!recordLeaderConfig || !recordFollowerConfig || !datasetName || !singleTask) {
+    const robot = visibleRecords.find((r) => r.name === selectedRobotName);
+    if (!robot) {
       toast({
-        title: "Missing Configuration",
-        description:
-          "Please fill in all required fields: calibration configs, dataset name, and task description.",
+        title: "No robot selected",
+        description: "Pick a robot from the list.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!robot.is_clean) {
+      toast({
+        title: "Robot not ready",
+        description: `${robot.name} is missing a calibration. Configure it before recording.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!datasetName || !singleTask) {
+      toast({
+        title: "Missing dataset details",
+        description: "Please enter a dataset name and task description.",
         variant: "destructive",
       });
       return;
@@ -141,10 +136,10 @@ const Landing = () => {
     }, {} as Record<string, { type: string; camera_index?: number; width: number; height: number; fps?: number }>);
 
     const recordingConfig = {
-      leader_port: recordLeaderPort,
-      follower_port: recordFollowerPort,
-      leader_config: recordLeaderConfig,
-      follower_config: recordFollowerConfig,
+      leader_port: robot.leader_port,
+      follower_port: robot.follower_port,
+      leader_config: robot.leader_config,
+      follower_config: robot.follower_config,
       dataset_repo_id: datasetRepoId,
       single_task: singleTask,
       num_episodes: numEpisodes,
@@ -200,7 +195,15 @@ const Landing = () => {
       </div>
 
       <div className="p-8 bg-gray-900 rounded-lg shadow-xl w-full max-w-4xl space-y-6 border border-gray-700">
-        <RobotConfigManager />
+        <RobotConfigManager
+          visibleRecords={visibleRecords}
+          hiddenNames={hiddenNames}
+          isLoading={isLoadingRobots}
+          addToSession={addToSession}
+          removeFromSession={removeFromSession}
+          createRobot={createRobot}
+          deleteRobot={deleteRobot}
+        />
         <ActionList actions={actions} />
       </div>
 
@@ -213,16 +216,9 @@ const Landing = () => {
       <RecordingModal
         open={showRecordingModal}
         onOpenChange={handleRecordingModalClose}
-        leaderPort={recordLeaderPort}
-        setLeaderPort={setRecordLeaderPort}
-        followerPort={recordFollowerPort}
-        setFollowerPort={setRecordFollowerPort}
-        leaderConfig={recordLeaderConfig}
-        setLeaderConfig={setRecordLeaderConfig}
-        followerConfig={recordFollowerConfig}
-        setFollowerConfig={setRecordFollowerConfig}
-        leaderConfigs={leaderConfigs}
-        followerConfigs={followerConfigs}
+        robots={visibleRecords}
+        selectedRobotName={selectedRobotName}
+        setSelectedRobotName={setSelectedRobotName}
         datasetName={datasetName}
         setDatasetName={setDatasetName}
         singleTask={singleTask}
@@ -231,7 +227,6 @@ const Landing = () => {
         setNumEpisodes={setNumEpisodes}
         cameras={cameras}
         setCameras={setCameras}
-        isLoadingConfigs={isLoadingConfigs}
         onStart={handleStartRecording}
         releaseStreamsRef={releaseStreamsRef}
       />

@@ -125,6 +125,12 @@ class TrainingManager:
             cmd = self._build_training_command(request)
             logger.info(f"Starting training with command: {' '.join(cmd)}")
             
+            # PYTHONUNBUFFERED makes the child's stdout flush per line. Without
+            # it, Python block-buffers when stdout is a pipe and our log
+            # parser sees nothing until ~4-8KB of output has piled up.
+            child_env = os.environ.copy()
+            child_env["PYTHONUNBUFFERED"] = "1"
+
             # Start the training process
             self.process = subprocess.Popen(
                 cmd,
@@ -132,13 +138,19 @@ class TrainingManager:
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
                 bufsize=1,
-                env=os.environ.copy()
+                env=child_env
             )
-            
-            # Update status
+
+            # Update status. Reset stale metrics from any prior run so the
+            # Monitoring tab doesn't briefly show last run's values.
             self.status.training_active = True
             self.status.total_steps = request.steps
             self.status.current_step = 0
+            self.status.current_loss = None
+            self.status.current_lr = None
+            self.status.grad_norm = None
+            self.status.epoch_time = None
+            self.status.eta_seconds = None
             self.status.available_controls = {
                 "stop_training": True,
                 "pause_training": False,  # Not implemented in LeRobot
@@ -173,7 +185,7 @@ class TrainingManager:
                     self.process.wait()
             
             self._stop_monitoring_threads()
-            self._reset_status()
+            self._finalize_status()
             
             return {"success": True, "message": "Training stopped successfully"}
             
@@ -188,7 +200,7 @@ class TrainingManager:
             # Process has ended
             if self.status.training_active:
                 self._stop_monitoring_threads()
-                self._reset_status()
+                self._finalize_status()
         
         return self.status
     
@@ -418,9 +430,20 @@ class TrainingManager:
         except Exception as e:
             logger.debug(f"Error parsing log line '{line}': {e}")
     
-    def _reset_status(self):
-        """Reset training status"""
-        self.status = TrainingStatus()
+    def _finalize_status(self):
+        """Mark a run as ended without wiping its final metrics.
+
+        Keep current_step, total_steps, current_loss, current_lr, grad_norm,
+        eta_seconds so the Monitoring tab can show the last values from the
+        completed (or stopped) run. The next start_training call resets the
+        stale fields explicitly.
+        """
+        self.status.training_active = False
+        self.status.available_controls = {
+            "stop_training": False,
+            "pause_training": False,
+            "resume_training": False,
+        }
         self.process = None
 
 # Global training manager instance

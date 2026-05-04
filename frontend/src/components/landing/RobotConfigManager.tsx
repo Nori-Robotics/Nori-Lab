@@ -71,10 +71,6 @@ const RobotConfigManager: React.FC<RobotConfigManagerProps> = ({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-white text-xl">Robots</h2>
-      </div>
-
       <AddRobotPicker
         hiddenNames={hiddenNames}
         onAddExisting={addToSession}

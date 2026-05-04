@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { Plus, Check, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import {
   Popover,
   PopoverContent,
@@ -58,7 +57,6 @@ const AddRobotPicker: React.FC<AddRobotPickerProps> = ({
   return (
     <div className="bg-gray-800/50 rounded-lg p-4 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-4 items-end">
       <div className="space-y-2">
-        <Label className="text-sm font-medium text-gray-300">Robot</Label>
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
             <Button

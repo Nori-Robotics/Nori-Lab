@@ -22,8 +22,8 @@ const EpisodeList: React.FC<Props> = ({ episodes, selected, loading, error, onSe
           Episodes
         </CardTitle>
       </CardHeader>
-      <CardContent className="flex-1 flex flex-col">
-        <ScrollArea className="flex-1 min-h-[12rem] pr-4 border border-gray-700 rounded-lg">
+      <CardContent className="flex-1 flex flex-col min-h-0">
+        <ScrollArea className="flex-1 pr-4 border border-gray-700 rounded-lg">
           <div className="p-2 space-y-1">
             {loading && <div className="text-center text-gray-500 py-8">Loading episodes…</div>}
             {error && <div className="text-center text-red-400 py-8">{error}</div>}

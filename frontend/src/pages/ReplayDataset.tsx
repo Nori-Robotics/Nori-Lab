@@ -54,10 +54,10 @@ const ReplayDataset: React.FC = () => {
   const disabled = state.status === "idle" || state.status === "loading";
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col p-4 sm:p-6 lg:p-8 gap-6">
+    <div className="h-screen overflow-hidden bg-black text-white flex flex-col p-4 gap-3">
       <ReplayHeader status={state.status} repoId={state.repoId} episode={state.episode} />
 
-      <div className="grid lg:grid-cols-2 gap-6">
+      <div className="grid lg:grid-cols-2 gap-4 h-44 shrink-0">
         <DatasetCombobox
           datasets={datasets}
           loading={datasetsLoading}
@@ -73,7 +73,7 @@ const ReplayDataset: React.FC = () => {
         />
       </div>
 
-      <div className="bg-gray-900 rounded-lg p-4 border border-gray-700 min-h-[50vh]">
+      <div className="flex-1 min-h-0 bg-gray-900 rounded-lg p-2 border border-gray-700">
         <UrdfProcessorInitializer />
         <UrdfViewer />
       </div>

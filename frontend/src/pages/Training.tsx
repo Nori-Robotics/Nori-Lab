@@ -1,14 +1,16 @@
 
 import React, { useState, useEffect, useRef } from "react";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@/hooks/use-toast";
 import { TrainingConfig, TrainingStatus, LogEntry } from "@/components/training/types";
 import TrainingHeader from "@/components/training/TrainingHeader";
 import TrainingTabs from "@/components/training/TrainingTabs";
 import ConfigurationTab from "@/components/training/ConfigurationTab";
 import MonitoringTab from "@/components/training/MonitoringTab";
 import TrainingControls from "@/components/training/TrainingControls";
+import TrainingExtraGate from "@/components/training/TrainingExtraGate";
 import { useApi } from "@/contexts/ApiContext";
 import { DatasetItem, listDatasets } from "@/lib/replayApi";
+import { Loader2 } from "lucide-react";
 
 const Training = () => {
   const { toast } = useToast();
@@ -24,6 +26,23 @@ const Training = () => {
       .then(setDatasets)
       .catch(() => setDatasets([]))
       .finally(() => setDatasetsLoading(false));
+  }, [baseUrl, fetchWithHeaders]);
+
+  const [trainingExtraAvailable, setTrainingExtraAvailable] = useState<boolean | null>(null);
+  const [trainingExtraInstallHint, setTrainingExtraInstallHint] = useState<string>("pip install accelerate");
+
+  useEffect(() => {
+    fetchWithHeaders(`${baseUrl}/system/training-extra`)
+      .then((r) => r.json())
+      .then((data: { available: boolean; install_hint: string }) => {
+        setTrainingExtraAvailable(data.available);
+        setTrainingExtraInstallHint(data.install_hint);
+      })
+      .catch(() => {
+        // Treat fetch failure as "available" so we don't lock the user out
+        // if the new endpoint isn't there yet (e.g. older backend).
+        setTrainingExtraAvailable(true);
+      });
   }, [baseUrl, fetchWithHeaders]);
 
   const [trainingConfig, setTrainingConfig] = useState<TrainingConfig>({
@@ -213,34 +232,50 @@ const Training = () => {
     <div className="min-h-screen bg-slate-900 text-white p-4">
       <div className="max-w-7xl mx-auto">
         <TrainingHeader trainingStatus={trainingStatus} />
-        <TrainingTabs activeTab={activeTab} setActiveTab={setActiveTab} />
-        
-        {activeTab === "config" && (
-          <ConfigurationTab
-            config={trainingConfig}
-            updateConfig={updateConfig}
-            datasets={datasets}
-            datasetsLoading={datasetsLoading}
-          />
+
+        {trainingExtraAvailable === null && (
+          <div className="flex items-center justify-center py-24 text-slate-400">
+            <Loader2 className="w-6 h-6 animate-spin mr-3" />
+            Checking training environment…
+          </div>
         )}
 
-        {activeTab === "monitoring" && (
-          <MonitoringTab
-            trainingStatus={trainingStatus}
-            logs={logs}
-            logContainerRef={logContainerRef}
-            getProgressPercentage={getProgressPercentage}
-            formatTime={formatTime}
-          />
+        {trainingExtraAvailable === false && (
+          <TrainingExtraGate installHint={trainingExtraInstallHint} />
         )}
-        
-        <TrainingControls
-          trainingStatus={trainingStatus}
-          isStartingTraining={isStartingTraining}
-          trainingConfig={trainingConfig}
-          handleStartTraining={handleStartTraining}
-          handleStopTraining={handleStopTraining}
-        />
+
+        {trainingExtraAvailable === true && (
+          <>
+            <TrainingTabs activeTab={activeTab} setActiveTab={setActiveTab} />
+
+            {activeTab === "config" && (
+              <ConfigurationTab
+                config={trainingConfig}
+                updateConfig={updateConfig}
+                datasets={datasets}
+                datasetsLoading={datasetsLoading}
+              />
+            )}
+
+            {activeTab === "monitoring" && (
+              <MonitoringTab
+                trainingStatus={trainingStatus}
+                logs={logs}
+                logContainerRef={logContainerRef}
+                getProgressPercentage={getProgressPercentage}
+                formatTime={formatTime}
+              />
+            )}
+
+            <TrainingControls
+              trainingStatus={trainingStatus}
+              isStartingTraining={isStartingTraining}
+              trainingConfig={trainingConfig}
+              handleStartTraining={handleStartTraining}
+              handleStopTraining={handleStopTraining}
+            />
+          </>
+        )}
       </div>
     </div>
   );

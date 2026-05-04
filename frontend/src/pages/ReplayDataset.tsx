@@ -1,65 +1,104 @@
+import React, { useEffect, useState } from "react";
+import ReplayHeader from "@/components/replay/ReplayHeader";
+import DatasetCombobox from "@/components/replay/DatasetCombobox";
+import EpisodeList from "@/components/replay/EpisodeList";
+import VideoGrid from "@/components/replay/VideoGrid";
+import PlaybackBar from "@/components/replay/PlaybackBar";
+import UrdfViewer from "@/components/UrdfViewer";
+import UrdfProcessorInitializer from "@/components/UrdfProcessorInitializer";
+import { useReplayPlayback } from "@/hooks/useReplayPlayback";
+import { DatasetItem, EpisodeItem } from "@/lib/replayApi";
 
-import React from 'react';
-import ReplayHeader from '@/components/replay/ReplayHeader';
-import DatasetSelector from '@/components/replay/DatasetSelector';
-import EpisodePlayer from '@/components/replay/EpisodePlayer';
-import ReplayVisualizer from '@/components/replay/ReplayVisualizer';
+const ReplayDataset: React.FC = () => {
+  const replay = useReplayPlayback();
 
-// Mock data for now, this would be fetched from the backend
-const mockDatasets = [
-  { id: 'dataset-1', name: 'Kitchen Task - Day 1' },
-  { id: 'dataset-2', name: 'Assembly Task - Morning' },
-  { id: 'dataset-3', name: 'Sorting Cans - Run 4' },
-];
+  const [datasets, setDatasets] = useState<DatasetItem[]>([]);
+  const [datasetsLoading, setDatasetsLoading] = useState(true);
 
-const mockEpisodes = {
-  'dataset-1': [
-    { id: 'ep-1', name: 'Episode 1', duration: 62 },
-    { id: 'ep-2', name: 'Episode 2', duration: 58 },
-  ],
-  'dataset-2': [
-    { id: 'ep-3', name: 'Episode 1', duration: 120 },
-  ],
-  'dataset-3': [
-    { id: 'ep-4', name: 'Episode 1', duration: 45 },
-    { id: 'ep-5', name: 'Episode 2', duration: 47 },
-    { id: 'ep-6', name: 'Episode 3', duration: 43 },
-  ],
-};
+  const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
+  const [episodes, setEpisodes] = useState<EpisodeItem[]>([]);
+  const [episodesLoading, setEpisodesLoading] = useState(false);
+  const [episodesError, setEpisodesError] = useState<string | null>(null);
+  const [selectedEpisode, setSelectedEpisode] = useState<number | null>(null);
 
+  // Load datasets on mount.
+  useEffect(() => {
+    setDatasetsLoading(true);
+    replay.listDatasets()
+      .then(setDatasets)
+      .catch(() => setDatasets([]))
+      .finally(() => setDatasetsLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-const ReplayDataset = () => {
-  // Normally you would fetch datasets and handle loading/error states
-  const [selectedDataset, setSelectedDataset] = React.useState<string | null>(mockDatasets.length > 0 ? mockDatasets[0].id : null);
-  const [selectedEpisode, setSelectedEpisode] = React.useState<string | null>(null);
-
-  const episodes = selectedDataset ? mockEpisodes[selectedDataset] || [] : [];
-
-  React.useEffect(() => {
-    // When dataset changes, reset episode selection
+  // Load episodes when repo changes.
+  useEffect(() => {
     setSelectedEpisode(null);
-  }, [selectedDataset]);
+    setEpisodes([]);
+    setEpisodesError(null);
+    if (!selectedRepo) return;
+    setEpisodesLoading(true);
+    replay.listEpisodes(selectedRepo)
+      .then((r) => setEpisodes(r.episodes))
+      .catch((e) => setEpisodesError(e.message || "Failed to load episodes"))
+      .finally(() => setEpisodesLoading(false));
+  }, [selectedRepo]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-start replay when an episode is picked. The hook's `start` internally stops any running session first.
+  useEffect(() => {
+    if (selectedRepo && selectedEpisode !== null) {
+      replay.start(selectedRepo, selectedEpisode);
+    }
+  }, [selectedRepo, selectedEpisode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const { state } = replay;
+  const disabled = state.status === "idle" || state.status === "loading";
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col p-4 sm:p-6 lg:p-8">
-      <ReplayHeader />
-      <div className="flex-1 flex flex-col lg:flex-row gap-6 mt-6">
-        <div className="w-full lg:w-1/3 xl:w-1/4 flex flex-col gap-6">
-          <DatasetSelector 
-            datasets={mockDatasets}
-            selectedDataset={selectedDataset}
-            onSelectDataset={setSelectedDataset}
-          />
-          <EpisodePlayer
-            episodes={episodes}
-            selectedEpisode={selectedEpisode}
-            onSelectEpisode={setSelectedEpisode}
-          />
-        </div>
-        <div className="flex-1">
-          <ReplayVisualizer />
-        </div>
+    <div className="min-h-screen bg-black text-white flex flex-col p-4 sm:p-6 lg:p-8 gap-6">
+      <ReplayHeader status={state.status} repoId={state.repoId} episode={state.episode} />
+
+      <div className="grid lg:grid-cols-2 gap-6">
+        <DatasetCombobox
+          datasets={datasets}
+          loading={datasetsLoading}
+          value={selectedRepo}
+          onChange={setSelectedRepo}
+        />
+        <EpisodeList
+          episodes={episodes}
+          selected={selectedEpisode}
+          loading={episodesLoading}
+          error={episodesError}
+          onSelect={setSelectedEpisode}
+        />
       </div>
+
+      <div className="bg-gray-900 rounded-lg p-4 border border-gray-700 min-h-[50vh]">
+        <UrdfProcessorInitializer />
+        <UrdfViewer />
+      </div>
+
+      <VideoGrid cameras={state.cameras} registerRefs={replay.setVideoRefs} />
+
+      <PlaybackBar
+        paused={state.paused}
+        frame={state.frame}
+        totalFrames={state.totalFrames}
+        fps={state.fps}
+        speed={state.speed}
+        disabled={disabled}
+        onPlay={replay.resume}
+        onPause={replay.pause}
+        onStop={replay.stop}
+        onSeek={replay.seek}
+        onSpeedChange={replay.setSpeed}
+      />
+
+      {state.error && (
+        <div className="rounded-md border border-red-700 bg-red-950/40 text-red-200 p-3 text-sm">
+          {state.error}
+        </div>
+      )}
     </div>
   );
 };

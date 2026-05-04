@@ -576,6 +576,53 @@ def _list_avfoundation_cameras() -> Dict[int, str]:
     return names
 
 
+def _capture_avfoundation_thumbnail(index: int) -> str | None:
+    """Capture a small JPEG thumbnail from AVFoundation index ``index`` via ffmpeg.
+
+    cv2.VideoCapture on macOS often returns the previous camera's framebuffer
+    on the first read, especially when probing multiple indices in a row.
+    ffmpeg's ``-frames:v 1`` after ``-ss`` reliably skips the warmup frames
+    and gives us the actual current image. Returns a base64 data URL or None.
+    """
+    import subprocess
+    import base64
+    try:
+        # -ss before -i: seek into the input slightly to skip warmup frames.
+        # -frames:v 1: take exactly one frame.
+        # -vf scale: downscale for thumbnail size.
+        # mjpeg + image2pipe: emit a single JPEG to stdout.
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-loglevel", "error",
+                "-y",
+                "-f", "avfoundation",
+                "-framerate", "30",
+                "-video_size", "640x480",
+                "-i", str(index),
+                "-frames:v", "1",
+                "-ss", "0.5",
+                "-vf", "scale=160:120",
+                "-q:v", "6",
+                "-f", "image2pipe",
+                "-vcodec", "mjpeg",
+                "pipe:1",
+            ],
+            capture_output=True,
+            timeout=8,
+        )
+        if result.returncode != 0 or not result.stdout:
+            logger.warning(
+                f"ffmpeg thumbnail capture failed for AVFoundation index {index}: "
+                f"{result.stderr.decode(errors='replace')[:300]}"
+            )
+            return None
+        return "data:image/jpeg;base64," + base64.b64encode(result.stdout).decode("ascii")
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logger.warning(f"ffmpeg thumbnail capture unavailable for index {index}: {e}")
+        return None
+
+
 @app.get("/available-cameras")
 def get_available_cameras():
     """Get all available cameras with a JPEG thumbnail per OpenCV index.
@@ -604,44 +651,70 @@ def get_available_cameras():
 
         avf_names = _list_avfoundation_cameras() if system == "Darwin" else {}
 
+        # Probe which OpenCV indices are available; we still want lerobot's
+        # cv2 backend to be the source of truth for "what indices exist," but
+        # on macOS we capture the thumbnail with ffmpeg below to avoid cv2's
+        # cross-camera framebuffer carryover.
+        available_indices: List[int] = []
+        index_props: Dict[int, Dict[str, int]] = {}
         for i in range(10):
             cap = cv2.VideoCapture(i, backend)
             if not cap.isOpened():
                 cap.release()
                 continue
-
-            # First read often returns a blank/garbage frame on warmup; try a few.
-            frame = None
-            for _ in range(5):
-                ret, candidate = cap.read()
-                if ret and candidate is not None:
-                    frame = candidate
-                    break
-
-            if frame is None:
-                cap.release()
-                continue
-
-            entry = {
-                "index": i,
-                "name": avf_names.get(i, f"Camera {i}"),
-                "available": True,
+            available_indices.append(i)
+            index_props[i] = {
                 "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                 "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
                 "fps": int(cap.get(cv2.CAP_PROP_FPS)),
             }
+            cap.release()
 
-            try:
-                small = cv2.resize(frame, (160, 120))
-                ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                if ok:
-                    encoded = base64.b64encode(buf.tobytes()).decode("ascii")
-                    entry["thumbnail"] = f"data:image/jpeg;base64,{encoded}"
-            except Exception as thumb_err:
-                logger.warning(f"Thumbnail capture failed for camera {i}: {thumb_err}")
+        logger.info(
+            f"📷 /available-cameras: indices={available_indices} "
+            f"avf_names={avf_names}"
+        )
+
+        for i in available_indices:
+            entry = {
+                "index": i,
+                "name": avf_names.get(i, f"Camera {i}"),
+                "available": True,
+                **index_props[i],
+            }
+
+            thumbnail: str | None = None
+            if system == "Darwin":
+                thumbnail = _capture_avfoundation_thumbnail(i)
+
+            if thumbnail is None:
+                # Fallback: cv2 capture (Linux, or ffmpeg unavailable).
+                cap = cv2.VideoCapture(i, backend)
+                if cap.isOpened():
+                    frame = None
+                    for _ in range(15):
+                        ret, candidate = cap.read()
+                        if ret and candidate is not None and candidate.size > 0:
+                            frame = candidate
+                    if frame is not None:
+                        try:
+                            small = cv2.resize(frame, (160, 120))
+                            ok, buf = cv2.imencode(
+                                ".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 70]
+                            )
+                            if ok:
+                                encoded = base64.b64encode(buf.tobytes()).decode("ascii")
+                                thumbnail = f"data:image/jpeg;base64,{encoded}"
+                        except Exception as thumb_err:
+                            logger.warning(
+                                f"cv2 thumbnail encoding failed for camera {i}: {thumb_err}"
+                            )
+                cap.release()
+
+            if thumbnail is not None:
+                entry["thumbnail"] = thumbnail
 
             cameras.append(entry)
-            cap.release()
 
         return {"status": "success", "cameras": cameras}
     except ImportError:

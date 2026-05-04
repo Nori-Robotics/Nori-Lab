@@ -47,6 +47,12 @@ from .training import (
     handle_training_logs,
 )
 
+from .system import (
+    handle_get_training_extra,
+    handle_install_training_extra,
+    handle_install_training_extra_status,
+)
+
 from .hf_auth import handle_hf_auth_status
 from . import dataset_browser
 
@@ -366,6 +372,29 @@ def training_status():
 def training_logs():
     """Get recent training logs"""
     return handle_training_logs()
+
+
+# ============================================================================
+# SYSTEM ENDPOINTS
+# ============================================================================
+
+
+@app.get("/system/training-extra")
+def get_training_extra():
+    """Return whether the LeRobot training extra (accelerate) is importable."""
+    return handle_get_training_extra()
+
+
+@app.post("/system/training-extra/install")
+def install_training_extra():
+    """Spawn `pip install accelerate` as a background subprocess. No-op if already running."""
+    return handle_install_training_extra()
+
+
+@app.get("/system/training-extra/install-status")
+def install_training_extra_status():
+    """Return current install state plus any pending log lines (drained on read)."""
+    return handle_install_training_extra_status()
 
 
 # Replay is rendered by the embedded lerobot/visualize_dataset Space; no backend routes needed.

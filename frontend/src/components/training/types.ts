@@ -1,10 +1,6 @@
-
 export interface TrainingConfig {
   // Dataset configuration
   dataset_repo_id: string;
-  dataset_revision?: string;
-  dataset_root?: string;
-  dataset_episodes?: number[];
 
   // Policy configuration
   policy_type: string;
@@ -18,7 +14,6 @@ export interface TrainingConfig {
   // Logging and checkpointing
   log_freq: number;
   save_freq: number;
-  eval_freq: number;
   save_checkpoint: boolean;
 
   // Output configuration
@@ -31,16 +26,8 @@ export interface TrainingConfig {
   wandb_project?: string;
   wandb_entity?: string;
   wandb_notes?: string;
-  wandb_run_id?: string;
   wandb_mode?: string;
   wandb_disable_artifact: boolean;
-
-  // Environment and evaluation
-  env_type?: string;
-  env_task?: string;
-  eval_n_episodes: number;
-  eval_batch_size: number;
-  eval_use_async_envs: boolean;
 
   // Policy-specific parameters
   policy_device?: string;
@@ -54,7 +41,6 @@ export interface TrainingConfig {
 
   // Advanced configuration
   use_policy_training_preset: boolean;
-  config_path?: string;
 }
 
 export interface TrainingStatus {

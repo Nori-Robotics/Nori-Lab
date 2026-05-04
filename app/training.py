@@ -203,36 +203,32 @@ class TrainingManager:
         
         # Core training parameters
         cmd.extend(["--steps", str(request.steps)])
-        cmd.extend(["--batch-size", str(request.batch_size)])
-        cmd.extend(["--num-workers", str(request.num_workers)])
-        
+        cmd.extend(["--batch_size", str(request.batch_size)])
+        cmd.extend(["--num_workers", str(request.num_workers)])
+
         if request.seed is not None:
             cmd.extend(["--seed", str(request.seed)])
-        
+
         # Policy device and AMP
         if request.policy_device:
             cmd.extend(["--policy.device", request.policy_device])
-        if request.policy_use_amp:
-            cmd.append("--policy.use_amp")
-        
+        cmd.extend(["--policy.use_amp", "true" if request.policy_use_amp else "false"])
+
         # Logging and checkpointing
-        cmd.extend(["--log-freq", str(request.log_freq)])
-        cmd.extend(["--save-freq", str(request.save_freq)])
-        cmd.extend(["--eval-freq", str(request.eval_freq)])
-        
-        if request.save_checkpoint:
-            cmd.append("--save_checkpoint")
-        
+        cmd.extend(["--log_freq", str(request.log_freq)])
+        cmd.extend(["--save_freq", str(request.save_freq)])
+        cmd.extend(["--eval_freq", str(request.eval_freq)])
+        cmd.extend(["--save_checkpoint", "true" if request.save_checkpoint else "false"])
+
         # Output configuration
-        cmd.extend(["--output-dir", request.output_dir])
-        if request.resume:
-            cmd.append("--resume")
+        cmd.extend(["--output_dir", request.output_dir])
+        cmd.extend(["--resume", "true" if request.resume else "false"])
         if request.job_name:
-            cmd.extend(["--job-name", request.job_name])
-        
+            cmd.extend(["--job_name", request.job_name])
+
         # Weights & Biases
+        cmd.extend(["--wandb.enable", "true" if request.wandb_enable else "false"])
         if request.wandb_enable:
-            cmd.append("--wandb.enable")
             if request.wandb_project:
                 cmd.extend(["--wandb.project", request.wandb_project])
             if request.wandb_entity:
@@ -243,21 +239,19 @@ class TrainingManager:
                 cmd.extend(["--wandb.run_id", request.wandb_run_id])
             if request.wandb_mode:
                 cmd.extend(["--wandb.mode", request.wandb_mode])
-            if request.wandb_disable_artifact:
-                cmd.append("--wandb.disable_artifact")
-        
+            cmd.extend(["--wandb.disable_artifact", "true" if request.wandb_disable_artifact else "false"])
+
         # Environment configuration
         if request.env_type:
             cmd.extend(["--env.type", request.env_type])
         if request.env_task:
             cmd.extend(["--env.task", request.env_task])
-        
+
         # Evaluation configuration
         cmd.extend(["--eval.n_episodes", str(request.eval_n_episodes)])
         cmd.extend(["--eval.batch_size", str(request.eval_batch_size)])
-        if request.eval_use_async_envs:
-            cmd.append("--eval.use_async_envs")
-        
+        cmd.extend(["--eval.use_async_envs", "true" if request.eval_use_async_envs else "false"])
+
         # Optimizer configuration
         if request.optimizer_type:
             cmd.extend(["--optimizer.type", request.optimizer_type])
@@ -267,13 +261,12 @@ class TrainingManager:
             cmd.extend(["--optimizer.weight_decay", str(request.optimizer_weight_decay)])
         if request.optimizer_grad_clip_norm is not None:
             cmd.extend(["--optimizer.grad_clip_norm", str(request.optimizer_grad_clip_norm)])
-        
+
         # Advanced options
-        if request.use_policy_training_preset:
-            cmd.append("--use_policy_training_preset")
+        cmd.extend(["--use_policy_training_preset", "true" if request.use_policy_training_preset else "false"])
         if request.config_path:
             cmd.extend(["--config_path", request.config_path])
-        
+
         return cmd
     
     def _start_monitoring(self):

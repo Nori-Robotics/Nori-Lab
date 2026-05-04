@@ -83,10 +83,6 @@ const Landing = () => {
     }
   };
 
-  const handleCalibrationClick = () => {
-    navigate("/calibration");
-  };
-
   const handleRecordingClick = () => {
     setShowRecordingModal(true);
     loadConfigs();
@@ -165,15 +161,8 @@ const Landing = () => {
     navigate("/recording", { state: { recordingConfig } });
   };
 
-  // Teleoperation is now per-robot on the tile, so it's not in this list.
+  // Calibration and Teleoperation are now per-robot on the tile.
   const actions: Action[] = [
-    {
-      title: "Calibration",
-      description: "Calibrate robot arm positions.",
-      handler: handleCalibrationClick,
-      color: "bg-indigo-500 hover:bg-indigo-600",
-      isWorkInProgress: false,
-    },
     {
       title: "Record Dataset",
       description: "Record episodes for training data.",

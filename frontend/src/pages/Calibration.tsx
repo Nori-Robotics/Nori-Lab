@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,8 +24,6 @@ import {
   Loader2,
   Play,
   Square,
-  Trash2,
-  List,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import Logo from "@/components/Logo";
@@ -40,8 +38,8 @@ interface CalibrationStatus {
   device_type: string | null;
   error: string | null;
   message: string;
-  step: number; // Current calibration step
-  total_steps: number; // Total number of calibration steps
+  step: number;
+  total_steps: number;
   current_positions: Record<string, number> | null;
   recorded_ranges: Record<
     string,
@@ -56,31 +54,20 @@ interface CalibrationRequest {
   robot_name: string | null;
 }
 
-interface CalibrationConfig {
-  name: string;
-  filename: string;
-  size: number;
-  modified: number;
-}
-
-// ConfigsResponse interface removed since we're using text input
-
 const Calibration = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const robotName = (location.state as { robot_name?: string } | null)?.robot_name ?? null;
+  const robotName =
+    (location.state as { robot_name?: string } | null)?.robot_name ?? null;
   const { toast } = useToast();
   const { baseUrl, fetchWithHeaders } = useApi();
 
-  // Ref for auto-scrolling console
   const consoleRef = useRef<HTMLDivElement>(null);
 
-  // Form state
-  const [deviceType, setDeviceType] = useState<string>("robot");
+  const [deviceType, setDeviceType] = useState<string>("teleop");
   const [port, setPort] = useState<string>("");
-  const [configFile, setConfigFile] = useState<string>("");
 
-  // If we arrived from a robot tile, pre-fill the form from that robot's record.
+  // Pre-fill the form from the robot's record on arrival.
   useEffect(() => {
     if (!robotName) return;
     let cancelled = false;
@@ -95,21 +82,13 @@ const Calibration = () => {
         if (!robot || cancelled) return;
         // Default to whichever side still needs calibration.
         const defaultDevice =
-          !robot.leader_config && robot.follower_config
-            ? "robot"
-            : "teleop";
+          !robot.leader_config && robot.follower_config ? "robot" : "teleop";
         setDeviceType(defaultDevice);
-        if (defaultDevice === "teleop") {
-          setPort(robot.leader_port || "");
-          setConfigFile(
-            robot.leader_config ? robot.leader_config.replace(/\.json$/, "") : ""
-          );
-        } else {
-          setPort(robot.follower_port || "");
-          setConfigFile(
-            robot.follower_config ? robot.follower_config.replace(/\.json$/, "") : ""
-          );
-        }
+        setPort(
+          defaultDevice === "teleop"
+            ? robot.leader_port || ""
+            : robot.follower_port || ""
+        );
       } catch (e) {
         console.error("Failed to load robot record for prefill:", e);
       }
@@ -119,19 +98,11 @@ const Calibration = () => {
     };
   }, [robotName, baseUrl, fetchWithHeaders]);
 
-  // Config loading and management
-  const [isLoadingConfigs, setIsLoadingConfigs] = useState(false);
-  const [availableConfigs, setAvailableConfigs] = useState<CalibrationConfig[]>(
-    []
-  );
-
-  // Port detection state
   const [showPortDetection, setShowPortDetection] = useState(false);
   const [detectionRobotType, setDetectionRobotType] = useState<
     "leader" | "follower"
   >("leader");
 
-  // Calibration state
   const [calibrationStatus, setCalibrationStatus] = useState<CalibrationStatus>(
     {
       calibration_active: false,
@@ -147,45 +118,19 @@ const Calibration = () => {
   );
   const [isPolling, setIsPolling] = useState(false);
 
-  // Config loading removed since we're using text input now
-
-  // Poll calibration status
   const pollStatus = async () => {
     try {
       const response = await fetchWithHeaders(`${baseUrl}/calibration-status`);
       if (response.ok) {
         const status = await response.json();
-        const previousStatus = calibrationStatus.status;
-
-        // Debug logging
-        console.log("Status update:", {
-          previousStatus,
-          newStatus: status.status,
-          calibrationActive: status.calibration_active,
-          polling: isPolling,
-        });
-
         setCalibrationStatus(status);
 
-        // If calibration just completed successfully, refresh the configs list
-        if (
-          previousStatus !== "completed" &&
-          status.status === "completed" &&
-          !status.calibration_active &&
-          deviceType
-        ) {
-          console.log("Calibration completed - refreshing available configs");
-          loadAvailableConfigs(deviceType);
-        }
-
-        // Stop polling if calibration is completed, error, or stopped (idle)
         if (
           !status.calibration_active &&
           (status.status === "completed" ||
             status.status === "error" ||
             status.status === "idle")
         ) {
-          console.log("Stopping polling due to status:", status.status);
           setIsPolling(false);
         }
       }
@@ -194,12 +139,19 @@ const Calibration = () => {
     }
   };
 
-  // Start calibration
   const handleStartCalibration = async () => {
-    if (!deviceType || !port || !configFile) {
+    if (!robotName) {
       toast({
-        title: "Missing Information",
-        description: "Please fill in all required fields",
+        title: "No robot selected",
+        description: "Open Calibration from a robot's gear icon on the Landing page.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!port) {
+      toast({
+        title: "Missing port",
+        description: "Set the device's serial port before starting.",
         variant: "destructive",
       });
       return;
@@ -208,7 +160,7 @@ const Calibration = () => {
     const request: CalibrationRequest = {
       device_type: deviceType,
       port: port,
-      config_file: configFile,
+      config_file: robotName,
       robot_name: robotName,
     };
 
@@ -243,7 +195,6 @@ const Calibration = () => {
     }
   };
 
-  // Stop calibration
   const handleStopCalibration = async () => {
     try {
       const response = await fetchWithHeaders(`${baseUrl}/stop-calibration`, {
@@ -257,8 +208,6 @@ const Calibration = () => {
           title: "Calibration Stopped",
           description: "Calibration has been stopped",
         });
-
-        // Force a status check after stopping
         setTimeout(() => {
           pollStatus();
         }, 500);
@@ -279,81 +228,13 @@ const Calibration = () => {
     }
   };
 
-  // Load available configs for the selected device type
-  const loadAvailableConfigs = async (deviceType: string) => {
-    if (!deviceType) return;
-
-    setIsLoadingConfigs(true);
-    try {
-      const response = await fetchWithHeaders(
-        `${baseUrl}/calibration-configs/${deviceType}`
-      );
-      const data = await response.json();
-
-      if (data.success) {
-        setAvailableConfigs(data.configs || []);
-      } else {
-        toast({
-          title: "Error Loading Configs",
-          description: data.message || "Could not load calibration configs",
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      toast({
-        title: "Error Loading Configs",
-        description: "Could not connect to the backend server",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoadingConfigs(false);
-    }
-  };
-
-  // Delete a config file
-  const handleDeleteConfig = async (configName: string) => {
-    if (!deviceType) return;
-
-    try {
-      const response = await fetchWithHeaders(
-        `${baseUrl}/calibration-configs/${deviceType}/${configName}`,
-        { method: "DELETE" }
-      );
-      const data = await response.json();
-
-      if (data.success) {
-        toast({
-          title: "Config Deleted",
-          description: data.message,
-        });
-        // Reload the configs list
-        loadAvailableConfigs(deviceType);
-      } else {
-        toast({
-          title: "Delete Failed",
-          description: data.message || "Could not delete the configuration",
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Could not delete the configuration",
-        variant: "destructive",
-      });
-    }
-  };
-
-  // Complete current calibration step
   const handleCompleteStep = async () => {
     if (!calibrationStatus.calibration_active) return;
 
     try {
       const response = await fetchWithHeaders(
         `${baseUrl}/complete-calibration-step`,
-        {
-          method: "POST",
-        }
+        { method: "POST" }
       );
 
       const data = await response.json();
@@ -380,32 +261,19 @@ const Calibration = () => {
     }
   };
 
-  // Config loading removed - using text input instead
-
-  // Set up polling
   useEffect(() => {
     let interval: NodeJS.Timeout;
 
     if (isPolling) {
-      // Use fast polling during active calibration for real-time updates
       const pollInterval = calibrationStatus.calibration_active ? 100 : 200;
       interval = setInterval(pollStatus, pollInterval);
-      pollStatus(); // Initial poll
+      pollStatus();
     }
 
     return () => {
       if (interval) clearInterval(interval);
     };
   }, [isPolling, calibrationStatus.calibration_active]);
-
-  // Load configs when device type changes
-  useEffect(() => {
-    if (deviceType) {
-      loadAvailableConfigs(deviceType);
-    } else {
-      setAvailableConfigs([]);
-    }
-  }, [deviceType]);
 
   // Load default port when device type changes (skip when arriving from a tile —
   // the robot-record prefill above wins)
@@ -421,7 +289,6 @@ const Calibration = () => {
         );
         const data = await response.json();
         if (data.status === "success") {
-          // Use saved port if available, otherwise use default port
           const portToUse = data.saved_port || data.default_port;
           if (portToUse) {
             setPort(portToUse);
@@ -446,23 +313,14 @@ const Calibration = () => {
       const data = await res.json();
       const robot = data.robot;
       if (!robot) return;
-      if (next === "teleop") {
-        setPort(robot.leader_port || "");
-        setConfigFile(
-          robot.leader_config ? robot.leader_config.replace(/\.json$/, "") : ""
-        );
-      } else {
-        setPort(robot.follower_port || "");
-        setConfigFile(
-          robot.follower_config ? robot.follower_config.replace(/\.json$/, "") : ""
-        );
-      }
+      setPort(
+        next === "teleop" ? robot.leader_port || "" : robot.follower_port || ""
+      );
     } catch (e) {
       console.error("Failed to swap robot record on device toggle:", e);
     }
   };
 
-  // Handle port detection
   const handlePortDetection = () => {
     const robotType = deviceType === "robot" ? "follower" : "leader";
     setDetectionRobotType(robotType);
@@ -473,7 +331,6 @@ const Calibration = () => {
     setPort(detectedPort);
   };
 
-  // Get status color and icon
   const getStatusDisplay = () => {
     switch (calibrationStatus.status) {
       case "idle":
@@ -526,7 +383,6 @@ const Calibration = () => {
   return (
     <div className="min-h-screen bg-slate-900 text-white p-4">
       <div className="max-w-4xl mx-auto">
-        {/* Header */}
         <div className="flex items-center gap-4 mb-6">
           <Button
             variant="ghost"
@@ -538,12 +394,24 @@ const Calibration = () => {
           </Button>
           <div className="flex items-center gap-3">
             <Logo iconOnly />
-            <h1 className="text-3xl font-bold">Device Calibration</h1>
+            <h1 className="text-3xl font-bold">
+              {robotName ? `Calibrate "${robotName}"` : "Device Calibration"}
+            </h1>
           </div>
         </div>
 
+        {!robotName && (
+          <Alert className="mb-6 bg-amber-900/40 border-amber-700 text-amber-100">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              Open Calibration from a robot's gear icon on the Landing page.
+              Each robot has its own calibration; running this page directly is
+              not supported.
+            </AlertDescription>
+          </Alert>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Configuration Panel */}
           <Card className="bg-slate-800/60 border-slate-700 backdrop-blur-sm">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-slate-200">
@@ -552,7 +420,6 @@ const Calibration = () => {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
-              {/* Device Type Selection */}
               <div className="space-y-2">
                 <Label
                   htmlFor="deviceType"
@@ -560,22 +427,24 @@ const Calibration = () => {
                 >
                   Device Type *
                 </Label>
-                <Select value={deviceType} onValueChange={handleDeviceTypeChange}>
+                <Select
+                  value={deviceType}
+                  onValueChange={handleDeviceTypeChange}
+                >
                   <SelectTrigger className="bg-slate-700 border-slate-600 text-white rounded-md">
                     <SelectValue placeholder="Select device type" />
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700 text-white">
-                    <SelectItem value="robot" className="hover:bg-slate-700">
-                      Robot (Follower)
-                    </SelectItem>
                     <SelectItem value="teleop" className="hover:bg-slate-700">
                       Teleoperator (Leader)
+                    </SelectItem>
+                    <SelectItem value="robot" className="hover:bg-slate-700">
+                      Robot (Follower)
                     </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
-              {/* Port Configuration */}
               <div className="space-y-2">
                 <Label
                   htmlFor="port"
@@ -599,95 +468,14 @@ const Calibration = () => {
                 </div>
               </div>
 
-              {/* Config File Name */}
-              <div className="space-y-2">
-                <Label
-                  htmlFor="configFile"
-                  className="text-sm font-medium text-slate-300"
-                >
-                  Calibration Config *
-                </Label>
-                <Input
-                  id="configFile"
-                  value={configFile}
-                  onChange={(e) => setConfigFile(e.target.value)}
-                  placeholder="config_name (e.g., my_robot_v1)"
-                  className="bg-slate-700 border-slate-600 text-white rounded-md"
-                />
-              </div>
-
-              {/* Available Configurations List */}
-              {deviceType && (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <List className="w-4 h-4 text-slate-400" />
-                    <Label className="text-sm font-medium text-slate-300">
-                      Available Configurations
-                    </Label>
-                    {isLoadingConfigs && (
-                      <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
-                    )}
-                  </div>
-
-                  <div className="max-h-40 overflow-y-auto bg-slate-900/50 rounded-lg border border-slate-700">
-                    {availableConfigs.length === 0 ? (
-                      <div className="p-3 text-center text-slate-400 text-sm">
-                        {isLoadingConfigs
-                          ? "Loading..."
-                          : "No configurations found"}
-                      </div>
-                    ) : (
-                      <div className="space-y-1 p-2">
-                        {availableConfigs.map((config) => (
-                          <div
-                            key={config.name}
-                            className="flex items-center justify-between bg-slate-700/50 rounded-md px-3 py-2 hover:bg-slate-700 transition-colors"
-                          >
-                            <div className="flex-1 min-w-0">
-                              <button
-                                onClick={() => setConfigFile(config.name)}
-                                className="text-left w-full text-white hover:text-blue-300 font-medium truncate"
-                                title={`Click to select: ${config.name}`}
-                              >
-                                {config.name}
-                              </button>
-                              <div className="text-xs text-slate-400">
-                                {new Date(
-                                  config.modified * 1000
-                                ).toLocaleDateString()}
-                                {" • "}
-                                {(config.size / 1024).toFixed(1)} KB
-                              </div>
-                            </div>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteConfig(config.name);
-                              }}
-                              className="ml-3 p-1 text-red-500/80 hover:text-red-500 hover:bg-red-500/10 rounded-full transition-colors"
-                              title={`Delete ${config.name}`}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
               <Separator className="bg-slate-700" />
 
-              {/* Action Buttons */}
               <div className="flex flex-col gap-3">
                 {!calibrationStatus.calibration_active ? (
                   <Button
                     onClick={handleStartCalibration}
                     className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-full py-6 text-lg"
-                    disabled={
-                      isLoadingConfigs || !deviceType || !port || !configFile
-                    }
+                    disabled={!robotName || !deviceType || !port}
                   >
                     <Play className="w-5 h-5 mr-2" />
                     Start Calibration
@@ -706,7 +494,6 @@ const Calibration = () => {
             </CardContent>
           </Card>
 
-          {/* Status Panel */}
           <Card className="bg-slate-800/60 border-slate-700 backdrop-blur-sm">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-slate-200">
@@ -715,7 +502,6 @@ const Calibration = () => {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Current Status */}
               <div className="flex items-center justify-between p-3 bg-slate-900/50 rounded-md">
                 <span className="text-slate-300">Status:</span>
                 <Badge
@@ -726,7 +512,6 @@ const Calibration = () => {
                 </Badge>
               </div>
 
-              {/* Live Position Data (during recording) */}
               {calibrationStatus.status === "recording" &&
                 calibrationStatus.recorded_ranges && (
                   <div className="space-y-3">
@@ -740,7 +525,6 @@ const Calibration = () => {
                       <div className="space-y-3">
                         {Object.entries(calibrationStatus.recorded_ranges).map(
                           ([motor, range]) => {
-                            // Calculate progress percentage (current position relative to min/max range)
                             const totalRange = range.max - range.min;
                             const currentOffset = range.current - range.min;
                             const progressPercent =
@@ -772,14 +556,11 @@ const Calibration = () => {
                                   </span>
                                 </div>
                                 <div className="relative">
-                                  {/* Progress bar background */}
                                   <div className="w-full bg-slate-700 rounded-full h-3">
-                                    {/* Min/Max range bar */}
                                     <div
                                       className="bg-slate-600 h-3 rounded-full relative"
                                       style={{ width: "100%" }}
                                     >
-                                      {/* Current position indicator */}
                                       <div
                                         className={`absolute top-0 w-1 h-3 rounded-full transition-all duration-100 ${
                                           rangeComplete
@@ -796,7 +577,6 @@ const Calibration = () => {
                                       />
                                     </div>
                                   </div>
-                                  {/* Min/Max labels */}
                                   <div className="flex justify-between text-xs text-slate-400 mt-1">
                                     <span>{range.min}</span>
                                     <span>{range.max}</span>
@@ -811,7 +591,6 @@ const Calibration = () => {
                   </div>
                 )}
 
-              {/* Status Messages */}
               {calibrationStatus.status === "connecting" && (
                 <Alert className="bg-yellow-900/50 border-yellow-700 text-yellow-200">
                   <AlertCircle className="h-4 w-4" />
@@ -864,7 +643,6 @@ const Calibration = () => {
                   </Alert>
                 )}
 
-              {/* Calibration Video */}
               <div className="bg-slate-900/50 p-4 rounded-lg border border-slate-700">
                 <h4 className="font-semibold mb-3 text-slate-200">
                   Calibration Demo:

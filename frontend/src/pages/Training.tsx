@@ -68,14 +68,14 @@ const Training = () => {
       if (trainingStatus.training_active) {
         try {
           // Get status
-          const statusResponse = await fetch("/training-status");
+          const statusResponse = await fetchWithHeaders(`${baseUrl}/training-status`);
           if (statusResponse.ok) {
             const status = await statusResponse.json();
             setTrainingStatus(status);
           }
 
           // Get logs
-          const logsResponse = await fetch("/training-logs");
+          const logsResponse = await fetchWithHeaders(`${baseUrl}/training-logs`);
           if (logsResponse.ok) {
             const logsData = await logsResponse.json();
             if (logsData.logs && logsData.logs.length > 0) {
@@ -89,7 +89,7 @@ const Training = () => {
     }, 1000);
 
     return () => clearInterval(pollInterval);
-  }, [trainingStatus.training_active]);
+  }, [trainingStatus.training_active, baseUrl, fetchWithHeaders]);
 
   // Auto-scroll logs
   useEffect(() => {
@@ -110,11 +110,8 @@ const Training = () => {
 
     setIsStartingTraining(true);
     try {
-      const response = await fetch("/start-training", {
+      const response = await fetchWithHeaders(`${baseUrl}/start-training`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify(trainingConfig),
       });
 
@@ -155,7 +152,7 @@ const Training = () => {
 
   const handleStopTraining = async () => {
     try {
-      const response = await fetch("/stop-training", {
+      const response = await fetchWithHeaders(`${baseUrl}/stop-training`, {
         method: "POST",
       });
 

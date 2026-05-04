@@ -480,10 +480,12 @@ const Recording = () => {
 
         <div className="bg-gray-900 rounded-lg border border-gray-700 p-8">
           <div className="flex justify-end items-center gap-4 mb-6 text-sm text-gray-400">
-            <span>
+            <span aria-label={`Episode ${currentEpisode} of ${totalEpisodes}`}>
               Episode <span className="text-white font-semibold">{currentEpisode}</span> / {totalEpisodes}
             </span>
-            <span className="font-mono">{formatTime(sessionElapsedTime)}</span>
+            <span className="font-mono" aria-label={`Total session time ${formatTime(sessionElapsedTime)}`}>
+              {formatTime(sessionElapsedTime)}
+            </span>
             <Button
               variant="ghost"
               size="icon"
@@ -526,7 +528,11 @@ const Recording = () => {
           </div>
 
           <div className="text-center mb-6">
-            <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold tracking-widest ${phaseColor.pill}`}>
+            <div
+              role="status"
+              aria-live="polite"
+              className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold tracking-widest ${phaseColor.pill}`}
+            >
               <span className={`w-2 h-2 rounded-full ${phaseColor.dot} ${currentPhase !== "completed" ? "animate-pulse" : ""}`} />
               {getStatusText()}
             </div>

@@ -19,7 +19,7 @@ def list_user_datasets() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for author in authors:
         try:
-            for ds in api.list_datasets(author=author, limit=200):
+            for ds in api.list_datasets(author=author, filter="LeRobot", limit=200):
                 if ds.id in seen:
                     continue
                 seen.add(ds.id)

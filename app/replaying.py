@@ -1,268 +1,211 @@
-from pydantic import BaseModel
-from typing import Dict, Any
-import threading
 import logging
+import threading
+import time
+from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
+from pydantic import BaseModel
+
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+from . import dataset_browser
 
 logger = logging.getLogger(__name__)
 
-# Import lerobot replay functionality directly
-from lerobot.scripts.lerobot_replay import replay, ReplayConfig, DatasetReplayConfig
-from lerobot.robots import make_robot_from_config
-from lerobot.robots.so_follower import SO101FollowerConfig, SO100FollowerConfig
 
-# Import calibration setup from config
-from .config import setup_follower_calibration_file
+class StartReplayRequest(BaseModel):
+    repo_id: str
+    episode: int
 
-# Simple global state
-replay_active = False
-replay_thread = None
-replay_status = {
-    "replay_active": False,
-    "status": "idle",
-    "error_message": None,
-}
 
-class ReplayRequest(BaseModel):
-    robot_type: str = "so101_follower"
-    robot_port: str = "/dev/tty.usbmodem58760431541"
-    robot_id: str = "my_awesome_follower_arm"
-    dataset_repo_id: str
-    episode: int = 0
+class ReplayControlRequest(BaseModel):
+    action: str  # "pause" | "resume" | "seek" | "set_speed"
+    value: float | int | None = None
 
-def run_replay_directly(request: ReplayRequest):
-    """Run the lerobot replay function directly"""
-    global replay_active, replay_status
-    
+
+@dataclass
+class ReplayState:
+    active: bool = False
+    repo_id: str | None = None
+    episode: int | None = None
+    frame: int = 0
+    total_frames: int = 0
+    fps: float = 30.0
+    speed: float = 1.0
+    paused: bool = False
+    joint_names: list[str] = field(default_factory=list)
+
+
+_state_lock = threading.Lock()
+_state = ReplayState()
+_actions: np.ndarray | None = None  # (T, J)
+_stop_event = threading.Event()
+_ticker_thread: threading.Thread | None = None
+
+
+def _strip_pos_suffix(names: list[str]) -> list[str]:
+    return [n[:-4] if n.endswith(".pos") else n for n in names]
+
+
+def _ticker_loop(manager) -> None:
+    global _state, _actions
+    while not _stop_event.is_set():
+        with _state_lock:
+            paused = _state.paused
+            frame = _state.frame
+            total = _state.total_frames
+            fps = _state.fps
+            speed = _state.speed
+            joint_names = _state.joint_names
+
+        if paused or frame >= total:
+            time.sleep(0.05)
+            if frame >= total and not paused:
+                with _state_lock:
+                    _state.paused = True
+            continue
+
+        if _actions is None:
+            time.sleep(0.05)
+            continue
+
+        row = _actions[frame]
+        joints = {name: float(row[i]) for i, name in enumerate(joint_names)}
+        manager.broadcast_joint_data_sync({
+            "type": "joint_update",
+            "joints": joints,
+            "timestamp": frame / fps,
+            "frame": frame,
+        })
+
+        with _state_lock:
+            _state.frame = min(_state.frame + 1, _state.total_frames)
+
+        # Sleep in slices so seek/stop responsiveness stays high at low speeds.
+        target = 1.0 / max(fps * speed, 0.01)
+        slept = 0.0
+        while slept < target and not _stop_event.is_set():
+            chunk = min(0.05, target - slept)
+            time.sleep(chunk)
+            slept += chunk
+
+
+def handle_start_replay(req: StartReplayRequest, manager) -> dict[str, Any]:
+    global _state, _actions, _ticker_thread
+
+    # Concurrency guard: refuse if teleop or recording is active.
+    from .teleoperating import teleoperation_active
+    from .recording import recording_active
+    if teleoperation_active or recording_active:
+        return {"success": False, "message": "Stop teleoperation or recording first."}
+
+    with _state_lock:
+        if _state.active:
+            return {"success": False, "message": "Replay already active. Stop it first."}
+
     try:
-        # Debug logging for all parameters
-        logger.info(f"🔍 DEBUG: Replay request received")
-        logger.info(f"🔍 DEBUG: robot_type='{request.robot_type}'")
-        logger.info(f"🔍 DEBUG: robot_port='{request.robot_port}'")
-        logger.info(f"🔍 DEBUG: robot_id='{request.robot_id}'")
-        logger.info(f"🔍 DEBUG: dataset_repo_id='{request.dataset_repo_id}'")
-        logger.info(f"🔍 DEBUG: episode={request.episode}")
-        
-        replay_status.update({
-            "replay_active": True,
-            "status": "running",
-            "error_message": None,
-        })
-        
-        logger.info(f"🎬 Starting replay: {request.robot_type} on {request.robot_port}")
-        logger.info(f"📁 Dataset: {request.dataset_repo_id}, Episode: {request.episode}")
-        
-        # Setup calibration file and get the proper config name
-        logger.info(f"🔧 Setting up calibration file for robot_id: {request.robot_id}")
-        try:
-            follower_config_name = setup_follower_calibration_file(request.robot_id)
-            logger.info(f"✅ Using follower config name: {follower_config_name}")
-        except Exception as calib_error:
-            logger.error(f"❌ Calibration setup failed: {calib_error}")
-            raise
-        
-        # Create robot config based on robot type
-        logger.info(f"🤖 Creating robot config for type: {request.robot_type}")
-        try:
-            if request.robot_type == "so101_follower":
-                robot_config = SO101FollowerConfig(
-                    port=request.robot_port,
-                    id=follower_config_name,  # Use processed config name
-                )
-            elif request.robot_type == "so100_follower":
-                robot_config = SO100FollowerConfig(
-                    port=request.robot_port,
-                    id=follower_config_name,  # Use processed config name
-                )
-            else:
-                raise ValueError(f"Unsupported robot type: {request.robot_type}")
-            logger.info(f"✅ Robot config created successfully")
-        except Exception as robot_error:
-            logger.error(f"❌ Robot config creation failed: {robot_error}")
-            raise
-        
-        # Create dataset config
-        logger.info(f"📊 Creating dataset config")
-        try:
-            dataset_config = DatasetReplayConfig(
-                repo_id=request.dataset_repo_id,
-                episode=request.episode,
-                fps=30
-            )
-            logger.info(f"✅ Dataset config created successfully")
-        except Exception as dataset_error:
-            logger.error(f"❌ Dataset config creation failed: {dataset_error}")
-            raise
-        
-        # Create complete replay config
-        logger.info(f"⚙️ Creating complete replay config")
-        try:
-            cfg = ReplayConfig(
-                robot=robot_config,
-                dataset=dataset_config,
-                play_sounds=False  # Disable sounds for web interface
-            )
-            logger.info(f"✅ Complete replay config created successfully")
-        except Exception as config_error:
-            logger.error(f"❌ Replay config creation failed: {config_error}")
-            raise
-        
-        # Validate robot connection before replay
-        logger.info(f"🔍 Validating robot connection before replay")
-        try:
-            # Create and test robot connection
-            test_robot = make_robot_from_config(robot_config)
-            logger.info(f"🤖 Robot created, attempting connection...")
-            logger.info(f"🔍 Robot config - Port: {robot_config.port}, ID: {robot_config.id}")
-            
-            test_robot.connect()
-            logger.info(f"✅ Robot connected successfully")
-            logger.info(f"🔍 Robot bus info: {type(test_robot.bus).__name__}")
-            
-            # Check if robot has motors configured
-            if hasattr(test_robot, 'bus') and hasattr(test_robot.bus, 'models'):
-                if not test_robot.bus.models:
-                    logger.error(f"❌ No motors detected on robot bus")
-                    raise ValueError("No motors detected on robot bus. Check robot connection and calibration.")
-                else:
-                    logger.info(f"✅ Robot has {len(test_robot.bus.models)} motors configured")
-            
-            # Test a simple motor operation to ensure they're working
-            try:
-                # Try to read current positions to verify motors are responsive
-                test_robot.bus.sync_read("Present_Position")
-                logger.info(f"✅ Motors are responsive")
-            except Exception as motor_test_error:
-                logger.error(f"❌ Motors not responsive: {motor_test_error}")
-                raise ValueError(f"Motors not responsive: {motor_test_error}")
-            
-            # Disconnect test connection
-            test_robot.disconnect()
-            logger.info(f"✅ Robot validation completed successfully")
-            
-        except ValueError as ve:
-            # Re-raise ValueError with original message
-            raise ve
-        except Exception as validation_error:
-            logger.error(f"❌ Robot validation failed: {validation_error}")
-            # Provide more specific error message for common issues
-            error_msg = str(validation_error)
-            if "No such file or directory" in error_msg or "Permission denied" in error_msg:
-                raise ValueError(f"Robot port '{request.robot_port}' is not accessible. Check USB connection and permissions.")
-            elif "models" in error_msg.lower() or "motor" in error_msg.lower():
-                raise ValueError(f"Motor configuration error: {validation_error}")
-            else:
-                raise ValueError(f"Robot validation failed: {validation_error}")
-
-        # Run the replay directly
-        logger.info(f"🚀 Starting lerobot replay function")
-        try:
-            replay(cfg)
-            logger.info(f"✅ Lerobot replay function completed successfully")
-        except StopIteration as stop_error:
-            logger.error(f"❌ StopIteration error during replay - no motors detected")
-            raise ValueError("No motors detected during replay. The robot may have been disconnected or the motors are not properly configured. Please check your robot hardware setup and calibration files.")
-        except Exception as replay_error:
-            logger.error(f"❌ Lerobot replay function failed: {replay_error}")
-            raise
-        
-        replay_status.update({
-            "status": "completed",
-            "replay_active": False
-        })
-        logger.info("✅ Replay completed successfully")
-        
+        assets = dataset_browser.get_replay_assets(req.repo_id, req.episode)
     except Exception as e:
-        import traceback
-        error_msg = str(e)
-        full_traceback = traceback.format_exc()
-        
-        # Enhanced error logging
-        logger.error(f"❌ Replay failed with exception type: {type(e).__name__}")
-        logger.error(f"❌ Replay error message: '{error_msg}'")
-        logger.error(f"❌ Full traceback:\n{full_traceback}")
-        
-        # Use more descriptive error message if original is empty
-        if not error_msg or error_msg.strip() == "":
-            error_msg = f"Unknown error of type {type(e).__name__}"
-        
-        replay_status.update({
-            "status": "error",
-            "replay_active": False,
-            "error_message": error_msg
-        })
-    finally:
-        replay_active = False
+        logger.exception("get_replay_assets failed")
+        return {"success": False, "message": f"Could not resolve dataset assets: {e}"}
 
-def handle_start_replay(request: ReplayRequest) -> Dict[str, Any]:
-    """Handle starting a replay session"""
-    global replay_thread, replay_active
-    
-    if replay_active:
-        return {
-            "success": False,
-            "message": "Replay is already active"
-        }
-    
     try:
-        replay_active = True
-        replay_thread = threading.Thread(
-            target=run_replay_directly,
-            args=(request,),
-            daemon=True
+        ds = LeRobotDataset(req.repo_id, episodes=[req.episode], download_videos=False)
+    except Exception as e:
+        logger.exception("LeRobotDataset load failed")
+        return {"success": False, "message": f"Failed to load episode: {e}"}
+
+    try:
+        action_col = ds.hf_dataset["action"]
+    except Exception:
+        # Older LeRobotDataset attribute layout
+        action_col = [ds[i]["action"] for i in range(len(ds))]
+    actions_np = np.asarray([np.asarray(a, dtype=np.float32) for a in action_col], dtype=np.float32)
+
+    joint_names = _strip_pos_suffix(assets["joint_names"])
+
+    _stop_event.clear()
+    with _state_lock:
+        _state = ReplayState(
+            active=True,
+            repo_id=req.repo_id,
+            episode=req.episode,
+            frame=0,
+            total_frames=int(actions_np.shape[0]),
+            fps=float(assets["fps"]),
+            speed=1.0,
+            paused=False,
+            joint_names=joint_names,
         )
-        replay_thread.start()
-        
-        return {
-            "success": True,
-            "message": "Replay started successfully"
-        }
-        
-    except Exception as e:
-        replay_active = False
-        logger.error(f"❌ Failed to start replay: {e}")
-        return {
-            "success": False,
-            "message": str(e)
-        }
+    _actions = actions_np
 
-def handle_stop_replay() -> Dict[str, Any]:
-    """Handle stopping the current replay session"""
-    global replay_active
-    
-    if not replay_active:
-        return {
-            "success": False,
-            "message": "No active replay session"
-        }
-    
-    # Note: The lerobot replay function doesn't have a built-in stop mechanism
-    # since it's designed to run to completion. We can only stop between episodes.
-    replay_active = False
-    replay_status.update({
-        "replay_active": False,
-        "status": "stopped"
-    })
-    
+    _ticker_thread = threading.Thread(target=_ticker_loop, args=(manager,), daemon=True)
+    _ticker_thread.start()
+
     return {
         "success": True,
-        "message": "Replay stop requested (will complete current episode)"
+        "joint_names": joint_names,
+        "cameras": assets["cameras"],
+        "fps": float(assets["fps"]),
+        "num_frames": int(actions_np.shape[0]),
     }
 
-def handle_replay_status() -> Dict[str, Any]:
-    """Handle getting the current replay status"""
-    return {
-        "success": True,
-        "status": replay_status.copy()
-    }
 
-def handle_replay_logs() -> Dict[str, Any]:
-    """Handle getting recent replay logs"""
-    return {
-        "success": True,
-        "logs": []  # Logs are handled by lerobot's logging system
-    }
+def handle_replay_control(req: ReplayControlRequest) -> dict[str, Any]:
+    with _state_lock:
+        if not _state.active:
+            return {"success": False, "message": "No active replay session."}
 
-def cleanup():
-    """Clean up replay resources"""
-    global replay_active
-    replay_active = False 
+        if req.action == "pause":
+            _state.paused = True
+        elif req.action == "resume":
+            if _state.frame >= _state.total_frames:
+                _state.frame = 0
+            _state.paused = False
+        elif req.action == "seek":
+            if req.value is None:
+                return {"success": False, "message": "seek requires a value (frame index)."}
+            target = max(0, min(int(req.value), max(_state.total_frames - 1, 0)))
+            _state.frame = target
+        elif req.action == "set_speed":
+            if req.value is None:
+                return {"success": False, "message": "set_speed requires a value."}
+            _state.speed = max(0.25, min(float(req.value), 16.0))
+        else:
+            return {"success": False, "message": f"Unknown action: {req.action}"}
+
+    return {"success": True}
+
+
+def handle_stop_replay() -> dict[str, Any]:
+    global _state, _actions, _ticker_thread
+
+    _stop_event.set()
+    thread = _ticker_thread
+    if thread is not None:
+        thread.join(timeout=1.5)
+    _ticker_thread = None
+
+    with _state_lock:
+        _state = ReplayState()
+    _actions = None
+    return {"success": True}
+
+
+def handle_replay_status() -> dict[str, Any]:
+    with _state_lock:
+        return {
+            "active": _state.active,
+            "repo_id": _state.repo_id,
+            "episode": _state.episode,
+            "frame": _state.frame,
+            "total_frames": _state.total_frames,
+            "fps": _state.fps,
+            "speed": _state.speed,
+            "paused": _state.paused,
+        }
+
+
+def cleanup() -> None:
+    handle_stop_replay()

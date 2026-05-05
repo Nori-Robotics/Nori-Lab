@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { JobRecord } from "@/lib/jobsApi";
-import { Square, X, AlertTriangle, CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { Square, X, AlertTriangle, CheckCircle2, Loader2, XCircle, ExternalLink } from "lucide-react";
 
 interface Props {
   job: JobRecord;
@@ -70,15 +70,34 @@ const JobCard: React.FC<Props> = ({ job, onStop, onDelete }) => {
             <Icon className={`w-3.5 h-3.5 ${isRunning ? "animate-spin" : ""}`} />
             {present.label}
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleAction}
-            className="h-7 w-7 text-slate-400 hover:text-white"
-            aria-label={isRunning ? "Stop job" : "Delete job"}
-          >
-            {isRunning ? <Square className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
-          </Button>
+          {job.runner === "hf_cloud" && job.hf_job_url ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              asChild
+              className="h-7 w-7 text-slate-400 hover:text-white"
+              aria-label="Open Hub job page"
+            >
+              <a
+                href={job.hf_job_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleAction}
+              className="h-7 w-7 text-slate-400 hover:text-white"
+              aria-label={isRunning ? "Stop job" : "Delete job"}
+            >
+              {isRunning ? <Square className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
+            </Button>
+          )}
         </div>
         <div>
           <div

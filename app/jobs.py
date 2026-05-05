@@ -65,6 +65,7 @@ class JobRecord(BaseModel):
     hf_job_id: Optional[str] = None
     hf_flavor: Optional[str] = None
     hf_repo_id: Optional[str] = None
+    hf_job_url: Optional[str] = None
 
 
 def _pid_alive(pid: int) -> bool:
@@ -530,6 +531,7 @@ class JobRegistry:
                 record.process_pid = runner.pid()
             else:
                 record.hf_job_id = runner.hf_job_id()
+                record.hf_job_url = runner.hf_job_url()
                 # config was mutated by HfCloudJobRunner.start to set
                 # policy_repo_id; mirror it onto the record for the UI.
                 record.hf_repo_id = config.policy_repo_id

@@ -38,6 +38,7 @@ class HfCloudJobRunner:
         self._flavor = flavor
         self._api = HfApi()
         self._hf_job_id: Optional[str] = None
+        self._hf_job_url: Optional[str] = None
         self._log_queue: "Queue[LogLine]" = Queue()
         self._tail_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -84,6 +85,7 @@ class HfCloudJobRunner:
             secrets={"HF_TOKEN": token},
         )
         self._hf_job_id = job.id
+        self._hf_job_url = getattr(job, "url", None)
 
         self._tail_thread = threading.Thread(
             target=self._tail_loop, name=f"hf-job-{job_id}-logs", daemon=True
@@ -210,3 +212,6 @@ class HfCloudJobRunner:
 
     def hf_job_id(self) -> Optional[str]:
         return self._hf_job_id
+
+    def hf_job_url(self) -> Optional[str]:
+        return self._hf_job_url

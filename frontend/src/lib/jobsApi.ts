@@ -59,6 +59,7 @@ export interface JobRecord {
   hf_job_id: string | null;
   hf_flavor: string | null;
   hf_repo_id: string | null;
+  hf_job_url: string | null;
 }
 
 type Fetcher = (url: string, options?: RequestInit) => Promise<Response>;
@@ -181,6 +182,40 @@ export async function listRunnerHardware(
   const r = await fetcher(`${baseUrl}/jobs/runners/hardware`);
   if (!r.ok) {
     return { authenticated: false, username: null, flavors: [] };
+  }
+  return r.json();
+}
+
+export interface HubJob {
+  id: string;
+  created_at: string | null;
+  docker_image: string | null;
+  space_id: string | null;
+  flavor: string | null;
+  status: { stage: string; message: string | null } | null;
+  owner: string | null;
+  url: string;
+}
+
+export interface HubModel {
+  repo_id: string;
+  last_modified: string | null;
+  private: boolean;
+}
+
+export interface HubJobsResponse {
+  authenticated: boolean;
+  jobs: HubJob[];
+  models: HubModel[];
+}
+
+export async function listHubJobs(
+  baseUrl: string,
+  fetcher: Fetcher,
+): Promise<HubJobsResponse> {
+  const r = await fetcher(`${baseUrl}/jobs/hub`);
+  if (!r.ok) {
+    return { authenticated: false, jobs: [], models: [] };
   }
   return r.json();
 }

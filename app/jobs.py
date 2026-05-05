@@ -649,14 +649,19 @@ class JobRegistry:
                     try:
                         from huggingface_hub import HfApi
                         info = HfApi().inspect_job(job_id=record.hf_job_id)
-                        status = str(getattr(info, "status", "")).upper()
+                        # info.status is a JobStatus dataclass; the stage
+                        # string lives on .stage.
+                        status_obj = getattr(info, "status", None)
+                        stage = getattr(status_obj, "stage", None) if status_obj is not None else None
+                        stage_str = str(stage).upper() if stage is not None else ""
                     except Exception as exc:
                         logger.warning(
                             "inspect_job failed during reattach for %s: %s",
                             record.id, exc,
                         )
-                        status = ""
-                    if status in {"QUEUED", "RUNNING"}:
+                        stage_str = ""
+                    terminal = {"COMPLETED", "CANCELED", "CANCELLED", "ERROR", "FAILED", "DELETED"}
+                    if stage_str and stage_str not in terminal:
                         logger.info(
                             "Re-attaching to HF Cloud job %s (hf_job_id=%s)",
                             record.id, record.hf_job_id,

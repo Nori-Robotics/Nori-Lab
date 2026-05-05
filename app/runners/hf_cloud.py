@@ -180,16 +180,21 @@ class HfCloudJobRunner:
         except Exception as exc:
             logger.warning("inspect_job failed for %s: %s", self._hf_job_id, exc)
             return False
-        # Status values from huggingface_hub: QUEUED, RUNNING, COMPLETED,
-        # FAILED, CANCELLED. We treat queued/running as alive.
-        status = getattr(info, "status", None)
-        status_str = str(status).upper() if status is not None else ""
-        if status_str in {"QUEUED", "RUNNING"}:
-            return True
-        # Cache the terminal status so returncode() can map it without
-        # re-calling the API.
-        self._terminal_status = status_str
-        return False
+        # info.status is a JobStatus dataclass; the actual stage string
+        # ("RUNNING", "COMPLETED", "ERROR", transient values like
+        # "QUEUED"/"SCHEDULING", …) lives on .stage. Documented terminal
+        # values: COMPLETED, CANCELED, ERROR, DELETED. We also accept
+        # CANCELLED/FAILED in case the API surfaces alternative spellings.
+        # Anything else — including unknown future states — is treated as
+        # alive so we don't prematurely finalise a healthy job.
+        status_obj = getattr(info, "status", None)
+        stage = getattr(status_obj, "stage", None) if status_obj is not None else None
+        stage_str = str(stage).upper() if stage is not None else ""
+        terminal = {"COMPLETED", "CANCELED", "CANCELLED", "ERROR", "FAILED", "DELETED"}
+        if stage_str in terminal:
+            self._terminal_status = stage_str
+            return False
+        return True
 
     def returncode(self) -> Optional[int]:
         if self._hf_job_id is None:

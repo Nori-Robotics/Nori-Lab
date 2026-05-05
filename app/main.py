@@ -407,6 +407,82 @@ def list_jobs(limit: int = 10):
     return {"jobs": job_registry.list(limit=limit)}
 
 
+@app.get("/jobs/hub")
+def list_hub_jobs():
+    """List the user's HF Cloud compute Jobs and their uploaded LeRobot model
+    repos on huggingface.co.
+
+    Returns 200 with empty lists when no token is configured so the frontend
+    can render an unauthenticated empty state without surfacing an error.
+
+    Declared before `/jobs/{job_id}` so FastAPI's first-match routing doesn't
+    treat "hub" as a job id.
+    """
+    token = get_token()
+    if not token:
+        return {"authenticated": False, "jobs": [], "models": []}
+    api = HfApi()
+
+    try:
+        info = api.whoami()
+    except Exception as exc:
+        logger.warning("whoami failed: %s", exc)
+        return {"authenticated": True, "jobs": [], "models": []}
+
+    authors: list[str] = []
+    if isinstance(info, dict):
+        if info.get("name"):
+            authors.append(info["name"])
+        for o in info.get("orgs", []) or []:
+            if isinstance(o, dict) and o.get("name"):
+                authors.append(o["name"])
+
+    try:
+        jobs = api.list_jobs()
+    except Exception as exc:
+        logger.warning("list_jobs failed: %s", exc)
+        jobs = []
+
+    seen_models: set[str] = set()
+    models: list[dict] = []
+    for author in authors:
+        try:
+            for m in api.list_models(author=author, filter="LeRobot", limit=200):
+                if m.id in seen_models:
+                    continue
+                seen_models.add(m.id)
+                models.append({
+                    "repo_id": m.id,
+                    "last_modified": m.last_modified.isoformat() if m.last_modified else None,
+                    "private": bool(getattr(m, "private", False)),
+                })
+        except Exception as exc:
+            logger.warning("list_models(%s) failed: %s", author, exc)
+    models.sort(key=lambda m: m["last_modified"] or "", reverse=True)
+
+    return {
+        "authenticated": True,
+        "jobs": [
+            {
+                "id": ji.id,
+                "created_at": ji.created_at.isoformat() if ji.created_at else None,
+                "docker_image": ji.docker_image,
+                "space_id": ji.space_id,
+                "flavor": ji.flavor,
+                "status": (
+                    {"stage": ji.status.stage, "message": ji.status.message}
+                    if ji.status
+                    else None
+                ),
+                "owner": ji.owner.name if ji.owner else None,
+                "url": ji.url,
+            }
+            for ji in jobs
+        ],
+        "models": models,
+    }
+
+
 @app.get("/jobs/{job_id}")
 def get_job(job_id: str):
     try:

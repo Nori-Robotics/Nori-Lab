@@ -480,6 +480,36 @@ def _list_hub_checkpoints(api, repo_id: str) -> List[JobCheckpoint]:
     return out
 
 
+_LANGUAGE_CONDITIONED_POLICY_TYPES = {"smolvla", "pi0", "pi0_fast", "pi05"}
+
+
+def _read_checkpoint_config(record: "JobRecord", step: int) -> Dict[str, object]:
+    """Load the pretrained_model/config.json for one checkpoint.
+
+    Local: read straight from <output_dir>/checkpoints/<padded_step>/.
+    Cloud: download just the single config.json via hf_hub_download (a few KB,
+    no full snapshot needed)."""
+    if record.runner == "local":
+        for ckpt in _list_local_checkpoints(record.output_dir):
+            if ckpt.step == step:
+                config_path = Path(ckpt.ref) / "config.json"
+                with open(config_path) as f:
+                    return json.load(f)
+        raise FileNotFoundError(
+            f"No checkpoint at step {step} for job {record.id}"
+        )
+    if not record.hf_repo_id:
+        raise ValueError(f"Cloud job {record.id} has no hf_repo_id")
+    from huggingface_hub import hf_hub_download
+    local_path = hf_hub_download(
+        repo_id=record.hf_repo_id,
+        filename=f"checkpoints/{step}/pretrained_model/config.json",
+        repo_type="model",
+    )
+    with open(local_path) as f:
+        return json.load(f)
+
+
 def _generate_job_id(policy_type: str, dataset_repo_id: str) -> str:
     """Build a sortable, collision-free job id from policy type and dataset slug."""
     from .training import _SLUG_RE
@@ -706,6 +736,34 @@ class JobRegistry:
         if record.runner == "local":
             return len(_list_local_checkpoints(record.output_dir))
         return len(self._list_cloud_cached(record.hf_repo_id))
+
+    def get_policy_config_summary(self, job_id: str, step: int) -> Dict[str, object]:
+        """Read the checkpoint's pretrained_model/config.json and return only
+        the UX-relevant slice: policy type, expected camera names + their
+        height/width, and whether the policy needs a --task string."""
+        with self._lock:
+            record = self._records.get(job_id)
+        if record is None:
+            raise JobNotFoundError(job_id)
+        cfg = _read_checkpoint_config(record, step)
+        policy_type = cfg.get("type")
+        image_features: Dict[str, Dict[str, int]] = {}
+        for full_name, feat in (cfg.get("input_features") or {}).items():
+            if feat.get("type") != "VISUAL":
+                continue
+            shape = feat.get("shape") or []
+            if len(shape) != 3:
+                continue
+            _channels, height, width = shape
+            # The policy keys are 'observation.images.<name>'; the rollout CLI
+            # takes just the suffix.
+            name = full_name.split(".")[-1]
+            image_features[name] = {"height": int(height), "width": int(width)}
+        return {
+            "policy_type": policy_type,
+            "image_features": image_features,
+            "requires_task": policy_type in _LANGUAGE_CONDITIONED_POLICY_TYPES,
+        }
 
     def delete(self, job_id: str) -> None:
         with self._lock:

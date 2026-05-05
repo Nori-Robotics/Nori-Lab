@@ -559,6 +559,20 @@ def get_job_checkpoints(job_id: str):
         raise HTTPException(status_code=404, detail=f"Job {job_id!r} not found")
 
 
+@app.get("/jobs/{job_id}/checkpoints/{step}/policy-config")
+def get_checkpoint_policy_config(job_id: str, step: int):
+    """Return the UX-relevant slice of a checkpoint's pretrained_model config:
+    policy_type, image_features (per-camera height/width), and requires_task."""
+    try:
+        return job_registry.get_policy_config_summary(job_id, step)
+    except JobNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Job {job_id!r} not found")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.post("/jobs/{job_id}/stop")
 def stop_job(job_id: str):
     try:

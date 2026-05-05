@@ -199,7 +199,7 @@ from pathlib import Path
 from queue import Empty, Queue
 from typing import List, Optional
 
-from huggingface_hub import HfApi, HfFolder
+from huggingface_hub import HfApi, get_token
 
 from ..jobs import LogLine, TrainingMetrics, parse_metrics_into
 from ..training import TrainingRequest, build_training_command
@@ -300,7 +300,7 @@ In `app/runners/hf_cloud.py`, replace the `start` method body with:
         if self._hf_job_id is not None:
             raise RuntimeError("HfCloudJobRunner already started")
 
-        token = HfFolder.get_token()
+        token = get_token()
         if not token:
             raise RuntimeError(
                 "HF token not found. Run 'hf auth login' before launching cloud jobs."
@@ -346,14 +346,13 @@ The submission requires real HF credentials. For now just verify the runner impo
 import os
 # Force-empty token paths
 os.environ.pop('HF_TOKEN', None)
-from huggingface_hub import HfFolder
 from unittest.mock import patch
 from pathlib import Path
 from app.jobs import TrainingMetrics
 from app.runners.hf_cloud import HfCloudJobRunner
 from app.training import TrainingRequest
 
-with patch.object(HfFolder, 'get_token', return_value=None):
+with patch('app.runners.hf_cloud.get_token', return_value=None):
     r = HfCloudJobRunner(TrainingMetrics(), Path('/tmp/x.jsonl'), 'a10g-small')
     try:
         r.start('jid', TrainingRequest(dataset_repo_id='a/b'), 'outputs/x')
@@ -561,7 +560,7 @@ from app.training import TrainingRequest
 with tempfile.TemporaryDirectory() as td:
     log_path = Path(td) / 'log.jsonl'
     with patch('app.runners.hf_cloud.HfApi') as MockApi, \
-         patch('app.runners.hf_cloud.HfFolder.get_token', return_value='hf_dummy'):
+         patch('app.runners.hf_cloud.get_token', return_value='hf_dummy'):
         api = MockApi.return_value
         api.whoami.return_value = {'name': 'tester'}
         fake_job = MagicMock()
@@ -906,7 +905,7 @@ Open `app/main.py` and locate the cluster of `@app.post("/jobs/...")` and `@app.
 In `app/main.py`, near the top (after existing imports), add:
 
 ```python
-from huggingface_hub import HfApi, HfFolder
+from huggingface_hub import HfApi, get_token
 
 _flavors_cache: dict = {"data": None, "fetched_at": 0.0}
 _FLAVOR_CACHE_TTL_SECONDS = 300.0
@@ -922,7 +921,7 @@ def get_runners_hardware():
     The flavors list is cached in-process for 5 minutes; whoami is fetched
     fresh each call (cheap; resolves the active HF token).
     """
-    token = HfFolder.get_token()
+    token = get_token()
     api = HfApi()
     authenticated = False
     username: Optional[str] = None

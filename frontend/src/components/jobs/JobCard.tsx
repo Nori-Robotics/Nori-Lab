@@ -1,14 +1,30 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { JobRecord } from "@/lib/jobsApi";
-import { Square, X, AlertTriangle, CheckCircle2, Loader2, XCircle, ExternalLink } from "lucide-react";
+import {
+  Square,
+  X,
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  XCircle,
+  ExternalLink,
+  Play,
+} from "lucide-react";
+import { useApi } from "@/contexts/ApiContext";
+import {
+  JobCheckpoint,
+  listJobCheckpoints,
+} from "@/lib/checkpointsApi";
+import CheckpointDropdown from "@/components/jobs/CheckpointDropdown";
 
 interface Props {
   job: JobRecord;
   onStop: (id: string) => void;
   onDelete: (id: string) => void;
+  onPlay: (job: JobRecord, step: number) => void;
 }
 
 function relativeTime(epochSec: number): string {
@@ -29,13 +45,12 @@ const statePresentation: Record<
   interrupted: { label: "Interrupted", color: "text-amber-400", Icon: AlertTriangle },
 };
 
-const JobCard: React.FC<Props> = ({ job, onStop, onDelete }) => {
+const JobCard: React.FC<Props> = ({ job, onStop, onDelete, onPlay }) => {
   const navigate = useNavigate();
+  const { baseUrl, fetchWithHeaders } = useApi();
   const present = statePresentation[job.state];
   const Icon = present.Icon;
   const isRunning = job.state === "running";
-  // Until tqdm fires its first progress line we have no step counts; show
-  // "Starting…" instead of a misleading 0/0 0% bar.
   const isStarting = isRunning && job.metrics.total_steps === 0;
   const progressPct =
     job.metrics.total_steps > 0
@@ -50,6 +65,40 @@ const JobCard: React.FC<Props> = ({ job, onStop, onDelete }) => {
     ? `ended ${relativeTime(job.ended_at)}`
     : present.label.toLowerCase();
 
+  const [checkpoints, setCheckpoints] = useState<JobCheckpoint[]>([]);
+  const [selectedStep, setSelectedStep] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (job.checkpoint_count <= 0) {
+      setCheckpoints([]);
+      setSelectedStep(null);
+      return;
+    }
+    let cancelled = false;
+    listJobCheckpoints(baseUrl, fetchWithHeaders, job.id)
+      .then((cks) => {
+        if (cancelled) return;
+        setCheckpoints(cks);
+        if (cks.length > 0) {
+          const latest = cks[cks.length - 1].step;
+          setSelectedStep((prev) =>
+            prev != null && cks.some((c) => c.step === prev) ? prev : latest,
+          );
+        } else {
+          setSelectedStep(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCheckpoints([]);
+          setSelectedStep(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [baseUrl, fetchWithHeaders, job.id, job.checkpoint_count]);
+
   const handleAction = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isRunning) {
@@ -58,6 +107,15 @@ const JobCard: React.FC<Props> = ({ job, onStop, onDelete }) => {
       if (window.confirm("Delete this run? This wipes the output directory.")) onDelete(job.id);
     }
   };
+
+  const handlePlay = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (selectedStep == null) return;
+    onPlay(job, selectedStep);
+  };
+
+  const showProgressBar = isRunning;
+  const showInferenceRow = checkpoints.length > 0 && selectedStep != null;
 
   return (
     <Card
@@ -100,23 +158,39 @@ const JobCard: React.FC<Props> = ({ job, onStop, onDelete }) => {
           )}
         </div>
         <div>
-          <div
-            className="text-white font-semibold truncate"
-            title={job.name}
-          >
+          <div className="text-white font-semibold truncate" title={job.name}>
             {job.name}
           </div>
           <div className="text-xs text-slate-400">{subtitle}</div>
         </div>
-        <div className="relative h-5 w-full overflow-hidden rounded-md bg-slate-900 border border-slate-700">
-          <div
-            className="h-full bg-gradient-to-r from-blue-500 to-sky-400 transition-[width] duration-500"
-            style={{ width: `${progressPct}%` }}
-          />
-          <div className="absolute inset-0 flex items-center justify-center text-xs font-semibold text-white tabular-nums drop-shadow">
-            {isStarting ? "Training starting…" : `${progressPct.toFixed(1)}%`}
+        {showProgressBar ? (
+          <div className="relative h-5 w-full overflow-hidden rounded-md bg-slate-900 border border-slate-700">
+            <div
+              className="h-full bg-gradient-to-r from-blue-500 to-sky-400 transition-[width] duration-500"
+              style={{ width: `${progressPct}%` }}
+            />
+            <div className="absolute inset-0 flex items-center justify-center text-xs font-semibold text-white tabular-nums drop-shadow">
+              {isStarting ? "Training starting…" : `${progressPct.toFixed(1)}%`}
+            </div>
           </div>
-        </div>
+        ) : null}
+        {showInferenceRow ? (
+          <div className="flex items-center gap-2">
+            <CheckpointDropdown
+              checkpoints={checkpoints}
+              selectedStep={selectedStep}
+              onChange={setSelectedStep}
+            />
+            <Button
+              size="icon"
+              onClick={handlePlay}
+              className="h-8 w-8 bg-green-500 hover:bg-green-600 text-white"
+              aria-label="Run inference with this checkpoint"
+            >
+              <Play className="w-4 h-4" />
+            </Button>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

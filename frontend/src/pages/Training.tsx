@@ -24,6 +24,8 @@ import {
   startTrainingJob,
   stopJob,
   deleteJob,
+  listRunnerHardware,
+  RunnerFlavor,
 } from "@/lib/jobsApi";
 
 const POLL_INTERVAL_MS = 1000;
@@ -58,6 +60,7 @@ function configToRequest(c: TrainingConfig): TrainingRequest {
   // The backend's TrainingRequest has more optional fields; the form covers
   // the user-meaningful subset.
   return {
+    target: c.target,
     dataset_repo_id: c.dataset_repo_id,
     policy_type: c.policy_type,
     steps: c.steps,
@@ -90,6 +93,7 @@ const ConfigurationMode: React.FC = () => {
   const navigate = useNavigate();
 
   const [trainingConfig, setTrainingConfig] = useState<TrainingConfig>({
+    target: { runner: "local" },
     dataset_repo_id: "",
     policy_type: "act",
     steps: 10000,
@@ -115,6 +119,9 @@ const ConfigurationMode: React.FC = () => {
   const [trainingExtraInstallHint, setTrainingExtraInstallHint] = useState<string>("pip install accelerate");
   const [runningJobExists, setRunningJobExists] = useState<boolean>(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [authenticated, setAuthenticated] = useState<boolean>(false);
+  const [flavors, setFlavors] = useState<RunnerFlavor[]>([]);
+  const [hardwareLoading, setHardwareLoading] = useState(true);
 
   useEffect(() => {
     setDatasetsLoading(true);
@@ -138,6 +145,29 @@ const ConfigurationMode: React.FC = () => {
     listJobs(baseUrl, fetchWithHeaders, 1)
       .then((j) => setRunningJobExists(j.some((r) => r.state === "running")))
       .catch(() => setRunningJobExists(false));
+  }, [baseUrl, fetchWithHeaders]);
+
+  useEffect(() => {
+    setHardwareLoading(true);
+    listRunnerHardware(baseUrl, fetchWithHeaders)
+      .then((data) => {
+        setAuthenticated(data.authenticated);
+        setFlavors(data.flavors);
+        if (
+          data.authenticated &&
+          data.flavors.some((f) => f.name === "a10g-small")
+        ) {
+          setTrainingConfig((prev) => ({
+            ...prev,
+            target: { runner: "hf_cloud", flavor: "a10g-small" },
+          }));
+        }
+      })
+      .catch(() => {
+        setAuthenticated(false);
+        setFlavors([]);
+      })
+      .finally(() => setHardwareLoading(false));
   }, [baseUrl, fetchWithHeaders]);
 
   const updateConfig = <T extends keyof TrainingConfig>(key: T, value: TrainingConfig[T]) => {
@@ -203,6 +233,9 @@ const ConfigurationMode: React.FC = () => {
           updateConfig={updateConfig}
           datasets={datasets}
           datasetsLoading={datasetsLoading}
+          authenticated={authenticated}
+          flavors={flavors}
+          hardwareLoading={hardwareLoading}
         />
         <div className="max-w-3xl mx-auto mt-6 flex justify-end">
           <Button

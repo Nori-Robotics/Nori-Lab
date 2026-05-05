@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/contexts/ApiContext";
+import { useHfAuth } from "@/contexts/HfAuthContext";
 
 import { TrainingConfig, TrainingStatus, LogEntry } from "@/components/training/types";
 import TrainingHeader from "@/components/training/TrainingHeader";
@@ -90,6 +91,7 @@ function configToRequest(c: TrainingConfig): TrainingRequest {
 
 const ConfigurationMode: React.FC = () => {
   const { baseUrl, fetchWithHeaders } = useApi();
+  const { auth } = useHfAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -149,28 +151,20 @@ const ConfigurationMode: React.FC = () => {
   }, [baseUrl, fetchWithHeaders]);
 
   useEffect(() => {
+    // Re-fetches when auth status flips (e.g. user pastes a token in
+    // HfAuthBanner) so flavors unlock without a page reload.
     setHardwareLoading(true);
     listRunnerHardware(baseUrl, fetchWithHeaders)
       .then((data) => {
         setAuthenticated(data.authenticated);
         setFlavors(data.flavors);
-        if (
-          data.authenticated &&
-          data.flavors.some((f) => f.name === "a10g-small")
-        ) {
-          setTrainingConfig((prev) => {
-            // Don't overwrite a selection the user made before the fetch resolved.
-            if (prev.target.runner !== "local") return prev;
-            return { ...prev, target: { runner: "hf_cloud", flavor: "a10g-small" } };
-          });
-        }
       })
       .catch(() => {
         setAuthenticated(false);
         setFlavors([]);
       })
       .finally(() => setHardwareLoading(false));
-  }, [baseUrl, fetchWithHeaders]);
+  }, [baseUrl, fetchWithHeaders, auth.status]);
 
   const updateConfig = <T extends keyof TrainingConfig>(key: T, value: TrainingConfig[T]) => {
     setTrainingConfig((prev) => ({ ...prev, [key]: value }));

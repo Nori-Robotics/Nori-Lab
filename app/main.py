@@ -57,7 +57,7 @@ from .system import (
     handle_install_training_extra_status,
 )
 
-from .hf_auth import handle_hf_auth_status
+from .hf_auth import handle_hf_auth_status, handle_hf_login
 from . import dataset_browser
 
 
@@ -282,6 +282,19 @@ def health_check():
 def hf_auth_status():
     """Check whether the local HF CLI is authenticated and return user info."""
     return handle_hf_auth_status()
+
+
+class HfLoginBody(BaseModel):
+    token: str
+
+
+@app.post("/hf-auth/login")
+def hf_auth_login(body: HfLoginBody):
+    """Persist a pasted HF token (validated against whoami) for this user."""
+    try:
+        return handle_hf_login(body.token)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
 
 
 @app.get("/datasets")

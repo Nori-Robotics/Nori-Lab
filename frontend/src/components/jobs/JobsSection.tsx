@@ -14,6 +14,8 @@ import {
 import JobCard from "./JobCard";
 import HubJobCard from "./HubJobCard";
 import HubModelCard from "./HubModelCard";
+import InferenceModal from "@/components/landing/InferenceModal";
+import { useRobots } from "@/hooks/useRobots";
 import {
   Collapsible,
   CollapsibleContent,
@@ -33,6 +35,11 @@ const JobsSection: React.FC = () => {
   const [hubModels, setHubModels] = useState<HubModel[]>([]);
   const [hubAuthenticated, setHubAuthenticated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const { selectedRecord } = useRobots();
+  const [inferenceModalOpen, setInferenceModalOpen] = useState(false);
+  const [inferenceJob, setInferenceJob] = useState<JobRecord | null>(null);
+  const [inferenceStep, setInferenceStep] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -74,6 +81,12 @@ const JobsSection: React.FC = () => {
         variant: "destructive",
       });
     }
+  };
+
+  const handlePlay = (job: JobRecord, step: number) => {
+    setInferenceJob(job);
+    setInferenceStep(step);
+    setInferenceModalOpen(true);
   };
 
   const handleDelete = async (id: string) => {
@@ -189,6 +202,7 @@ const JobsSection: React.FC = () => {
                 job={job}
                 onStop={handleStop}
                 onDelete={handleDelete}
+                onPlay={handlePlay}
               />
             ))}
           </div>
@@ -225,6 +239,7 @@ const JobsSection: React.FC = () => {
                     job={job}
                     onStop={handleStop}
                     onDelete={handleDelete}
+                    onPlay={handlePlay}
                   />
                 ))}
                 {untrackedHubActive.map((job) => (
@@ -250,6 +265,7 @@ const JobsSection: React.FC = () => {
                         job={job}
                         onStop={handleStop}
                         onDelete={handleDelete}
+                        onPlay={handlePlay}
                       />
                     ))}
                     {untrackedHubCancelled.map((job) => (
@@ -262,6 +278,15 @@ const JobsSection: React.FC = () => {
           </>
         )}
       </div>
+      {inferenceJob ? (
+        <InferenceModal
+          open={inferenceModalOpen}
+          onOpenChange={setInferenceModalOpen}
+          robot={selectedRecord}
+          jobId={inferenceJob.id}
+          initialStep={inferenceStep}
+        />
+      ) : null}
     </section>
   );
 };

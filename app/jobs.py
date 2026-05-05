@@ -66,6 +66,9 @@ class JobRecord(BaseModel):
     hf_flavor: Optional[str] = None
     hf_repo_id: Optional[str] = None
     hf_job_url: Optional[str] = None
+    # Number of checkpoints currently visible (local: filesystem; cloud:
+    # Hub repo). Filled in by JobRegistry.list/get; persisted as zero.
+    checkpoint_count: int = 0
 
 
 class JobCheckpoint(BaseModel):
@@ -510,13 +513,17 @@ class JobRegistry:
         with self._lock:
             records = list(self._records.values())
         records.sort(key=lambda r: r.started_at, reverse=True)
-        return records[:limit]
+        records = records[:limit]
+        for r in records:
+            r.checkpoint_count = self._count_checkpoints(r)
+        return records
 
     def get(self, job_id: str) -> JobRecord:
         with self._lock:
             record = self._records.get(job_id)
         if record is None:
             raise JobNotFoundError(job_id)
+        record.checkpoint_count = self._count_checkpoints(record)
         return record
 
     def start(self, config: TrainingRequest, target: Optional[JobTarget] = None) -> JobRecord:
@@ -653,6 +660,12 @@ class JobRegistry:
             return _list_local_checkpoints(record.output_dir)
         # Cloud branch added in Task 6.
         return []
+
+    def _count_checkpoints(self, record: JobRecord) -> int:
+        if record.runner == "local":
+            return len(_list_local_checkpoints(record.output_dir))
+        # Cloud counted in Task 6 once the cache exists; zero for now.
+        return 0
 
     def delete(self, job_id: str) -> None:
         with self._lock:

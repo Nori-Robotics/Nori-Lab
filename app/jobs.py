@@ -50,10 +50,14 @@ class JobRecord(BaseModel):
     exit_code: Optional[int] = None
     error_message: Optional[str] = None
     metrics: TrainingMetrics = TrainingMetrics()
-    runner: Literal["local"] = "local"
-    # PID of the detached subprocess; survives uvicorn --reload so a fresh
-    # registry can re-attach by tailing the log file.
+    runner: Literal["local", "hf_cloud"] = "local"
+    # PID of the detached subprocess (local runner only); survives uvicorn
+    # --reload so a fresh registry can re-attach by tailing the log file.
     process_pid: Optional[int] = None
+    # HF Jobs identifiers (hf_cloud runner only)
+    hf_job_id: Optional[str] = None
+    hf_flavor: Optional[str] = None
+    hf_repo_id: Optional[str] = None
 
 
 def _pid_alive(pid: int) -> bool:

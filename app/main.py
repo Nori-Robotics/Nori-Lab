@@ -27,6 +27,7 @@ from .recording import (
     handle_recording_status,
     handle_upload_dataset,
     handle_get_dataset_info,
+    handle_delete_dataset,
 )
 
 # Import our custom teleoperation functionality
@@ -421,6 +422,12 @@ def upload_dataset(request: UploadRequest):
 def get_dataset_info(request: DatasetInfoRequest):
     """Get information about a saved dataset"""
     return handle_get_dataset_info(request)
+
+
+@app.post("/delete-dataset")
+def delete_dataset(request: DatasetInfoRequest):
+    """Remove a recorded dataset directory from local disk."""
+    return handle_delete_dataset(request)
 
 
 # ============================================================================

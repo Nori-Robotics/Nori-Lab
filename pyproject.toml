@@ -30,7 +30,7 @@ lelab = "lelab.scripts.lelab:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app*", "lelab*", "scripts*", "frontend"]
+include = ["lelab*", "frontend"]
 
 [tool.setuptools.package-data]
 frontend = ["dist/**/*"]

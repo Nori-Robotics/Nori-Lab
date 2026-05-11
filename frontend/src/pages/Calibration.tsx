@@ -178,6 +178,27 @@ const Calibration = () => {
   );
   const [isPolling, setIsPolling] = useState(false);
 
+  // Mirror calibration_active into a ref so the unmount cleanup below can read
+  // the latest value without re-firing on every status change.
+  const calibrationActiveRef = useRef(false);
+  useEffect(() => {
+    calibrationActiveRef.current = calibrationStatus.calibration_active;
+  }, [calibrationStatus.calibration_active]);
+
+  // If the user leaves this page (back arrow, browser back, programmatic nav)
+  // while calibration is running, the backend singleton stays active and the
+  // next Start request fails with "Calibration already active". Stop it on
+  // unmount as a catch-all.
+  useEffect(() => {
+    return () => {
+      if (calibrationActiveRef.current) {
+        fetchWithHeaders(`${baseUrl}/stop-calibration`, { method: "POST" }).catch(
+          (e) => console.error("Failed to stop calibration on unmount:", e)
+        );
+      }
+    };
+  }, [baseUrl, fetchWithHeaders]);
+
   const pollStatus = async () => {
     try {
       const response = await fetchWithHeaders(`${baseUrl}/calibration-status`);

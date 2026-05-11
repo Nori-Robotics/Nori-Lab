@@ -19,6 +19,7 @@ import EditDataset from "@/pages/EditDataset";
 import Upload from "@/pages/Upload";
 
 import NotFound from "@/pages/NotFound";
+import SingleTabGuard from "@/components/SingleTabGuard";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { ApiProvider } from "./contexts/ApiContext";
 import { HfAuthProvider } from "./contexts/HfAuthContext";
@@ -35,19 +36,21 @@ function App() {
               <UrdfProvider>
                 <DragAndDropProvider>
                   <BrowserRouter>
-                    <Routes>
-                      <Route path="/" element={<Landing />} />
-                      <Route path="/teleoperation" element={<Teleoperation />} />
-                      <Route path="/recording" element={<Recording />} />
-                      <Route path="/upload" element={<Upload />} />
-                      <Route path="/training" element={<Training />} />
-                      <Route path="/training/:jobId" element={<Training />} />
-                      <Route path="/inference" element={<Inference />} />
-                      <Route path="/calibration" element={<Calibration />} />
-                      <Route path="/edit-dataset" element={<EditDataset />} />
+                    <SingleTabGuard>
+                      <Routes>
+                        <Route path="/" element={<Landing />} />
+                        <Route path="/teleoperation" element={<Teleoperation />} />
+                        <Route path="/recording" element={<Recording />} />
+                        <Route path="/upload" element={<Upload />} />
+                        <Route path="/training" element={<Training />} />
+                        <Route path="/training/:jobId" element={<Training />} />
+                        <Route path="/inference" element={<Inference />} />
+                        <Route path="/calibration" element={<Calibration />} />
+                        <Route path="/edit-dataset" element={<EditDataset />} />
 
-                      <Route path="*" element={<NotFound />} />
-                    </Routes>
+                        <Route path="*" element={<NotFound />} />
+                      </Routes>
+                    </SingleTabGuard>
                     <Toaster />
                   </BrowserRouter>
                 </DragAndDropProvider>

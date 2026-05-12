@@ -36,6 +36,8 @@ import CameraConfiguration, {
   CameraConfig,
 } from "@/components/recording/CameraConfiguration";
 
+const DISCONTINUITY_ERROR_PREFIX = "Motor discontinuity detected";
+
 interface CalibrationStatus {
   calibration_active: boolean;
   status: string; // "idle", "connecting", "recording", "completed", "error", "stopping"
@@ -346,7 +348,7 @@ const Calibration = () => {
   useEffect(() => {
     if (
       calibrationStatus.status === "error" &&
-      calibrationStatus.error?.startsWith("Motor discontinuity detected")
+      calibrationStatus.error?.startsWith(DISCONTINUITY_ERROR_PREFIX)
     ) {
       demoVideoRef.current?.scrollIntoView({
         behavior: "smooth",
@@ -799,7 +801,7 @@ const Calibration = () => {
               {calibrationStatus.status === "error" &&
                 calibrationStatus.error &&
                 (calibrationStatus.error.startsWith(
-                  "Motor discontinuity detected"
+                  DISCONTINUITY_ERROR_PREFIX
                 ) ? (
                   <Alert className="bg-red-900/50 border-red-700 text-red-200">
                     <XCircle className="h-4 w-4" />

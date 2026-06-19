@@ -48,6 +48,44 @@ ROBOTS_PATH = os.path.expanduser("~/.cache/huggingface/lerobot/robots")
 # query the Hub for LeLab-produced datasets and compute usage metrics.
 LELAB_TAG = "LeLab"
 
+# NORI: load a project-root `.env` (if present) so the vars below can be set there
+# instead of exported in every shell. Real environment variables still win over `.env`.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:  # python-dotenv is optional; env vars still work without it.
+    pass
+
+# NORI: Nori-Backend / Supabase configuration, read from the laptop environment.
+# These are the only Nori env vars the laptop app needs. The HF org-admin token and
+# the Supabase service-role key are NEVER read here — all HF access is backend-mediated
+# (see NORI_PLAN.md "The invariant: backend-mediated HF access").
+#
+# Local-dev note: LeLab's own uvicorn binds :8000, so Nori-Backend must run on a
+# different port locally. The default below assumes `uvicorn main:app --port 8001`.
+NORI_BACKEND_URL = os.environ.get("NORI_BACKEND_URL", "http://localhost:8001").rstrip("/")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+# The anon key is safe to ship to the browser (it only permits what Supabase RLS allows).
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
+
+
+def nori_public_config() -> dict[str, str | bool]:
+    """Public Nori config served to the React bundle via `GET /nori/config`.
+
+    Keeps env in a single source (the laptop environment, read by Python) so the
+    frontend needs no separate `.env`/rebuild to change the backend URL. Returns only
+    values that are safe to expose to the browser.
+    """
+    return {
+        "noriBackendUrl": NORI_BACKEND_URL,
+        "supabaseUrl": SUPABASE_URL,
+        "supabaseAnonKey": SUPABASE_ANON_KEY,
+        # Lets the frontend show a clear "Nori auth not configured" state instead of
+        # silently failing when the laptop env hasn't been set up yet.
+        "configured": bool(SUPABASE_URL and SUPABASE_ANON_KEY),
+    }
+
 
 def with_lelab_tag(tags: list[str] | None) -> list[str]:
     """Return `tags` with LELAB_TAG appended (deduped, order preserved)."""

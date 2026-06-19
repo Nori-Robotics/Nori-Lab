@@ -17,6 +17,15 @@ import NotFound from "@/pages/NotFound";
 import SingleTabGuard from "@/components/SingleTabGuard";
 import TeleopStopNotice from "@/components/TeleopStopNotice";
 import UpdateNotice from "@/components/UpdateNotice";
+// NORI: additive Nori laptop-app surface (all under /nori/*; no upstream routes touched).
+import { NoriProvider } from "@/nori/NoriContext";
+import NoriLayout from "@/nori/components/NoriLayout";
+import SignIn from "@/nori/pages/sign-in";
+import Account from "@/nori/pages/account";
+import Pairing from "@/nori/pages/pairing";
+import Marketplace from "@/nori/pages/marketplace";
+import Consents from "@/nori/pages/consents";
+import TrainingHistory from "@/nori/pages/training-history";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { ApiProvider } from "./contexts/ApiContext";
 import { HfAuthProvider } from "./contexts/HfAuthContext";
@@ -46,6 +55,24 @@ function App() {
                         <Route path="/inference" element={<Inference />} />
                         <Route path="/calibration" element={<Calibration />} />
                         <Route path="/edit-dataset" element={<EditDataset />} />
+
+                        {/* NORI: Nori app routes, isolated under a NoriProvider + layout. */}
+                        <Route path="/nori/sign-in" element={<NoriProvider><SignIn /></NoriProvider>} />
+                        <Route
+                          path="/nori"
+                          element={
+                            <NoriProvider>
+                              <NoriLayout />
+                            </NoriProvider>
+                          }
+                        >
+                          <Route index element={<Account />} />
+                          <Route path="account" element={<Account />} />
+                          <Route path="pairing" element={<Pairing />} />
+                          <Route path="marketplace" element={<Marketplace />} />
+                          <Route path="consents" element={<Consents />} />
+                          <Route path="training-history" element={<TrainingHistory />} />
+                        </Route>
 
                         <Route path="*" element={<NotFound />} />
                       </Routes>

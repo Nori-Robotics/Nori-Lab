@@ -356,6 +356,25 @@ def health_check():
     return {"status": "ok", "message": "FastAPI server is running"}
 
 
+# NORI: public config + JWT plumbing for the Nori laptop-app additions.
+# The frontend bootstraps Supabase/Nori-Backend config from here (single source of env,
+# read by Python) instead of a separate frontend .env. Only browser-safe values are
+# exposed — never the HF token or the Supabase service-role key.
+@app.get("/nori/config")
+def nori_config():
+    return config.nori_public_config()
+
+
+def nori_jwt(request: Request) -> str | None:
+    """Extract the forwarded Supabase JWT from the inbound LeLab request.
+
+    The browser sends it as `X-Nori-JWT`; Nori proxy endpoints (Phase 2+) pass it to
+    NoriClient, which forwards it as `Authorization: Bearer ...` to Nori-Backend. LeLab
+    never validates the token itself — Nori-Backend does (via JWKS).
+    """
+    return request.headers.get("X-Nori-JWT")
+
+
 @app.get("/hf-auth-status")
 def hf_auth_status():
     """Check whether the local HF CLI is authenticated and return user info."""

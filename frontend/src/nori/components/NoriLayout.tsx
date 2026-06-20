@@ -2,7 +2,8 @@
 // Reuses Tailwind tokens only (no parallel UI kit); shadcn primitives live in
 // @/components/ui and can be pulled in per-page as the pages get built out.
 
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { useEffect } from "react";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useNori } from "@/nori/NoriContext";
 
 const NAV: { to: string; label: string }[] = [
@@ -14,8 +15,18 @@ const NAV: { to: string; label: string }[] = [
 ];
 
 const NoriLayout = () => {
-  const { loading, error } = useNori();
+  const { loading, error, ready, session } = useNori();
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+
+  // Once bootstrap is done and Supabase is ready, an unauthenticated visitor to any
+  // Nori page is sent to sign-in. We wait for `!loading` so we don't bounce during the
+  // initial session restore.
+  useEffect(() => {
+    if (!loading && ready && !session) {
+      navigate("/nori/sign-in", { replace: true });
+    }
+  }, [loading, ready, session, navigate]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">

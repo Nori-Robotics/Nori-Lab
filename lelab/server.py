@@ -37,6 +37,7 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from . import datasets as dataset_browser
+from .nori_client import NoriBackendError, NoriClient  # NORI: cloud API client
 
 # Import our custom calibration functionality
 from .calibrate import CalibrationRequest, calibration_manager
@@ -373,6 +374,34 @@ def nori_jwt(request: Request) -> str | None:
     never validates the token itself — Nori-Backend does (via JWKS).
     """
     return request.headers.get("X-Nori-JWT")
+
+
+def _nori_client(request: Request) -> NoriClient:
+    """Build a NoriClient carrying the inbound request's forwarded JWT."""
+    return NoriClient(jwt=nori_jwt(request))
+
+
+def _nori_proxy(call):
+    """Run a NoriClient call, translating NoriBackendError into an HTTPException so the
+    frontend sees Nori-Backend's status + detail unchanged instead of an opaque 500."""
+    try:
+        return call()
+    except NoriBackendError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+# NORI: Nori-Backend proxy routes. The browser calls these same-origin (on the LeLab
+# server); LeLab forwards the JWT to Nori-Backend. Response shapes pass through unchanged.
+@app.post("/nori/customers/me/provision")
+def nori_provision_customer(request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(client.provision_customer)
+
+
+@app.get("/nori/customers/me")
+def nori_get_customer(request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(client.get_customer)
 
 
 @app.get("/hf-auth-status")

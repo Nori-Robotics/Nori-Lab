@@ -83,19 +83,29 @@ first task is to add them in `server.py` (e.g. `POST /nori/customers/me/provisio
 
 ---
 
-## 2. Phase 2 — Auth + provisioning ✅ (backend exists)
+## 2. Phase 2 — Auth + provisioning ✅ DONE (2026-06-21)
 
-- [ ] **Sign-in screen** (`frontend/src/nori/pages/sign-in.tsx`): email/password via Supabase JS
-  SDK; on success store JWT in localStorage; redirect to `/account`.
-- [ ] **JWT plumbing** (two hops):
-  - Frontend → LeLab Python: include JWT in `X-Nori-JWT` header.
-  - LeLab Python → Nori-Backend: read header, forward as `Authorization: Bearer <jwt>`.
-    LeLab Python never validates the JWT itself.
-- [ ] **Provisioning on first sign-in**: call `POST /api/v1/customers/me/provision` via
-  `nori_client.provision_customer()`. Idempotent — safe on every sign-in.
-- [ ] **Account page** (`frontend/src/nori/pages/account.tsx`): `GET /api/v1/customers/me`
-  (returns `{provisioned: false, ...}` if not yet provisioned). Show profile, billing tier,
-  compute allowance, paired robot serial (or "not paired yet"); link to `/pairing`.
+> Verified: `ruff` clean, backend imports OK, frontend tsc clean for Nori files (two
+> pre-existing upstream tsc errors in `meshLoaders.ts`/`vite.config.ts` from the vite-8
+> merge are unrelated), `npm run build` clean. Live: JWT forwarding confirmed end-to-end —
+> no header → backend "Missing Authorization header"; dummy token → backend "Invalid token"
+> (reached the JWKS validator). **Not auto-tested:** the actual browser sign-in + successful
+> provision — needs a real Supabase user login; verify in-browser at `/nori/sign-in`.
+
+- [x] **Backend proxy routes** in `server.py` (`# NORI:`): `POST /nori/customers/me/provision`
+  and `GET /nori/customers/me`, via `_nori_client(request)` + `_nori_proxy()` (translates
+  `NoriBackendError` → `HTTPException`, passing status + detail through unchanged).
+- [x] **Sign-in screen** (`pages/sign-in.tsx`): email/password via Supabase JS SDK (shadcn
+  Card/Input/Label/Button). On success the SDK stores+refreshes the JWT; redirects to
+  `/nori/account` via the session effect.
+- [x] **JWT plumbing** (two hops): browser attaches `X-Nori-JWT` (in `api/client.ts` via
+  `getAccessToken()`); LeLab `nori_jwt()` reads it; `NoriClient` forwards as `Bearer`.
+- [x] **Provisioning on sign-in**: `NoriContext` calls `provisionCustomer()` whenever a
+  session appears (keyed on user id; idempotent), stores the `CustomerProfile`.
+- [x] **Account page** (`pages/account.tsx`): renders profile / billing tier / compute
+  allowance / pairing state from context; sign-out; "Pair a robot" link when unpaired.
+- [x] **Auth guard**: `NoriLayout` redirects signed-out visitors to `/nori/sign-in` once
+  bootstrap completes.
 
 ---
 

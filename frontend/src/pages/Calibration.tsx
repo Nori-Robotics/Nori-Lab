@@ -13,6 +13,15 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -54,6 +63,10 @@ interface CalibrationStatus {
     string,
     { min: number; max: number; current: number }
   > | null;
+  auto_calibration_active: boolean;
+  auto_calibration_status: string;
+  auto_calibration_message: string;
+  auto_calibration_error: string | null;
 }
 
 interface CalibrationRequest {
@@ -184,9 +197,19 @@ const Calibration = () => {
       total_steps: 1,
       current_positions: null,
       recorded_ranges: null,
+      auto_calibration_active: false,
+      auto_calibration_status: "idle",
+      auto_calibration_message: "",
+      auto_calibration_error: null,
     }
   );
   const [isPolling, setIsPolling] = useState(false);
+  const [showAutoCalibrationDialog, setShowAutoCalibrationDialog] =
+    useState(false);
+  const [autoCalibrationConfirmed, setAutoCalibrationConfirmed] =
+    useState(false);
+  const [isStartingAutoCalibration, setIsStartingAutoCalibration] =
+    useState(false);
 
   // Mirror calibration_active into a ref so the unmount cleanup below can read
   // the latest value without re-firing on every status change.
@@ -354,6 +377,48 @@ const Calibration = () => {
         description: "Could not complete calibration step",
         variant: "destructive",
       });
+    }
+  };
+
+  const handleOpenAutoCalibrationDialog = () => {
+    setAutoCalibrationConfirmed(false);
+    setShowAutoCalibrationDialog(true);
+  };
+
+  const handleStartAutoCalibration = async () => {
+    if (!autoCalibrationConfirmed) return;
+    setIsStartingAutoCalibration(true);
+    try {
+      const response = await fetchWithHeaders(`${baseUrl}/start-auto-calibration`, {
+        method: "POST",
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        setShowAutoCalibrationDialog(false);
+        setIsPolling(true);
+        toast({
+          title: "Auto Calibration Started",
+          description:
+            result.message ||
+            "SO-101 auto calibration started.",
+        });
+      } else {
+        toast({
+          title: "Auto Calibration Failed",
+          description: result.message || "Could not start auto calibration.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Error starting auto calibration:", error);
+      toast({
+        title: "Error",
+        description: "Could not start auto calibration.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsStartingAutoCalibration(false);
     }
   };
 
@@ -796,27 +861,75 @@ const Calibration = () => {
                       motor,
                       range.max - range.min
                     )
-                  );
+                );
                 return (
                   <div className="space-y-3">
-                    <div className="flex justify-center">
+                    <div className="flex flex-col gap-3">
+                      <Button
+                        onClick={handleOpenAutoCalibrationDialog}
+                        disabled={
+                          !calibrationStatus.calibration_active ||
+                          calibrationStatus.auto_calibration_active
+                        }
+                        className="w-full min-w-0 px-4 py-3 rounded-full bg-blue-600 hover:bg-blue-700 transition-colors text-sm sm:text-base"
+                      >
+                        {calibrationStatus.auto_calibration_active ? (
+                          <Loader2 className="w-4 h-4 mr-2 shrink-0 animate-spin" />
+                        ) : (
+                          <Activity className="w-4 h-4 mr-2 shrink-0" />
+                        )}
+                        <span className="truncate">
+                          Auto Calibrate Joints
+                        </span>
+                      </Button>
                       <Button
                         onClick={handleCompleteStep}
-                        disabled={!calibrationStatus.calibration_active}
-                        className={`px-8 py-3 rounded-full transition-colors ${
+                        disabled={
+                          !calibrationStatus.calibration_active ||
+                          calibrationStatus.auto_calibration_active
+                        }
+                        className={`w-full min-w-0 px-4 py-3 rounded-full transition-colors text-sm sm:text-base ${
                           allComplete
                             ? "bg-green-600 hover:bg-green-700"
                             : "bg-orange-500 hover:bg-orange-600"
                         }`}
                       >
                         {allComplete ? (
-                          <CheckCircle className="w-4 h-4 mr-2" />
+                          <CheckCircle className="w-4 h-4 mr-2 shrink-0" />
                         ) : (
-                          <AlertCircle className="w-4 h-4 mr-2" />
+                          <AlertCircle className="w-4 h-4 mr-2 shrink-0" />
                         )}
-                        Save Calibration
+                        <span className="truncate">Save Calibration</span>
                       </Button>
                     </div>
+                    {calibrationStatus.auto_calibration_status !== "idle" && (
+                      <Alert
+                        className={`${
+                          calibrationStatus.auto_calibration_status === "error"
+                            ? "bg-red-900/50 border-red-700 text-red-200"
+                            : calibrationStatus.auto_calibration_status ===
+                              "completed"
+                            ? "bg-green-900/50 border-green-700 text-green-200"
+                            : "bg-blue-900/50 border-blue-700 text-blue-200"
+                        }`}
+                      >
+                        {calibrationStatus.auto_calibration_active ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : calibrationStatus.auto_calibration_status ===
+                          "error" ? (
+                          <XCircle className="h-4 w-4" />
+                        ) : (
+                          <CheckCircle className="h-4 w-4" />
+                        )}
+                        <AlertDescription>
+                          {calibrationStatus.auto_calibration_status === "error"
+                            ? calibrationStatus.auto_calibration_error ||
+                              "Auto calibration failed."
+                            : calibrationStatus.auto_calibration_message ||
+                              "SO-101 auto calibration is running."}
+                        </AlertDescription>
+                      </Alert>
+                    )}
                     <Alert className="bg-purple-900/50 border-purple-700 text-purple-200">
                       <Activity className="h-4 w-4" />
                       <AlertDescription>
@@ -961,6 +1074,61 @@ const Calibration = () => {
           </Card>
         )}
       </div>
+
+      <Dialog
+        open={showAutoCalibrationDialog}
+        onOpenChange={setShowAutoCalibrationDialog}
+      >
+        <DialogContent className="max-w-2xl bg-slate-900 border-slate-700 text-white">
+          <DialogHeader>
+            <DialogTitle>Confirm Initial Position</DialogTitle>
+            <DialogDescription className="text-slate-300">
+              Place the arm in the initial position shown below before starting
+              SO-101 auto calibration.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="overflow-hidden rounded-md border border-slate-700 bg-slate-950">
+              <img
+                src="/calibration/autocalibration-initial-position.jpg"
+                alt="SO-101 initial calibration position"
+                className="max-h-[60vh] w-full object-contain"
+              />
+            </div>
+            <label className="flex items-start gap-3 rounded-md border border-slate-700 bg-slate-800/70 p-3 text-sm text-slate-200">
+              <Checkbox
+                checked={autoCalibrationConfirmed}
+                onCheckedChange={(checked) =>
+                  setAutoCalibrationConfirmed(checked === true)
+                }
+                className="mt-0.5 border-slate-500"
+              />
+              <span>The arm matches the photo and the motion path is clear.</span>
+            </label>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowAutoCalibrationDialog(false)}
+              className="border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleStartAutoCalibration}
+              disabled={!autoCalibrationConfirmed || isStartingAutoCalibration}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              {isStartingAutoCalibration && (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              )}
+              Start Auto Calibration
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <PortDetectionModal
         open={showPortDetection}

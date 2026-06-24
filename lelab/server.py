@@ -988,6 +988,12 @@ def complete_calibration_step():
     return calibration_manager.complete_step()
 
 
+@app.post("/start-auto-calibration")
+def start_auto_calibration():
+    """Start SO-101 auto calibration during range recording."""
+    return calibration_manager.start_auto_calibration()
+
+
 @app.get("/calibration-configs/{device_type}")
 def get_calibration_configs(device_type: str):
     """Get all calibration config files for a specific device type"""

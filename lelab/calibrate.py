@@ -23,6 +23,7 @@ import logging
 import threading
 import time
 import traceback
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -37,6 +38,12 @@ from lerobot.teleoperators import (
     make_teleoperator_from_config,
 )
 from lerobot.utils.utils import init_logging
+
+from .so101_auto_calibration import (
+    AutoCalibrationCancelledError,
+    SO101AutoCalibrationResult,
+    run_so101_auto_calibration,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +71,10 @@ class CalibrationStatus:
     total_steps: int = 1  # Total number of calibration steps
     current_positions: dict[str, float] = None
     recorded_ranges: dict[str, dict[str, float]] = None  # {motor: {min: val, max: val, current: val}}
+    auto_calibration_active: bool = False
+    auto_calibration_status: str = "idle"  # "idle", "running", "completed", "error"
+    auto_calibration_message: str = ""
+    auto_calibration_error: str | None = None
 
 
 @dataclass
@@ -83,65 +94,42 @@ class CalibrationManager:
         self.status = CalibrationStatus()
         self.device: Robot | Teleoperator | None = None
         self.calibration_thread: threading.Thread | None = None
+        self.auto_calibration_thread: threading.Thread | None = None
         self.stop_calibration = False
         self._status_lock = threading.Lock()
+        self._device_io_lock = threading.RLock()
         self._step_complete = threading.Event()
+        self._auto_calibration_stop = threading.Event()
         self._recording_active = False
         self._start_positions = {}
         self._mins = {}
         self._maxes = {}
         self._homing_offsets = {}
         self._current_request: CalibrationRequest | None = None
+        self._auto_calibration_motor: str | None = None
+        self._auto_calibration_range_guard_motors: set[str] = set()
 
         # Initialize logging
         init_logging()
 
     def get_status(self) -> CalibrationStatus:
         """Get current calibration status"""
+        should_read_positions = (
+            self.status.status == "recording" and self.device and self.device.is_connected
+        )
+        if should_read_positions:
+            try:
+                positions = self._read_positions(num_retry=2, retry_delay=0.005)
+                if positions:
+                    self._record_positions(positions)
+            except Exception as e:
+                # Reduce log spam by using debug level for expected port contention
+                if "Port is in use" in str(e):
+                    logger.debug(f"Port busy during position read: {e}")
+                else:
+                    logger.warning(f"Failed to read positions: {e}")
+
         with self._status_lock:
-            # Update current positions if we're recording and device is connected
-            if self.status.status == "recording" and self.device and self.device.is_connected:
-                try:
-                    # Try reading positions with quick retry on port contention
-                    positions = None
-                    for attempt in range(2):  # Quick retry for status updates
-                        try:
-                            positions = self.device.bus.sync_read("Present_Position", normalize=False)
-                            break
-                        except Exception as read_error:
-                            if "Port is in use" in str(read_error) and attempt < 1:
-                                time.sleep(0.005)  # Very short delay
-                                continue
-                            else:
-                                raise read_error
-
-                    if positions:
-                        # Update recorded ranges
-                        if not self.status.recorded_ranges:
-                            self.status.recorded_ranges = {}
-
-                        for motor, pos in positions.items():
-                            # Filter out invalid readings (0, negative, or extreme values)
-                            if pos <= 0 or pos >= 5000:
-                                continue  # Skip invalid readings
-
-                            if motor not in self.status.recorded_ranges:
-                                self.status.recorded_ranges[motor] = {"min": pos, "max": pos, "current": pos}
-                            else:
-                                self.status.recorded_ranges[motor]["current"] = pos
-                                self.status.recorded_ranges[motor]["min"] = min(
-                                    self.status.recorded_ranges[motor]["min"], pos
-                                )
-                                self.status.recorded_ranges[motor]["max"] = max(
-                                    self.status.recorded_ranges[motor]["max"], pos
-                                )
-                except Exception as e:
-                    # Reduce log spam by using debug level for expected port contention
-                    if "Port is in use" in str(e):
-                        logger.debug(f"Port busy during position read: {e}")
-                    else:
-                        logger.warning(f"Failed to read positions: {e}")
-
             return self.status
 
     def _update_status(self, **kwargs):
@@ -172,6 +160,10 @@ class CalibrationManager:
                 step=0,
                 current_positions=None,
                 recorded_ranges=None,
+                auto_calibration_active=False,
+                auto_calibration_status="idle",
+                auto_calibration_message="",
+                auto_calibration_error=None,
             )
             self._current_request = request
 
@@ -198,6 +190,9 @@ class CalibrationManager:
             if not self.status.calibration_active:
                 return {"success": False, "message": "No calibration active"}
 
+            if self.status.auto_calibration_active:
+                return {"success": False, "message": "Auto calibration is still running"}
+
             if self.status.status == "recording":
                 # Complete recording step
                 self._recording_active = False
@@ -219,6 +214,7 @@ class CalibrationManager:
 
             logger.info("Stopping calibration process...")
             self.stop_calibration = True
+            self._auto_calibration_stop.set()
             self._recording_active = False
             self._step_complete.set()  # Unblock any waiting step
 
@@ -227,6 +223,9 @@ class CalibrationManager:
             # Wait for thread to finish
             if self.calibration_thread and self.calibration_thread.is_alive():
                 self.calibration_thread.join(timeout=5.0)
+
+            if self.auto_calibration_thread and self.auto_calibration_thread.is_alive():
+                self.auto_calibration_thread.join(timeout=2.0)
 
             # Ensure cleanup is called if thread didn't finish properly
             if self.calibration_thread and self.calibration_thread.is_alive():
@@ -242,6 +241,43 @@ class CalibrationManager:
             logger.error(f"Error stopping calibration: {e}")
             # Force cleanup on error too
             self._cleanup_and_finish("Calibration stopped with error", status="error")
+            return {"success": False, "message": str(e)}
+
+    def start_auto_calibration(self) -> dict[str, Any]:
+        """Start the SO-101 auto calibration flow during range recording."""
+        try:
+            if not self.status.calibration_active or self.status.status != "recording":
+                return {"success": False, "message": "Start calibration before running auto calibration"}
+
+            if not self.device or not self.device.is_connected:
+                return {"success": False, "message": "Device is not connected"}
+
+            if self.status.auto_calibration_active:
+                return {"success": False, "message": "Auto calibration already active"}
+
+            self._auto_calibration_stop.clear()
+            self._update_status(
+                auto_calibration_active=True,
+                auto_calibration_status="running",
+                auto_calibration_message="Running SO-101 auto calibration...",
+                auto_calibration_error=None,
+            )
+
+            self.auto_calibration_thread = threading.Thread(
+                target=self._auto_calibrate_motors_worker,
+                daemon=True,
+            )
+            self.auto_calibration_thread.start()
+
+            return {"success": True, "message": "SO-101 auto calibration started"}
+        except Exception as e:
+            logger.error(f"Error starting auto calibration: {e}")
+            self._update_status(
+                auto_calibration_active=False,
+                auto_calibration_status="error",
+                auto_calibration_message="Auto calibration failed",
+                auto_calibration_error=str(e),
+            )
             return {"success": False, "message": str(e)}
 
     def _calibration_worker(self, request: CalibrationRequest):
@@ -321,20 +357,22 @@ class CalibrationManager:
         """Auto-capture homing offsets from the device's current position."""
         logger.info("Setting homing offsets from current position")
 
-        # Disable torque to allow manual movement during recording
-        self.device.bus.disable_torque()
-        for motor in self.device.bus.motors:
-            self.device.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+        with self._device_io_lock:
+            # Disable torque to allow manual movement during recording
+            self.device.bus.disable_torque()
+            for motor in self.device.bus.motors:
+                self.device.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
-        self.device.bus.reset_calibration()
-        actual_positions = self.device.bus.sync_read("Present_Position", normalize=False)
+            self.device.bus.reset_calibration()
+            actual_positions = self.device.bus.sync_read("Present_Position", normalize=False)
         logger.info(f"Current positions for homing: {actual_positions}")
 
         self._homing_offsets = self.device.bus._get_half_turn_homings(actual_positions)
         logger.info(f"Calculated homing offsets: {self._homing_offsets}")
 
-        for motor, offset in self._homing_offsets.items():
-            self.device.bus.write("Homing_Offset", motor, offset)
+        with self._device_io_lock:
+            for motor, offset in self._homing_offsets.items():
+                self.device.bus.write("Homing_Offset", motor, offset)
 
     def _step_range_recording(self):
         """Record range of motion as the user moves all joints."""
@@ -344,11 +382,11 @@ class CalibrationManager:
         self._start_positions = {}
         for attempt in range(5):  # Try multiple times to get valid initial positions
             try:
-                positions = self.device.bus.sync_read("Present_Position", normalize=False)
+                positions = self._read_positions()
                 # Validate initial positions
                 valid_positions = {}
                 for motor, pos in positions.items():
-                    if pos > 0 and pos < 5000:  # Valid range
+                    if 0 <= pos < 5000:  # Valid raw encoder range
                         valid_positions[motor] = pos
 
                 if len(valid_positions) == len(positions):  # All positions are valid
@@ -388,24 +426,15 @@ class CalibrationManager:
         while not self._step_complete.is_set() and not self.stop_calibration:
             try:
                 # Try reading positions with retry on port contention
-                positions = None
-                for attempt in range(3):  # Try up to 3 times
-                    try:
-                        positions = self.device.bus.sync_read("Present_Position", normalize=False)
-                        break  # Success, exit retry loop
-                    except Exception as read_error:
-                        if "Port is in use" in str(read_error) and attempt < 2:
-                            time.sleep(0.01)  # Short delay before retry
-                            continue
-                        else:
-                            raise read_error  # Re-raise if not port contention or final attempt
+                positions = self._read_positions(num_retry=3, retry_delay=0.01)
 
                 if positions:
-                    # Validate the readings - filter out invalid/zero values
+                    # Validate the readings - filter out invalid values
                     valid_positions = {}
                     for motor, pos in positions.items():
-                        # Filter out clearly invalid readings (0, negative, or extreme values)
-                        if pos > 0 and pos < 5000:  # Reasonable range for motor positions
+                        # Filter out clearly invalid readings (negative or extreme values).
+                        # Raw encoder position 0 is valid and can be a true wrist-roll endpoint.
+                        if 0 <= pos < 5000:  # Reasonable range for motor positions
                             valid_positions[motor] = pos
                         else:
                             logger.debug(f"Filtered invalid position for {motor}: {pos}")
@@ -413,16 +442,18 @@ class CalibrationManager:
                     # Only update if we have valid readings
                     if valid_positions:
                         for motor, pos in valid_positions.items():
-                            if motor in prev_positions and abs(pos - prev_positions[motor]) > 2000:
+                            if (
+                                motor in prev_positions
+                                and abs(pos - prev_positions[motor]) > 2000
+                                and not self._is_expected_auto_calibration_motion(motor)
+                            ):
                                 raise CalibrationDiscontinuityError(
                                     "Motor discontinuity detected. Make sure to start "
                                     "the calibration with the robot in a middle position "
                                     "- all joints in the middle of their ranges."
                                 )
                             prev_positions[motor] = pos
-                            if motor in self._mins:
-                                self._mins[motor] = min(self._mins[motor], pos)
-                                self._maxes[motor] = max(self._maxes[motor], pos)
+                        self._record_positions(valid_positions)
 
                 time.sleep(0.05)  # 20Hz update rate
             except CalibrationDiscontinuityError:
@@ -496,7 +527,8 @@ class CalibrationManager:
 
         # Write and save calibration
         self.device.calibration = calibration
-        self.device.bus.write_calibration(calibration)
+        with self._device_io_lock:
+            self.device.bus.write_calibration(calibration)
         self.device._save_calibration()
 
         logger.info(f"Calibration saved to {self.device.calibration_fpath}")
@@ -518,19 +550,179 @@ class CalibrationManager:
 
     def _cleanup_and_finish(self, message: str, status: str = "completed"):
         """Clean up and finish calibration"""
+        self._auto_calibration_stop.set()
         self._cleanup_device()
         self._recording_active = False
-        self._update_status(calibration_active=False, status=status, message=message)
+        self._update_status(
+            calibration_active=False,
+            status=status,
+            message=message,
+            auto_calibration_active=False,
+        )
 
     def _cleanup_device(self):
         """Clean up device connection"""
         try:
             if self.device:
                 logger.info("Disconnecting device...")
-                self.device.disconnect()
+                with self._device_io_lock:
+                    self.device.disconnect()
                 self.device = None
         except Exception as e:
             logger.error(f"Error disconnecting device: {e}")
+
+    def _read_positions(
+        self,
+        motors: str | Sequence[str] | None = None,
+        *,
+        num_retry: int = 3,
+        retry_delay: float = 0.01,
+    ) -> dict[str, int]:
+        """Read raw motor positions with a short retry loop for serial-port contention."""
+        for attempt in range(num_retry):
+            try:
+                with self._device_io_lock:
+                    return self.device.bus.sync_read("Present_Position", motors, normalize=False)
+            except Exception as read_error:
+                if "Port is in use" in str(read_error) and attempt < num_retry - 1:
+                    time.sleep(retry_delay)
+                    continue
+                raise
+        return {}
+
+    def _record_positions(
+        self,
+        positions: dict[str, int],
+        *,
+        update_ranges: bool = True,
+        allow_auto_range_update: bool = False,
+    ) -> None:
+        """Merge live raw positions into the in-memory min/max range state."""
+        if not positions:
+            return
+
+        with self._status_lock:
+            if not self.status.recorded_ranges:
+                self.status.recorded_ranges = {}
+            if not self.status.current_positions:
+                self.status.current_positions = {}
+
+            for motor, pos in positions.items():
+                if pos < 0 or pos >= 5000:
+                    continue
+
+                self.status.current_positions[motor] = pos
+                should_update_range = update_ranges and (
+                    allow_auto_range_update or not self._is_expected_auto_calibration_motion(motor)
+                )
+                if should_update_range:
+                    if motor not in self._mins:
+                        self._mins[motor] = pos
+                    if motor not in self._maxes:
+                        self._maxes[motor] = pos
+
+                    self._mins[motor] = min(self._mins[motor], pos)
+                    self._maxes[motor] = max(self._maxes[motor], pos)
+
+                self.status.recorded_ranges[motor] = {
+                    "min": self._mins.get(motor, pos),
+                    "max": self._maxes.get(motor, pos),
+                    "current": pos,
+                }
+
+    def _auto_calibrate_motors_worker(self) -> None:
+        logger.info("Starting SO-101 auto calibration")
+        try:
+            if not self.device or not self.device.is_connected:
+                raise RuntimeError("Device is not connected")
+
+            motor_names = set(getattr(self.device.bus, "motors", {}))
+            self._auto_calibration_motor = None
+            self._auto_calibration_range_guard_motors = set(motor_names)
+
+            result = run_so101_auto_calibration(
+                self.device.bus,
+                io_lock=self._device_io_lock,
+                status_callback=lambda message: self._update_status(
+                    auto_calibration_message=message
+                ),
+                position_callback=lambda positions: self._record_positions(
+                    positions, update_ranges=False
+                ),
+                stop_requested=lambda: self._auto_calibration_stop.is_set()
+                or self.stop_calibration,
+            )
+
+            if self._auto_calibration_stop.is_set() or self.stop_calibration:
+                raise AutoCalibrationCancelledError("Auto calibration cancelled")
+
+            self._apply_so101_auto_calibration_result(result)
+            self._update_status(
+                auto_calibration_active=False,
+                auto_calibration_status="completed",
+                auto_calibration_message=(
+                    "SO-101 auto calibration completed. Save calibration to persist it."
+                ),
+                auto_calibration_error=None,
+            )
+            logger.info("SO-101 auto calibration completed")
+        except AutoCalibrationCancelledError:
+            logger.info("SO-101 auto calibration cancelled")
+            self._update_status(
+                auto_calibration_active=False,
+                auto_calibration_status="idle",
+                auto_calibration_message="Auto calibration cancelled",
+                auto_calibration_error=None,
+            )
+        except Exception as e:
+            logger.error("Auto calibration failed: %s", e)
+            logger.error(traceback.format_exc())
+            with self._device_io_lock:
+                try:
+                    if self.device:
+                        self.device.bus.disable_torque()
+                except Exception:
+                    logger.debug("Failed to disable torque after auto calibration error", exc_info=True)
+            self._update_status(
+                auto_calibration_active=False,
+                auto_calibration_status="error",
+                auto_calibration_message="Auto calibration failed",
+                auto_calibration_error=str(e),
+            )
+        finally:
+            self._auto_calibration_motor = None
+            self._auto_calibration_range_guard_motors.clear()
+
+    def _apply_so101_auto_calibration_result(
+        self, result: SO101AutoCalibrationResult
+    ) -> None:
+        for motor, calibration in result.calibration.items():
+            self._mins[motor] = int(calibration.range_min)
+            self._maxes[motor] = int(calibration.range_max)
+            self._homing_offsets[motor] = int(calibration.homing_offset)
+
+        self.device.calibration = result.calibration
+        self._record_positions(result.current_positions, update_ranges=False)
+
+        with self._status_lock:
+            if not self.status.recorded_ranges:
+                self.status.recorded_ranges = {}
+            current_positions = self.status.current_positions or {}
+            for motor, calibration in result.calibration.items():
+                current = result.current_positions.get(
+                    motor, current_positions.get(motor, calibration.range_min)
+                )
+                self.status.recorded_ranges[motor] = {
+                    "min": int(calibration.range_min),
+                    "max": int(calibration.range_max),
+                    "current": int(current),
+                }
+
+    def _is_expected_auto_calibration_motion(self, motor: str) -> bool:
+        return self.status.auto_calibration_active and (
+            motor == self._auto_calibration_motor
+            or motor in self._auto_calibration_range_guard_motors
+        )
 
 
 # Global calibration manager instance

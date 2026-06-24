@@ -346,18 +346,29 @@ class NoriClient:
     # -- consents (Phase 6) --------------------------------------------------------
 
     def list_consents(self) -> Any:
-        """GET /consents."""
+        """GET /consents (active + revoked)."""
         return self._request("GET", f"{API}/consents")
 
-    def post_consent(self, consent_type: str, granted: bool) -> dict[str, Any]:
-        """POST /consents — e.g. train_self / publish_public toggles."""
-        return self._request(
-            "POST", f"{API}/consents", json={"consent_type": consent_type, "granted": granted}
-        )
+    def grant_consent(
+        self,
+        consent_type: str,
+        policy_version: str,
+        scope_dataset_repo: str | None = None,
+    ) -> dict[str, Any]:
+        """POST /consents — grant train_self / publish_public. Idempotent on
+        (customer, type, scope)."""
+        body: dict[str, Any] = {
+            "consent_type": consent_type,
+            "policy_version": policy_version,
+        }
+        if scope_dataset_repo is not None:
+            body["scope_dataset_repo"] = scope_dataset_repo
+        return self._request("POST", f"{API}/consents", json=body)
 
-    def revoke_consent(self, consent_id: str) -> dict[str, Any]:
+    def revoke_consent(self, consent_id: str, reason: str | None = None) -> dict[str, Any]:
         """POST /consents/{id}/revoke."""
-        return self._request("POST", f"{API}/consents/{consent_id}/revoke")
+        body = {"reason": reason} if reason is not None else None
+        return self._request("POST", f"{API}/consents/{consent_id}/revoke", json=body)
 
     # -- deletion requests (Phase 6) -----------------------------------------------
 

@@ -36,6 +36,8 @@ interface NoriContextType {
   provisioning: boolean;
   /** Set if provisioning failed (distinct from the bootstrap `error`). */
   customerError: string | null;
+  /** Replace the cached customer (e.g. after pairing returns an updated profile). */
+  setCustomer: (c: CustomerProfile) => void;
 }
 
 const NoriContext = createContext<NoriContextType | undefined>(undefined);
@@ -119,6 +121,7 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       customer,
       provisioning,
       customerError,
+      setCustomer,
     }),
     [config, loading, error, session, customer, provisioning, customerError]
   );

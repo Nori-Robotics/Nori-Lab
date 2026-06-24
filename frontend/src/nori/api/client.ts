@@ -23,6 +23,13 @@ export type DispatchResponse = components["schemas"]["DispatchResponse"];
 export type TrainingJob = components["schemas"]["TrainingJob"];
 export type TrainingJobLogs = components["schemas"]["TrainingJobLogs"];
 export type SessionRow = components["schemas"]["SessionRow"];
+export type Consent = components["schemas"]["Consent"];
+export type ConsentType = components["schemas"]["ConsentGrantRequest"]["consent_type"];
+export type DeletionRequest = components["schemas"]["DeletionRequest"];
+export type DeletionScope = components["schemas"]["DeletionRequestCreate"]["request_scope"];
+
+/** Label for the consent-policy text the user agreed to. Bump when that text changes. */
+export const CONSENT_POLICY_VERSION = "v1";
 /** GET /customers/me returns the profile, or this shape when not yet provisioned. */
 export type NotProvisioned = { provisioned: false } & Record<string, unknown>;
 export type CustomerMe = CustomerProfile | NotProvisioned;
@@ -153,6 +160,28 @@ export function dispatchTraining(
   });
 }
 
+/**
+ * Start a Nori-dispatched training via LeLab's existing /jobs/training endpoint with a
+ * `nori_cloud` target. The job lands in LeLab's job registry + watch UI (NoriCloudJobRunner)
+ * AND, since it dispatches to the backend, in GET /nori/training/jobs. `datasetRepoId`
+ * satisfies LeLab's TrainingRequest schema; the backend decides what to actually train.
+ */
+export function startNoriTraining(
+  baseUrl: string,
+  fetcher: Fetcher,
+  datasetRepoId: string,
+  timeoutSeconds = 900
+): Promise<unknown> {
+  return noriRequest(baseUrl, fetcher, "/jobs/training", {
+    method: "POST",
+    body: {
+      config: { dataset_repo_id: datasetRepoId },
+      target: { runner: "nori_cloud", timeout_seconds: timeoutSeconds },
+    },
+    action: "Start training",
+  });
+}
+
 export function listJobs(baseUrl: string, fetcher: Fetcher): Promise<TrainingJob[]> {
   return noriRequest<TrainingJob[]>(baseUrl, fetcher, "/nori/training/jobs", {
     action: "Load training jobs",
@@ -181,4 +210,64 @@ export function getJobLogs(
     `/nori/training/jobs/${encodeURIComponent(jobId)}/logs?since=${since}`,
     { action: "Load training logs" }
   );
+}
+
+// -- pairing / consents / deletion (Phase 6) -----------------------------------
+
+/** POST /nori/customers/me/pair — 409 if re-pairing to a different serial. */
+export function pairRobot(
+  baseUrl: string,
+  fetcher: Fetcher,
+  robotSerialNumber: string
+): Promise<CustomerProfile> {
+  return noriRequest<CustomerProfile>(baseUrl, fetcher, "/nori/customers/me/pair", {
+    method: "POST",
+    body: { robot_serial_number: robotSerialNumber },
+    action: "Pair robot",
+  });
+}
+
+export function listConsents(baseUrl: string, fetcher: Fetcher): Promise<Consent[]> {
+  return noriRequest<Consent[]>(baseUrl, fetcher, "/nori/consents", {
+    action: "Load consents",
+  });
+}
+
+export function grantConsent(
+  baseUrl: string,
+  fetcher: Fetcher,
+  consentType: ConsentType
+): Promise<Consent> {
+  return noriRequest<Consent>(baseUrl, fetcher, "/nori/consents", {
+    method: "POST",
+    body: { consent_type: consentType, policy_version: CONSENT_POLICY_VERSION },
+    action: "Grant consent",
+  });
+}
+
+export function revokeConsent(
+  baseUrl: string,
+  fetcher: Fetcher,
+  consentId: string,
+  reason?: string
+): Promise<Consent> {
+  return noriRequest<Consent>(
+    baseUrl,
+    fetcher,
+    `/nori/consents/${encodeURIComponent(consentId)}/revoke`,
+    { method: "POST", body: { reason }, action: "Revoke consent" }
+  );
+}
+
+export function createDeletionRequest(
+  baseUrl: string,
+  fetcher: Fetcher,
+  requestScope: DeletionScope,
+  notes?: string
+): Promise<DeletionRequest> {
+  return noriRequest<DeletionRequest>(baseUrl, fetcher, "/nori/deletion-requests", {
+    method: "POST",
+    body: { request_scope: requestScope, notes },
+    action: "Request deletion",
+  });
 }

@@ -492,6 +492,60 @@ def nori_get_job_logs(job_id: str, request: Request, since: int = 0):
     return _nori_proxy(lambda: client.get_job_logs(job_id, since=since))
 
 
+# NORI: pairing + consents + deletion (Phase 6).
+class NoriPairBody(BaseModel):
+    robot_serial_number: str
+
+
+@app.post("/nori/customers/me/pair")
+def nori_pair_robot(body: NoriPairBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.pair_robot(body.robot_serial_number))
+
+
+@app.get("/nori/consents")
+def nori_list_consents(request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(client.list_consents)
+
+
+class NoriConsentBody(BaseModel):
+    consent_type: Literal["train_self", "publish_public"]
+    policy_version: str
+    scope_dataset_repo: str | None = None
+
+
+@app.post("/nori/consents")
+def nori_grant_consent(body: NoriConsentBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(
+        lambda: client.grant_consent(
+            body.consent_type, body.policy_version, body.scope_dataset_repo
+        )
+    )
+
+
+class NoriConsentRevokeBody(BaseModel):
+    reason: str | None = None
+
+
+@app.post("/nori/consents/{consent_id}/revoke")
+def nori_revoke_consent(consent_id: str, body: NoriConsentRevokeBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.revoke_consent(consent_id, body.reason))
+
+
+class NoriDeletionBody(BaseModel):
+    request_scope: Literal["full", "data_only"]
+    notes: str | None = None
+
+
+@app.post("/nori/deletion-requests")
+def nori_create_deletion_request(body: NoriDeletionBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.create_deletion_request(body.model_dump()))
+
+
 @app.get("/hf-auth-status")
 def hf_auth_status():
     """Check whether the local HF CLI is authenticated and return user info."""

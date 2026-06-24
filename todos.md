@@ -186,18 +186,29 @@ Honor the invariant: **no HF token ever on the laptop.** All HF access via Nori-
 
 ---
 
-## 5. Phase 6 — Polish ✅ (backend exists; pull forward while Pi is in flight)
+## 5. Phase 6 — Polish ✅ DONE (2026-06-23)
 
-- [ ] **Consent management UI** (`frontend/src/nori/pages/consents.tsx`): toggles for
-  `train_self` and `publish_public` via `POST /api/v1/consents`, `/consents/{id}/revoke`,
-  `GET /consents`.
-- [ ] **Training history** (`frontend/src/nori/pages/training-history.tsx`):
-  `GET /api/v1/training/jobs` + `{job_id}`; per-job detail with logs polling.
-- [ ] **Deletion request UI**: `POST /api/v1/deletion-requests`. (Backend purge sweeper is
-  ⚠️ not yet wired — writes a status row only; UI is fine to build.)
-- [ ] **Pairing screen — manual serial entry only** (`frontend/src/nori/pages/pairing.tsx`):
-  text input → `POST /api/v1/customers/me/pair {robot_serial_number}` (409 on re-pair to a
-  different serial). The mDNS/QR discovery path is 🟡/🔴 (needs daemon advertisement).
+> Verified: `ruff` clean, backend imports OK + all routes registered, Nori files tsc-clean,
+> `npm run build` clean. Live: pair / consents / consent-revoke / deletion routes all forward
+> → 401 with a dummy token (schema-validated + reached backend). All pages reachable via the
+> `NoriLayout` nav (Account / Marketplace / Training / Consents / Pairing).
+
+- [x] **Backend proxies** (`server.py`, `# NORI:`): `POST /nori/customers/me/pair`,
+  `GET /nori/consents`, `POST /nori/consents`, `POST /nori/consents/{id}/revoke`,
+  `POST /nori/deletion-requests` (typed Pydantic bodies). Fixed `nori_client` consent methods
+  to the real schema (`grant_consent(type, policy_version, scope?)`; was a wrong `granted` flag).
+- [x] **Consent UI** (`pages/consents.tsx`): grant/revoke toggles for `train_self` /
+  `publish_public` (resolves the active row from `GET /consents`). `CONSENT_POLICY_VERSION`
+  constant ("v1") — bump when the consent text changes.
+- [x] **Deletion UI**: data-only / full scope + request button on the consents page
+  (`POST /deletion-requests`; backend purge sweeper ⚠️ not yet wired — status row only).
+- [x] **Pairing screen** (`pages/pairing.tsx`): manual serial → `POST /customers/me/pair`,
+  updates the cached profile via `NoriContext.setCustomer`; shows paired state if already
+  paired. mDNS/QR discovery still 🔴 (needs daemon advertisement).
+- [x] **Training history** (`pages/training-history.tsx`): lists `GET /nori/training/jobs`,
+  per-job expand with live log polling (`…/{id}/logs?since=`, 2 s, stops on terminal), plus a
+  **"Start training"** button — the frontend trigger for the Phase-4 `nori_cloud` runner
+  (POSTs `/jobs/training` with `runner=nori_cloud`; also appears in LeLab's watch UI).
 
 ---
 

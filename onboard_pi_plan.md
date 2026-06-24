@@ -6,11 +6,30 @@ This phase replaces the prototype bash scripts and Python server architecture wi
 
 ---
 
+## Versioning & Build Order
+
+> **North star: remote WAN teleop — laptop *or* VR headset, with basic controls and a live video stream — is the first product target.** Everything below is sequenced to reach it fast and defer the rest. Autonomy ("fetches and tidies"), polished onboarding, signed OTA, and the native-UI migration come *after* a human can reliably drive the robot over the internet.
+
+These milestones cut **across** the capability sections (§a–§g); they are a delivery order, distinct from the *UI-migration Phases* and the *README deployment Phases*. Numbering is rough and subject to resequencing.
+
+| Milestone | Goal | Pulls in | Deferred / stubbed |
+|---|---|---|---|
+| **M0 — Daemon substrate** (internal) | The C++ safety/control core, driven from the laptop app over **LAN**. The unavoidable foundation — WAN teleop *is* this plus a network layer. | §b in full (Feetech C++ SDK bus control, 50 Hz loop, **all four motor-protection layers**, network + thermal watchdogs, E-STOP latch); §f JSON control + `protocol_version`; reuse the prototype's **LAN ZMQ video**. | WAN, WebRTC, VR, audio, OTA, onboarding, ATECC (software-key fallback). |
+| **M1 — WAN remote teleop, laptop** ⭐ | **The headline target.** An operator anywhere on the internet drives with basic (keyboard / on-screen) controls and sees the live video. | §f WebRTC video (software-encode, ~24 fps) + Supabase **rendezvous/relay** + **TLS + scoped tokens** (R10); §e app "remote mode" as the single control client; WAN watchdog profile. | VR, audio, signed OTA, factory provisioning, native UI. |
+| **M2 — VR headset teleop (over WAN)** ⭐ | The same remote session, driven from a Quest 3. | §e VR path: app WebXR → **`jog` mapper (laptop)**, clutch, re-clutch-on-resume, controller **E-STOP** (R13), haptics from current telemetry. **Daemon control path unchanged from M0.** | — (rides M1's session) |
+| **M3 — Audio** | Operator hears the room; robot makes status/safety sounds. | §g v1: mic → laptop uplink (Opus/RTP → WebRTC track), sound effects on safety events. | Wake word, voice/LLM, talk-through-robot, AEC. |
+| **M4 — Productionization / shipping** | Make it a consumer unit, not a dev rig. | §c headless WiFi onboarding; §d signed A/B OTA; **R3 ATECC608B** identity; §a factory imaging + **R12 per-unit provisioning**; UI-migration Phase 2 (Slint/LVGL) **only if** the RAM budget (R1) forces it. | — |
+| **(parallel) Autonomy & IL** | Policy execution + dataset recording. | Separate Item; reuses the same daemon + recording stream (R5). | Out of this doc's teleop-first scope. |
+
+**On "LAN baseline" vs "WAN first":** WAN teleop is architecturally LAN teleop **plus** a TLS/relay/WebRTC layer over the same control path. So LAN teleop (M0) is the substrate you pass *through* on the way to WAN (M1) — not a separate product milestone to dwell on. Where §e/§f call LAN the "always-working baseline," read that as *the fallback that keeps working*, not *the first thing we ship*.
+
+---
+
 ## a) Factory Pre-Imaging & OS Tuning
 
 The Pi ships with the OS, host agent, per-unit identity, and configuration pre-installed.
 
-- **Base image:** headless Pi OS Lite, aggressively stripped — remove Wayland, X11, PulseAudio, and unneeded kernel modules. **Idle RAM target < 100 MB.**
+- **Base image:** headless Pi OS Lite, aggressively stripped — remove Wayland, X11, and unneeded kernel modules. **Keep a minimal ALSA audio stack** — the robot has a speaker + mic (see §g), so audio is *not* stripped; skip PulseAudio/PipeWire until two-way voice/AEC needs them. **Idle RAM target < 100 MB** (daemon baseline) on the **2 GB Pi 5**.
 - **Unattended boot:** replace the manual bash-script launch with supervised auto-start on boot via systemd units, so the robot comes up working with no human in the loop.
 - **Service management:** the current `start_teleop.sh` wrapper is replaced with a strict systemd unit, `nori-core.service`, configured with:
   - `Restart=always`
@@ -27,11 +46,11 @@ Completely deprecate the Python `StallDetector` and JSON-TCP loop in favor of a 
 [Network Broker] ──(Lock-Free SPSC Queue)──► [Real-Time C++ Motor Engine]
        │                                              │
        ▼                                              ▼
- Timestamp Validator (100 ms)              Hardware Polling (Core 1/2)
+ Arrival-time Watchdog (tiered)            Hardware Polling (Core 1/2)
 ```
 
 ### True threading & bus concurrency
-Dedicated threads pinned to specific CPU cores via `pthread_setaffinity_np`. Bus 1 (`/dev/xlerobot_bus1`) and Bus 2 (`/dev/xlerobot_bus2`) are polled **concurrently** via raw C `termios` calls, eliminating the sequential I/O propagation lag of the old `scservo_sdk`.
+Dedicated threads pinned to specific CPU cores via `pthread_setaffinity_np`. Bus 1 (`/dev/xlerobot_bus1`) and Bus 2 (`/dev/xlerobot_bus2`) are driven by the **C++ Feetech SDK** — one `PortHandler` per bus, each on its own pinned thread — so the two buses are polled **concurrently**. (The sequential I/O lag in rpi4 came from Python's single-threaded, GIL-bound loop, *not* from the SDK.) Using the C++ SDK — the same `PortHandler`/`PacketHandler`/`GroupSync` family the Python `scservo_sdk` wraps — keeps the motor layer close to upstream lerobot. **Raw `termios` is a fallback only** if the SDK can't expose a needed fd-level setting (low-latency ioctl / custom packet timeout — both patchable on the SDK's fd, as rpi4 did). Both CH343 boards are reached through the shared USB Type-A peripheral hub (see R16); deterministic `udev` naming must survive the hub topology.
 
 ### Servo monitoring (thermal / current)
 Motor threads continuously read `Present_Current`, `Present_Position`, and thermal registers. If `Present_Current` spikes while `Present_Position` delta stays near zero (a physical obstruction), the C++ loop immediately sets an atomic `e_stop_latched` flag.
@@ -39,11 +58,64 @@ Motor threads continuously read `Present_Current`, `Present_Position`, and therm
 ### Latching requirement
 Unlike the prototype's stall-soften (which auto-recovers), this C++ state is a **hard latch**: it cuts `Torque_Limit` and drops current instructions. Recovery requires an **explicit user reset via the UI/app** — the obstruction may be a human.
 
-### Network monitoring & buffer depth
-The network ingestion thread unpacks incoming binary C-structs and pushes them into a lock-free ring buffer. The motor thread checks `timestamp_us` of the active chunk.
+### Port *all four* motor-protection layers — not just stall detection
+The prototype's safety is four layers deep (documented in the `rpi4` README). The C++ rewrite re-hosts the bus layer on the **C++ Feetech SDK** and the loop in native C++20, so **every layer must be re-implemented / re-validated natively** — re-porting only the stall detector would be a safety regression on a robot that has already physically killed two motors.
 
-- **Reconciliation:** if `std::chrono::steady_clock` exceeds the newest buffered timestamp by `WATCHDOG_THRESHOLD` (~100 ms), the daemon executes a mathematically smooth deceleration ramp to a safe-stop (not a hard stop). It resumes only when the buffer is refilled with fresh, contiguous timestamps.
-- ⚠️ **Open value:** current baseline is a 500 ms dead-man timer; the proposed ~100 ms is the *start-worrying* threshold — settle the exact value against measured buffer depth.
+1. **`Torque_Limit=600`** written to SRAM on init — caps peak current so the power station doesn't trip.
+2. **Software stall detection** — the latching obstruction response above.
+3. **Calibration position clamp** — the prototype clamps every `Goal_Position` to the per-unit calibrated `[range_min, range_max]` (was `motors_bus.py:_unnormalize`). This is the layer that makes it *impossible* to command a motor past its physical limit; it **must** be reimplemented in the bus worker, reading the same per-unit calibration JSON (see provisioning, R12).
+4. **Firmware EEPROM backup** (set once via `fix_eeprom.py`): `Protection_Current=450`, `Over_Current_Protection_Time=150`, `Max_Temperature_Limit=70`, `Max_Torque_Limit=600`. These are motor-resident and survive the rewrite, but the daemon must never raise the temperature/time ceilings.
+
+### Network monitoring & the tiered watchdog
+The network ingestion thread parses incoming **JSON-line control frames** (see §f — the wire format stays JSON, not packed binary) and pushes the decoded command into a lock-free SPSC ring buffer. The single producer is guaranteed because the **laptop app is the only control client** (VR, keyboard, and on-screen inputs all fan in app-side; the Pi accepts exactly one connection — see §e). The motor thread consumes the freshest command each tick.
+
+Critically, the watchdog keys on the **Pi-monotonic arrival time** of the last accepted frame, *not* on any timestamp embedded by the client. The client-supplied timestamp is used only for **ordering** (discard out-of-order frames) and **latency display** — never in the safety path — which removes any dependency on cross-machine clock sync (NTP).
+
+#### Distinct safety responses — latching vs auto-recovering
+The prototype conflated these; the daemon must not. Two responses **latch** (require a deliberate human reset); the rest are **auto-recovering degradations** that resume on their own once the condition clears.
+
+| Trigger | Response | Recovery |
+|---|---|---|
+| **Network staleness** (frames stop / arrive late) | Graceful degrade to a *safe-hold* | **Automatic** — resume when fresh frames return |
+| **Pi thermal / undervoltage** (SoC hot, or firmware throttle/undervoltage flag) | Tiered: shed load, then *safe-hold* | **Automatic** — resume on cooldown / power recovery |
+| **Obstruction stall** (high `Present_Current` + ~zero `Present_Position` delta — possibly a human) | Hard latch: cut `Torque_Limit`, drop current | **Manual** reset via UI/app |
+| **Explicit E-STOP** (operator / user / headset button) | Hard latch | **Manual** reset via UI/app |
+
+Neither the network nor the thermal watchdog may **hard-latch** — a transient WiFi/WAN blip or a heat spike must never force the user to walk over and reset a robot. They degrade, hold safely, and auto-recover. Only physical obstruction and a deliberate E-STOP latch.
+
+#### Tiered network watchdog (arms ≠ wheels)
+Two thresholds, with the response differing by actuator because the failure modes differ:
+
+- **T_warn** → begin a smooth **base deceleration to zero**; **arms hold** their last commanded position under torque (a held object stays held; the pose is preserved and is the natural resume point). UI/headset shows *"link degraded."*
+- **T_stop** → base fully stopped, arms still holding → **safe-hold** state. Still auto-recoverable.
+- **Fresh contiguous frames** → re-sync from the *actual* current position and ramp motion back in.
+
+Wheels decelerate (a rolling base on stale commands is a collision risk); arms hold rather than go limp (limp drops the load and loses the pose).
+
+#### Threshold profiles — LAN ≠ WAN
+A flat 100 ms is unusable: WAN RTT alone is 40–160 ms with jitter, and even bad LAN WiFi spikes past 100 ms (the exact reason the legacy serial-timeout floor was raised to 500 ms). The app declares the link mode at handshake, and the daemon selects a profile:
+
+| Mode | T_warn | T_stop |
+|---|---|---|
+| **LAN** | ~150 ms | ~500 ms |
+| **WAN** | ~300 ms | ~1000 ms |
+
+*Upgrade path (not v1):* make it adaptive — `T_warn = max(150 ms, 3×median_RTT)`, `T_stop = max(500 ms, 6×median_RTT)` — self-tuning with no magic numbers.
+
+#### VR re-clutch on resume
+After any safe-hold, **VR teleop requires the operator to re-engage the clutch** (re-squeeze) before motion resumes — otherwise the robot would snap to wherever the operator's hands drifted during the outage. Keyboard teleop resumes directly (it is incremental jog, no jump risk).
+
+#### Pi thermal & power watchdog
+A low-rate (~1 Hz) monitor — **off the 50 Hz hot path** — reads the SoC temperature (`/sys/class/thermal/thermal_zone0/temp`) and the firmware throttle/undervoltage bitmask (`vcgencmd get_throttled`). The motivation is control-quality, not just hardware protection: Pi firmware soft-throttles around 80 °C, and a throttled CPU can't guarantee the 50 Hz loop — so the daemon must react *before* the firmware does. Undervoltage (the README's documented USB-power failure mode) is watched on the same monitor.
+
+Tiered, and **auto-recovering** (it belongs with network staleness, not the hard latch):
+
+| Threshold | Response |
+|---|---|
+| **~70 °C, or undervoltage flag set** (warn) | Surface on telemetry + UI; shed non-critical heat/load — drop camera fps/JPEG quality, dim or pause the kiosk render. Motion continues. |
+| **~80 °C (hot)** | Enter **safe-hold** (stop motion) before firmware throttle bites; daemon stays alive to report; auto-resume on cooldown. |
+
+`pi_temp_c` and the throttle flags ship in the periodic (1 Hz) telemetry so the app and NoriScreen display them. Thresholds are Pi 5 starting points — tune against measured in-enclosure thermals.
 
 ---
 
@@ -55,7 +127,7 @@ This is the **only** end-user setup step.
 - **Framework justification:** Python is used here deliberately — a run-once, exits-after task outside the real-time motor path, where library convenience (HTTP servers, NetworkManager DBus wrappers) outweighs C++ performance benefits.
 - **Launch security:**
   - The pairing handshake requires **token authentication**.
-  - The pipeline strictly forbids writing **video buffers** to the persistent cache (SD card) to prevent flash wear and privacy leaks. **See risk R5 below — this needs reconciliation with the recording flow.**
+  - The pipeline strictly forbids writing **video buffers** to the persistent cache (SD card) to prevent flash wear and privacy leaks. **Resolved in R5 (DECIDED): no persistent Pi-side video — recording frames stream to the laptop app, never the SD card.**
   - Local configs use `.json`; any persistent tensor logic uses `.safetensors` (no `pickle` → no arbitrary code execution).
   - Must be **opt-out** so developers can disable it via SSH.
 
@@ -66,24 +138,132 @@ This is the **only** end-user setup step.
 Field units need a robust, zero-downtime update path for the C++ agent, ML policies, and system dependencies.
 
 - **A/B partitioning:** via a robust controller (RAUC or Mender). Two rootfs partitions; updates stream to the inactive one in the background. On reboot the bootloader flips to the new partition; if `nori-core.service` crashes on boot, it falls back to the previous working partition.
-- **Cryptographic identity:** updates are signed and verified against the factory-flashed per-unit identity (in a secure enclave or read-only EEPROM — **not** a shared image secret). This same hardware ID authenticates the robot to the Item 3 Supabase registry.
+- **Cryptographic identity:** updates are signed and verified against the factory-flashed per-unit identity (in an **ATECC608B secure element** — see R3 resolution; **not** a shared image secret). This same hardware ID authenticates the robot to the Item 3 Supabase registry.
+- **Per-unit provisioning caveat:** OTA streams the *same* rootfs image to every unit, but **calibration and identity are per-robot**. The A/B flow must treat these as unit-local state that survives partition swaps (not baked into the image). See R12.
+
+---
+
+## e) Teleoperation Architecture
+
+Teleop is a first-class path the original plan omitted (it described only the autonomous "fetches and tidies" flow). The shipped robot must be drivable by a human — for development, demos, and data collection — over both LAN and WAN.
+
+### The laptop app is the single control client
+All operator input converges in the **laptop app**, which holds the *one* connection the Pi accepts. Keyboard, on-screen controls, and the optional VR headset are **input mappers on the laptop side** that feed one outgoing control stream. Consequences:
+
+- The Pi-side contract never changes when VR is toggled on/off — VR is genuinely just a feature switch in the app.
+- The daemon's network producer is single by construction (validates the SPSC queue choice in §b).
+- The robot exposes exactly **one** authenticated control surface, whether the operator is on the LAN or across the internet.
+
+### One canonical command set; keyboard and VR map onto it
+Define the teleop command vocabulary **once**. Both keyboard and VR emit the *same* fields — VR must not grow a parallel code path.
+
+- For v1, VR controller 3D poses map to **exactly the DOF the keyboard already exposes**, nothing more.
+- VR adds one control concept now: a **clutch** ("squeeze to move") — release to reposition your hands without moving the robot, re-squeeze to re-engage.
+- Workspace scaling, per-arm fine selection, and richer mappings come later behind the same command set.
+
+### Where IK runs — keyboard and VR both emit `jog`; the daemon runs IK (decided 2026-06-24, option a)
+- **Canonical path (keyboard + VR):** every input mapper emits the shared **`jog`** task-space command (6-DOF per arm — see `nori_protocol_schema.md`). The VR mapper, **on the laptop**, converts controller pose-deltas into `jog` rates exactly as rpi4 already does (its VR path is delta-based, not 1:1 absolute). The **C++ daemon runs IK + motion smoothing on `jog` regardless of source** — one control path, resampled onto the steady 50 Hz loop, holding the latest state and owning the calibration clamp.
+- **Secondary path (kept):** laptop-side IK sending an absolute lerobot `action` dict — for fast IK iteration in Python and the direct-USB bring-up path.
+- **Reserved (future, not built):** raw-controller-pose frames with daemon-side IK-from-poses — *only* if true absolute 1:1 hand-tracking is ever wanted. Rejected for now: it adds a second control path for fidelity rpi4 doesn't currently deliver, and contradicts the "same system for laptop and Quest" goal.
+
+### VR connection model
+Quest 3 connects to the **app's** WebXR endpoint on the operator's own machine (localhost is a secure context — no cert pain). The app relays into the single control stream. The Pi never terminates the headset connection. *(Quest-direct-to-Pi was rejected: it solves "no laptop," which is the **autonomy** requirement, not a teleop one, while taking on the worst TLS/NAT/load costs.)*
+
+### LAN vs WAN operation
+- **LAN (default on home WiFi):** the app discovers the robot via mDNS, connects directly, token auth. Lowest latency; ZMQ video. This is the always-working baseline.
+- **WAN (explicit "remote" mode):** the connection is brokered through the **Supabase registry + relay** (see §f). TLS + per-robot authorization; WebRTC video. The *architecture is identical* to LAN — only the security/NAT layer changes.
+
+### E-STOP and reset from inside the headset
+A VR operator can't reach the phone or kiosk, so (extends R9 / R13):
+- A **Quest controller button maps to E-STOP**, sent as a priority control message.
+- **Reset** after a hard latch requires a deliberate gesture (e.g. hold-to-reset) and is gated on the operator seeing the scene via the live video feed before clearing.
+
+### Haptic feedback
+The telemetry stream already carries per-motor `Present_Current`, and on the gripper that is the **virtual tactile signal** (current ∝ contact force). Route that to **Quest controller rumble** on contact. This is a reason the telemetry keeps the current channels through any protocol revision.
+
+### Headless (no-headset) feature parity
+"As much as possible without a Quest" is a hard requirement, not a nicety. With no headset attached the app must offer:
+
+- Live robot state + video view
+- Teleop jog controls (keyboard is the v1 baseline; the frontend's existing rapier3d 3D scene is the natural home for a draggable end-effector target later)
+- Record start/stop
+- E-STOP + reset
+- Grip-force readout
+
+All of these map to control/telemetry that already exists — parity is mostly a UI commitment, not new protocol.
+
+---
+
+## f) Transport, Wire Protocol & WAN Rendezvous
+
+### Control channel — JSON, versioned (not packed binary)
+The control channel stays **JSON-line TCP** (the format the laptop clients already speak), with two additions:
+
+- A **`protocol_version`** field asserted in the handshake (and ideally every frame). Both ends refuse mismatched versions **loudly** rather than decoding garbage — the non-negotiable safety tripwire.
+- **Golden-fixture tests in both repos** (same canonical message → same decoded result) so any field change breaks CI before it ships.
+
+Rationale: at ~50 Hz the control frames are a few hundred bytes — ~15 KB/s, trivial on any link — and JSON parse in C++ (e.g. simdjson) is ~1–2 µs against a 20 ms loop budget. The zero-copy win of packed structs is real but buys microseconds and kilobytes we don't need, while a silent field reorder/width drift across the C++/Python boundary would corrupt joint commands near a human. JSON keeps the wire human-debuggable (`tcpdump`) and the existing clients working unchanged. This **supersedes the original binary-struct R8 resolution** (see revised R8).
+
+*Upgrade path (only if a measured trigger fires — serialize cost or bandwidth over a stated budget):* move to a codegen **IDL (Cap'n Proto / FlatBuffers)**, never hand-rolled structs, so there's a single source of truth and no hand-maintained drift. Not needed for launch.
+
+### Video channel — ZMQ now (LAN), WebRTC soon (WAN)
+- **LAN baseline (keep working):** ZMQ PUB/SUB, MJPEG → base64 JPEG, `CONFLATE=1` per camera (today's proven path; backpressure drops frames, not memory). ZMQ does **not** traverse NAT.
+- **WAN (build as soon as possible):** **WebRTC @ ~24 fps.** Because ZMQ can't cross NAT, WAN video needs WebRTC from the first WAN release — it is *near-term, not "someday."* ⚠️ The **Pi 5 has no hardware video encoder** (unlike the Pi 4), so the stream is **software-encoded** on the CPU — pin the encoder to dedicated core(s) so it doesn't starve the 50 Hz loop, keep fps/resolution modest, and budget against R1 (see R11). **Opus audio (§g) rides the same WebRTC session** as a separate track.
+- Control stays JSON for both modes; only the video/audio transport differs.
+
+### WAN rendezvous & authorization — via the Item 3 Supabase registry
+The Pi sits behind home NAT; a remote operator can't reach it directly. WAN mode routes through Supabase:
+
+1. **Identity:** the robot authenticates to Supabase with its per-unit hardware identity (R3 / ATECC608B), the same ID used to verify OTA updates.
+2. **Authorization:** Supabase records which operator accounts may control which robots and issues a **short-lived, scoped session token** for a specific robot.
+3. **Rendezvous / NAT traversal:** the registry brokers the connection — either a managed **relay (TURN-style)** carrying both the JSON control channel and the WebRTC media, or by handing both ends a **WireGuard/Tailscale peer** for a direct encrypted tunnel. WebRTC video and the control channel **share this one signaling/relay path** rather than each inventing its own.
+4. **Transport security:** all WAN control traffic is TLS; LAN stays token-only with mDNS discovery.
+
+> The detailed WAN/Supabase sequence (account → authz → token → relay → connect) is a sub-plan to expand during implementation; the four points above are the binding contract.
+
+---
+
+## g) Audio I/O
+
+The robot carries a **speaker and microphone**. Audio is a new I/O subsystem, kept deliberately small for v1 and decoupled from the 50 Hz motor path.
+
+### v1 scope (now)
+- **Mic → laptop (uplink):** the operator hears the room. One-way capture on the Pi, Opus-encoded, streamed to the laptop and played there.
+- **Robot sound effects (output):** local playback of short pre-rendered clips (status chimes, alerts). Wired to safety events early — e.g. an audible cue on **safe-hold / E-STOP** (improves the R13 feedback story) — since it's cheap and useful.
+
+### Deferred (later, unless a design reason pulls it earlier)
+- **Wake word + voice commands** (mic → STT), and an **LLM intent layer** on top.
+- **Operator → robot voice** (talk *through* the robot speaker) — this makes audio two-way. For now operator voice (if any) stays on the laptop/call side, not routed through the robot.
+- **Acoustic echo cancellation (AEC)** — required once playback and capture are live on the robot *simultaneously* (two-way). Explicit TODO; not needed while audio is uplink-only.
+- **Audio as a recorded dataset channel** for IL/policy training.
+
+### Transport — RTP/Opus now, folds into WebRTC later
+For v1, send mic audio as **Opus over RTP** on its own channel (e.g. GStreamer: Pi `alsasrc ! opusenc ! rtpopuspay ! udpsink` → laptop `udpsrc ! rtpopusdepay ! opusdec ! sink`), separate from control and video, with a small jitter buffer on the laptop. This is the standard low-latency "mic-to-remote-speaker" recipe and uses **the same codec/payload WebRTC speaks** — so when the WAN/WebRTC path lands (§f), audio becomes a WebRTC **track** on the existing session with minimal rework (and two-way + AEC become natural there). Do **not** put audio on the ZMQ `CONFLATE` camera path — audio needs continuity, not latest-only.
+
+### Process model & OS
+- Audio runs in its **own process/thread**, never the 50 Hz daemon loop (mirrors the standalone camera capture). `audio_io.cpp` is its eventual home; v1 may start as a small standalone GStreamer helper.
+- **ALSA only** for v1 (capture + clip playback); skip PulseAudio/PipeWire until two-way mixing/AEC needs them. §a keeps the minimal ALSA stack rather than stripping it.
+- **Hardware:** a **USB audio device** (class-compliant speaker + mic, or a USB sound card) on the shared peripheral hub — consistent with the all-USB topology (R16), no GPIO/I²S device-tree work. This also sets up the **two-way phase**: a USB conference speakerphone with **hardware AEC** drops onto the same hub later. Pin the exact part before factory imaging (like R3).
+
+### Privacy (mirrors the §2c video rule)
+A home microphone is a high-trust surface. **No audio is persisted** (no audio to SD), there is a **clear mute control + "mic live" indicator**, and mic streaming is **opt-in**. Tracked as R15.
 
 ---
 
 ## UI Migration Strategy
 
-The frontend kiosk (`index.html`) follows a staged migration to fit the **1 GB Pi RAM ceiling**:
+The frontend kiosk (`index.html`) follows a staged migration to fit the **2 GB Pi 5 RAM ceiling**:
 
 ### Phase 1 (Launch)
-`chromium-browser --kiosk` serving the existing HTML/WebSocket UI over `localhost:9090`. Works today, zero rewrite, allows immediate beta shipping.
+`chromium-browser --kiosk` serving the existing **NoriScreen** kiosk UI (status + E-STOP) — already shipping on the Pi's 7" DSI display over HTTP **9091** (the prototype's `start_teleop.sh` brings it up today). Zero rewrite, allows immediate beta shipping. *(An earlier draft said `localhost:9090`; the actual port is 9091 and the UI already exists — build on NoriScreen rather than re-introducing a kiosk.)*
 
 ### Phase 2 (RAM-driven C++ migration)
-When the RAM budget is breached by Phase 3's heavy V4L2 zero-copy camera streams, Chromium is removed and the UI is rewritten in **Slint** or **LVGL**, compiled into the `NoriCoreAgent` daemon.
+When the RAM budget is breached by the zero-copy camera + software WebRTC-encode path (M1 onward), Chromium is removed and the UI is rewritten in **Slint** or **LVGL**, compiled into the `NoriCoreAgent` daemon.
 
 - **Architecture:** bypasses the X11/Wayland window manager entirely — draws directly to the DSI screen via DRM/KMS or `/dev/fb0`.
 - **Performance:** UI memory drops from ~150 MB (Chromium) to **< 20 MB**, hitting a stable 60 fps. IPC changes from network WebSockets to internal lock-free event queues between UI and motor threads.
 
-> **Launch outcome:** an assistive user unboxes the robot, connects WiFi via their phone, runs the laptop application, and the robot fetches and tidies — zero code. Developers get open LeRobot underneath, a mathematically stable native C++ hardware profile, and ROS/remote access without web-browser overhead.
+> **Outcome (by milestone):** first (M1/M2) a remote operator — on a laptop or in a VR headset, anywhere on the internet — drives the robot with live video; later (M4 + the autonomy Item) an assistive user unboxes it, connects WiFi via their phone, and the robot tidies with zero code. Developers get open LeRobot underneath, a mathematically stable native C++ hardware profile, and ROS/remote access without web-browser overhead.
 
 ---
 
@@ -101,14 +281,15 @@ nori-teleop/
 │   ├── include/                  ◀── Public header blueprints (.h / .hpp)
 │   │   ├── bus_controller.hpp
 │   │   ├── safety_watchdog.hpp
-│   │   ├── binary_protocol.hpp
+│   │   ├── wire_protocol.hpp     ◀── JSON control/telemetry schema (from nori-protocol submodule)
 │   │   └── ui_manager.hpp
 │   └── src/                      ◀── Implementation source blocks (.cpp)
 │       ├── main.cpp              ◀── Init, affinity layout, core thread setup
-│       ├── bus_controller.cpp    ◀── termios Feetech bus worker logic
-│       ├── safety_watchdog.cpp   ◀── 50 Hz stall + timestamp monitoring loops
+│       ├── bus_controller.cpp    ◀── Feetech C++ SDK bus worker (one PortHandler/bus, own thread)
+│       ├── safety_watchdog.cpp   ◀── 50 Hz stall + tiered arrival-time watchdog
 │       ├── video_grabber.cpp     ◀── Zero-copy kernel mmap frame capture
-│       ├── network_broker.cpp    ◀── Binary payload / WebRTC broker
+│       ├── network_broker.cpp    ◀── JSON control channel / ZMQ + WebRTC video broker
+│       ├── audio_io.cpp          ◀── Mic Opus/RTP uplink + sound-effect playback (ALSA); WebRTC track later
 │       └── ui/
 │           ├── face_canvas.slint ◀── Declared UI layout definitions
 │           └── ui_manager.cpp    ◀── Slint integration bridge (or LVGL)
@@ -133,22 +314,45 @@ These are tensions or gaps surfaced while aligning this doc with the laptop app'
 
 | ID | Risk | Why it matters | Suggested resolution |
 |---|---|---|---|
-| **R1** | **Chromium kiosk vs. RAM budget** | Phase 1 keeps Chromium (~150 MB) on a 1 GB Pi *alongside* the daemon, V4L2 camera buffers, and WebRTC encode. The "< 100 MB idle" target is the daemon baseline only — total system headroom at launch is thin. | Measure real Phase-1 peak RAM with cameras streaming **before** committing to ship on Chromium. Have the Slint/LVGL path (Phase 2) ready earlier than "when budget is breached." |
+| **R1** | **Chromium kiosk vs. RAM budget** | Phase 1 keeps Chromium (~150 MB) on the 2 GB Pi 5 *alongside* the daemon, V4L2 camera buffers (ZMQ JPEG at LAN launch; software WebRTC encode once WAN ships — see R11), and the audio stack (§g). The "< 100 MB idle" target is the daemon baseline only — 2 GB helps but headroom with Chromium + cameras + encode is still finite. | Measure real Phase-1 peak RAM with cameras streaming **before** committing to ship on Chromium. Have the Slint/LVGL path (Phase 2) ready earlier than "when budget is breached." |
 | **R2** | **UI compiled into the safety daemon** | Phase 2 compiles the UI into `NoriCoreAgent`. A UI render bug/leak can now crash the process that owns the 50 Hz safety loop. `OOMScoreAdjust=-1000` would also protect the memory-hungry UI from the OOM killer, defeating its purpose. | Keep the safety/motor loop in a **separate process** from the UI even after the Chromium removal; communicate over the lock-free queue across a process boundary (shared memory). Only the safety process gets `OOMScoreAdjust=-1000`. |
-| **R3** | **No secure enclave on stock Pi 4/5** | "secure enclave or read-only EEPROM" — the Pi has no TPM by default, and the boot EEPROM isn't a general secret store. Per-unit signed identity needs a concrete mechanism. | Decide between an add-on secure element (e.g. ATECC608 / OP-TEE) vs. a sealed key in a read-only partition. Pin this before factory imaging — it's hard to retrofit. |
-| **R4** | **A/B partitioning storage cost** | Two rootfs partitions roughly doubles rootfs storage on the SD/eMMC, and RAUC/Mender add bundle staging space. | Confirm the flash size budget covers 2× rootfs + update staging + the recording flash buffer (R5) simultaneously. |
-| **R5** | **"No video to SD" vs. on-Pi recording buffer** ⚠️ | Item 2c forbids writing video buffers to persistent cache (SD). But `NORI_PLAN.md` (realigned) says the Pi stores recording frames as a **binary stream on local flash** during a run, which the laptop later pulls. These directly conflict. | Reconcile explicitly: e.g. (a) recording buffer is **RAM-backed / tmpfs**, not the SD persistent cache; or (b) recording is an **opt-in exception** to the no-persist privacy rule, deleted immediately after the laptop pull. Document which. |
+| **R3** | **No secure enclave on stock Pi 4/5** (DECIDED 2026-06-24) | The Pi has no TPM by default, and the boot EEPROM isn't a general secret store. Per-unit signed identity needs a concrete mechanism. | **DECIDED: ATECC608B secure element** — see resolution below. Pin before factory imaging. |
+| **R4** | **A/B partitioning storage cost** | Two rootfs partitions roughly doubles rootfs storage on the SD/eMMC, and RAUC/Mender add bundle staging space. | Confirm the flash size budget covers 2× rootfs + update staging. (No persistent recording buffer to budget — R5 streams to the laptop.) |
+| **R5** | **"No video to SD" vs. on-Pi recording buffer** (DECIDED 2026-06-24) | Item 2c forbids writing video buffers to persistent cache (SD); an earlier `NORI_PLAN.md` draft implied an on-flash recording buffer. | **DECIDED: no persistent Pi-side video — stream frames to the laptop app (matches the prototype); WAN recording, if ever needed, uses tmpfs/RAM, never SD.** See resolution below. |
 | **R6** | **mDNS reliability** | `xlerobot.local` resolution fails on some routers/OSes (mDNS blocked, client subnet isolation). | Already covered laptop-side by manual-serial fallback; ensure the daemon **also** exposes a reachable IP path and the captive portal surfaces the assigned IP for manual entry. |
-| **R7** | **Transport split: TCP control vs. WebRTC/UDP video** | `network_broker.cpp` brokers both the binary control payload and WebRTC video. The laptop expects a single TCP control socket + a separate WebRTC/UDP video channel. | Confirm the broker cleanly separates the two so a video stall can't backpressure the control stream (and vice versa). Version the binary control struct. |
-| **R8** | **Shared wire-protocol drift across two repos** (resolved 2026-06-16) | The Pi daemon (`nori-teleop`) and the laptop app (`NoriLeLab`) are **separate repos — this is intentional and correct** (different toolchains: C++/CMake-on-ARM vs. Python/npm-on-x86; different deploy paths: signed A/B OTA vs. PyPI/installer; different blast radius). The split is *not* the risk. The risk is that `binary_protocol.hpp` (Pi) and the laptop's pack/unpack code become **two hand-maintained definitions of one byte layout** that drift silently — a reordered field or changed int width corrupts joint commands with no error, on a robot moving near a human. | **Keep both repos.** Fix drift with a single source of truth + a runtime tripwire (see resolution below). |
+| **R7** | **Transport split: TCP control vs. video channel** | `network_broker.cpp` brokers both the JSON control channel and video (ZMQ on LAN / WebRTC on WAN). The laptop expects a single control socket + a separate video channel. | Confirm the broker cleanly separates the two so a video stall can't backpressure the control stream (and vice versa). Version the JSON control schema (see revised R8). |
+| **R8** | **Shared wire-protocol drift across two repos** (resolved 2026-06-16; revised 2026-06-24) | The Pi daemon (`nori-teleop`) and the laptop app (`NoriLeLab`) are **separate repos — this is intentional and correct** (different toolchains: C++/CMake-on-ARM vs. Python/npm-on-x86; different deploy paths: signed A/B OTA vs. PyPI/installer; different blast radius). The split is *not* the risk. The risk is that the Pi daemon's protocol definition and the laptop's parse/serialize code become **two hand-maintained definitions of one message format** that drift silently — a renamed, reordered, or retyped field corrupts joint commands with no error, on a robot moving near a human. | **Keep both repos.** Fix drift with a single source of truth + a runtime tripwire (see resolution below). |
+| **R9** | **E-STOP reset path** | The hard latch requires an explicit user reset, but the reset command's transport/auth isn't specified. | Define the reset as an authenticated command on the TCP control channel (see laptop `NORI_PLAN.md` LAN matrix), and confirm it's reachable even when the control stream is in safe-stop. **VR-specific branch: see R13.** |
 
-### [NEW] R8 resolution — shared protocol contract
+### [NEW] R8 resolution — shared protocol contract *(revised 2026-06-24: JSON, not binary)*
 
-Two repos, one contract. Don't merge them; add a thin shared definition both pull from, plus a version check that turns silent drift into a loud failure.
+Two repos, one contract. Don't merge them; add a thin shared definition both pull from, plus a version check that turns silent drift into a loud failure. **The wire format is JSON** (see §f for the rationale — packed binary buys perf we don't need at 50 Hz while adding a cross-language drift hazard near a moving robot).
 
-1. **New repo `nori-protocol`** — the canonical wire format. Start hand-rolled (easiest now): one authoritative `binary_protocol.hpp` (fixed-layout C structs, the format the daemon already speaks) + a matching Python `ctypes`/`struct` mirror for the laptop. Consume it as a **git submodule** in both `nori-teleop` and `NoriLeLab` so neither repo owns a private copy.
-2. **`protocol_version` field in the TCP handshake** (and ideally every frame). Both ends assert it on connect and **refuse mismatched versions loudly** instead of decoding garbage. This is the non-negotiable safety tripwire.
-3. **Golden-bytes fixture test in both repos** — same hex blob → same decoded struct — so any struct change breaks CI before it ships.
+1. **Shared schema in a `nori-protocol` submodule** — one canonical definition of the JSON control + telemetry messages (a JSON Schema, or a single annotated `.py`/`.hpp` pair of field lists), consumed as a **git submodule** in both `nori-teleop` and `NoriLeLab` so neither repo owns a private copy.
+2. **`protocol_version` in the handshake** (and ideally every frame). Both ends assert it and **refuse mismatched versions loudly** instead of decoding garbage. Non-negotiable safety tripwire.
+3. **Golden-fixture test in both repos** — same canonical message → same decoded result — so any field change breaks CI before it ships.
 
-Upgrade path: if the struct set later grows beyond a handful, swap the hand-rolled header for a codegen IDL (FlatBuffers / Cap'n Proto — both zero-copy, fine for the 50 Hz path). Not needed now.
-| **R9** | **E-STOP reset path** | The hard latch requires an explicit user reset, but the reset command's transport/auth isn't specified. | Define the reset as an authenticated command on the TCP control channel (see laptop `NORI_PLAN.md` LAN matrix), and confirm it's reachable even when the control stream is in safe-stop. |
+Upgrade path: only if a measured trigger fires (serialize cost / bandwidth over budget), swap JSON for a **codegen IDL** (Cap'n Proto / FlatBuffers) — never hand-rolled structs. Not needed for launch.
+
+### [DECIDED 2026-06-24] Resolutions from the teleop / transport design pass
+
+These close several open risks and add detail surfaced while specifying the teleop + LAN/WAN architecture (§e, §f).
+
+**R3 (per-unit identity) — DECIDED: ATECC608B secure element.**
+Stock Pi 4/5 has no usable TPM, and a key sealed in a read-only partition is extractable by anyone with physical SD access (per-unit, but not tamper-resistant). OP-TEE/TrustZone on the Pi is fragile without fused keys and not production-grade here. The **ATECC608B** (I²C, ~$1) stores the private key non-extractably, does ECDSA on-chip, is well-supported (cryptoauthlib), behaves identically on Pi 4/5, and **decouples identity from the OS image** so A/B partition swaps never touch it. Cost: a small BOM addition + I²C provisioning at the factory — acceptable since the hardware is ours. *Dev note:* abstract identity behind an interface with a **software-key fallback** so software work proceeds now; swap to ATECC at hardware bring-up. Pin before factory imaging.
+
+**R5 (no-video-to-SD vs recording buffer) — DECIDED: no persistent Pi-side video; stream to the app.**
+The conflict is largely illusory. The prototype's recording path already **streams frames to the laptop, which writes the `LeRobotDataset`** — the Pi never persists video. That is simultaneously the best-performance option (no SD I/O contention with the 50 Hz loop, no RAM pressure beyond the stream buffer) and fully satisfies the 2c "no video to SD" privacy/flash-wear rule with **zero conflict**. Keep it for launch. The only case tempting a Pi-side buffer is **WAN recording**, where you don't want lossy H.264 as training data — and even then it must be a **tmpfs/RAM ring flushed per-episode, never SD**. Default: stream to the app.
+
+**Provisioning (per-unit calibration + identity) — DEFERRED to pre-ship, constraint documented now (R12).**
+Not a blocker today: calibration is provisioned manually (scp the per-unit JSON, per the README) and works. The automation only becomes necessary at factory-imaging time, because OTA ships one image to all units while **calibration and identity are per-robot**. Action now: §a (imaging) and §d (OTA) must not assume a single golden image with no per-unit step. Owner: shipping phase.
+
+| ID | Risk | Why it matters | Suggested resolution |
+|---|---|---|---|
+| **R10** | **WAN attack surface** | WAN mode exposes robot control to the public internet. Weak auth = remote control of a machine moving near humans. | TLS on all WAN control; short-lived scoped per-robot tokens from Supabase (R3 identity); never expose the control port via naive port-forwarding — broker through the relay/VPN (§f). |
+| **R11** | **WebRTC encode load on the Pi 5 (no HW encoder)** | WAN video (WebRTC, ~24 fps) is the heaviest single addition. **The Pi 5 removed the Pi 4's hardware H.264 encoder and has no HW video encoder at all**, so WAN video must be **software-encoded** on the CPU — competing with the 50 Hz loop and the new audio stack (§g). | Pin the software encoder to dedicated core(s) away from the motor threads; keep resolution/fps modest (e.g. 640×480 @ 24 fps); budget CPU/RAM against R1 and validate on the 2 GB Pi 5 before committing WAN video. Opus audio encode is cheap by comparison. |
+| **R12** | **Per-unit factory provisioning** (calibration + identity) | OTA ships one image; calibration + identity are per-robot. No automated provisioning step exists yet. | Deferred to pre-ship (see above). Document the constraint in §a/§d now; design the factory flow before first batch. |
+| **R13** | **E-STOP / reset reachability in VR** | A headset operator can't reach the phone/kiosk to stop or reset. | Map a Quest controller button to E-STOP; gate reset behind a deliberate gesture + live-video confirmation (extends R9). |
+| **R14** | **Pi thermal / undervoltage throttling** (spec'd 2026-06-24) | Firmware throttle at ~80 °C breaks 50 Hz determinism; undervoltage (the README's USB-power issue) does the same. | Addressed: tiered, auto-recovering thermal/power watchdog in §b (1 Hz monitor, shed-load → safe-hold, telemetry). Tune thresholds against in-enclosure thermals. |
+| **R15** | **Microphone privacy in the home** | A home mic is a higher trust surface than cameras; persisted or always-on audio is a serious privacy/PR risk. | No audio persisted (no audio to SD, mirrors R5); clear mute + "mic live" indicator; mic streaming opt-in. See §g. |
+| **R16** | **Shared USB hub: power, bandwidth & single point of failure** | All peripherals — both motor buses (CH343), cameras, and USB audio — reach the Pi 5 through one USB Type-A multi-port **data hub**. That concentrates power draw, USB bandwidth, and failure into one part: motor inrush can brown out neighbors (the README's USB-power failure mode, now *shared*), multiple MJPEG cameras + audio compete for one host-controller lane, and a hub fault drops *everything* at once. | Use a **powered** hub with headroom for motor inrush + cameras + audio; verify per-port current under simultaneous load. Keep deterministic `udev` naming keyed on **port path / serial** so `/dev/xlerobot_bus{1,2}` stay stable through the hub. Budget aggregate USB bandwidth (cameras + audio) against the host controller. The §b undervoltage watchdog flags hub-induced brownouts; surface a dropped bus rather than letting it silently stall. |

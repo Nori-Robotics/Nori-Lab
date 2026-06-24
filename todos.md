@@ -109,49 +109,80 @@ first task is to add them in `server.py` (e.g. `POST /nori/customers/me/provisio
 
 ---
 
-## 3. Phase 3 — Marketplace browse + install ✅ (backend exists)
+## 3. Phase 3 — Marketplace browse + install ✅ DONE (2026-06-23)
 
-- [ ] **Browse** (`frontend/src/nori/pages/marketplace.tsx`): `GET /api/v1/marketplace/policies`
-  (`?source=own|first_party|community`). Policy cards: title, description, source badge.
-  Client-side filter/search for v1.
-- [ ] **Acquire + download flow**:
-  - First-party w/o acquisition → prompt, then `POST /marketplace/policies/{listing_id}/acquire`.
-  - Download via `GET /api/v1/marketplace/policies/{ref}/download` (`ref` = `jobs.id` for own,
-    `marketplace_listings.id` otherwise). LeLab Python receives bytes, writes to local cache
-    (matches the existing rollout local-disk load path).
-- [ ] *(Browse + download + cache only.* **Robot push** via `rollout` against hardware is 🔴
-  blocked — needs the Pi. Build everything up to "policy cached locally" now.)
+> Verified: `ruff` clean, backend imports OK, Nori files tsc-clean, `npm run build` clean.
+> Live: all four proxy routes exist (return 502, not 404). Full forwarding couldn't be
+> end-to-end tested because **Nori-Backend on :8001 was down** at test time — but the
+> graceful 502 ("can't reach backend") path is itself confirmed, and Phase 2 proved
+> forwarding works when the backend is up. Restart the backend to exercise live browse.
+>
+> **Schema note:** the live `GET /marketplace/policies` has **no `source` query param** —
+> filtering is client-side (4 tabs: All/Own/First-party/Community), as the plan anticipated.
+
+- [x] **Backend proxies** in `server.py` (`# NORI:`): `GET /nori/marketplace/policies`,
+  `GET /nori/marketplace/datasets/public`, `POST /nori/marketplace/policies/{id}/acquire`,
+  `POST /nori/marketplace/policies/{ref}/download`.
+- [x] **Streaming download** in `nori_client.download_policy()` — streams safetensors bytes
+  to `~/.cache/huggingface/lerobot/nori_policies/<ref>/model.safetensors` atomically (via
+  `.part` temp + `os.replace`); returns `{ref, path, size_bytes}`. Cache path helpers
+  (`NORI_POLICY_CACHE`, `nori_policy_dir`) added to `utils/config.py`.
+- [x] **Browse page** (`pages/marketplace.tsx`): policy cards (title, description, source
+  badge, class, price), source-filter tabs + client-side search.
+- [x] **Install flow**: first-party → `acquire` then `download`; own-trained → direct
+  download. Per-card install status ("Installing…" → "Cached N KB locally" / error).
+- [x] **Entry link**: added a "Nori" button to `LandingTopBar` → `/nori/account` (`# NORI:`,
+  the one sanctioned modification to an existing LeLab screen).
+- [ ] 🔴 **Robot push** via `rollout` against the downloaded policy — blocked on the Pi.
+  Bytes are cached locally; wiring the cached `model.safetensors` into a rollout needs a
+  reachable robot to test, so deferred with Phase 5.
 
 ---
 
-## 4. Phase 4 — Reroute Python HF calls ✅ (the non-Pi slice; backend exists)
+## 4. Phase 4 — Reroute Python HF calls ✅ DONE (client + API plumbing) (2026-06-23)
 
 Honor the invariant: **no HF token ever on the laptop.** All HF access via Nori-Backend.
 
-- [ ] **`lelab/datasets.py` — upload client (4-step presigned-S3 flow)** `# NORI:`
-  Replace any direct `HfApi(token=...).upload_folder(...)` with
-  `nori_client.upload_dataset(local_path)` driving:
-  1. Build manifest `[{path, size}, ...]` from the assembled dataset dir; `POST /datasets/upload/start`.
-  2. PUT each file to its presigned S3 URL with header `x-amz-server-side-encryption: AES256`.
-  3. `POST /datasets/upload/{session_id}/finalize`; on 422 HEAD-miss, retry the listed `missing`
-     PUTs and re-finalize.
-  4. Poll `GET /datasets/upload/{session_id}` (~5 s) until terminal (`PROMOTED` = success;
-     `FAILED`/`PROMOTION_FAILED`/`CANCELLED`).
-  - Enforce manifest rules client-side before `/start`: non-empty; relative paths only
-    (no `..`/absolute); extension allowlist `{.parquet,.json,.mp4,.mkv,.txt,.md,.png,.jpg}`;
-    ≤5 GB/file; ≤20 GB total; must contain `info.json`.
-  - *(This is the upload-to-backend client only. The pre-step that **pulls the binary recording
-    log from the Pi** is 🔴 blocked.)*
-- [ ] **`lelab/jobs.py` / `lelab/train.py` — training dispatch** `# NORI:`
-  Replace `huggingface_hub.run_job(...)` with `nori_client.dispatch_training(timeout_seconds=...)`
-  (`POST /api/v1/training/dispatch`, body `{timeout_seconds: 60..3600}`). Returns
-  `{internal_job_uuid, hf_job_id, ...}`.
-- [ ] **Training-log polling** `# NORI:` Replace `huggingface_hub.fetch_job_logs(...)` with
-  `nori_client.get_job_logs(job_uuid, since=offset)` every ~2 s
-  (`GET /api/v1/training/jobs/{id}/logs?since=<offset>` → `{lines, next_offset, job_status,
-  is_terminal}`). Surface in the existing "watch training" UI.
-- [ ] **`lelab/server.py` — config bootstrap** `# NORI:` add `NORI_BACKEND_URL` + JWT
-  pass-through wiring (frontend → LeLab Python → Nori-Backend).
+> Verified: `ruff` clean, Nori files tsc-clean, `npm run build` clean. Manifest
+> builder/validator **unit-tested** (valid dataset + 5 rejection cases). Live: training
+> proxies forward → 401 with dummy token; upload route → 404 for missing dataset (local
+> precondition runs before the backend call). Full S3 round-trip not exercised (needs a real
+> dataset + backend S3), but the orchestration + error paths are in place.
+
+- [x] **`nori_client.upload_dataset()` — full 4-step presigned-S3 flow**: build+validate
+  manifest → `start` → PUT each file (`x-amz-server-side-encryption: AES256`) → `finalize`
+  (retries the 422 HEAD-miss `missing` set once) → poll `GET …/{id}` until terminal
+  (`PROMOTED` success; else raises). Fixed the stub's `{files:}` → `{manifest:}` body.
+- [x] **Manifest rules** enforced client-side via module-level `build_manifest()` /
+  `validate_manifest()` (unit-testable, no client needed): non-empty; relative paths only;
+  extension allowlist; ≤5 GB/file; ≤20 GB total; must contain `info.json`. `ManifestError`.
+- [x] **Upload route** `POST /nori/datasets/upload {repo_id, commit_message?}` — resolves the
+  LeRobot cache path, 404s if not a dataset dir, else runs `upload_dataset` (synchronous,
+  mirrors existing `/upload-dataset`; background later if long uploads hurt UX).
+- [x] **Training dispatch + polling proxies** in `server.py` + typed client methods:
+  `POST /nori/training/dispatch {timeout_seconds}`, `GET /nori/training/jobs`,
+  `GET …/{id}`, `GET …/{id}/logs?since=`. (These also back the Phase 6 history UI.)
+- [x] **`server.py` config + JWT pass-through** — done in Phase 1/2.
+- [x] 🟢 **Deep integration — option (a) DONE (2026-06-23):** added
+  `runners/nori_cloud.py` `NoriCloudJobRunner` implementing the `JobRunner` Protocol
+  (`isinstance(r, JobRunner)` verified). Wired into `jobs.py`: `JobTarget`/`JobRecord` gain
+  a `nori_cloud` runner + `timeout_seconds`/`nori_job_uuid`; `job_registry.start(...,
+  nori_jwt=)` branches to it; `create_training_job` forwards `X-Nori-JWT` and maps
+  `NoriBackendError` → HTTP status. A Nori training therefore appears in the **existing** job
+  list + watch UI with no frontend changes (LeLab's own `/jobs/{id}/logs` calls the runner's
+  `stream_log_lines`). Live: no session → 400; bad/expired token → 401.
+  - **Two documented constraints** (forced by the architecture, see file header): dispatch is
+    config-less (`{timeout_seconds}` only — backend decides what to train); the Python poll
+    thread can't refresh the Supabase JWT, so on expiry it stops streaming gracefully and the
+    frontend training-history page (refreshing token) becomes the source of truth. After a
+    LeLab restart a `nori_cloud` record is marked `interrupted` (no reattach without a JWT).
+- [ ] **Frontend trigger** for a `nori_cloud` job (POST `/jobs/training` with
+  `target.runner="nori_cloud"`) — lands naturally on the Phase 6 training-history page.
+- [ ] **Upload trigger UI** (small): a "Push to Nori" action on a dataset → `uploadDataset()`.
+- [ ] Reroute `record.py` `push_to_hub` (still HF-direct) once the upload trigger UI exists.
+- [ ] 🔴 **Pi-blocked (the dataset-producing half):** pull the binary recording log from
+  `xlerobot.local` + `tools/export_lerobot_dataset.py` to parse it into the Parquet/mp4
+  LeRobotDataset that `upload_dataset()` consumes. Needs the daemon's wire format.
 
 ---
 

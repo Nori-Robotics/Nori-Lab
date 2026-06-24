@@ -47,7 +47,7 @@ from .jobs import (
     JobTarget,
     job_registry,
 )
-from .nori_client import NoriBackendError, NoriClient  # NORI: cloud API client
+from .nori_client import ManifestError, NoriBackendError, NoriClient  # NORI: cloud API client
 
 # Import our custom recording functionality
 from .record import (
@@ -404,6 +404,94 @@ def nori_get_customer(request: Request):
     return _nori_proxy(client.get_customer)
 
 
+# NORI: marketplace (Phase 3). Browse + acquire + download-to-local-cache. Running the
+# downloaded policy against the robot (rollout) is blocked on the Pi.
+@app.get("/nori/marketplace/policies")
+def nori_list_policies(request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(client.list_policies)
+
+
+@app.get("/nori/marketplace/datasets/public")
+def nori_list_public_datasets(request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(client.list_public_datasets)
+
+
+@app.post("/nori/marketplace/policies/{listing_id}/acquire")
+def nori_acquire_policy(listing_id: str, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.acquire_policy(listing_id))
+
+
+@app.post("/nori/marketplace/policies/{ref}/download")
+def nori_download_policy(ref: str, request: Request):
+    """Stream the policy's safetensors bytes through LeLab into the local Nori cache.
+    Returns {ref, path, size_bytes}; the cached file is what rollout will load later."""
+    client = _nori_client(request)
+    dest = config.nori_policy_dir(ref)
+    return _nori_proxy(lambda: client.download_policy(ref, dest))
+
+
+# NORI: dataset upload (Phase 4). Reroutes the HF-direct push to the backend-mediated
+# 4-step presigned-S3 flow. Runs synchronously (mirrors the existing /upload-dataset);
+# long uploads block the request — background it later if needed. The producing pipeline
+# (Pi binary-log pull + tools/export_lerobot_dataset.py) is the remaining Pi-blocked half.
+class NoriDatasetUploadBody(BaseModel):
+    repo_id: str
+    commit_message: str | None = None
+
+
+@app.post("/nori/datasets/upload")
+def nori_upload_dataset(body: NoriDatasetUploadBody, request: Request):
+    local_path = dataset_browser._lerobot_cache_root() / body.repo_id
+    if not dataset_browser._is_dataset_dir(local_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"No local dataset at {local_path} (expected meta/info.json).",
+        )
+    client = _nori_client(request)
+
+    def run():
+        try:
+            return client.upload_dataset(str(local_path), commit_message=body.commit_message)
+        except ManifestError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return _nori_proxy(run)
+
+
+# NORI: training dispatch + log polling (Phase 4). Backend-mediated: it holds the HF token
+# and owns the HF Job; the laptop dispatches and polls. These also back the Phase 6
+# training-history UI.
+class NoriDispatchBody(BaseModel):
+    timeout_seconds: int = 900
+
+
+@app.post("/nori/training/dispatch")
+def nori_dispatch_training(body: NoriDispatchBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.dispatch_training(body.timeout_seconds))
+
+
+@app.get("/nori/training/jobs")
+def nori_list_jobs(request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(client.list_jobs)
+
+
+@app.get("/nori/training/jobs/{job_id}")
+def nori_get_job(job_id: str, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.get_job(job_id))
+
+
+@app.get("/nori/training/jobs/{job_id}/logs")
+def nori_get_job_logs(job_id: str, request: Request, since: int = 0):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.get_job_logs(job_id, since=since))
+
+
 @app.get("/hf-auth-status")
 def hf_auth_status():
     """Check whether the local HF CLI is authenticated and return user info."""
@@ -528,9 +616,13 @@ async def create_training_job(req: Request):
     raw = await req.json()
     body = StartTrainingBody.from_legacy(raw)
     try:
-        record = job_registry.start(body.config, body.target)
+        # NORI: forward the Supabase JWT so a nori_cloud target can dispatch + poll.
+        record = job_registry.start(body.config, body.target, nori_jwt=nori_jwt(req))
     except JobAlreadyRunningError as exc:
         raise HTTPException(status_code=409, detail=f"Job already running: {exc}") from exc
+    except NoriBackendError as exc:
+        # NORI: a nori_cloud dispatch failed (bad/expired session, backend down).
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     except ValueError as exc:
         # e.g. "flavor is required when runner is hf_cloud"
         raise HTTPException(status_code=400, detail=str(exc)) from exc

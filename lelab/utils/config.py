@@ -70,6 +70,18 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 
 
+# NORI: local cache for policies downloaded from the marketplace (Phase 3). The bytes
+# arrive from Nori-Backend's streaming endpoint (never HF directly); rollout/inference
+# loads them from here later. One subdir per policy ref.
+NORI_POLICY_CACHE = os.path.expanduser("~/.cache/huggingface/lerobot/nori_policies")
+
+
+def nori_policy_dir(ref: str) -> str:
+    """Local cache dir for a policy `ref`, with the ref sanitized for filesystem use."""
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in ref)
+    return os.path.join(NORI_POLICY_CACHE, safe)
+
+
 def nori_public_config() -> dict[str, str | bool]:
     """Public Nori config served to the React bundle via `GET /nori/config`.
 

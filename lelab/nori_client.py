@@ -13,6 +13,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import time
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
@@ -25,6 +28,20 @@ API = "/api/v1"
 DEFAULT_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 PolicySource = Literal["own", "first_party", "community"]
+
+# Manifest rules enforced client-side before /start (mirrors the backend; fail fast with a
+# clear error instead of a round-trip rejection). See NORI_PLAN.md dataset-upload section.
+UPLOAD_ALLOWED_EXTENSIONS = {".parquet", ".json", ".mp4", ".mkv", ".txt", ".md", ".png", ".jpg"}
+UPLOAD_MAX_FILE_BYTES = 5 * 1024**3  # 5 GB / file
+UPLOAD_MAX_TOTAL_BYTES = 20 * 1024**3  # 20 GB total
+UPLOAD_REQUIRED_FILE = "info.json"
+# Terminal upload-session states (GET /datasets/upload/{id}).status.
+UPLOAD_TERMINAL_STATES = {"PROMOTED", "FAILED", "PROMOTION_FAILED", "CANCELLED"}
+UPLOAD_SUCCESS_STATE = "PROMOTED"
+
+
+class ManifestError(ValueError):
+    """Raised when a dataset directory violates the upload manifest rules."""
 
 
 class NoriBackendError(RuntimeError):
@@ -134,13 +151,48 @@ class NoriClient:
         """GET /marketplace/datasets/public (auth-optional)."""
         return self._request("GET", f"{API}/marketplace/datasets/public")
 
-    def download_policy(self, ref: str, dest_dir: str) -> str:
-        """GET /marketplace/policies/{ref}/download — stream bytes to local cache.
+    def download_policy(self, ref: str, dest_dir: str, filename: str = "model.safetensors") -> dict[str, Any]:
+        """GET /marketplace/policies/{ref}/download — stream safetensors bytes to disk.
 
-        Phase 3 work: stream the StreamingResponse to `dest_dir` and return the path.
-        `ref` = jobs.id (own) or marketplace_listings.id.
+        Writes to `dest_dir/filename` atomically (via a .part temp file) and returns
+        {ref, path, size_bytes}. `ref` = jobs.id (own) or marketplace_listings.id.
         """
-        raise NotImplementedError("Phase 3: marketplace policy download streaming")
+        url = f"{self.base_url}{API}/marketplace/policies/{ref}/download"
+        os.makedirs(dest_dir, exist_ok=True)
+        final_path = os.path.join(dest_dir, filename)
+        tmp_path = f"{final_path}.part"
+        size = 0
+        try:
+            with (
+                httpx.Client(timeout=httpx.Timeout(None, connect=10.0)) as client,
+                client.stream("GET", url, headers=self._headers()) as resp,
+            ):
+                if not resp.is_success:
+                    resp.read()
+                    detail: Any
+                    try:
+                        body = resp.json()
+                        detail = body.get("detail", body) if isinstance(body, dict) else body
+                    except ValueError:
+                        detail = resp.text or None
+                    raise NoriBackendError(
+                        f"GET {url} -> {resp.status_code}: {detail}",
+                        status_code=resp.status_code,
+                        detail=detail,
+                    )
+                with open(tmp_path, "wb") as f:
+                    for chunk in resp.iter_bytes():
+                        f.write(chunk)
+                        size += len(chunk)
+            os.replace(tmp_path, final_path)
+        except httpx.RequestError as exc:
+            raise NoriBackendError(
+                f"Could not reach Nori-Backend at {url}: {exc}", status_code=502
+            ) from exc
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        return {"ref": ref, "path": final_path, "size_bytes": size}
 
     # -- training (Phase 4 dispatch + log polling) ---------------------------------
 
@@ -172,21 +224,29 @@ class NoriClient:
 
     # -- dataset upload: 4-step presigned-S3 flow (Phase 4) ------------------------
 
-    def start_dataset_upload(self, manifest: list[dict[str, Any]]) -> dict[str, Any]:
+    def start_dataset_upload(
+        self, manifest: list[dict[str, Any]], commit_message: str | None = None
+    ) -> dict[str, Any]:
         """POST /datasets/upload/start — manifest [{path, size}, ...].
 
         Returns {session_id, uploads: [{path, put_url}], expires_at}.
         """
-        return self._request(
-            "POST", f"{API}/datasets/upload/start", json={"files": manifest}
-        )
+        body: dict[str, Any] = {"manifest": manifest}
+        if commit_message is not None:
+            body["commit_message"] = commit_message
+        return self._request("POST", f"{API}/datasets/upload/start", json=body)
 
-    def finalize_dataset_upload(self, session_id: str) -> dict[str, Any]:
+    def finalize_dataset_upload(
+        self, session_id: str, commit_message: str | None = None
+    ) -> dict[str, Any]:
         """POST /datasets/upload/{session_id}/finalize.
 
         On HEAD-miss returns 422 {reason, missing: [paths]} (NoriBackendError.detail).
         """
-        return self._request("POST", f"{API}/datasets/upload/{session_id}/finalize")
+        body = {"commit_message": commit_message} if commit_message is not None else None
+        return self._request(
+            "POST", f"{API}/datasets/upload/{session_id}/finalize", json=body
+        )
 
     def get_dataset_upload(self, session_id: str) -> dict[str, Any]:
         """GET /datasets/upload/{session_id} — poll during FINALIZING."""
@@ -196,13 +256,92 @@ class NoriClient:
         """POST /datasets/upload/{session_id}/cancel."""
         return self._request("POST", f"{API}/datasets/upload/{session_id}/cancel")
 
-    def upload_dataset(self, local_path: str) -> dict[str, Any]:
-        """Full 4-step upload: build manifest -> start -> PUT each file to S3 (with
-        `x-amz-server-side-encryption: AES256`) -> finalize (retry missing) -> poll.
+    def _put_file(self, put_url: str, file_path: str) -> None:
+        """PUT one file to its presigned S3 URL. S3 rejects the upload without the
+        server-side-encryption header, so it is mandatory here."""
+        with open(file_path, "rb") as f:
+            try:
+                with httpx.Client(timeout=httpx.Timeout(None, connect=10.0)) as client:
+                    resp = client.put(
+                        put_url,
+                        content=f,
+                        headers={"x-amz-server-side-encryption": "AES256"},
+                    )
+            except httpx.RequestError as exc:
+                raise NoriBackendError(
+                    f"S3 PUT failed for {file_path}: {exc}", status_code=502
+                ) from exc
+        if not resp.is_success:
+            raise NoriBackendError(
+                f"S3 PUT for {file_path} -> {resp.status_code}: {resp.text[:200]}",
+                status_code=resp.status_code,
+            )
 
-        Phase 4 work; orchestrates the methods above + the laptop-side S3 PUTs.
+    def upload_dataset(
+        self,
+        local_path: str,
+        commit_message: str | None = None,
+        poll_interval: float = 5.0,
+        poll_timeout: float = 1800.0,
+    ) -> dict[str, Any]:
+        """Full 4-step upload: build+validate manifest -> start -> PUT each file to S3 ->
+        finalize (retry HEAD-miss) -> poll until terminal. Returns the final SessionRow.
+
+        Raises ManifestError on a bad dataset dir, NoriBackendError on backend/S3/timeout.
         """
-        raise NotImplementedError("Phase 4: full presigned-S3 dataset upload orchestration")
+        manifest = build_manifest(local_path)
+        validate_manifest(manifest)
+
+        start = self.start_dataset_upload(manifest, commit_message=commit_message)
+        session_id = start["session_id"]
+        # path -> presigned PUT URL
+        put_urls = {u["path"]: u["put_url"] for u in start.get("uploads", [])}
+        root = Path(local_path)
+
+        def put_paths(paths: list[str]) -> None:
+            for rel in paths:
+                url = put_urls.get(rel)
+                if not url:
+                    raise NoriBackendError(
+                        f"No presigned URL returned for {rel!r}", status_code=500
+                    )
+                self._put_file(url, str(root / rel))
+
+        put_paths([entry["path"] for entry in manifest])
+
+        # Finalize; on a 422 HEAD-miss, re-PUT the listed paths and finalize once more.
+        try:
+            self.finalize_dataset_upload(session_id, commit_message=commit_message)
+        except NoriBackendError as exc:
+            missing = exc.detail.get("missing") if isinstance(exc.detail, dict) else None
+            if exc.status_code == 422 and missing:
+                logger.warning("Finalize HEAD-miss; retrying %d file(s)", len(missing))
+                put_paths(list(missing))
+                self.finalize_dataset_upload(session_id, commit_message=commit_message)
+            else:
+                raise
+
+        # Poll until terminal.
+        deadline = time.monotonic() + poll_timeout
+        while True:
+            session = self.get_dataset_upload(session_id)
+            status = session.get("status")
+            if status in UPLOAD_TERMINAL_STATES:
+                if status != UPLOAD_SUCCESS_STATE:
+                    raise NoriBackendError(
+                        f"Upload {session_id} ended in {status}: "
+                        f"{session.get('failure_reason')}",
+                        status_code=502,
+                        detail=session,
+                    )
+                return session
+            if time.monotonic() >= deadline:
+                raise NoriBackendError(
+                    f"Upload {session_id} still {status} after {poll_timeout}s",
+                    status_code=504,
+                    detail=session,
+                )
+            time.sleep(poll_interval)
 
     # -- consents (Phase 6) --------------------------------------------------------
 
@@ -225,3 +364,52 @@ class NoriClient:
     def create_deletion_request(self, payload: dict[str, Any]) -> dict[str, Any]:
         """POST /deletion-requests (backend purge sweeper not yet wired — status row only)."""
         return self._request("POST", f"{API}/deletion-requests", json=payload)
+
+
+# -- dataset manifest helpers (module-level so they're unit-testable w/o a client) -----
+
+
+def build_manifest(local_path: str) -> list[dict[str, Any]]:
+    """Walk a dataset dir and produce the upload manifest: [{path, size}, ...] with
+    POSIX-style relative paths, sorted for determinism. Skips empty dirs (no entries)."""
+    root = Path(local_path)
+    if not root.is_dir():
+        raise ManifestError(f"Dataset path is not a directory: {local_path}")
+    manifest: list[dict[str, Any]] = []
+    for p in sorted(root.rglob("*")):
+        if p.is_file():
+            manifest.append(
+                {"path": p.relative_to(root).as_posix(), "size": p.stat().st_size}
+            )
+    return manifest
+
+
+def validate_manifest(manifest: list[dict[str, Any]]) -> None:
+    """Enforce the manifest rules client-side; raise ManifestError on the first violation.
+
+    Rules (mirror the backend): non-empty; relative paths only (no `..`/absolute);
+    extension allowlist; <=5 GB/file; <=20 GB total; must contain info.json.
+    """
+    if not manifest:
+        raise ManifestError("Dataset is empty — nothing to upload.")
+
+    total = 0
+    names = {entry["path"] for entry in manifest}
+    for entry in manifest:
+        rel, size = entry["path"], entry["size"]
+        if rel.startswith("/") or ".." in Path(rel).parts:
+            raise ManifestError(f"Unsafe path in manifest: {rel!r}")
+        ext = Path(rel).suffix.lower()
+        if ext not in UPLOAD_ALLOWED_EXTENSIONS:
+            raise ManifestError(
+                f"Disallowed file type {ext!r} ({rel}); allowed: "
+                f"{sorted(UPLOAD_ALLOWED_EXTENSIONS)}"
+            )
+        if size > UPLOAD_MAX_FILE_BYTES:
+            raise ManifestError(f"{rel} is {size} bytes (> {UPLOAD_MAX_FILE_BYTES} limit).")
+        total += size
+
+    if total > UPLOAD_MAX_TOTAL_BYTES:
+        raise ManifestError(f"Dataset is {total} bytes (> {UPLOAD_MAX_TOTAL_BYTES} limit).")
+    if not any(Path(n).name == UPLOAD_REQUIRED_FILE for n in names):
+        raise ManifestError(f"Dataset must contain {UPLOAD_REQUIRED_FILE}.")

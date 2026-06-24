@@ -48,10 +48,13 @@ JobState = Literal["running", "done", "failed", "interrupted"]
 
 class JobTarget(BaseModel):
     """Where a job should run. `local` ⇒ LocalJobRunner. `hf_cloud` requires
-    a non-empty `flavor` from HfApi.list_jobs_hardware()."""
+    a non-empty `flavor` from HfApi.list_jobs_hardware(). `nori_cloud` ⇒ dispatched
+    through Nori-Backend (NORI; only `timeout_seconds` is forwarded)."""
 
-    runner: Literal["local", "hf_cloud"] = "local"
+    runner: Literal["local", "hf_cloud", "nori_cloud"] = "local"
     flavor: str | None = None
+    # NORI: per-job timeout forwarded to POST /training/dispatch (nori_cloud only).
+    timeout_seconds: int = 900
 
 
 class TrainingMetrics(BaseModel):
@@ -79,10 +82,12 @@ class JobRecord(BaseModel):
     exit_code: int | None = None
     error_message: str | None = None
     metrics: TrainingMetrics = TrainingMetrics()
-    runner: Literal["local", "hf_cloud", "imported"] = "local"
+    runner: Literal["local", "hf_cloud", "nori_cloud", "imported"] = "local"
     # PID of the detached subprocess (local runner only); survives uvicorn
     # --reload so a fresh registry can re-attach by tailing the log file.
     process_pid: int | None = None
+    # NORI: Nori-Backend internal job uuid (nori_cloud runner only).
+    nori_job_uuid: str | None = None
     # HF Jobs identifiers (hf_cloud runner only)
     hf_job_id: str | None = None
     hf_flavor: str | None = None
@@ -778,12 +783,19 @@ class JobRegistry:
         record.checkpoint_count = self._count_checkpoints(record)
         return record
 
-    def start(self, config: TrainingRequest, target: JobTarget | None = None) -> JobRecord:
+    def start(
+        self,
+        config: TrainingRequest,
+        target: JobTarget | None = None,
+        nori_jwt: str | None = None,
+    ) -> JobRecord:
         from .runners.hf_cloud import HfCloudJobRunner  # lazy import to avoid circular import
 
         target = target or JobTarget()
         if target.runner == "hf_cloud" and not target.flavor:
             raise ValueError("flavor is required when runner is hf_cloud")
+        if target.runner == "nori_cloud" and not nori_jwt:
+            raise ValueError("nori_cloud requires an authenticated Nori session (sign in first)")
 
         with self._lock:
             # Local trainings are bounded by this machine's GPU/USB resources,
@@ -816,6 +828,12 @@ class JobRegistry:
             log_path = _job_log_path(self._output_root, job_id)
             if target.runner == "local":
                 runner = LocalJobRunner(record.metrics, log_file_path=log_path)
+            elif target.runner == "nori_cloud":
+                from .runners.nori_cloud import NoriCloudJobRunner
+
+                runner = NoriCloudJobRunner(
+                    record.metrics, log_path, target.timeout_seconds, nori_jwt
+                )
             else:
                 runner = HfCloudJobRunner(record.metrics, log_path, target.flavor)
 
@@ -832,6 +850,9 @@ class JobRegistry:
             # Capture runner-specific identifiers.
             if target.runner == "local":
                 record.process_pid = runner.pid()
+            elif target.runner == "nori_cloud":
+                record.nori_job_uuid = runner.nori_job_uuid()
+                record.hf_job_id = runner.hf_job_id()
             else:
                 record.hf_job_id = runner.hf_job_id()
                 record.hf_job_url = runner.hf_job_url()

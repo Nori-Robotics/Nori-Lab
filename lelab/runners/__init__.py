@@ -20,5 +20,6 @@ Protocol declared in app/jobs.py.
 """
 
 from .hf_cloud import HfCloudJobRunner
+from .nori_cloud import NoriCloudJobRunner  # NORI
 
-__all__ = ["HfCloudJobRunner"]
+__all__ = ["HfCloudJobRunner", "NoriCloudJobRunner"]

@@ -1,4 +1,5 @@
 import React from "react";
+import { Link } from "react-router-dom";
 import HfAuthChip from "./HfAuthChip";
 
 const LandingTopBar: React.FC = () => {
@@ -15,7 +16,16 @@ const LandingTopBar: React.FC = () => {
             LeLab
           </span>
         </div>
-        <HfAuthChip />
+        <div className="flex items-center gap-3">
+          {/* NORI: entry point into the Nori laptop-app surface (all under /nori/*). */}
+          <Link
+            to="/nori/account"
+            className="rounded-md border border-gray-700 px-3 py-1 text-sm font-medium text-gray-200 hover:bg-gray-800 hover:text-white"
+          >
+            Nori
+          </Link>
+          <HfAuthChip />
+        </div>
       </div>
     </header>
   );

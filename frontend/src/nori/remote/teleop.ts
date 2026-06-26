@@ -17,6 +17,17 @@ import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 export type ControlMode = "cylindrical" | "joint";
 export type ArmSide = "left" | "right";
 
+// A ready-to-send `jog` payload (the inner object of {type:"control", jog:{...}}).
+// VR feeds this in directly so it rides the exact same wire the keyboard does — the
+// daemon's jog->IK->clamp->motor path is identical regardless of source. Values are
+// normalized rates in [-1,1] per DOF (the daemon scales by its per-tick step).
+export interface ExternalJog {
+  left_arm?: Record<string, number>;
+  right_arm?: Record<string, number>;
+  base?: Record<string, number>;
+  z_lift?: number;
+}
+
 export interface TelemetryView {
   loopHz: number;
   safety: string;
@@ -41,6 +52,9 @@ export interface RemoteTeleopOptions {
   onTelemetry: (t: TelemetryView) => void;
   onMode: (mode: ControlMode) => void;
   onControlActive: (active: boolean) => void;
+  // Optional: per-motor Present_Current from telemetry (the virtual tactile signal).
+  // VR haptics (M2 Phase 3) maps the gripper current to controller rumble.
+  onCurrents?: (currents: Record<string, number>) => void;
 }
 
 // Two schemes; 'm' toggles. Default = CYLINDRICAL (the rpi4 feel).
@@ -94,6 +108,10 @@ export class RemoteTeleop {
   private curMac = ""; // HMAC of the robot's nonce, proving we hold the token
   private linkMode: "lan" | "wan" | null = null; // measured ICE path -> daemon watchdog
   private mode: ControlMode = "cylindrical";
+  // When non-null, the jog tick sends this payload instead of the keyboard-derived one
+  // (set by the VR session each frame; null = keyboard owns the stream). An all-zeros
+  // payload is a deliberate "hold" (e.g. clutch released) — distinct from null.
+  private externalJog: ExternalJog | null = null;
   private readonly pressed = new Set<string>();
   private readonly cmdDown = new Set<string>();
   // loop_hz / temp / status only ride the periodic telemetry block, not every per-tick
@@ -109,6 +127,17 @@ export class RemoteTeleop {
 
   setArm(arm: ArmSide) {
     this.o.arm = arm;
+  }
+
+  // VR (or any external input mapper) hands the jog tick a ready jog payload. Pass null
+  // to release the stream back to the keyboard. The next jogTick uses it as-is.
+  setExternalJog(jog: ExternalJog | null) {
+    this.externalJog = jog;
+  }
+
+  // Public command surface for non-keyboard inputs (VR E-STOP / reset). Mirrors sendCmd.
+  command(cmd: "estop" | "reset_latch" | "reset") {
+    this.sendCmd(cmd);
   }
 
   private iceServers(): RTCIceServer[] {
@@ -330,6 +359,10 @@ export class RemoteTeleop {
         if (status.safety) this.tel.safety = status.safety;
         if (status.watchdog) this.tel.watchdog = status.watchdog;
       }
+      // Per-motor Present_Current (virtual tactile signal) -> VR haptics, if a sink is set.
+      if (this.o.onCurrents && m.currents && typeof m.currents === "object") {
+        this.o.onCurrents(m.currents as Record<string, number>);
+      }
       this.o.onTelemetry({ ...this.tel });
     } else if (m.type === "ack") {
       this.log("daemon ack (watchdog=" + JSON.stringify(m.watchdog_profile || m.watchdog || "?") + ")");
@@ -397,6 +430,15 @@ export class RemoteTeleop {
     const ch = this.controlCh;
     if (!ch || ch.readyState !== "open") return;
     if (ch.bufferedAmount > BUFFER_LIMIT) return; // congested -> skip, don't pile up latency
+
+    // VR (or another mapper) owns the stream: send its payload verbatim. It already
+    // carries left_arm/right_arm/base/z_lift in the daemon's jog vocabulary, so this is
+    // the identical wire frame the keyboard path below produces — just a different source.
+    if (this.externalJog) {
+      this.dcSend({ type: "control", jog: this.externalJog });
+      return;
+    }
+
     const km = this.armKeymap();
     // joint mode: always send all 6 joint fields (0 default) so the daemon picks the
     // per-motor path. cylindrical mode: send only task DOFs -> daemon task/IK path.

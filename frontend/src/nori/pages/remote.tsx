@@ -21,6 +21,7 @@ import {
   type ControlMode,
   type TelemetryView,
 } from "@/nori/remote/teleop";
+import { VrSession } from "@/nori/remote/vr-session";
 
 const DEFAULT_STUN = "stun:stun.l.google.com:19302";
 
@@ -63,11 +64,14 @@ const Remote = () => {
   const { ready, customer } = useNori();
   const videoRef = useRef<HTMLVideoElement>(null);
   const teleopRef = useRef<RemoteTeleop | null>(null);
+  const vrRef = useRef<VrSession | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [connecting, setConnecting] = useState(false);
   const [running, setRunning] = useState(false);
+  const [inVr, setInVr] = useState(false);
+  const [xrSupported, setXrSupported] = useState<boolean | null>(null);
   const [connState, setConnState] = useState("idle");
   const [controlActive, setControlActive] = useState(false);
   const [mode, setMode] = useState<ControlMode>("cylindrical");
@@ -104,6 +108,13 @@ const Remote = () => {
     if (!settings.room && serial) set("room", serial);
   }, [serial, settings.room]);
 
+  // VR is an optional mode on top of the same session: detect headset support, and on any
+  // link drop require a fresh squeeze before VR drive resumes (re-clutch-on-resume).
+  useEffect(() => { VrSession.isSupported().then(setXrSupported); }, []);
+  useEffect(() => {
+    if (connState === "failed" || connState === "disconnected") vrRef.current?.reclutch();
+  }, [connState]);
+
   const connect = async () => {
     if (!videoRef.current) return;
     setConnecting(true);
@@ -125,6 +136,7 @@ const Remote = () => {
       onTelemetry: setTel,
       onMode: setMode,
       onControlActive: setControlActive,
+      onCurrents: (c) => vrRef.current?.setCurrents(c), // gripper current -> VR haptics
     });
     teleopRef.current = teleop;
     try {
@@ -139,13 +151,37 @@ const Remote = () => {
   };
 
   const disconnect = useCallback(async () => {
+    await vrRef.current?.stop();
+    vrRef.current = null;
     const t = teleopRef.current;
     teleopRef.current = null;
     if (t) await t.stop();
     setRunning(false);
+    setInVr(false);
     setControlActive(false);
     setConnState("idle");
   }, []);
+
+  // Enter the immersive (AR-passthrough) headset session on top of the live link. Reuses
+  // the same RemoteTeleop + video element; VR feeds `jog` exactly like the keyboard.
+  const enterVr = async () => {
+    const teleop = teleopRef.current;
+    if (!teleop || !videoRef.current) return;
+    const session = new VrSession({
+      teleop,
+      videoEl: videoRef.current,
+      onLog: appendLog,
+      onEnd: () => { setInVr(false); vrRef.current = null; },
+    });
+    vrRef.current = session;
+    try {
+      await session.start();
+      setInVr(true);
+    } catch (e) {
+      appendLog("enter VR failed: " + (e instanceof Error ? e.message : String(e)));
+      vrRef.current = null;
+    }
+  };
 
   // Keyboard control: only while a session is running. The class ignores keys typed in
   // form fields and only emits jog when the control channel is open.
@@ -162,7 +198,7 @@ const Remote = () => {
   }, [running]);
 
   // Tear down on unmount / navigate away (also fires the robot 'bye' for a clean restart).
-  useEffect(() => () => { teleopRef.current?.stop(); }, []);
+  useEffect(() => () => { vrRef.current?.stop(); teleopRef.current?.stop(); }, []);
 
   return (
     <section className="space-y-4">
@@ -170,6 +206,7 @@ const Remote = () => {
         <h1 className="text-2xl font-bold">Remote teleop</h1>
         <span className="text-sm text-muted-foreground">
           {running ? `conn: ${connState}` : "not connected"}
+          {inVr ? "  · in VR" : ""}
           {controlActive ? "  · control active" : ""}
         </span>
       </div>
@@ -198,6 +235,16 @@ const Remote = () => {
               </Button>
             ) : (
               <Button variant="destructive" onClick={disconnect}>Disconnect</Button>
+            )}
+            {xrSupported && (
+              <Button
+                variant="secondary"
+                onClick={enterVr}
+                disabled={!running || inVr || connState !== "connected"}
+                title="Open the headset (AR passthrough) on this same session"
+              >
+                {inVr ? "In VR" : "Enter VR"}
+              </Button>
             )}
             <label className="flex items-center gap-2 text-sm">
               Arm

@@ -27,12 +27,21 @@ export interface VrControllerFrame {
   trigger: number;   // analog gripper: 1 = close, 0 = open
   squeeze: number;   // grip button: the CLUTCH ("squeeze to move")
   thumbstick: { x: number; y: number };
-  buttons: { a?: boolean; b?: boolean; estop?: boolean };
+}
+
+// Discrete actions, already resolved from the (configurable) button bindings by the session
+// layer — the mapper stays agnostic to which physical button/hand each came from. (reset is
+// a hold-gesture handled in the session, so it isn't here.)
+export interface VrControls {
+  zUp?: boolean;
+  zDown?: boolean;
+  estop?: boolean;
 }
 
 export interface VrFrame {
   left?: VrControllerFrame | null;
   right?: VrControllerFrame | null;
+  controls?: VrControls;
 }
 
 export interface VrMapResult {
@@ -46,8 +55,12 @@ const POS_GAIN_Y = 70;
 const POS_GAIN_Z = 70;
 const POS_SCALE = 0.01;
 const DELTA_LIMIT = 0.01; // max cartesian motion per frame (m)
-const ANGLE_SCALE = 4.0;
-const ANGLE_LIMIT = 8.0;  // max wrist angle change per frame (deg)
+// Wrist scales/limits are PER-AXIS (verified on hardware 2026-06-25). Roll is deliberately
+// much gentler than pitch — matches NoriTeleopReference VR_WRIST_* defaults.
+const PITCH_SCALE = 4.0;  // VR_WRIST_PITCH_SCALE
+const PITCH_LIMIT = 8.0;  // VR_WRIST_PITCH_LIMIT (also clamps the shoulder_pan delta)
+const ROLL_SCALE = 1.0;   // VR_WRIST_ROLL_SCALE
+const ROLL_LIMIT = 2.5;   // VR_WRIST_ROLL_LIMIT
 const PAN_GAIN = 200.0;   // cartesian-x delta -> shoulder_pan deg
 const JUMP_POS = 50;      // reconnect guard on internal pos units
 const JUMP_ANGLE = 30;    // reconnect guard on wrist angles (deg)
@@ -69,7 +82,6 @@ class HandState {
   private prevFlex: number | null = null;
   private prevRoll: number | null = null;
   private engaged = false; // clutch latched on
-  private estopPrev = false;
 
   // Drop all baselines so a fresh squeeze re-establishes them with no jump (used on
   // clutch release AND on forced re-clutch after a safe-hold — re-clutch-on-resume).
@@ -82,11 +94,8 @@ class HandState {
 
   // Returns the arm jog rates for this hand, or null when the clutch is released
   // (caller treats null as "no contribution"; an engaged-but-still hand returns zeros).
-  step(f: VrControllerFrame | null | undefined): { arm: Record<string, number> | null; estop: boolean } {
-    if (!f) { this.release(); return { arm: null, estop: false }; }
-
-    const estopEdge = !!f.buttons.estop && !this.estopPrev;
-    this.estopPrev = !!f.buttons.estop;
+  step(f: VrControllerFrame | null | undefined): Record<string, number> | null {
+    if (!f) { this.release(); return null; }
 
     // Clutch with hysteresis. Released -> hold (zero) and forget baselines so the next
     // engage doesn't snap the robot to wherever the hand drifted.
@@ -96,17 +105,17 @@ class HandState {
     } else if (f.squeeze >= CLUTCH_ON) {
       this.engaged = true;
     }
-    if (!this.engaged) return { arm: null, estop: estopEdge };
+    if (!this.engaged) return null;
 
     const cur = f.position;
-    if (!cur) return { arm: zeroArm(), estop: estopEdge };
+    if (!cur) return zeroArm();
 
     // First engaged frame (or first frame after re-engage): establish baseline, hold.
     if (!wasEngaged || !this.prevPos) {
       this.prevPos = cur;
       if (f.wristFlexDeg != null) this.prevFlex = f.wristFlexDeg;
       if (f.wristRollDeg != null) this.prevRoll = f.wristRollDeg;
-      return { arm: gripperOnly(f.trigger), estop: estopEdge };
+      return gripperOnly(f.trigger);
     }
 
     const vrX = (cur[0] - this.prevPos[0]) * POS_GAIN_X;
@@ -116,7 +125,7 @@ class HandState {
     // Controller reconnect / tracking glitch -> reset baseline, hold this frame.
     if (Math.abs(vrX) > JUMP_POS || Math.abs(vrY) > JUMP_POS || Math.abs(vrZ) > JUMP_POS) {
       this.prevPos = cur;
-      return { arm: gripperOnly(f.trigger), estop: estopEdge };
+      return gripperOnly(f.trigger);
     }
     this.prevPos = cur;
 
@@ -125,13 +134,15 @@ class HandState {
     const dz = clamp(vrZ * POS_SCALE, -DELTA_LIMIT, DELTA_LIMIT);
 
     const arm = zeroArm();
-    // rpi4: current_x += -delta_z (Z flipped), current_y += delta_y. As rates:
+    // rpi4: current_x += -delta_z (Z flipped), current_y += delta_y. As rates.
+    // Y is flipped vs rpi4 here: the new daemon's reach-Y points the opposite way, so
+    // hand-up -> arm-up (verified on hardware 2026-06-26).
     arm.x = clamp1(-dz / XY_STEP);
-    arm.y = clamp1(dy / XY_STEP);
+    arm.y = clamp1(-dy / XY_STEP);
 
     // rpi4: delta_pan = clamp(delta_x * 200, ±8) deg, applied above a small deadband.
     if (Math.abs(dx) > 0.001) {
-      arm.shoulder_pan = clamp1(clamp(dx * PAN_GAIN, -ANGLE_LIMIT, ANGLE_LIMIT) / DEG_STEP);
+      arm.shoulder_pan = clamp1(clamp(dx * PAN_GAIN, -PITCH_LIMIT, PITCH_LIMIT) / DEG_STEP);
     }
 
     // Wrist pitch from wrist_flex delta (rpi4 couples wrist_flex to pitch downstream).
@@ -139,32 +150,32 @@ class HandState {
       if (this.prevFlex == null) {
         this.prevFlex = f.wristFlexDeg;
       } else {
-        let dp = (f.wristFlexDeg - this.prevFlex) * ANGLE_SCALE;
+        let dp = (f.wristFlexDeg - this.prevFlex) * PITCH_SCALE;
         if (Math.abs(dp) > JUMP_ANGLE) dp = 0; // glitch guard
-        else dp = clamp(dp, -ANGLE_LIMIT, ANGLE_LIMIT);
+        else dp = clamp(dp, -PITCH_LIMIT, PITCH_LIMIT);
         arm.pitch = clamp1(dp / DEG_STEP);
         this.prevFlex = f.wristFlexDeg;
       }
     }
 
-    // Wrist roll delta.
+    // Wrist roll delta (gentler than pitch — separate scale/limit, matches reference).
     if (f.wristRollDeg != null) {
       if (this.prevRoll == null) {
         this.prevRoll = f.wristRollDeg;
       } else {
-        let dr = (f.wristRollDeg - this.prevRoll) * ANGLE_SCALE;
+        let dr = (f.wristRollDeg - this.prevRoll) * ROLL_SCALE;
         if (Math.abs(dr) > JUMP_ANGLE) dr = 0;
-        else dr = clamp(dr, -ANGLE_LIMIT, ANGLE_LIMIT);
+        else dr = clamp(dr, -ROLL_LIMIT, ROLL_LIMIT);
         arm.wrist_roll = clamp1(dr / DEG_STEP);
         this.prevRoll = f.wristRollDeg;
       }
     }
 
-    // Analog gripper: trigger 1 -> close (+1), 0 -> open (-1), 0.5 -> hold. The daemon
-    // accumulates and clamps the gripper target, so a held trigger settles at the limit.
-    arm.gripper = clamp1(f.trigger * 2 - 1);
+    // Binary gripper (matches reference: 45 if trigger>0.5 else 0). Through the daemon's
+    // jog accumulator/clamp, +1 drives toward closed and -1 toward open.
+    arm.gripper = f.trigger > 0.5 ? 1 : -1;
 
-    return { arm, estop: estopEdge };
+    return arm;
   }
 }
 
@@ -173,7 +184,7 @@ function zeroArm(): Record<string, number> {
 }
 function gripperOnly(trigger: number): Record<string, number> {
   const a = zeroArm();
-  a.gripper = clamp1(trigger * 2 - 1);
+  a.gripper = trigger > 0.5 ? 1 : -1; // binary, matches reference
   return a;
 }
 
@@ -182,22 +193,23 @@ function baseFromThumb(f: VrControllerFrame | null | undefined): Record<string, 
   if (!f) return null;
   const { x, y } = f.thumbstick;
   const linear = Math.abs(y) > THUMB_DEADZONE ? -y : 0; // stick up = forward
-  const angular = Math.abs(x) > THUMB_DEADZONE ? x : 0;
+  const angular = Math.abs(x) > THUMB_DEADZONE ? -x : 0; // reference negates tx
   if (!linear && !angular) return null;
   return { linear: clamp1(linear), angular: clamp1(angular) };
 }
 
-// Right A/B -> z-lift up/down (rpi4 VR_Z_LIFT_UP/DOWN_BUTTON).
-function zLiftFromButtons(f: VrControllerFrame | null | undefined): number {
-  if (!f) return 0;
-  if (f.buttons.a) return 1;
-  if (f.buttons.b) return -1;
-  return 0;
+// z-lift from the resolved semantic controls. +1 up / -1 down (verify sign on hardware).
+function zLiftFromControls(c: VrControls | undefined): number {
+  if (!c) return 0;
+  if (c.zUp && !c.zDown) return 1;
+  if (c.zDown && !c.zUp) return -1;
+  return 0; // none, or both (conflict) -> hold
 }
 
 export class VrJogMapper {
   private readonly left = new HandState();
   private readonly right = new HandState();
+  private estopPrev = false;
 
   // Force both hands to require a fresh squeeze before driving again. Call after any
   // safe-hold (link drop / E-STOP latch) so resume can't snap to a drifted pose.
@@ -207,22 +219,26 @@ export class VrJogMapper {
   }
 
   // Map one VR frame to a jog payload. Left controller -> left arm, right -> right arm;
-  // base + z-lift come from the right controller (matching rpi4).
+  // base comes from the right controller; z-lift + E-STOP come from the resolved controls.
   map(frame: VrFrame): VrMapResult {
-    const l = this.left.step(frame.left);
-    const r = this.right.step(frame.right);
+    const lArm = this.left.step(frame.left);
+    const rArm = this.right.step(frame.right);
     const base = baseFromThumb(frame.right);
-    const z = zLiftFromButtons(frame.right);
+    const z = zLiftFromControls(frame.controls);
+
+    const estopNow = !!frame.controls?.estop;
+    const estopEdge = estopNow && !this.estopPrev;
+    this.estopPrev = estopNow;
 
     // Nothing engaged at all -> null (let the keyboard keep the stream).
-    if (l.arm == null && r.arm == null && !base && !z) {
-      return { jog: null, estop: l.estop || r.estop };
+    if (lArm == null && rArm == null && !base && !z) {
+      return { jog: null, estop: estopEdge };
     }
     const jog: ExternalJog = {};
-    if (l.arm) jog.left_arm = l.arm;
-    if (r.arm) jog.right_arm = r.arm;
+    if (lArm) jog.left_arm = lArm;
+    if (rArm) jog.right_arm = rArm;
     if (base) jog.base = base;
     if (z) jog.z_lift = z;
-    return { jog, estop: l.estop || r.estop };
+    return { jog, estop: estopEdge };
   }
 }

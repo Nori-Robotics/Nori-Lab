@@ -26,6 +26,7 @@ import Pairing from "@/nori/pages/pairing";
 import Marketplace from "@/nori/pages/marketplace";
 import Consents from "@/nori/pages/consents";
 import TrainingHistory from "@/nori/pages/training-history";
+import Remote from "@/nori/pages/remote";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { ApiProvider } from "./contexts/ApiContext";
 import { HfAuthProvider } from "./contexts/HfAuthContext";
@@ -68,6 +69,7 @@ function App() {
                         >
                           <Route index element={<Account />} />
                           <Route path="account" element={<Account />} />
+                          <Route path="remote" element={<Remote />} />
                           <Route path="pairing" element={<Pairing />} />
                           <Route path="marketplace" element={<Marketplace />} />
                           <Route path="consents" element={<Consents />} />

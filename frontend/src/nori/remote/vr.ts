@@ -134,11 +134,11 @@ class HandState {
     const dz = clamp(vrZ * POS_SCALE, -DELTA_LIMIT, DELTA_LIMIT);
 
     const arm = zeroArm();
-    // rpi4: current_x += -delta_z (Z flipped), current_y += delta_y. As rates.
-    // Y is flipped vs rpi4 here: the new daemon's reach-Y points the opposite way, so
-    // hand-up -> arm-up (verified on hardware 2026-06-26).
+    // rpi4 reference, sign-for-sign: current_x += -delta_z (Z flipped), current_y += delta_y.
+    // (Any genuine motor-direction inversion belongs in calibration/daemon so keyboard and
+    // VR agree — not flipped here, which would desync VR from the reference + keyboard.)
     arm.x = clamp1(-dz / XY_STEP);
-    arm.y = clamp1(-dy / XY_STEP);
+    arm.y = clamp1(dy / XY_STEP);
 
     // rpi4: delta_pan = clamp(delta_x * 200, ±8) deg, applied above a small deadband.
     if (Math.abs(dx) > 0.001) {

@@ -75,6 +75,11 @@ const DEG_STEP = 3.0;
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const clamp1 = (v: number) => clamp(v, -1, 1);
+// Cap the top jog speed for the continuous motion DOFs (reach, pan, pitch, roll, base) so VR
+// feels controlled — 0.7 = 70% of the daemon's full jog rate. Low-speed response is
+// unchanged (only saturating, fast hand moves are limited). Gripper/z stay full (discrete).
+const VR_MAX_RATE = 0.7;
+const capRate = (v: number) => clamp(v, -VR_MAX_RATE, VR_MAX_RATE);
 
 // Stateful per-hand integrator. One instance per controller; the mapper owns two.
 class HandState {
@@ -171,6 +176,9 @@ class HandState {
       }
     }
 
+    // Cap top speed on the continuous motion DOFs (not the binary gripper).
+    for (const k of Object.keys(arm)) if (k !== "gripper") arm[k] = capRate(arm[k]);
+
     // Binary gripper (matches reference: 45 if trigger>0.5 else 0). Through the daemon's
     // jog accumulator/clamp, +1 drives toward closed and -1 toward open.
     arm.gripper = f.trigger > 0.5 ? 1 : -1;
@@ -195,7 +203,7 @@ function baseFromThumb(f: VrControllerFrame | null | undefined): Record<string, 
   const linear = Math.abs(y) > THUMB_DEADZONE ? -y : 0; // stick up = forward
   const angular = Math.abs(x) > THUMB_DEADZONE ? -x : 0; // reference negates tx
   if (!linear && !angular) return null;
-  return { linear: clamp1(linear), angular: clamp1(angular) };
+  return { linear: capRate(linear), angular: capRate(angular) };
 }
 
 // z-lift from the resolved semantic controls. +1 up / -1 down (verify sign on hardware).

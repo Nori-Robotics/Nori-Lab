@@ -244,7 +244,7 @@ The robot carries a **speaker and microphone**. Audio is a new I/O subsystem, de
 - **Robot sound effects (output) — M3a:** local playback of short pre-rendered clips (status chimes, alerts), wired to safety events early — an audible cue on **safe-hold / E-STOP** improves the R13 feedback story. Note: operator voice + a sound-effect can play at once → needs a mixer (`dmix` / single owner).
 
 ### Deferred
-- **Operator camera → robot screen (M6):** rendered by an **on-demand Chromium call view** (not LVGL) — see §UI. Reserve the WebRTC video m-line + protocol call-state fields in M3 so it slots in without renegotiation later.
+- **Operator camera → robot screen (M6):** rendered by an **on-demand Chromium call view** (not LVGL) — see §UI. Reserve the WebRTC video m-line (recvonly, muted) at session establishment in M3 so it slots in without renegotiation later. *(Call/mute/live signaling rides the **media-bridge message layer**, not the daemon's `nori-protocol` — the daemon never sees audio/video.)*
 - **Wake word + voice commands** (mic → STT), and an **LLM intent layer** on top.
 - **Audio as a recorded dataset channel** for IL/policy training.
 

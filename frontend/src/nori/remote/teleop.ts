@@ -37,11 +37,33 @@ export interface TelemetryView {
   watchdog: string;
   tempC: number;
   active: boolean;
+  // Measured ICE path (host/host = "lan", anything via STUN/TURN = "wan"); null until the
+  // candidate pair resolves. Drives the daemon watchdog profile and the on-screen link chip.
+  linkMode: "lan" | "wan" | null;
+  // Per-motor Present_Current (the "virtual tactile" signal), keyed like "right_arm_gripper".
+  // Same values fed to VR haptics; surfaced here for the on-screen grip-force readout.
+  currents: Record<string, number>;
+}
+
+// Two-way call state (Phase 7 §B). Reported to the page via onCall so it can render the
+// call bar + on-air indicators. Everything here is renegotiation-free: mic/camera attach to
+// transceivers the robot already offered (R-X.1). Fields degrade gracefully when the robot
+// hasn't yet offered audio/video m-lines (Pi M3/M6 pending) — micSending stays false.
+export interface CallState {
+  active: boolean;       // operator has joined the call (mic captured locally)
+  micMuted: boolean;     // operator mic muted (track.enabled = false)
+  micSending: boolean;   // mic is actually wired to a robot uplink transceiver (else: local-only)
+  robotAudio: boolean;   // an inbound audio track from the robot is attached to the sink
+  robotMicLive: boolean; // robot reports its mic is live (telemetry; reserved field)
+  cameraOn: boolean;     // M6 (gated): operator camera is sending
 }
 
 export interface RemoteTeleopOptions {
   supabase: SupabaseClient;
   videoEl: HTMLVideoElement;
+  // Sink for the robot's inbound audio track. A separate element from videoEl because the
+  // video element is muted for autoplay; audio must play from its own unmuted element.
+  audioEl?: HTMLAudioElement;
   room: string;
   token: string; // room token (HMAC secret); "" = open dev room
   stun: string;
@@ -58,18 +80,22 @@ export interface RemoteTeleopOptions {
   // Optional: per-motor Present_Current from telemetry (the virtual tactile signal).
   // VR haptics (M2 Phase 3) maps the gripper current to controller rumble.
   onCurrents?: (currents: Record<string, number>) => void;
+  // Optional: two-way call state changes (mic/camera/robot-audio). Phase 7 §B.
+  onCall?: (state: CallState) => void;
 }
 
 // Two schemes; 'm' toggles. Default = CYLINDRICAL (the rpi4 feel).
 //  cylindrical: shoulder_pan + x/y reach (IK) + pitch + wrist_roll + gripper
 //  joint (per-motor): each motor direct, top row +, bottom row -
-const TASK_KEYS: Record<string, [string, number]> = {
+// Exported so the on-screen control legend (pages/remote.tsx) derives from the SAME maps
+// the jog stream uses — no hand-maintained second copy to drift out of sync (C3).
+export const TASK_KEYS: Record<string, [string, number]> = {
   q: ["shoulder_pan", 1], e: ["shoulder_pan", -1],
   w: ["x", 1], s: ["x", -1], a: ["y", 1], d: ["y", -1],
   z: ["pitch", 1], x: ["pitch", -1], r: ["wrist_roll", 1], f: ["wrist_roll", -1],
   t: ["gripper", 1], g: ["gripper", -1],
 };
-const JOINT_KEYS: Record<string, [string, number]> = {
+export const JOINT_KEYS: Record<string, [string, number]> = {
   q: ["shoulder_pan", 1], a: ["shoulder_pan", -1],
   w: ["shoulder_lift", 1], s: ["shoulder_lift", -1],
   e: ["elbow_flex", 1], d: ["elbow_flex", -1],
@@ -77,11 +103,48 @@ const JOINT_KEYS: Record<string, [string, number]> = {
   t: ["wrist_roll", 1], g: ["wrist_roll", -1],
   y: ["gripper", 1], h: ["gripper", -1],
 };
-const BASE_KEYS: Record<string, [string, number]> = {
+export const BASE_KEYS: Record<string, [string, number]> = {
   i: ["linear", 1], k: ["linear", -1], j: ["angular", 1], l: ["angular", -1],
 };
-const ZLIFT_KEYS: Record<string, number> = { u: 1, o: -1 };
-const CMD_KEYS: Record<string, string> = { " ": "estop", p: "reset_latch", c: "reset" };
+export const ZLIFT_KEYS: Record<string, number> = { u: 1, o: -1 };
+export const CMD_KEYS: Record<string, string> = { " ": "estop", p: "reset_latch", c: "reset" };
+
+// One legend row: the +/- key pair that drives a single DOF, ready to render (C3).
+export interface KeybindRow { dof: string; posKey: string; negKey: string; }
+
+// Collapse a `key -> [dof, ±1]` map into per-DOF +/- rows, preserving first-seen order so
+// the legend reads in the same order as the physical key layout.
+function rowsFromAxisMap(map: Record<string, [string, number]>): KeybindRow[] {
+  const byDof = new Map<string, KeybindRow>();
+  for (const [key, [dof, sign]] of Object.entries(map)) {
+    const row = byDof.get(dof) ?? { dof, posKey: "", negKey: "" };
+    if (sign > 0) row.posKey = key; else row.negKey = key;
+    byDof.set(dof, row);
+  }
+  return [...byDof.values()];
+}
+
+// Structured control legend for a given mode — derived from the exported maps above so it
+// can never drift from what the keys actually send.
+export function keybindLegend(mode: ControlMode): {
+  arm: KeybindRow[];
+  base: KeybindRow[];
+  lift: KeybindRow;
+  commands: { key: string; label: string }[];
+} {
+  const [u, o] = Object.entries(ZLIFT_KEYS).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  return {
+    arm: rowsFromAxisMap(mode === "joint" ? JOINT_KEYS : TASK_KEYS),
+    base: rowsFromAxisMap(BASE_KEYS),
+    lift: { dof: "lift (selected arm)", posKey: u, negKey: o },
+    commands: [
+      { key: "SPACE", label: "E-STOP" },
+      { key: "P", label: "reset latch" },
+      { key: "C", label: "reset" },
+      { key: "M", label: "toggle mode" },
+    ],
+  };
+}
 
 const JOG_HZ_MS = 20; // 50 Hz level-jog
 const BUFFER_LIMIT = 16384; // skip a jog frame if the channel is congested
@@ -119,8 +182,20 @@ export class RemoteTeleop {
   private readonly cmdDown = new Set<string>();
   // loop_hz / temp / status only ride the periodic telemetry block, not every per-tick
   // frame — keep last values so the readout doesn't flicker to 0.
-  private tel: TelemetryView = { loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false };
+  private tel: TelemetryView = {
+    loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {},
+  };
   private stopped = false;
+
+  // ---- two-way call (Phase 7 §B) -------------------------------------------
+  private micStream: MediaStream | null = null;
+  private micTrack: MediaStreamTrack | null = null;
+  private camStream: MediaStream | null = null;
+  private camTrack: MediaStreamTrack | null = null;
+  private call: CallState = {
+    active: false, micMuted: true, micSending: false,
+    robotAudio: false, robotMicLive: false, cameraOn: false,
+  };
 
   constructor(opts: RemoteTeleopOptions) {
     this.o = opts;
@@ -141,6 +216,143 @@ export class RemoteTeleop {
   // Public command surface for non-keyboard inputs (VR E-STOP / reset). Mirrors sendCmd.
   command(cmd: "estop" | "reset_latch" | "reset") {
     this.sendCmd(cmd);
+  }
+
+  // Flip cylindrical <-> per-motor from the UI (same effect as the 'm' key). onMode fires.
+  toggleMode() {
+    this.setMode(this.mode === "joint" ? "cylindrical" : "joint");
+  }
+
+  // ---- two-way call (Phase 7 §B) -------------------------------------------
+  // All of the following are renegotiation-free (R-X.1): the operator's mic/camera are
+  // attached to transceivers the robot offered up front via replaceTrack. If the robot has
+  // not (yet) offered an audio/video uplink m-line, capture still succeeds locally but
+  // micSending/cameraOn reflect that nothing is transmitted (Pi M3/M6 pending).
+
+  callState(): CallState {
+    return { ...this.call };
+  }
+
+  // Join the call: capture the mic (browser AEC/NS/AGC on as cheap insurance; the real fix
+  // is robot-side hardware AEC, M3-D), wire it to the uplink if present, announce over the
+  // control channel. Starts MUTED — the operator explicitly unmutes.
+  async joinCall(): Promise<CallState> {
+    if (!this.micStream) {
+      this.micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      this.micTrack = this.micStream.getAudioTracks()[0] ?? null;
+    }
+    if (this.micTrack) this.micTrack.enabled = !this.call.micMuted;
+    this.call.active = true;
+    this.applyAudioSink(); // now in the call -> unmute the robot audio sink
+    const wired = this.attachTrack("audio", this.micTrack);
+    this.call.micSending = wired && !this.call.micMuted;
+    if (!wired) this.log("mic captured, but robot offered no audio uplink — not transmitting (Pi M3 pending)");
+    this.dcSend({ type: "call", state: "join", mic_muted: this.call.micMuted });
+    this.emitCall();
+    return this.callState();
+  }
+
+  // Leave the call: stop capture, detach from the uplink, announce.
+  leaveCall() {
+    this.detachTrack("audio");
+    this.stopStream(this.micStream); this.micStream = null; this.micTrack = null;
+    this.disableCamera();
+    this.call.active = false;
+    this.call.micSending = false;
+    this.applyAudioSink(); // left the call -> mute the robot audio sink again
+    this.dcSend({ type: "call", state: "leave" });
+    this.emitCall();
+  }
+
+  // Mute/unmute the operator mic. A track.enabled flip — never a renegotiation.
+  setMicMuted(muted: boolean) {
+    this.call.micMuted = muted;
+    if (this.micTrack) this.micTrack.enabled = !muted;
+    this.call.micSending = this.call.active && !muted && !!this.audioSender();
+    this.dcSend({ type: "call", mic_muted: muted });
+    this.emitCall();
+  }
+
+  // M6 (gated): capture the operator camera and wire it to the reserved video uplink. Built
+  // now, shipped dark — the page only calls this behind isM6VideoEnabled(). Returns the local
+  // stream so the caller can show a self-view.
+  async enableCamera(): Promise<MediaStream | null> {
+    if (!this.camStream) {
+      this.camStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480 }, // ≤480p (R-X.7: a 7" DSI needs no more)
+      });
+      this.camTrack = this.camStream.getVideoTracks()[0] ?? null;
+    }
+    const wired = this.attachTrack("video", this.camTrack);
+    this.call.cameraOn = true;
+    if (!wired) this.log("camera captured, but robot offered no video uplink — not transmitting (Pi M6 pending)");
+    this.emitCall();
+    return this.camStream;
+  }
+
+  disableCamera() {
+    this.detachTrack("video");
+    this.stopStream(this.camStream); this.camStream = null; this.camTrack = null;
+    this.call.cameraOn = false;
+    this.emitCall();
+  }
+
+  private emitCall() {
+    this.o.onCall?.({ ...this.call });
+  }
+
+  // Robot audio only plays while the operator is in the call (mute the sink otherwise), so
+  // merely connecting the session never leaks room audio.
+  private applyAudioSink() {
+    if (this.o.audioEl) this.o.audioEl.muted = !this.call.active;
+  }
+
+  // Re-attach whatever the operator already captured onto the current peer (used after a
+  // fresh peer is built mid-call). No-op if nothing captured.
+  private attachLocalMedia() {
+    if (this.micTrack) {
+      const wired = this.attachTrack("audio", this.micTrack);
+      this.call.micSending = wired && this.call.active && !this.call.micMuted;
+    }
+    if (this.camTrack) this.attachTrack("video", this.camTrack);
+    this.emitCall();
+  }
+
+  // Find a transceiver of the given kind we can SEND on (the robot offered to receive from
+  // us), and replaceTrack. Returns whether an uplink existed.
+  private attachTrack(kind: "audio" | "video", track: MediaStreamTrack | null): boolean {
+    if (!this.pc || !track) return false;
+    const tr = this.sendTransceiver(kind);
+    if (!tr) return false;
+    try { tr.sender.replaceTrack(track); return true; } catch { return false; }
+  }
+
+  private detachTrack(kind: "audio" | "video") {
+    const tr = this.pc ? this.sendTransceiver(kind) : null;
+    try { tr?.sender.replaceTrack(null); } catch { /* peer already gone */ }
+  }
+
+  private audioSender(): boolean {
+    return !!this.sendTransceiver("audio");
+  }
+
+  // The first transceiver of `kind` whose negotiated direction lets us send. Uses the
+  // inbound receiver track's kind to identify the m-line's media type (reliable post-SRD).
+  private sendTransceiver(kind: "audio" | "video"): RTCRtpTransceiver | null {
+    if (!this.pc) return null;
+    const canSend = (d: RTCRtpTransceiverDirection | null | undefined) =>
+      d === "sendrecv" || d === "sendonly";
+    for (const t of this.pc.getTransceivers()) {
+      if (t.receiver.track?.kind !== kind) continue;
+      if (canSend(t.currentDirection) || canSend(t.direction)) return t;
+    }
+    return null;
+  }
+
+  private stopStream(s: MediaStream | null) {
+    s?.getTracks().forEach((t) => t.stop());
   }
 
   private iceServers(): RTCIceServer[] {
@@ -182,6 +394,9 @@ export class RemoteTeleop {
       await pc.setLocalDescription(answer);
       channel.send({ type: "broadcast", event: "sdp", payload: { type: "answer", sdp: answer.sdp } });
       this.log("answer sent");
+      // If a call was already joined before (re)connect, re-wire mic/cam onto this fresh
+      // peer's transceivers. Pure replaceTrack — no renegotiation (R-X.1).
+      this.attachLocalMedia();
     });
 
     channel.on("broadcast", { event: "ice" }, async ({ payload }) => {
@@ -222,6 +437,14 @@ export class RemoteTeleop {
   async stop() {
     this.stopped = true;
     this.pressed.clear();
+    // release mic/camera capture (safe if never joined)
+    this.stopStream(this.micStream); this.micStream = null; this.micTrack = null;
+    this.stopStream(this.camStream); this.camStream = null; this.camTrack = null;
+    this.call = {
+      active: false, micMuted: true, micSending: false,
+      robotAudio: false, robotMicLive: false, cameraOn: false,
+    };
+    this.emitCall();
     if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
     if (this.jogTimer) { clearInterval(this.jogTimer); this.jogTimer = null; }
     // tell the robot to exit (clean restart) before we tear down
@@ -256,7 +479,23 @@ export class RemoteTeleop {
     });
     this.pc = pc;
     this.linkMode = null; // recomputed per connection from the selected candidate pair
+    this.tel.linkMode = null;
     pc.ontrack = (ev) => {
+      // Robot inbound audio -> dedicated sink. Kept MUTED until the operator joins the call,
+      // so connecting the session doesn't leak room audio before you're "in the call".
+      if (ev.track.kind === "audio") {
+        if (this.o.audioEl && this.o.audioEl.srcObject !== ev.streams[0]) {
+          this.o.audioEl.srcObject = ev.streams[0];
+          this.log("robot audio track attached" + (this.call.active ? "" : " (muted until Join call)"));
+        }
+        this.applyAudioSink();
+        this.call.robotAudio = true;
+        // If the robot mutes/ends its mic, drop the indicator.
+        ev.track.onmute = () => { this.call.robotAudio = false; this.emitCall(); };
+        ev.track.onended = () => { this.call.robotAudio = false; this.emitCall(); };
+        this.emitCall();
+        return;
+      }
       if (this.o.videoEl.srcObject !== ev.streams[0]) {
         this.o.videoEl.srcObject = ev.streams[0];
         this.log("video track attached");
@@ -320,6 +559,8 @@ export class RemoteTeleop {
       // STUN, relay via TURN) is WAN. Tell the daemon so it uses the matching watchdog
       // profile (LAN 150/500 vs WAN 300/1000) instead of always assuming WAN.
       this.linkMode = t(local) === "host" && t(remote) === "host" ? "lan" : "wan";
+      this.tel.linkMode = this.linkMode;
+      this.o.onTelemetry({ ...this.tel }); // surface the link chip as soon as the path resolves
       this.sendLink();
     } catch { /* getStats best-effort */ }
   }
@@ -362,9 +603,16 @@ export class RemoteTeleop {
         if (status.safety) this.tel.safety = status.safety;
         if (status.watchdog) this.tel.watchdog = status.watchdog;
       }
-      // Per-motor Present_Current (virtual tactile signal) -> VR haptics, if a sink is set.
-      if (this.o.onCurrents && m.currents && typeof m.currents === "object") {
-        this.o.onCurrents(m.currents as Record<string, number>);
+      // Per-motor Present_Current (virtual tactile signal) -> VR haptics + on-screen readout.
+      if (m.currents && typeof m.currents === "object") {
+        this.tel.currents = m.currents as Record<string, number>;
+        this.o.onCurrents?.(this.tel.currents);
+      }
+      // Reserved: robot reports whether its mic is live (Pi M3). Drives the "robot on air"
+      // indicator; absent until the daemon sends it.
+      if (typeof m.robot_mic_live === "boolean" && m.robot_mic_live !== this.call.robotMicLive) {
+        this.call.robotMicLive = m.robot_mic_live;
+        this.emitCall();
       }
       this.o.onTelemetry({ ...this.tel });
     } else if (m.type === "ack") {

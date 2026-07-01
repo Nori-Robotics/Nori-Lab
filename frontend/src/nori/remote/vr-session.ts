@@ -15,6 +15,7 @@
 //               move/tilt/twist the controller -> that arm's x/y/pitch/roll + shoulder_pan
 //   each hand:  A/X = that arm's lift UP            B/Y = that arm's lift DOWN
 //   right only: thumbstick = base drive             thumbstick-press (hold 1.5s) = reset latch
+//               thumbstick-press (double-tap)        = recenter (video panel -> current facing)
 //   left only:  thumbstick-press = E-STOP (latches + re-clutch) (R13: the operator is
 //               in-headset seeing live video, satisfying the confirmation gate)
 
@@ -23,6 +24,12 @@ import { VrJogMapper, type VrControllerFrame, type VrFrame } from "./vr";
 import type { RemoteTeleop } from "./teleop";
 
 const RESET_HOLD_MS = 1500;
+// Recenter = a quick DOUBLE-TAP of the reset button (right thumbstick press). It's cleanly
+// separable from the hold-to-reset gesture on the same button: a hold is one long press
+// (recenter never sees a second edge); a double-tap is two short presses (reset's hold timer
+// never elapses). Costs no extra button in an already-full binding map.
+const RECENTER_DBLTAP_MS = 400;
+const PANEL_DIST = 2.0; // metres in front of the operator the video panel sits after recenter
 // gripper Present_Current -> rumble. Raw sign-magnitude ints; tune on hardware.
 const HAPTIC_IDLE = 60;   // below this = no contact, no buzz
 const HAPTIC_FULL = 600;  // at/above this = full-strength rumble
@@ -88,10 +95,16 @@ export class VrSession {
   private scene: THREE.Scene | null = null;
   private camera: THREE.PerspectiveCamera | null = null;
   private texture: THREE.VideoTexture | null = null;
+  private panel: THREE.Mesh | null = null;
   private session: XRSession | null = null;
   private currents: Record<string, number> = {};
   private resetHeldSince = 0;
   private resetFired = false;
+  // Recenter gesture state: edge + last-tap timestamp for the double-tap detector, and a
+  // one-shot flag serviced on the next frame that has a viewer pose.
+  private resetPrev = false;
+  private lastResetTapAt = 0;
+  private recenterPending = false;
   private running = false;
 
   constructor(opts: VrSessionOptions) {
@@ -153,8 +166,9 @@ export class VrSession {
       new THREE.PlaneGeometry(2.0, 1.5),
       new THREE.MeshBasicMaterial({ map: texture, toneMapped: false })
     );
-    panel.position.set(0, 1.4, -2.0);
+    panel.position.set(0, 1.4, -PANEL_DIST);
     scene.add(panel);
+    this.panel = panel;
 
     const session = await xr.requestSession(mode, {
       optionalFeatures: ["local-floor", "bounded-floor"],
@@ -167,7 +181,8 @@ export class VrSession {
     this.o.onLog(
       `${mode === "immersive-ar" ? "AR (passthrough)" : "VR"} session started — ` +
         "grip to engage clutch, A/X & B/Y = that arm's lift up/down, "
-          + "left stick-press = E-STOP, hold right stick-press = reset"
+          + "left stick-press = E-STOP, hold right stick-press = reset, "
+          + "double-tap right stick-press = recenter"
     );
     renderer.setAnimationLoop((_t, frame) => this.onXRFrame(frame));
   }
@@ -194,6 +209,7 @@ export class VrSession {
     this.scene = null;
     this.camera = null;
     this.texture = null;
+    this.panel = null;
     this.session = null;
     this.o.onLog("VR session ended");
     this.o.onEnd();
@@ -233,7 +249,10 @@ export class VrSession {
           this.mapper.reclutch();
           this.o.onLog("E-STOP — re-squeeze grip to resume");
         }
-        this.handleResetHold(this.buttonDown(this.b.reset, sources));
+        const resetHeld = this.buttonDown(this.b.reset, sources);
+        this.detectRecenterTap(resetHeld); // double-tap of the same button = recenter
+        this.handleResetHold(resetHeld);   // sustained hold of it = reset_latch
+        if (this.recenterPending) this.serviceRecenter(frame, refSpace);
         this.applyHaptics(session);
       }
     }
@@ -282,6 +301,49 @@ export class VrSession {
       // Touch controllers report the stick on axes[2]/[3]; fall back to [0]/[1] like the reference.
       thumbstick: { x: gp.axes[2] ?? gp.axes[0] ?? 0, y: gp.axes[3] ?? gp.axes[1] ?? 0 },
     };
+  }
+
+  // Recenter on demand (public so the page could bind it too). Serviced on the next frame
+  // that has a viewer pose, so it always has a fresh head transform to face the panel to.
+  recenter() {
+    this.recenterPending = true;
+  }
+
+  // Double-tap detector on the reset button's rising edge. Two rising edges within
+  // RECENTER_DBLTAP_MS => recenter. A single press (or a long hold) never triggers it.
+  private detectRecenterTap(pressed: boolean) {
+    if (pressed && !this.resetPrev) {
+      const now = performance.now();
+      if (this.lastResetTapAt && now - this.lastResetTapAt < RECENTER_DBLTAP_MS) {
+        this.recenter();
+        this.lastResetTapAt = 0; // consume so a third tap starts a fresh pair
+        this.o.onLog("recenter — video panel moved to your current facing");
+      } else {
+        this.lastResetTapAt = now;
+      }
+    }
+    this.resetPrev = pressed;
+  }
+
+  // Reposition the video panel PANEL_DIST metres in front of where the operator is now
+  // facing (horizontal yaw only), at their current eye height, turned to face them. Lets an
+  // operator who has physically turned re-orient the robot's view without walking back.
+  private serviceRecenter(frame: XRFrame, refSpace: XRReferenceSpace) {
+    const panel = this.panel;
+    if (!panel) return;
+    const pose = frame.getViewerPose(refSpace);
+    if (!pose) return; // no head pose this frame — retry next frame (flag stays set)
+    this.recenterPending = false;
+    const p = pose.transform.position;
+    const q = pose.transform.orientation;
+    // forward = head orientation applied to -Z, flattened to the horizontal plane.
+    const fwd = new THREE.Vector3(0, 0, -1)
+      .applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w));
+    fwd.y = 0;
+    if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1); // looking straight up/down -> keep prior facing
+    fwd.normalize();
+    panel.position.set(p.x + fwd.x * PANEL_DIST, p.y, p.z + fwd.z * PANEL_DIST);
+    panel.lookAt(p.x, p.y, p.z); // face the operator (same height keeps it vertical)
   }
 
   // Reset latch = hold the bound reset button for RESET_HOLD_MS. R13: the operator is

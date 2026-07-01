@@ -1,250 +1,215 @@
-# NoriLeLab — Pre-Pi Work Queue (todos)
+# NoriLeLab — Work Queue (todos)
 
-> **Purpose:** the concrete task list of work that can start **now**, before the Pi-side
-> C++ `NoriCoreAgent` daemon exists. Derived from [`full_nori_plan.md`](full_nori_plan.md) and
-> [`onboard_pi_plan.md`](onboard_pi_plan.md), reconciled 2026-06-18.
+> **Purpose:** the concrete task list for the laptop app. Derived from
+> [`full_nori_plan.md`](full_nori_plan.md) (what/why), [`m3_m5_implementation_plan.md`](m3_m5_implementation_plan.md)
+> (the M3→M6 how), and [`onboard_pi_plan.md`](onboard_pi_plan.md) (robot side).
 >
-> **The single blocker** is the Pi daemon and its LAN contract (TCP binary control/state,
-> WebRTC/UDP video, binary recording-log pull, mDNS presence). Anything that talks to
-> `xlerobot.local` is blocked. Everything that talks to **Nori-Backend is unblocked** —
-> the backend is verified up and running, and all required endpoints exist (re-verified
-> 2026-06-16 in `full_nori_plan.md`'s dependency matrix).
+> **Current stage (2026-07-01):** Phases 1–6 (all Nori-Backend integration) are **done**.
+> M1 WAN remote teleop + WebRTC video/control is **done**. VR teleop is **in active
+> development**. The live front is **Phase 7 — two-way audio call + teleop GUI overhaul**
+> (the laptop half of robot M3), plus the §P parallel track. This is the highest-value
+> **fully hardware-free** work: testable against a mock daemon / WebRTC loopback with no robot.
 
 ---
 
 ## Legend
 
-- ✅ **Unblocked** — no Pi dependency; can be built and tested against Nori-Backend now.
+- ✅ **Done** — built, in-tree, verified.
+- 🟢 **Now** — unblocked, hardware-free, actively targetable.
 - 🟡 **Partial** — the static / non-protocol slice is doable; the LAN-transport slice is blocked.
-- 🔴 **Blocked** — depends on the Pi daemon's binary protocol / WebRTC / mDNS. Listed for
-  reference only; do **not** start.
+- 🔴 **Blocked** — depends on the Pi daemon's protocol / WebRTC / mDNS. Reference only; do **not** start.
 
-Tagging rule (from `full_nori_plan.md`): in-place edits to existing LeLab files get a `# NORI:`
-comment so upstream merges stay easy. Additive files (`frontend/src/nori/`,
-`lelab/nori_client.py`) need no tag.
+Tagging rule: in-place edits to existing LeLab files get a `# NORI:` comment so upstream
+merges stay easy. Additive files (`frontend/src/nori/`, `lelab/nori_client.py`) need no tag.
 
 ---
 
-## 0. Environment setup (do first)
+## Done ledger (Phases 0–6 + M1)
 
-- [ ] **Install Node.js / npm** — *currently missing on this machine; this is why
-  `lelab --dev` fails with `no such file or directory: 'npm'`.* The dev launcher
-  (`lelab/scripts/lelab.py:105,109`) shells out to `npm install` then `npm run dev` for the
-  Vite server on :8080. Fix:
-  ```bash
-  brew install node       # Homebrew present at /opt/homebrew (arm64, macOS 15.3.2)
-  node --version && npm --version   # verify on PATH
-  ```
-  (Node 22 LTS matches `@types/node ^22` in `frontend/package.json`.)
-- [ ] `pip install -e .` in a fresh venv (Python ≥3.10); verify `lelab` boots.
-- [ ] After Node is installed, verify `lelab --dev` brings up Vite (:8080) + uvicorn (:8000).
-- [ ] Confirm Nori-Backend reachable: `GET http://localhost:8000/openapi.json` returns the spec
-  (needed for type generation in Phase 1). **Note:** health is mounted at `/health`, NOT
-  `/api/v1/health`.
-- [ ] *(Optional, if SO-101 hardware on hand)* exercise legacy calibrate/teleop/record to
-  validate the inherited upstream base. Uses the serial path, not the Pi.
+Compressed — see git history / `full_nori_plan.md` for detail. Do not re-open without cause.
+
+- ✅ **Phase 0** — env (Node, both servers, OpenAPI reachable).
+- ✅ **Phase 1** — Nori scaffolding: `frontend/src/nori/` tree, generated `api/types.ts`,
+  `api/client.ts`, Supabase `auth/`, `lelab/nori_client.py`, env config, `/nori/*` routes.
+- ✅ **Phase 2** — auth + provisioning: sign-in, two-hop JWT plumbing (`X-Nori-JWT` → `Bearer`),
+  provision-on-sign-in, account page, auth guard.
+- ✅ **Phase 3** — marketplace: browse + source filter, install (acquire→download / direct),
+  streaming policy download to local cache.
+- ✅ **Phase 4** — HF reroute (client + plumbing): 4-step presigned-S3 `upload_dataset()`,
+  manifest build/validate (unit-tested), training dispatch + log-polling proxies,
+  `runners/nori_cloud.py` `NoriCloudJobRunner` wired into the job registry.
+- ✅ **Phase 6** — polish: pairing (manual serial), consents grant/revoke, deletion request,
+  training-history page with live log polling + "Start training" trigger.
+- ✅ **M1 — WAN remote teleop:** `frontend/src/nori/remote/teleop.ts` (`RemoteTeleop`) —
+  WebRTC answerer, Supabase signaling, fresh-peer-per-offer, unreliable control data channel,
+  HMAC room-token auth, LAN/WAN link-mode detection from the selected ICE pair (drives the
+  daemon watchdog profile), telemetry view (`loop_hz`, safety, watchdog, temp, currents).
+
+**In active development (uncommitted):**
+- 🟢 **VR teleop** — `remote/vr.ts` (jog mapper) + `remote/vr-session.ts` (`VrSession`, WebXR
+  controller→jog mapping), offered as an option on top of remote. Feeds `ExternalJog` into the
+  same control wire the keyboard uses. Finish/stabilize before layering the call UI on top.
 
 ---
 
-## 1. Phase 1 — Nori scaffolding ✅ DONE (2026-06-19)
+## Phase 7 — Two-way audio call + teleop GUI overhaul  🟢 (laptop half of robot M3)
 
-> Verified: `npx tsc -b --noEmit` clean, `npm run build` clean, `ruff check` clean,
-> backend imports + `.env` load verified. The eslint `react-refresh` warning on
-> `NoriContext.tsx` matches the existing `ApiContext.tsx` pattern (non-blocking).
+> **Goal:** the M1 WebRTC session gains **two-way audio** (operator hears the room + speaks
+> into it) and a teleop control surface worth shipping. Operator **video is deferred to M6** —
+> build it but ship it dark behind a flag. **No change to the control data channel.**
 >
-> **⚠️ Port collision resolved:** LeLab and Nori-Backend both default to `:8000`. The
-> Nori default is now `:8001` (`NORI_BACKEND_URL`). Run Nori-Backend locally with
-> `uvicorn main:app --port 8001`, or set `NORI_BACKEND_URL` to wherever it actually is.
-
-- [x] Created the additive frontend tree under `frontend/src/nori/` (api/, auth/, pages/,
-  components/) + `NoriContext.tsx` bootstrap provider.
-- [x] Generated typed API client `frontend/src/nori/api/types.ts` from the live backend
-  (1380 lines). Added `npm run gen:types` script (defaults to `:8001`, override via env).
-- [x] Built `frontend/src/nori/api/client.ts` — typed wrapper hitting LeLab `/nori/*` proxy
-  routes, injecting `X-Nori-JWT` from the Supabase session. Plus `auth/supabase.ts`
-  (lazy client init from `/nori/config`) and `auth/session.ts` (token/sign-in/sign-out).
-- [x] Created `lelab/nori_client.py` — `NoriClient` with `httpx`, JWT forwarding, and all
-  typed methods (simple GET/POST wired for real; `download_policy`/`upload_dataset` stubbed
-  with `NotImplementedError` + phase pointers). `NORI_BACKEND_URL` defaults to `:8001`.
-- [x] Added env config to `lelab/utils/config.py`: `NORI_BACKEND_URL`, `SUPABASE_URL`,
-  `SUPABASE_ANON_KEY` + `nori_public_config()`; loads project-root `.env` via python-dotenv.
-- [x] `server.py`: added `GET /nori/config` (browser-safe config bootstrap) + `nori_jwt()`
-  header-extraction helper for Phase 2 proxy routes. Tagged `# NORI:`.
-- [x] Registered `/nori/*` routes in `frontend/src/App.tsx` (additive; no upstream routes
-  touched) under a `NoriProvider` + `NoriLayout`, plus `/nori/sign-in`.
-- [x] Added deps to `pyproject.toml`: `httpx`, `python-dotenv` (were transitive). Added
-  `@supabase/supabase-js` + `openapi-typescript` to `frontend/package.json`. Created
-  `.env.example`.
-
-**Note for the next session:** the frontend `client.ts` calls LeLab `/nori/*` *proxy*
-routes (per the JWT-plumbing design) — those proxy endpoints don't exist yet. Phase 2's
-first task is to add them in `server.py` (e.g. `POST /nori/customers/me/provision` →
-`NoriClient(nori_jwt(req)).provision_customer()`).
-
----
-
-## 2. Phase 2 — Auth + provisioning ✅ DONE (2026-06-21)
-
-> Verified: `ruff` clean, backend imports OK, frontend tsc clean for Nori files (two
-> pre-existing upstream tsc errors in `meshLoaders.ts`/`vite.config.ts` from the vite-8
-> merge are unrelated), `npm run build` clean. Live: JWT forwarding confirmed end-to-end —
-> no header → backend "Missing Authorization header"; dummy token → backend "Invalid token"
-> (reached the JWKS validator). **Not auto-tested:** the actual browser sign-in + successful
-> provision — needs a real Supabase user login; verify in-browser at `/nori/sign-in`.
-
-- [x] **Backend proxy routes** in `server.py` (`# NORI:`): `POST /nori/customers/me/provision`
-  and `GET /nori/customers/me`, via `_nori_client(request)` + `_nori_proxy()` (translates
-  `NoriBackendError` → `HTTPException`, passing status + detail through unchanged).
-- [x] **Sign-in screen** (`pages/sign-in.tsx`): email/password via Supabase JS SDK (shadcn
-  Card/Input/Label/Button). On success the SDK stores+refreshes the JWT; redirects to
-  `/nori/account` via the session effect.
-- [x] **JWT plumbing** (two hops): browser attaches `X-Nori-JWT` (in `api/client.ts` via
-  `getAccessToken()`); LeLab `nori_jwt()` reads it; `NoriClient` forwards as `Bearer`.
-- [x] **Provisioning on sign-in**: `NoriContext` calls `provisionCustomer()` whenever a
-  session appears (keyed on user id; idempotent), stores the `CustomerProfile`.
-- [x] **Account page** (`pages/account.tsx`): renders profile / billing tier / compute
-  allowance / pairing state from context; sign-out; "Pair a robot" link when unpaired.
-- [x] **Auth guard**: `NoriLayout` redirects signed-out visitors to `/nori/sign-in` once
-  bootstrap completes.
-
----
-
-## 3. Phase 3 — Marketplace browse + install ✅ DONE (2026-06-23)
-
-> Verified: `ruff` clean, backend imports OK, Nori files tsc-clean, `npm run build` clean.
-> Live: all four proxy routes exist (return 502, not 404). Full forwarding couldn't be
-> end-to-end tested because **Nori-Backend on :8001 was down** at test time — but the
-> graceful 502 ("can't reach backend") path is itself confirmed, and Phase 2 proved
-> forwarding works when the backend is up. Restart the backend to exercise live browse.
+> **Where it lives:** `frontend/src/nori/remote/` (session logic) + `frontend/src/nori/pages/remote.tsx`
+> (UI) + the VR surface (`remote/vr-session.ts`). Robot-side counterparts (mic/speaker, AEC,
+> sound-effects) are `onboard_pi_plan.md` M3 — not in this repo.
 >
-> **Schema note:** the live `GET /marketplace/policies` has **no `source` query param** —
-> filtering is client-side (4 tabs: All/Own/First-party/Community), as the plan anticipated.
+> **The one hard rule (R-X.1) — read before writing any audio code:** `webrtcbin` on the Pi is
+> fragile under renegotiation. The **track set is fixed at session establishment**. All m-lines
+> (robot video, robot→operator audio, operator→robot audio, and a **reserved muted video m-line**
+> for M6) must be present in the **first** offer/answer. "Unmute mic" / "enable video" later is a
+> **track-enable flip or a full session re-establish — never a live renegotiation.** The browser
+> is the **answerer**, so this depends on the robot's offer proposing those m-lines (see §D).
 
-- [x] **Backend proxies** in `server.py` (`# NORI:`): `GET /nori/marketplace/policies`,
-  `GET /nori/marketplace/datasets/public`, `POST /nori/marketplace/policies/{id}/acquire`,
-  `POST /nori/marketplace/policies/{ref}/download`.
-- [x] **Streaming download** in `nori_client.download_policy()` — streams safetensors bytes
-  to `~/.cache/huggingface/lerobot/nori_policies/<ref>/model.safetensors` atomically (via
-  `.part` temp + `os.replace`); returns `{ref, path, size_bytes}`. Cache path helpers
-  (`NORI_POLICY_CACHE`, `nori_policy_dir`) added to `utils/config.py`.
-- [x] **Browse page** (`pages/marketplace.tsx`): policy cards (title, description, source
-  badge, class, price), source-filter tabs + client-side search.
-- [x] **Install flow**: first-party → `acquire` then `download`; own-trained → direct
-  download. Per-card install status ("Installing…" → "Cached N KB locally" / error).
-- [x] **Entry link**: added a "Nori" button to `LandingTopBar` → `/nori/account` (`# NORI:`,
-  the one sanctioned modification to an existing LeLab screen).
-- [ ] 🔴 **Robot push** via `rollout` against the downloaded policy — blocked on the Pi.
-  Bytes are cached locally; wiring the cached `model.safetensors` into a rollout needs a
-  reachable robot to test, so deferred with Phase 5.
+### A. Audio track plumbing on the existing peer connection
+
+*Target: `remote/teleop.ts` (`RemoteTeleop`), reused by `remote/vr-session.ts`.*
+
+- [ ] **A1 — Robot audio playback (uplink; M3a, ship first, no AEC dependency).**
+  Extend `pc.ontrack` (`teleop.ts:259`) to route an **incoming audio** track to an audio sink.
+  Today it only handles video (`videoEl.srcObject`). Add a hidden `<audio autoplay>` element (or
+  set the audio track on a dedicated `MediaStream`) and attach it. Small jitter buffer; verify
+  continuity, not latest-only.
+  - *Open:* one combined stream vs. split video/audio streams? Robot sends both in `ev.streams[0]`
+    or separate — confirm against `webrtc_robot.py` track layout. **DECIDE with Pi team.**
+- [ ] **A2 — Operator mic capture (downlink; M3b).**
+  `getUserMedia({ audio: true })`; attach the mic track to the **audio m-line the robot's offer
+  proposes** (via the matching `RTCRtpTransceiver` — do **not** `addTrack` a new m-line, that
+  forces renegotiation). Gate acquisition behind an explicit "join call" action (permission
+  prompt UX), not on page load.
+  - *Open:* mic constraints — echoCancellation/noiseSuppression/autoGainControl on the browser
+    side? (Robot-side AEC is the real fix per M3-D, but browser AEC is free insurance.) **TWEAK.**
+- [ ] **A3 — Establishment-time track contract.** On building the answer, ensure the peer has
+  transceivers for: robot-video (recv), robot-audio (recv), operator-audio (send), and a
+  **reserved operator-video transceiver set to `inactive`/muted** (M6). No mid-call `addTrack`.
+  - *Depends on §D + Pi:* the browser can only fill m-lines the robot offered. If the robot's
+    current offer is video-only (`SENDONLY` video, per `m3_m5_implementation_plan.md` R-X.1),
+    this is **coordination-gated** on the Pi adding the audio + reserved-video m-lines to its offer.
+
+### B. Call UI + control-channel state sync
+
+*Target: `pages/remote.tsx` (+ shared indicator component under `nori/remote/` or `components/`).*
+
+> **Basic laptop-side layout done 2026-07-01** — `CallState` + call API on `RemoteTeleop`
+> (`joinCall`/`leaveCall`/`setMicMuted`/`enableCamera`/`disableCamera`, `onCall` events),
+> `CallBar` in `remote/TeleopStatus.tsx`, audio sink + self-view slot in `remote.tsx`. All
+> renegotiation-free (attach to transceivers the robot offers). **Visuals are throwaway** —
+> front-end team redoes them; the point is every control + indicator is now wired/exposed.
+> Still gated on the **Pi offering audio (M3) / video (M6) m-lines** — until then mic/cam
+> capture works locally but `micSending=false` (surfaced in the UI).
+
+- [x] **B1 — Mic mute toggle** (done): `RemoteTeleop.setMicMuted()` flips `track.enabled`; default
+  muted on join. No renegotiation.
+- [x] **B2 — "On air" indicators** (done): `CallBar` shows operator (`active && !muted && micSending`)
+  and robot (`robotMicLive || robotAudio`) live dots. Robot-side truth read from the reserved
+  `robot_mic_live` telemetry field + the inbound audio track's mute/ended events.
+- [x] **B3 — Call-state sync over the control channel** (done): `joinCall`/`leaveCall`/`setMicMuted`
+  emit `{type:"call", ...}` over the existing control channel (same `dcSend` wire as `link`/`jog`).
+  - *Open (still):* mute authority — we currently **send intent + render local state**, and also
+    accept the robot's `robot_mic_live`. Confirm whether the robot echoes a consolidated call
+    state we should render from instead. **DECIDE with Pi team** (goes in §D message schema).
+- [x] **B4 — Operator camera + self-view, GATED** (done): full capture + attach + self-view built;
+  UI hidden unless `isM6VideoEnabled()`. **Flag decision:** localStorage `nori_m6_video=1` dev
+  toggle (`remote/flags.ts`) — cheap to promote to a build-time default later.
+
+### C. Teleop GUI overhaul
+
+*Target: `pages/remote.tsx` + the VR surface. Much of the data already exists in `TelemetryView`
+/ `onCurrents` — this is mostly surfacing it well.*
+
+- [x] **C1 — Clear connection/telemetry panel** (done 2026-07-01): `TelemetryPanel` in
+  `remote/TeleopStatus.tsx` — conn state, link path (LAN/WAN, now surfaced on `TelemetryView`),
+  `loop_hz` (toned <45/<30), safety, watchdog, temp, and a **stale** flag (no telemetry frame
+  for >1.5 s while control is active).
+- [x] **C2 — Grip-force / current readout** (done 2026-07-01): `GripForce` bars from
+  `TelemetryView.currents` (grippers first). Currents now ride the telemetry view, not just VR
+  haptics. Also added a visible **Mode** toggle button (`RemoteTeleop.toggleMode()`).
+- [x] **C3 — Keybind discoverability** (done 2026-07-01): `ControlLegend` derived from the
+  exported `keybindLegend(mode)` in `teleop.ts` (single source of truth — the maps the jog
+  stream uses), mode-aware.
+- [x] **C4 — VR recenter/reposition** (done 2026-07-01): `VrSession.serviceRecenter()` moves the
+  video panel PANEL_DIST in front of the operator's current facing. Gesture = **double-tap the
+  right thumbstick press** (cleanly separable from hold-to-reset; no extra button spent).
+- [x] **C5 — Call-window layout** (basic, done 2026-07-01): robot video with an overlaid reserved
+  self-view slot (hidden until M6), the `CallBar` beneath it, then telemetry / grip-force /
+  legend. Throwaway visuals; front-end team owns the real design.
+- [ ] 🟡 **C6 — Basic 3D visual of robot** (arm/rail positioning as cubes, for fully-remote teleop).
+  **Gated:** telemetry today carries `loop_hz / temp / safety / watchdog / currents` but **no
+  joint/rail positions** (`teleop.ts` `handleTelemetry`). Need the daemon to include per-joint
+  positions in the telemetry frame before the cubes can reflect real pose. **CONFIRM schema with
+  Pi team**, then render with three.js (the VR scene already pulls in three).
+
+### D. Shared protocol contract (`nori-protocol`)
+
+> Prerequisite for the B3 call-state messages and the reserved fields. Coordinate with the Pi
+> team — this is a **shared submodule**, one source of truth. Section-6 partial promoted here
+> because Phase 7 needs it.
+
+- [ ] **D1 — Stand up the `nori-protocol` git submodule** + `protocol_version` handshake
+  convention + golden-fixture test harness; wire it into NoriLeLab. **Blocked slice:** the
+  concrete daemon struct/field layout is owned by the Pi team — leave a versioned placeholder
+  until they pin it.
+- [ ] **D2 — Add the new fields:** mute state, call-state (join/leave/active), on-air/indicator
+  sync, **and reserved video/call fields** (used fully in M6). Bump `protocol_version`; add
+  golden fixtures (R8).
+- [ ] **D3 — Migrate `teleop.ts` off hand-rolled JSON** to parse/serialize against the shared
+  schema; **assert `protocol_version` on connect** (fail loudly on mismatch).
+  - *Open:* how strict is version mismatch — hard-refuse, or warn + best-effort? **DECIDE.**
+
+### Phase 7 acceptance criteria (laptop side; audio validation is hardware-gated on the robot)
+
+- [ ] Operator hears the robot's room (A1) — verifiable against a WebRTC loopback / mock.
+- [ ] Operator mic reaches the session; mute flip works with **no renegotiation** (A2/B1).
+- [ ] On-air indicators on both ends agree via the control channel (B2/B3).
+- [ ] Operator video is present in code but inert behind the flag (B4).
+- [ ] Telemetry panel, current readout, keybind legend, mode toggle all render (C1–C4).
+- [ ] `protocol_version` asserted on connect; call-state messages validated by fixtures (D).
+- [ ] *(Hardware-gated, robot M3):* no echo/howl (AEC), latency < 300 ms, no hub brownout.
 
 ---
 
-## 4. Phase 4 — Reroute Python HF calls ✅ DONE (client + API plumbing) (2026-06-23)
-
-Honor the invariant: **no HF token ever on the laptop.** All HF access via Nori-Backend.
-
-> Verified: `ruff` clean, Nori files tsc-clean, `npm run build` clean. Manifest
-> builder/validator **unit-tested** (valid dataset + 5 rejection cases). Live: training
-> proxies forward → 401 with dummy token; upload route → 404 for missing dataset (local
-> precondition runs before the backend call). Full S3 round-trip not exercised (needs a real
-> dataset + backend S3), but the orchestration + error paths are in place.
-
-- [x] **`nori_client.upload_dataset()` — full 4-step presigned-S3 flow**: build+validate
-  manifest → `start` → PUT each file (`x-amz-server-side-encryption: AES256`) → `finalize`
-  (retries the 422 HEAD-miss `missing` set once) → poll `GET …/{id}` until terminal
-  (`PROMOTED` success; else raises). Fixed the stub's `{files:}` → `{manifest:}` body.
-- [x] **Manifest rules** enforced client-side via module-level `build_manifest()` /
-  `validate_manifest()` (unit-testable, no client needed): non-empty; relative paths only;
-  extension allowlist; ≤5 GB/file; ≤20 GB total; must contain `info.json`. `ManifestError`.
-- [x] **Upload route** `POST /nori/datasets/upload {repo_id, commit_message?}` — resolves the
-  LeRobot cache path, 404s if not a dataset dir, else runs `upload_dataset` (synchronous,
-  mirrors existing `/upload-dataset`; background later if long uploads hurt UX).
-- [x] **Training dispatch + polling proxies** in `server.py` + typed client methods:
-  `POST /nori/training/dispatch {timeout_seconds}`, `GET /nori/training/jobs`,
-  `GET …/{id}`, `GET …/{id}/logs?since=`. (These also back the Phase 6 history UI.)
-- [x] **`server.py` config + JWT pass-through** — done in Phase 1/2.
-- [x] 🟢 **Deep integration — option (a) DONE (2026-06-23):** added
-  `runners/nori_cloud.py` `NoriCloudJobRunner` implementing the `JobRunner` Protocol
-  (`isinstance(r, JobRunner)` verified). Wired into `jobs.py`: `JobTarget`/`JobRecord` gain
-  a `nori_cloud` runner + `timeout_seconds`/`nori_job_uuid`; `job_registry.start(...,
-  nori_jwt=)` branches to it; `create_training_job` forwards `X-Nori-JWT` and maps
-  `NoriBackendError` → HTTP status. A Nori training therefore appears in the **existing** job
-  list + watch UI with no frontend changes (LeLab's own `/jobs/{id}/logs` calls the runner's
-  `stream_log_lines`). Live: no session → 400; bad/expired token → 401.
-  - **Two documented constraints** (forced by the architecture, see file header): dispatch is
-    config-less (`{timeout_seconds}` only — backend decides what to train); the Python poll
-    thread can't refresh the Supabase JWT, so on expiry it stops streaming gracefully and the
-    frontend training-history page (refreshing token) becomes the source of truth. After a
-    LeLab restart a `nori_cloud` record is marked `interrupted` (no reattach without a JWT).
-- [ ] **Frontend trigger** for a `nori_cloud` job (POST `/jobs/training` with
-  `target.runner="nori_cloud"`) — lands naturally on the Phase 6 training-history page.
-- [ ] **Upload trigger UI** (small): a "Push to Nori" action on a dataset → `uploadDataset()`.
-- [ ] Reroute `record.py` `push_to_hub` (still HF-direct) once the upload trigger UI exists.
-- [ ] 🔴 **Pi-blocked (the dataset-producing half):** pull the binary recording log from
-  `xlerobot.local` + `tools/export_lerobot_dataset.py` to parse it into the Parquet/mp4
-  LeRobotDataset that `upload_dataset()` consumes. Needs the daemon's wire format.
-
----
-
-## 5. Phase 6 — Polish ✅ DONE (2026-06-23)
-
-> Verified: `ruff` clean, backend imports OK + all routes registered, Nori files tsc-clean,
-> `npm run build` clean. Live: pair / consents / consent-revoke / deletion routes all forward
-> → 401 with a dummy token (schema-validated + reached backend). All pages reachable via the
-> `NoriLayout` nav (Account / Marketplace / Training / Consents / Pairing).
-
-- [x] **Backend proxies** (`server.py`, `# NORI:`): `POST /nori/customers/me/pair`,
-  `GET /nori/consents`, `POST /nori/consents`, `POST /nori/consents/{id}/revoke`,
-  `POST /nori/deletion-requests` (typed Pydantic bodies). Fixed `nori_client` consent methods
-  to the real schema (`grant_consent(type, policy_version, scope?)`; was a wrong `granted` flag).
-- [x] **Consent UI** (`pages/consents.tsx`): grant/revoke toggles for `train_self` /
-  `publish_public` (resolves the active row from `GET /consents`). `CONSENT_POLICY_VERSION`
-  constant ("v1") — bump when the consent text changes.
-- [x] **Deletion UI**: data-only / full scope + request button on the consents page
-  (`POST /deletion-requests`; backend purge sweeper ⚠️ not yet wired — status row only).
-- [x] **Pairing screen** (`pages/pairing.tsx`): manual serial → `POST /customers/me/pair`,
-  updates the cached profile via `NoriContext.setCustomer`; shows paired state if already
-  paired. mDNS/QR discovery still 🔴 (needs daemon advertisement).
-- [x] **Training history** (`pages/training-history.tsx`): lists `GET /nori/training/jobs`,
-  per-job expand with live log polling (`…/{id}/logs?since=`, 2 s, stops on terminal), plus a
-  **"Start training"** button — the frontend trigger for the Phase-4 `nori_cloud` runner
-  (POSTs `/jobs/training` with `runner=nori_cloud`; also appears in LeLab's watch UI).
-
----
-
-## 6. Partial — static / non-protocol slices only 🟡
+## Section 6 partials — static / non-protocol slices only 🟡
 
 - [ ] **`XLerobot2WheelsConfig` static descriptor** (Phase 5 declarative part): DOF count + names,
   motor mapping, kinematic profile, calibration interface, camera enumeration — following the
-  `SO101LeaderConfig`/`SO101FollowerConfig` pattern. Keep it in its own module to minimize
-  upstream-merge conflict surface. **Blocked part:** the constructor's LAN transport (TCP socket
-  + WebRTC channel to `xlerobot.local`) — build the descriptor, leave `connect()` stubbed.
-- [ ] **`nori-protocol` shared-contract scaffolding** (R8 resolution): stand up the repo, the
-  `protocol_version` handshake convention, the golden-bytes fixture-test harness, and the
-  git-submodule wiring into NoriLeLab. **Blocked part:** the concrete `binary_protocol.hpp`
-  struct field layout is owned by the daemon — leave the struct definition as a versioned
-  placeholder until the Pi team pins it.
+  `SO101LeaderConfig`/`SO101FollowerConfig` pattern. Own module (minimize upstream-merge
+  conflict). **Blocked part:** the constructor's LAN transport — build the descriptor, leave
+  `connect()` stubbed.
 
 ---
 
 ## 🔴 Blocked by Pi code — do NOT start (reference only)
 
-- All Phase 5 LAN transport: TCP binary control/state, WebRTC video sink + signaling host,
-  E-STOP reset command on the control channel.
-- `tools/export_lerobot_dataset.py` — parses the Pi's binary recording stream into Parquet +
-  `.mp4`; schema owned by the daemon.
-- The binary recording-log **pull** from `xlerobot.local` (Phase 4 pre-upload ingest step).
+- Phase 5 LAN transport: TCP JSON control/state, WebRTC video sink + signaling host on the
+  laptop, E-STOP reset command on the control channel.
+- `tools/export_lerobot_dataset.py` — parses the Pi's live recording stream into Parquet + `.mp4`;
+  schema owned by the daemon.
+- The recording-stream ingest from `xlerobot.local` (Phase 4 pre-upload step).
 - WebRTC/OpenCV video sink feeding `rollout.py` inference + the React canvas mirror.
 - mDNS/QR discovery pairing UX (needs the daemon's `xlerobot.local` advertisement).
 - Robot push of a downloaded policy (`rollout` against live hardware).
+- Robot-side M3 audio (mic/speaker, AEC, sound-effects), M4 LVGL face, M6 on-demand Chromium
+  call view — all `onboard_pi_plan.md`.
 
 ---
 
 ## Suggested execution order
 
-1. **Phase 0** (env: install Node, verify both servers + OpenAPI).
-2. **Phase 1** (scaffolding + `nori_client.py` + generated types) — unblocks all of 2/3/4/6.
-3. Then **Phases 2, 3, 4-(backend parts), 6 in parallel** — all independent of the robot.
-4. **Section 6 partials** opportunistically, alongside the above.
+1. **Stabilize VR** (finish the in-flight uncommitted work).
+2. **D1/D2** — stand up `nori-protocol` + reserve the call-state/video fields (unblocks B3 cleanly).
+3. **A1** — robot audio playback (uplink; simplest, no AEC dependency, immediate value).
+4. **A2/A3/B1–B3** — operator mic + mute + on-air sync (coordinate the robot's offer m-lines).
+5. **C1–C5** — teleop GUI overhaul (mostly surfacing existing telemetry; parallelizable).
+6. **B4** — operator video, built dark behind the M6 flag.
+7. **Section 6 partial** (`XLerobot2WheelsConfig` descriptor) — opportunistic.
 
-This is a large, fully-unblocked block of work that does not depend on the robot existing.
+All of the above is hardware-free and testable against a mock daemon / WebRTC loopback.
+Batch the robot-side audio validation (AEC, latency, hub power) for when a unit is back.

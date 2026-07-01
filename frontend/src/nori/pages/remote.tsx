@@ -18,10 +18,13 @@ import { getSupabase } from "@/nori/auth/supabase";
 import {
   RemoteTeleop,
   type ArmSide,
+  type CallState,
   type ControlMode,
   type TelemetryView,
 } from "@/nori/remote/teleop";
 import { VrSession } from "@/nori/remote/vr-session";
+import { TelemetryPanel, GripForce, ControlLegend, CallBar } from "@/nori/remote/TeleopStatus";
+import { isM6VideoEnabled } from "@/nori/remote/flags";
 
 const DEFAULT_STUN = "stun:stun.l.google.com:19302";
 
@@ -63,9 +66,12 @@ function loadSettings(): Settings {
 const Remote = () => {
   const { ready, customer } = useNori();
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const selfViewRef = useRef<HTMLVideoElement>(null);
   const teleopRef = useRef<RemoteTeleop | null>(null);
   const vrRef = useRef<VrSession | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  const m6 = isM6VideoEnabled();
 
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [connecting, setConnecting] = useState(false);
@@ -76,9 +82,30 @@ const Remote = () => {
   const [controlActive, setControlActive] = useState(false);
   const [mode, setMode] = useState<ControlMode>("cylindrical");
   const [tel, setTel] = useState<TelemetryView>({
-    loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false,
+    loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {},
+  });
+  const [stale, setStale] = useState(false);
+  const lastTelRef = useRef(0);
+  const [call, setCall] = useState<CallState>({
+    active: false, micMuted: true, micSending: false,
+    robotAudio: false, robotMicLive: false, cameraOn: false,
   });
   const [logLines, setLogLines] = useState<string[]>([]);
+
+  // Telemetry rides the control channel ~periodically; if it dries up while we still think
+  // control is active, the readouts are no longer live. Flag it so the panel says "stale".
+  const onTelemetry = useCallback((t: TelemetryView) => {
+    lastTelRef.current = Date.now();
+    setStale(false);
+    setTel(t);
+  }, []);
+  useEffect(() => {
+    if (!running) { setStale(false); return; }
+    const id = setInterval(() => {
+      if (lastTelRef.current && Date.now() - lastTelRef.current > 1500) setStale(true);
+    }, 500);
+    return () => clearInterval(id);
+  }, [running]);
 
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) =>
     setSettings((s) => {
@@ -123,6 +150,7 @@ const Remote = () => {
     const teleop = new RemoteTeleop({
       supabase: getSupabase(),
       videoEl: videoRef.current,
+      audioEl: audioRef.current ?? undefined,
       room: settings.room.trim() || serial || "nori-dev",
       token: settings.token.trim(),
       stun: settings.stun.trim() || DEFAULT_STUN,
@@ -133,10 +161,11 @@ const Remote = () => {
       arm: settings.arm,
       onLog: appendLog,
       onConnState: setConnState,
-      onTelemetry: setTel,
+      onTelemetry,
       onMode: setMode,
       onControlActive: setControlActive,
       onCurrents: (c) => vrRef.current?.setCurrents(c), // gripper current -> VR haptics
+      onCall: setCall,
     });
     teleopRef.current = teleop;
     try {
@@ -183,6 +212,32 @@ const Remote = () => {
     }
   };
 
+  // ---- two-way audio call (Phase 7 §B) ------------------------------------
+  const joinCall = async () => {
+    try {
+      await teleopRef.current?.joinCall();
+    } catch (e) {
+      appendLog("join call failed: " + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+  const leaveCall = () => teleopRef.current?.leaveCall();
+  const toggleMute = () => teleopRef.current?.setMicMuted(!call.micMuted);
+  const toggleCamera = async () => {
+    const t = teleopRef.current;
+    if (!t) return;
+    try {
+      if (call.cameraOn) {
+        t.disableCamera();
+        if (selfViewRef.current) selfViewRef.current.srcObject = null;
+      } else {
+        const stream = await t.enableCamera(); // M6-gated in the UI; capture is built now
+        if (selfViewRef.current) selfViewRef.current.srcObject = stream;
+      }
+    } catch (e) {
+      appendLog("camera toggle failed: " + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
   // Keyboard control: only while a session is running. The class ignores keys typed in
   // form fields and only emits jog when the control channel is open.
   useEffect(() => {
@@ -219,14 +274,41 @@ const Remote = () => {
 
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <div className="space-y-3">
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            controls
-            className="w-full rounded-md bg-black"
-            style={{ aspectRatio: "4 / 3" }}
+          <div className="relative">
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              controls
+              className="w-full rounded-md bg-black"
+              style={{ aspectRatio: "4 / 3" }}
+            />
+            {/* Reserved operator self-view slot (M6). Hidden until the camera is on. */}
+            <video
+              ref={selfViewRef}
+              autoPlay
+              playsInline
+              muted
+              className={
+                "absolute bottom-2 right-2 w-32 rounded border-2 border-background bg-black shadow " +
+                (m6 && call.cameraOn ? "" : "hidden")
+              }
+              style={{ aspectRatio: "4 / 3" }}
+            />
+          </div>
+          {/* Robot inbound audio — unmuted sink, no video element can play it (video is muted). */}
+          <audio ref={audioRef} autoPlay className="hidden" />
+
+          <CallBar
+            call={call}
+            running={running}
+            connected={connState === "connected"}
+            m6={m6}
+            onJoin={joinCall}
+            onLeave={leaveCall}
+            onToggleMute={toggleMute}
+            onToggleCamera={toggleCamera}
           />
           <div className="flex flex-wrap items-center gap-3">
             {!running ? (
@@ -257,26 +339,42 @@ const Remote = () => {
                 <option value="left">left</option>
               </select>
             </label>
-            <span className="rounded bg-muted px-2 py-1 font-mono text-xs">
-              {tel.active
-                ? `loop ${tel.loopHz.toFixed(1)}Hz  safety=${tel.safety}  wd=${tel.watchdog}  temp=${tel.tempC.toFixed(0)}C`
-                : "control inactive"}
-            </span>
-            <span className="text-xs text-muted-foreground">
-              mode: {mode === "joint" ? "per-motor" : "cylindrical (rpi4)"} — press M to toggle
-            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => teleopRef.current?.toggleMode()}
+              disabled={!running}
+              title="Switch between cylindrical (rpi4 feel) and per-motor control"
+            >
+              Mode: {mode === "joint" ? "per-motor" : "cylindrical"}
+            </Button>
           </div>
 
-          <details className="text-sm">
-            <summary className="cursor-pointer text-muted-foreground">keyboard controls</summary>
-            <pre className="mt-2 whitespace-pre-wrap text-xs">
-{`M = toggle control mode (default: cylindrical / rpi4)
-cylindrical:  Q/E shoulder_pan  W/S x(reach)  A/D y(reach)  Z/X pitch  R/F wrist_roll  T/G gripper
-per-motor:    Q/A shoulder_pan  W/S shoulder_lift  E/D elbow_flex  R/F wrist_flex  T/G wrist_roll  Y/H gripper
-base: I/K fwd/back   J/L turn   U/O lift (the SELECTED arm)     cmds: SPACE e-stop   P reset-latch   C reset
-Click the video/page first so it has keyboard focus. Keys are ignored while typing in a field.`}
-            </pre>
-          </details>
+          <TelemetryPanel
+            connState={running ? connState : "idle"}
+            tel={tel}
+            controlActive={controlActive}
+            stale={stale}
+            inVr={inVr}
+          />
+
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-sm">Grip force / motor current</CardTitle>
+            </CardHeader>
+            <CardContent className="pb-3">
+              <GripForce currents={tel.currents} />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-sm">Controls</CardTitle>
+            </CardHeader>
+            <CardContent className="pb-3">
+              <ControlLegend mode={mode} />
+            </CardContent>
+          </Card>
 
           <div
             ref={logRef}

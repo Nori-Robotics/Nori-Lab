@@ -37,7 +37,8 @@
 | **Python media bridge (stays Python)** | `rpi5/media/` | `webrtc_robot.py`, `signaling.py`, GStreamer. **Sanctioned exception** — own process, off the RT loop. Audio tracks added here in M3. |
 | **Legacy Python (delete in M4)** | `rpi4/` | `teleop_server.py`, `image_server.py` — flagged dead (`onboard_pi_plan.md` §Repo Schema). |
 | **Kiosk / on-screen UI** | `deploy/kiosk/` | Chromium NoriScreen face today; LVGL face replaces it in M4. Chromium retained for the M6 on-demand call view. |
-| **Shared wire schema** | `nori-protocol/` submodule | New fields for mute/live/call-state — add in M3, **including the deferred video/call fields** (reserve now). Bump `protocol_version`. |
+| **Shared wire schema** | `nori-protocol/` submodule | Daemon contract only (hello/control/command/telemetry). **Unchanged by M3** — call/mute/live signaling does *not* go here (see note below). |
+| **Media-bridge signaling** | `rpi5/media/` (`webrtc_robot.py` + operator client) | Call/mute/live/call-state messages live here, alongside the existing `ready`/`bye`/`offer`/`ice` messages. The daemon never sees audio → no `protocol_version` bump. |
 | **Laptop app** | `NoriLeLab/` | Operator mic (M3) + camera (M6) capture, call UI, teleop GUI (§P). |
 
 ---
@@ -58,8 +59,8 @@
 - [ ] Small jitter buffer; verify continuity (not latest-only).
 
 **B. (M3a) Safety/status sound-effects**
-- [ ] Short pre-rendered clips; play on safe-hold / E-STOP / stall latch (improves R13 feedback). Event hook crosses the process boundary (safety → media/audio) — reuse the same IPC as R2.
-- [ ] Testable off-hardware by triggering the safety events.
+- [ ] Short pre-rendered clips; play on safe-hold / E-STOP / stall latch (improves R13 feedback). **[refined 2026-07-01]** No new daemon hook or protocol field needed — a small robot-side consumer watches the existing `telemetry.status.safety` transitions (`ok`→`safe_hold`/`latched`) and plays the matching clip (ALSA). Keeps the RT daemon untouched.
+- [ ] Testable off-hardware by feeding synthetic telemetry transitions (playback itself is hardware-gated).
 
 **C. (M3b) Operator voice → robot speaker (downlink)**
 - [ ] Operator page/LeLab captures mic → Opus **send** track; robot receives → `opusdec` → ALSA playback.
@@ -75,7 +76,7 @@
 **F. Privacy (R15, bidirectional-ready)**
 - [ ] Robot mic: mute control + "mic live" indicator; opt-in; no audio persisted.
 - [ ] Reserve the operator-feed-live indicator + consent fields now (used fully in M6).
-- [ ] Add mute/live/**call-state** fields to `nori-protocol` (include the deferred video fields); bump `protocol_version`.
+- [ ] **[refined 2026-07-01, during M3a impl]** mute/live/**call-state** signaling lives in the **media-bridge message layer** (alongside `ready`/`bye`), **not** `nori-protocol` — the daemon never sees audio, so **no `protocol_version` bump**. The daemon does a *strict* version-equality check (`protocol.hpp` `PROTOCOL_VERSION`), so putting call-state there would force a lockstep daemon+bridge+client redeploy for a message the daemon just ignores. Keep it out.
 
 ### 2.2 M3 acceptance criteria *(hardware-gated)*
 - [ ] (M3a) Operator hears the room; sound-effects fire on safety events.
@@ -170,8 +171,8 @@ Not a milestone: independent of the Pi and the **only** fully-validatable-withou
 - [ ] **AEC hardware (M3-D / M5)** — resolve with HW engineers. Questions: (1) integrated vs discrete speaker+mic; (2) on-chip AEC / full-duplex? (part# + datasheet); (3) USB Audio Class compliant?; (4) **dev part == ship part?** (integrated module likely → software AEC); (5) acoustic coupling/separation; (6) DSP added latency; (7) if discrete, is the playback reference available to the mic path?; (8) power/bandwidth on the shared hub (R16). **#4 gates the software stack — pin first.**
 - [x] **webrtcbin stays Python** (resolved 2026-07-01) — media bridge is a sanctioned Python exception (own process, off the RT loop); no C++ port.
 - [x] **Video rendering = on-demand Chromium, not LVGL** (resolved 2026-07-01). DRM-overlay LVGL video is fallback-only.
-- [ ] **Protocol additions** for mute/live/call-state **and the reserved video/call fields** — land in `nori-protocol` with a `protocol_version` bump + golden fixtures (R8).
-- [ ] **Session track-set policy** — confirm the "fixed track set per session; upgrade = re-establish" rule is enforced in `webrtc_robot.py` + operator client (R-X.1).
+- [x] **Call/mute/live signaling location** (resolved 2026-07-01) — the **media-bridge message layer**, *not* `nori-protocol`; no daemon `protocol_version` bump (daemon never sees audio). Sound-effects consume existing `telemetry.status` transitions — also no protocol change.
+- [ ] **Session track-set policy** — confirm the "fixed track set per session; upgrade = re-establish" rule is enforced in `webrtc_robot.py` + operator client (R-X.1). *(M3a keeps audio SENDONLY; M3b makes it SENDRECV from session start.)*
 
 ---
 

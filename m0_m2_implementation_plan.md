@@ -39,7 +39,7 @@ The Python prototype already solved the hard hardware details. Port the *logic*,
 | **Calibration load** (per-unit JSON, same path/format) | `teleop_server.py:875-889,1018-1024` | calibration loader |
 | **Bus init order** (configure → write_calibration → torque/mode setup) | `teleop_server.py:343-358,966-1040` | daemon startup |
 | **50 Hz loop + protocol** (hello/ack, keys/vr/arm_targets/wheel_targets/reset/bye, telemetry) | `teleop_server.py:1000-1130+` | `network_broker.cpp` + loop |
-| **Control math** — P-control arms/head, smooth base, SO101 IK, stall detect | `teleop_server.py:430-810` | control modules |
+| **Control math** — P-control arms, smooth base, SO101 IK, stall detect | `teleop_server.py:430-810` | control modules |
 | **Dead-man / constants** — `FPS=50`, `DEAD_MAN_SEC=0.5`, `TCP_PORT=7777`, `TELEMETRY_INTERVAL=10` | `teleop_server.py:88-91` | daemon config |
 | **Camera ZMQ** (reuse as-is for M0 video) | `rpi4/image_server.py` | run unchanged on Pi 5 |
 | **E-STOP listener** (HTTP 9091 / NoriScreen) | `teleop_server.py:891-930` | event input |
@@ -122,7 +122,7 @@ The Python prototype already solved the hard hardware details. Port the *logic*,
 
 ### 2.2 M0 acceptance criteria
 *(Track A = mock + TCP client off-hardware; Track B = real bus on the Pi, gated on vendoring the SCServo SDK.)*
-- [~] A `jog`-emitting client connects and drives **both arms + head + base + Z-lift** (transport + jog→IK→`.pos` parity); telemetry `state` matches lerobot keys. **Track A ✓** (mock); on-robot confirm pending Track B.
+- [~] A `jog`-emitting client connects and drives **both arms + base + lifts** (transport + jog→IK→`.pos` parity); telemetry `state` matches lerobot keys. **Track A ✓** (mock); on-robot confirm pending Track B.
 - [~] Sustained **`loop_hz ≈ 50`** — now measured over a 1 s window and shipped in telemetry. **Track A ✓** (mock ~50); under dual-bus load pending Track B.
 - [ ] Pull a motor cable → **stall latch** fires, requires manual reset. *(StallDetector logic verified in `selftest`; needs real currents on the Pi — Track B.)*
 - [x] Kill the client → **network watchdog**: wheels decel, arms hold, **auto-resume** on reconnect (no latch). **Track A ✓** (silence → warn → stop → resume).

@@ -98,7 +98,7 @@
 - [ ] Measure real Chromium-face peak RAM alongside the daemon + camera(s) + M3 audio streaming (R1). This gates the migration timing.
 
 **B. Delete legacy Python**
-- [ ] Remove `rpi4/teleop_server.py`, `rpi4/image_server.py` (declared dead). Retain only `onboard_wifi_setup.py` (run-once, M5). Confirm nothing in deploy/service calls them.
+- [ ] Delete the `rpi4/` directory (legacy Python teleop + camera server). The behavioral-spec reference (`teleop_server.py`) + the prototype README were preserved in `rpi5/reference/` (2026-07-01); the rest is dead. Confirm nothing in deploy/service calls them.
 - [ ] **Media bridge stays Python** — record as a sanctioned exception (own process, off RT loop).
 
 **C. LVGL always-on face**

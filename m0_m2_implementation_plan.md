@@ -12,7 +12,7 @@
 | Area | Path | Notes |
 |---|---|---|
 | **New C++ daemon** | `NoriTeleop/rpi5/` | Greenfield. All real-time/native code (`nori_core_agent/`). |
-| **Old working reference** | `NoriTeleop/rpi4/` | Fully-working **LAN** Python teleop. **Reference only** — do not extend. Best anchors: port setup, register map, calibration clamp, protocol, kinematics (see §1). |
+| **Old working reference** | `NoriTeleop/rpi5/reference/teleop_server.py` | Fully-working **LAN** Python teleop (preserved from the now-deleted `rpi4/`). **Reference only** — do not extend. Best anchors: port setup, register map, calibration clamp, protocol, kinematics (see §1). |
 | **Shared wire schema** | `nori-protocol/` (new repo, git submodule) | One canonical **JSON** control + telemetry definition, consumed by both the daemon and the laptop app. Per `onboard_pi_plan.md` §f / R8. |
 | **Laptop app / video sink / VR mapper** | `NoriLeLab/` (separate repo) | Single control client; WebRTC video sink; WebXR→`jog` mapper. |
 | **WAN rendezvous / auth** | Supabase backend (Item 3) | Relay/TURN or WireGuard + scoped tokens. M1+. |
@@ -31,7 +31,7 @@ The Python prototype already solved the hard hardware details. Port the *logic*,
 
 | What you need | rpi4 anchor | Port to |
 |---|---|---|
-| **Port setup** — CH343 boards enumerate as `/dev/ttyACM*` (cdc_acm), pinned to `/dev/xlerobot_bus{1,2}` by **USB serial** | `rpi4/99-xlerobot.rules`, `teleop_server.py:84-86,299-302` | `bus_controller.cpp` (Feetech SDK `PortHandler` @ **1 000 000 baud**) |
+| **Port setup** — CH343 boards enumerate as `/dev/ttyACM*` (cdc_acm), pinned to `/dev/xlerobot_bus{1,2}` by **USB serial** | `rpi5/tools/99-xlerobot.rules`, `teleop_server.py:84-86,299-302` | `bus_controller.cpp` (Feetech SDK `PortHandler` @ **1 000 000 baud**) |
 | **Register map** (STS3215 addresses/lengths) | `teleop_server.py:61-80` (`REG`) | `bus_controller.hpp` constants |
 | **Sign-magnitude** (bit 15) for Goal/Present Velocity & Present Current | `teleop_server.py:82,226-243` | bus codec |
 | **Sync read/write** groups (positions, currents, goals, wheel velocities) | `teleop_server.py:361-424` | bus worker |

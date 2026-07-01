@@ -16,6 +16,7 @@ This document is the concrete plan for adapting upstream LeLab (huggingface/leLa
 - **Python changes are in-place, narrowly-scoped, tagged `# NORI:`** in `lelab/datasets.py`, `lelab/jobs.py`, `lelab/train.py`. Plus one new file `lelab/nori_client.py`.
 - **No HF tokens on the customer's laptop, ever.** All HF access mediated by Nori-Backend (per `plan.md` 3d.i).
 - **Hardware extension** (XLerobot2Wheels — bimanual + mobile base + Z-lift) is a parallel track owned by the robotics engineer.
+- **[SCOPE INCREASE 2026-06-30, rev 2026-07-01] Two-way telepresence (Zoom-like session), staged.** The remote-teleop session grows toward a **bidirectional call**. Staged after a feasibility pass: **M3 = two-way audio** (operator mic → robot speaker + robot mic → operator; their voice in the room), **operator video → robot screen deferred to M6** (on-demand Chromium call view). Laptop-side = operator mic capture + call UI + a better teleop GUI now, operator-camera capture built-but-gated — see the new **Phase 7**. Robot-side (AEC, sound-effects, LVGL face, deferred video) is in `onboard_pi_plan.md` (M3/M4/M6).
 
 ---
 
@@ -67,9 +68,9 @@ Worth scanning before deciding what to keep vs. replace:
 
 The hardware integration alone is months of work that you're getting for free.
 
-**[NEW] Caveat (realigned against the C++ Pi daemon, 2026-06-16):** three of the "free" pieces above are *partly superseded* because the Pi now runs a native C++ daemon with its own binary protocol (see `onboard_pi_plan.md`):
-- **Hardware integration** — the Robot class no longer drives motors over serial/ZMQ; it's a LAN thin-client (TCP + WebRTC to `xlerobot.local`). See Phase 5.
-- **Recording → LeRobotDataset pipeline** — frames are recorded as a binary stream on the Pi's flash, pulled to the laptop, and parsed by a new `tools/export_lerobot_dataset.py`. See Phase 4.
+**[NEW] Caveat (realigned against the C++ Pi daemon, 2026-06-16; protocol/recording reconciled 2026-06-24):** three of the "free" pieces above are *partly superseded* because the Pi now runs a native C++ daemon with its own **versioned JSON** protocol (see `onboard_pi_plan.md` §f / R8 — the wire format is JSON, *not* binary C-structs):
+- **Hardware integration** — the Robot class no longer drives motors over serial/ZMQ; it's a thin-client (TCP/JSON control + WebRTC video) to the daemon, on LAN or — for remote teleop — via the WAN relay. See Phase 5.
+- **Recording → LeRobotDataset pipeline** — frames **stream live to the laptop, which writes the dataset**; the Pi persists no video (`onboard_pi_plan.md` R5). See Phase 4.
 - **Camera capture** — replaced by a WebRTC/OpenCV video sink in the FastAPI layer. See Phase 5.
 
 The dataset *assembly format* (Parquet + mp4 LeRobotDataset) and the *local inference* path (`rollout.py`) are still reused — they just consume laptop-parsed / WebRTC-decoded inputs instead of locally-captured ones.
@@ -132,9 +133,9 @@ Both paths submit the same `POST /api/v1/customers/me/pair {robot_serial_number}
 
 The fork's Robot class is a thin wrapper that *describes* the robot and connects over LAN; it does not own real-time control or safety.
 
-**[NEW] Thin-client transport (realigned against the C++ Pi daemon, 2026-06-16):** the Pi now runs a native C++20 `NoriCoreAgent` daemon (see `onboard_pi_plan.md`) that owns the 50 Hz control loop, the safety stack, and camera capture, and exposes a binary network protocol — **not** the legacy Python `scservo_sdk` serial path or custom ZMQ-over-Wi-Fi ports. Consequences for the fork's Robot class:
+**[NEW] Thin-client transport (realigned against the C++ Pi daemon, 2026-06-16; protocol reconciled 2026-06-24):** the Pi now runs a native C++20 `NoriCoreAgent` daemon (see `onboard_pi_plan.md`) that owns the 50 Hz control loop, the safety stack, and camera capture, and exposes a **versioned JSON-line control protocol + WebRTC media** — **not** a binary C-struct protocol, and **not** the legacy Python `scservo_sdk` serial path or custom ZMQ-over-Wi-Fi ports. Consequences for the fork's Robot class:
 
-- The `XLerobot2Wheels` constructor does **not** open low-level serial connections (`scservo_sdk`) or ZMQ sockets. Instead it opens **a single low-latency TCP socket** (for control/state, the binary C-struct protocol the daemon speaks) **plus an optimized WebRTC/UDP client channel** (for video) directly to the Pi's fixed address `xlerobot.local`.
+- The `XLerobot2Wheels` constructor does **not** open low-level serial connections (`scservo_sdk`) or ZMQ sockets. Instead it opens **a single control socket** (TCP/JSON-line, the versioned protocol the daemon speaks; TLS over the WAN relay) **plus a WebRTC client channel** (for video) to the Pi — `xlerobot.local` on LAN, or via the Supabase relay for remote teleop.
 - The class is therefore purely a *network client + static descriptor*: DOF/names, motor mapping, kinematic profile, calibration interface, and camera enumeration, talking to the daemon over LAN. All real-time and safety behavior lives in the C++ daemon on the Pi.
 
 ### Distribution (deferred decision)
@@ -279,12 +280,12 @@ For each change, tag the modified block with `# NORI:` comments.
     3. `POST .../finalize`; on 422 HEAD-miss, retry the `missing` PUTs and re-finalize.
     4. Poll `GET .../{session_id}` until terminal (`PROMOTED` = success).
   - ✅ Backend endpoints now exist (re-verified 2026-06-16) — this is no longer blocked; it's fork-side client work.
-- [ ] **[NEW] `lelab/datasets.py` — post-session binary log pull + local export (realigned 2026-06-16):** with the C++ Pi daemon, recording frames are no longer assembled into a LeRobotDataset on the Pi. The daemon writes a **compact, sequential binary stream to the Pi's local flash buffer** during a run. The laptop must ingest and parse that stream before any cloud upload. New flow:
-  1. On recording finish, the React frontend fires a completion event to the FastAPI backend.
-  2. `lelab/datasets.py` **pulls the raw binary log block from the Pi over the network** (a quick HTTP `GET` endpoint or basic file transfer from `xlerobot.local`).
-  3. The backend runs **`tools/export_lerobot_dataset.py` locally on the laptop CPU** to parse the binary chunks into high-fidelity **Apache Parquet** files + synchronized **`.mp4`** video frames (i.e. assemble a standard LeRobotDataset on the laptop).
+- [ ] **[NEW] `lelab/datasets.py` — live-stream capture + local export (realigned 2026-06-16; reconciled to R5 2026-06-24):** with the C++ Pi daemon, recording frames are not assembled into a LeRobotDataset on the Pi. Per `onboard_pi_plan.md` R5, **the Pi persists no video** — frames + state **stream live to the laptop during the run** (over the same control/video session), and the laptop assembles the dataset. New flow:
+  1. On record start, `lelab/datasets.py` subscribes to the daemon's live state + video streams and buffers them laptop-side (timestamps stamped Pi-side at capture).
+  2. On recording finish, the React frontend fires a completion event to the FastAPI backend.
+  3. The backend runs **`tools/export_lerobot_dataset.py` locally on the laptop CPU** to assemble the captured streams into high-fidelity **Apache Parquet** files + synchronized **`.mp4`** video (a standard LeRobotDataset).
   4. Only then does the assembled dataset get routed to Supabase/HF via `nori_client.upload_dataset(...)` (backend-mediated, per the HF-token invariant).
-  - **New file required:** `tools/export_lerobot_dataset.py` (laptop-side binary → Parquet/mp4 parser). This replaces the assumption that LeLab's in-process recording pipeline produces the dataset directly.
+  - **New file required:** `tools/export_lerobot_dataset.py` (laptop-side stream → Parquet/mp4 assembler). This replaces the assumption that LeLab's in-process recording pipeline produces the dataset directly. *(Note: a Pi-side original-quality buffer is only considered for WAN recording, and even then tmpfs/RAM, never SD — R5.)*
 - [ ] **`lelab/jobs.py`** / **`lelab/train.py`** — training dispatch:
   - Replace `huggingface_hub.run_job(...)` with `nori_client.dispatch_training(timeout_seconds=...)`.
   - Backend returns `{internal_job_uuid, hf_job_id, ...}` (the existing dispatch response shape).
@@ -304,16 +305,17 @@ Goal: LeLab knows about XLerobot2Wheels and can drive it.
 - [ ] Extend calibration flow for the additional joints (Z-lift, base wheel encoders if needed).
 - [ ] Extend teleop UI to cover the additional DOF.
 - [ ] Update record flow so all joint streams + cameras are captured.
-- [ ] **[NEW] Implement the LAN thin-client transport (realigned 2026-06-16):** the `XLerobot2Wheels` constructor opens **one TCP socket** (binary control/state protocol to the C++ daemon) + **one WebRTC/UDP channel** (video) to `xlerobot.local`. No `scservo_sdk`, no ZMQ. When LeLab's calibrate/teleop/record/rollout flows "spin up" the robot instance, this is all the constructor does — connect, don't drive. Pack/unpack the daemon's binary C-structs on the TCP side.
+- [ ] **[NEW] Implement the thin-client transport (realigned 2026-06-16; JSON 2026-06-24):** the `XLerobot2Wheels` constructor opens **one control socket** (TCP/JSON-line to the C++ daemon; TLS via the WAN relay) + **one WebRTC channel** (video) to the Pi (`xlerobot.local` on LAN / relay on WAN). No `scservo_sdk`, no ZMQ. When LeLab's calibrate/teleop/record/rollout flows "spin up" the robot instance, this is all the constructor does — connect, don't drive. Parse/serialize the daemon's **JSON** frames against the shared `nori-protocol` schema (assert `protocol_version`).
 
 #### [NEW] Real-time video capture via WebRTC / OpenCV (realigned 2026-06-16)
 
-The C++ Pi daemon bypasses the legacy `image_server.py` entirely and streams hardware MJPEG frames over low-overhead **UDP / WebRTC DataChannels**. The laptop needs an explicit path to receive, decode, and render this feed for both teleop and inference. The FastAPI layer in `lelab/` owns this:
+The C++ Pi daemon streams camera video as **ZMQ JPEG on LAN** (reusing the proven `image_server.py` path for the M0/LAN baseline) and as a **WebRTC H.264 media track on WAN** (software-encoded — the Pi 5 has no hardware encoder; see `onboard_pi_plan.md` R11). The laptop needs an explicit path to receive, decode, and render this feed for both teleop and inference. The FastAPI layer in `lelab/` owns this:
 
 - [ ] **WebRTC signaling / video sink:** the FastAPI server hosts the WebRTC signaling exchange with the Pi daemon (or acts as the native sink, decoding frames via optimized OpenCV `cv2.VideoCapture` loops).
 - [ ] **Inference tap:** the decoded raw frame array is passed directly into the local model inference loops (ACT / Diffusion Policy vectors in `lelab/rollout.py`) — the same frames feed the policy.
 - [ ] **Live view mirror:** the live frame matrix is mirrored straight to the React frontend canvas component **without lagging the execution engine** (keep decode/inference and UI mirroring decoupled so neither stalls the other).
 - [ ] **Supersedes:** the plan's earlier assumption that teleop/inference visuals are inherited unchanged from upstream LeLab. Upstream's camera-capture path is replaced by this WebRTC/OpenCV sink.
+- [ ] **[2026-06-30, rev 2026-07-01] Bidirectional (telepresence), staged:** this sink now also *sends* — the operator's **mic** is a WebRTC send track and the robot's mic is a recv track played on the laptop (M3, two-way audio). The operator's **camera** send track is built-but-gated (M6). See Phase 7; reserve all m-lines up front (no mid-call renegotiation). Control data channel unchanged.
 
 Tag any changes to existing LeLab files with `# NORI:`. Where possible, isolate the new robot class as its own module so upstream merges don't touch it.
 
@@ -331,6 +333,26 @@ Tag any changes to existing LeLab files with `# NORI:`. Where possible, isolate 
   - Manual serial entry text input
   - Submits to `POST /api/v1/customers/me/pair`
 - [ ] **QR / mDNS pairing** (future): post-MVP polish for pairing UX
+
+---
+
+### Phase 7 — Two-way audio call + teleop GUI ([NEW] 2026-06-30, rev 2026-07-01; laptop side of robot M3)
+
+Goal: the laptop half of the voice call (audio two-way; operator **video deferred to robot M6**), plus a teleop control surface worth shipping. **This is the highest-value fully hardware-free work** — testable against the mock daemon + a WebRTC loopback with no robot, so it runs in parallel and should start first while there's no unit.
+
+- [ ] **Operator mic capture** (`frontend/src/nori/remote/`): `getUserMedia` audio; add as a **WebRTC send track** on the existing `RemoteTeleop`/`VrSession` peer connection (reuse the M1 session — additive).
+- [ ] **Robot audio playback:** attach the robot's incoming mic track to an audio sink on the laptop.
+- [ ] **Operator camera capture + self-view — build but gate behind an M6 flag** (`getUserMedia` video, added as a send track). Deferred feature; ship dark.
+- [ ] **Session rule (important):** negotiate the **fixed track set at establishment** and reserve the video m-line (muted) now; "enable video" later is a track flip or session re-establish — **never** a live renegotiation (`webrtcbin` is fragile there — see `m3_m5_implementation_plan.md` R-X.1).
+- [ ] **Call UI:** mute (audio) toggle + clear **"on air" indicators** mirroring the robot-side privacy state (R15); camera-off toggle + self-view gated with the M6 flag. Wire mute/call state through the control channel so the robot's indicators agree.
+- [ ] **Teleop GUI overhaul** (operator + VR control surface — `webrtc_operator.html` + `/nori/remote`, `/nori/vr`):
+  - clearer connection/telemetry state (link mode LAN/WAN, `loop_hz`, watchdog level, stalled joints);
+  - grip-force / current readout (the virtual tactile signal already in telemetry);
+  - keybind discoverability + on-screen control legend; cylindrical ↔ per-motor toggle UX;
+  - call-window layout (robot video + controls; operator self-view slot reserved for M6).
+- [ ] **Protocol:** new fields (mute, call state, indicator sync, **reserved video/call fields**) go in the shared `nori-protocol` submodule with a `protocol_version` bump + golden fixtures (R8).
+
+> Robot-side counterparts (AEC hardware, sound-effects, and the deferred operator-video via an **on-demand Chromium** call view) are `onboard_pi_plan.md` M3/M4/M6 — see `m3_m5_implementation_plan.md`.
 
 ---
 
@@ -374,22 +396,22 @@ See `../Nori-Backend/README.md` (API reference) and `../Nori-Backend/todos.md` f
 
 ## [NEW] Pi daemon LAN contract matrix
 
-These are the **robot-side** dependencies — channels the C++ `NoriCoreAgent` daemon (see `onboard_pi_plan.md`) must expose over LAN for the fork to function. Distinct from the Nori-Backend matrix above: these are spoken directly to `xlerobot.local`, never through the cloud. Status as of 2026-06-16 (daemon is a parallel track owned by the robotics/systems engineer).
+These are the **robot-side** dependencies — channels the C++ `NoriCoreAgent` daemon (see `onboard_pi_plan.md`) must expose for the fork to function. Distinct from the Nori-Backend matrix above. On **LAN** they are spoken directly to `xlerobot.local`; for **WAN remote teleop** the *same* channels ride the Supabase relay/TLS tunnel (only the network/security layer changes — `onboard_pi_plan.md` §e/§f). Status as of 2026-06-16 (transport reconciled to JSON + WAN 2026-06-24; daemon is a parallel track owned by the robotics/systems engineer).
 
 | Channel | Transport | Used by (fork side) | Phase | Status |
 |---|---|---|---|---|
-| Control / state stream | TCP socket, binary C-structs (timestamped) | `XLerobot2Wheels` constructor + calibrate/teleop/record/rollout | 5 | ❌ depends on daemon |
-| Live video feed | WebRTC DataChannel / UDP (MJPEG) | WebRTC video sink → `rollout.py` inference + React canvas | 5 | ❌ depends on daemon |
-| WebRTC signaling exchange | HTTP/WS handshake (SDP/ICE) | FastAPI signaling host in `lelab/` | 5 | ❌ depends on daemon |
-| Binary recording-log pull | HTTP `GET` (or basic file transfer) from flash buffer | `lelab/datasets.py` post-session ingest → `tools/export_lerobot_dataset.py` | 4 | ❌ depends on daemon |
-| mDNS presence advertisement | mDNS (`xlerobot.local`) | LAN discovery for pairing UX | 6 | ⚠️ specified in `onboard_pi_plan.md` 2c |
-| Pairing handshake / token auth | HTTP over the captive-portal/LAN path | Pairing flow (`POST /api/v1/customers/me/pair`) | 6 | ⚠️ specified in `onboard_pi_plan.md` 2c |
-| Safety E-STOP reset | TCP control command (clears the C++ `e_stop_latched` hard latch) | UI "reset" action after an obstruction latch | 5 | ❌ depends on daemon |
+| Control / state stream | TCP socket, **JSON-line** (versioned, timestamped); TLS on WAN | `XLerobot2Wheels` constructor + calibrate/teleop/record/rollout | 5 | ❌ depends on daemon |
+| Live video feed | **ZMQ JPEG (LAN) / WebRTC H.264 (WAN)** | WebRTC/ZMQ video sink → `rollout.py` inference + React canvas | 5 | ❌ depends on daemon |
+| WebRTC signaling exchange | HTTP/WS handshake (SDP/ICE); brokered via the relay on WAN | FastAPI signaling host in `lelab/` | 5 | ❌ depends on daemon |
+| Recording stream | **live frames over the same control/video session** (no Pi-side flash buffer — R5) → laptop writes the dataset | `lelab/datasets.py` ingest → `tools/export_lerobot_dataset.py` | 4 | ❌ depends on daemon |
+| mDNS presence advertisement | mDNS (`xlerobot.local`) — LAN only | LAN discovery for pairing UX | 6 | ⚠️ specified in `onboard_pi_plan.md` 2c |
+| Pairing handshake / token auth | HTTP over captive-portal/LAN (LAN); scoped token via Supabase (WAN) | Pairing flow (`POST /api/v1/customers/me/pair`) | 6 | ⚠️ specified in `onboard_pi_plan.md` 2c |
+| Safety E-STOP reset | control command (clears the C++ `e_stop_latched` hard latch) | UI "reset" action after an obstruction latch | 5 | ❌ depends on daemon |
 
 **Notes:**
-- The exact binary protocol schema (struct layout, byte order, timestamp units) is owned by the daemon and must be mirrored by the fork's pack/unpack code. Pin a version field.
-- The watchdog/dead-man threshold (~100 ms proposed, 500 ms baseline) lives on the Pi — the fork just needs to keep the control stream fed; see `onboard_pi_plan.md` 2b.
-- These channels are **not** in the Nori-Backend matrix because they bypass the cloud entirely; the only cloud touchpoint in the recording path is the final dataset upload.
+- The JSON control + telemetry schema is owned by the daemon and **shared via the `nori-protocol` git submodule** (one source of truth, golden-fixture tests in both repos). The fork parses/serializes against it and **asserts `protocol_version`** on connect (`onboard_pi_plan.md` R8).
+- The watchdog is **tiered and per-mode** on the Pi — LAN {T_warn 150 ms / T_stop 500 ms}, WAN {300 / 1000 ms} — and **auto-recovers** (it does not hard-latch). The fork just keeps the control stream fed; see `onboard_pi_plan.md` §b.
+- On LAN these channels bypass the cloud entirely; on WAN they traverse the Supabase relay. The cloud touchpoint in the recording path is still only the final dataset upload.
 
 ---
 
@@ -426,7 +448,7 @@ Cadence: weekly during early dev, monthly once stable.
 
 ### Top-level
 
-- `NORI_PLAN.md` — this file
+- `full_nori_plan.md` — this file (canonical laptop-app plan; the stale `NORI_PLAN.md` fork copy was deleted 2026-06-30)
 - `CLAUDE.md` — upstream's; leave alone
 
 ### Frontend additions (under `frontend/src/nori/`)
@@ -439,8 +461,8 @@ Cadence: weekly during early dev, monthly once stable.
 ### Backend additions (under `lelab/`)
 
 - `lelab/nori_client.py` — HTTP client for Nori-Backend with JWT auth
-- **[NEW]** Robot class file for `XLerobot2Wheels` — lives **inside this `NoriLeLab` repo as an integrated submodule / extension of the underlying `lerobot` Python package** (no longer "TBD"). It is a LAN thin-client: TCP socket + WebRTC/UDP to `xlerobot.local`, not a serial/ZMQ driver.
-- **[NEW]** `tools/export_lerobot_dataset.py` — laptop-side parser that turns the Pi's raw binary recording stream into Parquet + `.mp4` (LeRobotDataset) before upload.
+- **[NEW]** Robot class file for `XLerobot2Wheels` — lives **inside this `NoriLeLab` repo as an integrated submodule / extension of the underlying `lerobot` Python package** (no longer "TBD"). It is a thin-client: TCP/JSON control + WebRTC video to the daemon (`xlerobot.local` on LAN / relay on WAN), not a serial/ZMQ driver.
+- **[NEW]** `tools/export_lerobot_dataset.py` — laptop-side assembler that turns the **live-streamed** frames + state into Parquet + `.mp4` (LeRobotDataset) before upload (no Pi-side binary buffer — R5).
 - **[NEW]** WebRTC video-sink module under `lelab/` — hosts signaling / decodes the Pi daemon's MJPEG-over-WebRTC feed via OpenCV, feeds both `rollout.py` inference and the React canvas.
 
 ### Backend in-place modifications (existing files; tagged `# NORI:`)

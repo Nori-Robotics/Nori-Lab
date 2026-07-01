@@ -1,14 +1,14 @@
 # NoriLeLab — Pre-Pi Work Queue (todos)
 
 > **Purpose:** the concrete task list of work that can start **now**, before the Pi-side
-> C++ `NoriCoreAgent` daemon exists. Derived from [`NORI_PLAN.md`](NORI_PLAN.md) and
+> C++ `NoriCoreAgent` daemon exists. Derived from [`full_nori_plan.md`](full_nori_plan.md) and
 > [`onboard_pi_plan.md`](onboard_pi_plan.md), reconciled 2026-06-18.
 >
 > **The single blocker** is the Pi daemon and its LAN contract (TCP binary control/state,
 > WebRTC/UDP video, binary recording-log pull, mDNS presence). Anything that talks to
 > `xlerobot.local` is blocked. Everything that talks to **Nori-Backend is unblocked** —
 > the backend is verified up and running, and all required endpoints exist (re-verified
-> 2026-06-16 in `NORI_PLAN.md`'s dependency matrix).
+> 2026-06-16 in `full_nori_plan.md`'s dependency matrix).
 
 ---
 
@@ -19,7 +19,7 @@
 - 🔴 **Blocked** — depends on the Pi daemon's binary protocol / WebRTC / mDNS. Listed for
   reference only; do **not** start.
 
-Tagging rule (from `NORI_PLAN.md`): in-place edits to existing LeLab files get a `# NORI:`
+Tagging rule (from `full_nori_plan.md`): in-place edits to existing LeLab files get a `# NORI:`
 comment so upstream merges stay easy. Additive files (`frontend/src/nori/`,
 `lelab/nori_client.py`) need no tag.
 

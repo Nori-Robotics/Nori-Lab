@@ -273,7 +273,7 @@ const Remote = () => {
 {`M = toggle control mode (default: cylindrical / rpi4)
 cylindrical:  Q/E shoulder_pan  W/S x(reach)  A/D y(reach)  Z/X pitch  R/F wrist_roll  T/G gripper
 per-motor:    Q/A shoulder_pan  W/S shoulder_lift  E/D elbow_flex  R/F wrist_flex  T/G wrist_roll  Y/H gripper
-base: I/K fwd/back   J/L turn   U/O z-lift     cmds: SPACE e-stop   P reset-latch   C reset
+base: I/K fwd/back   J/L turn   U/O lift (the SELECTED arm)     cmds: SPACE e-stop   P reset-latch   C reset
 Click the video/page first so it has keyboard focus. Keys are ignored while typing in a field.`}
             </pre>
           </details>

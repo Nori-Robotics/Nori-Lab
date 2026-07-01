@@ -25,7 +25,10 @@ export interface ExternalJog {
   left_arm?: Record<string, number>;
   right_arm?: Record<string, number>;
   base?: Record<string, number>;
-  z_lift?: number;
+  // Per-arm lift (velocity, [-1,1]). The robot has one lift per arm; drive them
+  // independently. (Was a single `z_lift`.)
+  left_lift?: number;
+  right_lift?: number;
 }
 
 export interface TelemetryView {
@@ -432,7 +435,7 @@ export class RemoteTeleop {
     if (ch.bufferedAmount > BUFFER_LIMIT) return; // congested -> skip, don't pile up latency
 
     // VR (or another mapper) owns the stream: send its payload verbatim. It already
-    // carries left_arm/right_arm/base/z_lift in the daemon's jog vocabulary, so this is
+    // carries left_arm/right_arm/base/left_lift/right_lift in the daemon's jog vocabulary, so this is
     // the identical wire frame the keyboard path below produces — just a different source.
     if (this.externalJog) {
       this.dcSend({ type: "control", jog: this.externalJog });
@@ -455,7 +458,8 @@ export class RemoteTeleop {
     }
     const jog: Record<string, unknown> = { [`${this.o.arm}_arm`]: a };
     if (Object.keys(base).length) jog.base = base;
-    if (z) jog.z_lift = z;
+    // u/o lift the CURRENTLY SELECTED arm (the dropdown that scopes the arm keys).
+    if (z) jog[`${this.o.arm}_lift`] = z;
     this.dcSend({ type: "control", jog });
   }
 }

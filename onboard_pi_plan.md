@@ -1,6 +1,6 @@
 # Item 2 — Pi Onboarding & Over-the-Air Updates
 
-> **Scope note:** This document lives in the `NoriLeLab` (laptop app) repo **for context only**. The work it describes runs **on the robot (Raspberry Pi)**, not on the laptop. The laptop app's view of these changes — and the LAN contract it depends on — is in [`NORI_PLAN.md`](NORI_PLAN.md) (see the *Pi daemon LAN contract matrix*).
+> **Scope note:** This document lives in the `NoriLeLab` (laptop app) repo **for context only**. The work it describes runs **on the robot (Raspberry Pi)**, not on the laptop. The laptop app's view of these changes — and the LAN contract it depends on — is in [`full_nori_plan.md`](full_nori_plan.md) (see the *Pi daemon LAN contract matrix*).
 
 This phase replaces the prototype bash scripts and Python server architecture with a hardened, embedded-Linux deployment. The core objective is a deterministic, memory-safe execution environment (**< 100 MB baseline RAM**) that survives extended uptimes in consumer homes without GC pauses, memory leaks, or network-induced stutter.
 
@@ -17,11 +17,20 @@ These milestones cut **across** the capability sections (§a–§g); they are a 
 | **M0 — Daemon substrate** (internal) | The C++ safety/control core, driven from the laptop app over **LAN**. The unavoidable foundation — WAN teleop *is* this plus a network layer. | §b in full (Feetech C++ SDK bus control, 50 Hz loop, **all four motor-protection layers**, network + thermal watchdogs, E-STOP latch); §f JSON control + `protocol_version`; reuse the prototype's **LAN ZMQ video**. | WAN, WebRTC, VR, audio, OTA, onboarding, ATECC (software-key fallback). |
 | **M1 — WAN remote teleop, laptop** ⭐ | **The headline target.** An operator anywhere on the internet drives with basic (keyboard / on-screen) controls and sees the live video. | §f WebRTC video (software-encode, ~24 fps) + Supabase **rendezvous/relay** + **TLS + scoped tokens** (R10); §e app "remote mode" as the single control client; WAN watchdog profile. | VR, audio, signed OTA, factory provisioning, native UI. |
 | **M2 — VR headset teleop (over WAN)** ⭐ | The same remote session, driven from a Quest 3. | §e VR path: app WebXR → **`jog` mapper (laptop)**, clutch, re-clutch-on-resume, controller **E-STOP** (R13), haptics from current telemetry. **Daemon control path unchanged from M0.** | — (rides M1's session) |
-| **M3 — Audio** | Operator hears the room; robot makes status/safety sounds. | §g v1: mic → laptop uplink (Opus/RTP → WebRTC track), sound effects on safety events. | Wake word, voice/LLM, talk-through-robot, AEC. |
-| **M4 — Productionization / shipping** | Make it a consumer unit, not a dev rig. | §c headless WiFi onboarding; §d signed A/B OTA; **R3 ATECC608B** identity; §a factory imaging + **R12 per-unit provisioning**; UI-migration Phase 2 (Slint/LVGL) **only if** the RAM budget (R1) forces it. | — |
+| **M3 — Two-way *audio* presence** ⭐ | The operator hears *and* speaks into the room (a voice call through the robot); robot makes safety/status sounds. | §g two-way audio (robot mic → operator **and** operator voice → robot speaker) with **mandatory AEC**; safety sound-effects; R15 privacy (mute + live indicators, no persist). Additive audio tracks on the existing M1 WebRTC session. **Operator *video* deferred to M6.** | Operator video (M6), wake word, voice/LLM, audio-as-dataset-channel. |
+| **M4 — LVGL native face + Python cleanup** ⭐ | Replace the always-on Chromium face; delete legacy Python. | LVGL idle face on DRM/KMS (the RAM win) in a **separate process** from the 50 Hz loop (R2), with a **display-yield hook** so an on-demand call view can borrow the screen; **retire `rpi4/` legacy**. **Timing is RAM-driven** (Chromium stays until its peak forces the swap). **Media bridge stays Python** (sanctioned exception, own process). | webrtcbin C++ port (not doing it); video in LVGL (never — M6 uses on-demand Chromium). |
+| **M5 — Productionization / shipping** | Make it a consumer unit, not a dev rig. | §c headless WiFi onboarding; §d signed A/B OTA; **R3 ATECC608B** identity; §a factory imaging + **R12 per-unit provisioning**; AEC ship-part decision. | — |
+| **M6 — Telepresence video (deferred)** | Operator's camera on the robot screen — completes the Zoom-like session. | Operator camera → robot DSI via an **on-demand Chromium call view** (launched only during a call, using M4's display-yield hook; torn down after). Additive WebRTC video track. | — (slots in later; M3/M4 reserve space for it) |
 | **(parallel) Autonomy & IL** | Policy execution + dataset recording. | Separate Item; reuses the same daemon + recording stream (R5). | Out of this doc's teleop-first scope. |
 
 **On "LAN baseline" vs "WAN first":** WAN teleop is architecturally LAN teleop **plus** a TLS/relay/WebRTC layer over the same control path. So LAN teleop (M0) is the substrate you pass *through* on the way to WAN (M1) — not a separate product milestone to dwell on. Where §e/§f call LAN the "always-working baseline," read that as *the fallback that keeps working*, not *the first thing we ship*.
+
+**[SCOPE INCREASE 2026-06-30, revised 2026-07-01] Two-way presence — audio now, video deferred; UI stays Chromium then LVGL when RAM forces it.** After a feasibility pass, the scope is staged:
+1. **M3 = two-way *audio*** (a voice call through the robot): operator→robot voice is pulled forward from §g's *deferred* list; robot→operator mic stays. This makes **AEC mandatory** (playback + capture live at once). **Operator *video* is deferred to M6.**
+2. **UI: Chromium now, LVGL when RAM actually forces it** (the original RAM-driven plan — deadlines win; *not* "straight to LVGL"). M4 replaces only the **always-on idle face** with LVGL (the RAM win), in a separate process (R2), with a **display-yield hook**. The **media bridge stays Python** (own process, off the RT loop) — no webrtcbin C++ port.
+3. **Video (M6) never renders in LVGL.** The always-on face is LVGL; the *transient* call video is rendered by an **on-demand Chromium** launched only during a call and torn down after — face and call are mutually exclusive in time, so it's a clean **display handoff**, not overlay-plane compositing. This deletes the hardest feasibility risk (LVGL + video on one DRM master).
+
+Rationale under the current hardware gap: M3/M4 are heavily **hardware-gated** (speaker/mic/DSI/AEC acoustics) — design now, validate on a unit. The **laptop-side GUI/LeLab track runs in parallel throughout** (the only hardware-free work). Full feasibility register + the M3a/M3b split + conversational-latency target: see [`m3_m5_implementation_plan.md`](m3_m5_implementation_plan.md).
 
 ---
 
@@ -210,6 +219,7 @@ Rationale: at ~50 Hz the control frames are a few hundred bytes — ~15 KB/s, tr
 - **LAN baseline (keep working):** ZMQ PUB/SUB, MJPEG → base64 JPEG, `CONFLATE=1` per camera (today's proven path; backpressure drops frames, not memory). ZMQ does **not** traverse NAT.
 - **WAN (build as soon as possible):** **WebRTC @ ~24 fps.** Because ZMQ can't cross NAT, WAN video needs WebRTC from the first WAN release — it is *near-term, not "someday."* ⚠️ The **Pi 5 has no hardware video encoder** (unlike the Pi 4), so the stream is **software-encoded** on the CPU — pin the encoder to dedicated core(s) so it doesn't starve the 50 Hz loop, keep fps/resolution modest, and budget against R1 (see R11). **Opus audio (§g) rides the same WebRTC session** as a separate track.
 - Control stays JSON for both modes; only the video/audio transport differs.
+- **[2026-06-30, rev 2026-07-01] The WebRTC session gains a reverse audio path (M3), video-down reserved for M6.** In addition to robot→operator video + robot mic uplink, M3 adds **operator→robot audio** (their voice → robot speaker); **operator→robot video** (their camera → robot DSI) is **deferred to M6**. All are added tracks, not a new transport (inherit NAT traversal + DTLS/SRTP). **Reserve every m-line at connect** (recvonly, muted) so M6 needs no live renegotiation — `webrtcbin` is fragile on renegotiation/teardown (see §g note + `media/README.md`). Control still rides the data channel unchanged.
 
 ### WAN rendezvous & authorization — via the Item 3 Supabase registry
 The Pi sits behind home NAT; a remote operator can't reach it directly. WAN mode routes through Supabase:
@@ -225,45 +235,62 @@ The Pi sits behind home NAT; a remote operator can't reach it directly. WAN mode
 
 ## g) Audio I/O
 
-The robot carries a **speaker and microphone**. Audio is a new I/O subsystem, kept deliberately small for v1 and decoupled from the 50 Hz motor path.
+The robot carries a **speaker and microphone**. Audio is a new I/O subsystem, decoupled from the 50 Hz motor path. **[SCOPE INCREASE 2026-06-30, revised 2026-07-01]** the target grew from one-way uplink to **two-way audio presence** (a voice call *through* the robot); operator *video* is deferred to M6 — see the milestone note.
 
-### v1 scope (now)
-- **Mic → laptop (uplink):** the operator hears the room. One-way capture on the Pi, Opus-encoded, streamed to the laptop and played there.
-- **Robot sound effects (output):** local playback of short pre-rendered clips (status chimes, alerts). Wired to safety events early — e.g. an audible cue on **safe-hold / E-STOP** (improves the R13 feedback story) — since it's cheap and useful.
+### M3 scope (two-way audio)
+- **Robot mic → operator (uplink) — M3a:** the operator hears the room. Pi capture, Opus-encoded, added as a WebRTC audio track on the existing M1 session (was the original v1 scope). No AEC dependency — can ship first.
+- **Operator voice → robot speaker (downlink) — M3b:** the operator talks *through* the robot. Opus track in the reverse direction on the same session. **This is what makes audio two-way**, and it is what forces AEC.
+- **Acoustic echo cancellation (AEC) — MANDATORY for two-way audio (M3b gate):** with speaker playback and mic capture live at once, the robot's mic hears its own speaker → echo/howl without AEC. **Preferred: a USB device with *hardware* AEC** (see Hardware below). Software AEC (PipeWire `module-echo-cancel` / WebRTC APM) is the fallback if the hardware part slips — but that reopens the "ALSA-only" stance, so pin the hardware question first (see the M-sequence §6 questions for HW engineers). *Deferring the operator video (M6) does **not** relax AEC — two-way audio alone echoes.*
+- **Robot sound effects (output) — M3a:** local playback of short pre-rendered clips (status chimes, alerts), wired to safety events early — an audible cue on **safe-hold / E-STOP** improves the R13 feedback story. Note: operator voice + a sound-effect can play at once → needs a mixer (`dmix` / single owner).
 
-### Deferred (later, unless a design reason pulls it earlier)
+### Deferred
+- **Operator camera → robot screen (M6):** rendered by an **on-demand Chromium call view** (not LVGL) — see §UI. Reserve the WebRTC video m-line + protocol call-state fields in M3 so it slots in without renegotiation later.
 - **Wake word + voice commands** (mic → STT), and an **LLM intent layer** on top.
-- **Operator → robot voice** (talk *through* the robot speaker) — this makes audio two-way. For now operator voice (if any) stays on the laptop/call side, not routed through the robot.
-- **Acoustic echo cancellation (AEC)** — required once playback and capture are live on the robot *simultaneously* (two-way). Explicit TODO; not needed while audio is uplink-only.
 - **Audio as a recorded dataset channel** for IL/policy training.
 
-### Transport — RTP/Opus now, folds into WebRTC later
-For v1, send mic audio as **Opus over RTP** on its own channel (e.g. GStreamer: Pi `alsasrc ! opusenc ! rtpopuspay ! udpsink` → laptop `udpsrc ! rtpopusdepay ! opusdec ! sink`), separate from control and video, with a small jitter buffer on the laptop. This is the standard low-latency "mic-to-remote-speaker" recipe and uses **the same codec/payload WebRTC speaks** — so when the WAN/WebRTC path lands (§f), audio becomes a WebRTC **track** on the existing session with minimal rework (and two-way + AEC become natural there). Do **not** put audio on the ZMQ `CONFLATE` camera path — audio needs continuity, not latest-only.
+### Transport — WebRTC tracks on the existing session (updated 2026-06-30)
+The original plan sent v1 mic as **Opus over RTP** and folded it into WebRTC "later." That's now moot: **M1 already shipped the WebRTC session** (video, control data channel, Supabase signaling, STUN/TURN). So audio and operator video are added as **additional WebRTC tracks on that same peer connection from the start** — they inherit its NAT traversal, DTLS/SRTP encryption, and jitter buffering, and two-way + AEC "become natural there" exactly as anticipated:
+- **robot mic → operator (M3a):** Opus send track (Pi `alsasrc ! opusenc` into `webrtcbin`).
+- **operator voice → robot (M3b):** Opus recv track → ALSA playback (Pi `webrtcbin → opusdec ! alsasink`).
+- **operator camera → robot (M6, deferred):** H.264/VP8 recv track rendered by an **on-demand Chromium call view** (§UI), *not* decoded into an LVGL overlay. The recv m-line is **reserved at connect** in M3 so M6 needs no renegotiation.
+
+> ⚠️ **Negotiate the full track set up front.** `webrtcbin` on this stack is single-shot and fragile on renegotiation/teardown (`media/README.md`). Reserve all m-lines (recvonly, muted) at session establishment; "unmute / add video" = a track-enable flip or a session re-establish (the supervisor already relaunches per session) — never a live renegotiation.
+
+The old standalone `alsasrc ! opusenc ! rtpopuspay ! udpsink` recipe is retained only as a **LAN-only fallback** if a WebRTC track proves troublesome; do **not** put audio on the ZMQ `CONFLATE` camera path — audio needs continuity, not latest-only.
 
 ### Process model & OS
 - Audio runs in its **own process/thread**, never the 50 Hz daemon loop (mirrors the standalone camera capture). `audio_io.cpp` is its eventual home; v1 may start as a small standalone GStreamer helper.
-- **ALSA only** for v1 (capture + clip playback); skip PulseAudio/PipeWire until two-way mixing/AEC needs them. §a keeps the minimal ALSA stack rather than stripping it.
-- **Hardware:** a **USB audio device** (class-compliant speaker + mic, or a USB sound card) on the shared peripheral hub — consistent with the all-USB topology (R16), no GPIO/I²S device-tree work. This also sets up the **two-way phase**: a USB conference speakerphone with **hardware AEC** drops onto the same hub later. Pin the exact part before factory imaging (like R3).
+- **ALSA + AEC (updated 2026-06-30):** ALSA remains the capture/playback layer. Because M3 is two-way, **AEC is required** — the cheapest correct path is a USB speakerphone doing AEC *in hardware* (no PulseAudio/PipeWire/WebRTC-APM software echo-canceller on the Pi). If a software canceller is ever forced, that's when PulseAudio/PipeWire (or WebRTC's `webrtcdsp`) enters the picture — avoid until then.
+- **Hardware (pin before factory imaging, like R3):** with two-way now the baseline, **default to a USB conference speakerphone with hardware AEC** (class-compliant, single device = combined speaker+mic+echo-cancel) on the shared peripheral hub — consistent with the all-USB topology (R16), no GPIO/I²S device-tree work. A plain USB speaker + USB mic is the fallback *only* if paired with software AEC. Budget its USB bandwidth/power against R16 alongside the cameras.
 
-### Privacy (mirrors the §2c video rule)
-A home microphone is a high-trust surface. **No audio is persisted** (no audio to SD), there is a **clear mute control + "mic live" indicator**, and mic streaming is **opt-in**. Tracked as R15.
+### Privacy (mirrors the §2c video rule) — now covers BOTH directions
+Audio **and** the operator's video feed are high-trust surfaces — and M3 adds a *live remote person into the home*, so privacy is now bidirectional:
+- **Robot mic (into home → out):** **no audio persisted** (no audio to SD), **clear mute + "mic live" indicator**, mic streaming **opt-in**. (original R15.)
+- **Operator voice (remote person → into home), M3; operator camera, M6:** a **clear on-screen indicator when a remote operator's audio (M3) or video (M6) is live** in the room, and the operator feed is likewise **never persisted** on the Pi. Reserve the indicator + consent fields in M3. Tracked as an extension of R15.
 
 ---
 
 ## UI Migration Strategy
 
-The frontend kiosk (`index.html`) follows a staged migration to fit the **2 GB Pi 5 RAM ceiling**:
+The frontend kiosk (`index.html`) follows a staged migration to fit the **2 GB Pi 5 RAM ceiling**. **[UPDATED 2026-07-01]** Reverted from the brief "straight to LVGL" plan back to **RAM-driven** timing (deadlines). Key insight that shaped it: the RAM cost is the **always-on face**, but live video is **transient** (calls only) — so the always-on face becomes LVGL (the RAM win) while the transient call video is rendered by an **on-demand Chromium**, not LVGL.
 
-### Phase 1 (Launch)
-`chromium-browser --kiosk` serving the existing **NoriScreen** kiosk UI (status + E-STOP) — already shipping on the Pi's 7" DSI display over HTTP **9091** (the prototype's `start_teleop.sh` brings it up today). Zero rewrite, allows immediate beta shipping. *(An earlier draft said `localhost:9090`; the actual port is 9091 and the UI already exists — build on NoriScreen rather than re-introducing a kiosk.)*
+### Phase 1 (Launch — current) — Chromium NoriScreen
+`chromium-browser --kiosk` serving the existing **NoriScreen** kiosk UI (status + E-STOP) — already shipping on the Pi's 7" DSI display over HTTP **9091** (the prototype's `start_teleop.sh` brings it up today). Zero rewrite; **kept for now** (deadlines) and — importantly — **retained past M4** to render the M6 on-demand call view. *(An earlier draft said `localhost:9090`; the actual port is 9091.)*
 
-### Phase 2 (RAM-driven C++ migration)
-When the RAM budget is breached by the zero-copy camera + software WebRTC-encode path (M1 onward), Chromium is removed and the UI is rewritten in **Slint** or **LVGL**, compiled into the `NoriCoreAgent` daemon.
+### Phase 2 = M4 (LVGL always-on face — RAM-driven)
+Replace the **always-on idle face** with **LVGL** (chosen over Slint for the smallest footprint + first-class DRM/KMS + framebuffer backends and a mature C API). **Timing is RAM-driven** — measure Chromium's real peak alongside the daemon + cameras + M3 audio first, and swap when the budget demands it, not preemptively.
 
-- **Architecture:** bypasses the X11/Wayland window manager entirely — draws directly to the DSI screen via DRM/KMS or `/dev/fb0`.
-- **Performance:** UI memory drops from ~150 MB (Chromium) to **< 20 MB**, hitting a stable 60 fps. IPC changes from network WebSockets to internal lock-free event queues between UI and motor threads.
+- **Architecture:** bypasses the X11/Wayland window manager entirely — draws directly to the DSI via **DRM/KMS** (`/dev/fb0` fallback).
+- **No video in LVGL:** the face is graphics only (blink/breathe/gaze + status chrome). Live operator video is **M6's on-demand Chromium**, not an LVGL overlay.
+- **Display-yield hook (build in M4 for M6):** the LVGL face process must cleanly **release DRM master / the DSI** on request and reacquire it afterward, so the on-demand call view can borrow the screen and hand it back. Face and call are mutually exclusive in time → a **display handoff**, not overlay-plane compositing.
+- **Performance:** UI (LVGL toolkit) RAM drops from ~150 MB (Chromium) to **< 20 MB**, stable 60 fps. IPC changes from network WebSockets to internal lock-free event queues. *(Call-time RAM = LVGL yielded + Chromium up; budget it separately — R1.)*
+- **Safety (R2):** the LVGL UI runs in a **separate process** from the 50 Hz safety loop (a UI leak/crash must never take down the motor loop); shared-memory lock-free queue. Only the safety process gets `OOMScoreAdjust=-1000`.
+- **Media bridge stays Python** (no webrtcbin C++ port) — own process, off the RT loop, so it doesn't threaten determinism.
 
-> **Outcome (by milestone):** first (M1/M2) a remote operator — on a laptop or in a VR headset, anywhere on the internet — drives the robot with live video; later (M4 + the autonomy Item) an assistive user unboxes it, connects WiFi via their phone, and the robot tidies with zero code. Developers get open LeRobot underneath, a mathematically stable native C++ hardware profile, and ROS/remote access without web-browser overhead.
+### M6 — on-demand call video (deferred)
+When a call needs the operator's camera: the LVGL face yields the DSI (hook above) → **Chromium is launched to render the call video full-screen** → on call end it's torn down and the face reacquires the screen. Transient ~150 MB is acceptable because it isn't persistent. **Fallback only** if that transient RAM proves unacceptable: the harder LVGL + GStreamer + **DRM/KMS overlay-plane** path (SW-decode → dmabuf → overlay plane; LVGL chrome on a second alpha plane) — the DRM-master-contention path we are deliberately avoiding; spike standalone before adopting.
+
+> **Outcome (by milestone):** first (M1/M2) a remote operator — on a laptop or in a VR headset, anywhere on the internet — drives the robot with live video; later (M5 + the autonomy Item) an assistive user unboxes it, connects WiFi via their phone, and the robot tidies with zero code. Developers get open LeRobot underneath, a mathematically stable native C++ hardware profile, and ROS/remote access without web-browser overhead.
 
 ---
 
@@ -289,10 +316,10 @@ nori-teleop/
 │       ├── safety_watchdog.cpp   ◀── 50 Hz stall + tiered arrival-time watchdog
 │       ├── video_grabber.cpp     ◀── Zero-copy kernel mmap frame capture
 │       ├── network_broker.cpp    ◀── JSON control channel / ZMQ + WebRTC video broker
-│       ├── audio_io.cpp          ◀── Mic Opus/RTP uplink + sound-effect playback (ALSA); WebRTC track later
-│       └── ui/
-│           ├── face_canvas.slint ◀── Declared UI layout definitions
-│           └── ui_manager.cpp    ◀── Slint integration bridge (or LVGL)
+│       ├── audio_io.cpp          ◀── Two-way audio: mic uplink + operator-voice playback (ALSA + HW-AEC device) as WebRTC tracks; sound-effects
+│       └── ui/                   ◀── LVGL always-on face in a SEPARATE process (R2); DRM/KMS + display-yield hook (M6 call video = on-demand Chromium, not LVGL)
+│           ├── screens/          ◀── LVGL screen/widget definitions (idle face, status, call view)
+│           └── ui_manager.cpp    ◀── LVGL integration bridge + shared-mem queue to the safety process
 │
 └── rpi4/                         ◀── RETAINED & HARDENED: Python On-Pi Utilities
     ├── onboard_wifi_setup.py     ◀── Python captive-portal wizard (Item 2c)
@@ -310,7 +337,7 @@ nori-teleop/
 
 ## [NEW] Open Issues & Risks (flagged 2026-06-16)
 
-These are tensions or gaps surfaced while aligning this doc with the laptop app's [`NORI_PLAN.md`](NORI_PLAN.md). None block beta, but each needs an owner/decision.
+These are tensions or gaps surfaced while aligning this doc with the laptop app's [`full_nori_plan.md`](full_nori_plan.md). None block beta, but each needs an owner/decision.
 
 | ID | Risk | Why it matters | Suggested resolution |
 |---|---|---|---|
@@ -318,11 +345,11 @@ These are tensions or gaps surfaced while aligning this doc with the laptop app'
 | **R2** | **UI compiled into the safety daemon** | Phase 2 compiles the UI into `NoriCoreAgent`. A UI render bug/leak can now crash the process that owns the 50 Hz safety loop. `OOMScoreAdjust=-1000` would also protect the memory-hungry UI from the OOM killer, defeating its purpose. | Keep the safety/motor loop in a **separate process** from the UI even after the Chromium removal; communicate over the lock-free queue across a process boundary (shared memory). Only the safety process gets `OOMScoreAdjust=-1000`. |
 | **R3** | **No secure enclave on stock Pi 4/5** (DECIDED 2026-06-24) | The Pi has no TPM by default, and the boot EEPROM isn't a general secret store. Per-unit signed identity needs a concrete mechanism. | **DECIDED: ATECC608B secure element** — see resolution below. Pin before factory imaging. |
 | **R4** | **A/B partitioning storage cost** | Two rootfs partitions roughly doubles rootfs storage on the SD/eMMC, and RAUC/Mender add bundle staging space. | Confirm the flash size budget covers 2× rootfs + update staging. (No persistent recording buffer to budget — R5 streams to the laptop.) |
-| **R5** | **"No video to SD" vs. on-Pi recording buffer** (DECIDED 2026-06-24) | Item 2c forbids writing video buffers to persistent cache (SD); an earlier `NORI_PLAN.md` draft implied an on-flash recording buffer. | **DECIDED: no persistent Pi-side video — stream frames to the laptop app (matches the prototype); WAN recording, if ever needed, uses tmpfs/RAM, never SD.** See resolution below. |
+| **R5** | **"No video to SD" vs. on-Pi recording buffer** (DECIDED 2026-06-24) | Item 2c forbids writing video buffers to persistent cache (SD); an earlier `full_nori_plan.md` draft implied an on-flash recording buffer. | **DECIDED: no persistent Pi-side video — stream frames to the laptop app (matches the prototype); WAN recording, if ever needed, uses tmpfs/RAM, never SD.** See resolution below. |
 | **R6** | **mDNS reliability** | `xlerobot.local` resolution fails on some routers/OSes (mDNS blocked, client subnet isolation). | Already covered laptop-side by manual-serial fallback; ensure the daemon **also** exposes a reachable IP path and the captive portal surfaces the assigned IP for manual entry. |
 | **R7** | **Transport split: TCP control vs. video channel** | `network_broker.cpp` brokers both the JSON control channel and video (ZMQ on LAN / WebRTC on WAN). The laptop expects a single control socket + a separate video channel. | Confirm the broker cleanly separates the two so a video stall can't backpressure the control stream (and vice versa). Version the JSON control schema (see revised R8). |
 | **R8** | **Shared wire-protocol drift across two repos** (resolved 2026-06-16; revised 2026-06-24) | The Pi daemon (`nori-teleop`) and the laptop app (`NoriLeLab`) are **separate repos — this is intentional and correct** (different toolchains: C++/CMake-on-ARM vs. Python/npm-on-x86; different deploy paths: signed A/B OTA vs. PyPI/installer; different blast radius). The split is *not* the risk. The risk is that the Pi daemon's protocol definition and the laptop's parse/serialize code become **two hand-maintained definitions of one message format** that drift silently — a renamed, reordered, or retyped field corrupts joint commands with no error, on a robot moving near a human. | **Keep both repos.** Fix drift with a single source of truth + a runtime tripwire (see resolution below). |
-| **R9** | **E-STOP reset path** | The hard latch requires an explicit user reset, but the reset command's transport/auth isn't specified. | Define the reset as an authenticated command on the TCP control channel (see laptop `NORI_PLAN.md` LAN matrix), and confirm it's reachable even when the control stream is in safe-stop. **VR-specific branch: see R13.** |
+| **R9** | **E-STOP reset path** | The hard latch requires an explicit user reset, but the reset command's transport/auth isn't specified. | Define the reset as an authenticated command on the TCP control channel (see laptop `full_nori_plan.md` LAN matrix), and confirm it's reachable even when the control stream is in safe-stop. **VR-specific branch: see R13.** |
 
 ### [NEW] R8 resolution — shared protocol contract *(revised 2026-06-24: JSON, not binary)*
 

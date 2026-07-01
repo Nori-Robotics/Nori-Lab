@@ -13,9 +13,10 @@
 // Control map (v1 — exactly the keyboard DOF, per §e "one canonical command set"):
 //   each hand:  grip = CLUTCH (squeeze to move)   trigger = that arm's gripper
 //               move/tilt/twist the controller -> that arm's x/y/pitch/roll + shoulder_pan
-//   right only: thumbstick = base drive           A / B = z-lift up / down
-//   left only:  X = E-STOP (latches + re-clutch)  Y (hold 1.5s) = reset latch (R13: the
-//               operator is in-headset seeing live video, satisfying the confirmation gate)
+//   each hand:  A/X = that arm's lift UP            B/Y = that arm's lift DOWN
+//   right only: thumbstick = base drive             thumbstick-press (hold 1.5s) = reset latch
+//   left only:  thumbstick-press = E-STOP (latches + re-clutch) (R13: the operator is
+//               in-headset seeing live video, satisfying the confirmation gate)
 
 import * as THREE from "three";
 import { VrJogMapper, type VrControllerFrame, type VrFrame } from "./vr";
@@ -36,21 +37,27 @@ export interface VrButtonRef { hand: Hand; index: number; }
 export interface VrBindings {
   clutch: Record<Hand, number>;  // grip button = squeeze-to-move (default 1 both hands)
   gripper: Record<Hand, number>; // trigger = that arm's gripper (default 0 both hands)
-  zUp?: VrButtonRef;
-  zDown?: VrButtonRef;
+  leftLiftUp?: VrButtonRef;
+  leftLiftDown?: VrButtonRef;
+  rightLiftUp?: VrButtonRef;
+  rightLiftDown?: VrButtonRef;
   estop?: VrButtonRef;
   reset?: VrButtonRef; // hold this for RESET_HOLD_MS
 }
 
-// Single-right-arm default (M2 bring-up): grip=clutch, trigger=gripper, right A/B = z-lift,
-// left X = E-STOP, hold left Y = reset. For dual-arm, move E-STOP/reset off left X/Y.
+// Dual-arm default: grip=clutch, trigger=gripper. Each controller's face buttons drive its
+// OWN arm's lift (left X/Y = left lift up/down; right A/B = right lift up/down). E-STOP and
+// reset moved onto the thumbstick PRESS (index 3) to free the face buttons for the lifts:
+// left stick-press = E-STOP; right stick-press (hold 1.5s) = reset.
 export const DEFAULT_BINDINGS: VrBindings = {
   clutch: { left: 1, right: 1 },
   gripper: { left: 0, right: 0 },
-  zUp: { hand: "right", index: 4 },   // A
-  zDown: { hand: "right", index: 5 }, // B
-  estop: { hand: "left", index: 4 },  // X
-  reset: { hand: "left", index: 5 },  // Y (hold)
+  leftLiftUp: { hand: "left", index: 4 },    // X
+  leftLiftDown: { hand: "left", index: 5 },  // Y
+  rightLiftUp: { hand: "right", index: 4 },  // A
+  rightLiftDown: { hand: "right", index: 5 }, // B
+  estop: { hand: "left", index: 3 },   // left thumbstick press
+  reset: { hand: "right", index: 3 },  // right thumbstick press (hold)
 };
 
 export interface VrSessionOptions {
@@ -159,7 +166,8 @@ export class VrSession {
     this.running = true;
     this.o.onLog(
       `${mode === "immersive-ar" ? "AR (passthrough)" : "VR"} session started — ` +
-        "grip to engage clutch, left X = E-STOP, hold left Y = reset"
+        "grip to engage clutch, A/X & B/Y = that arm's lift up/down, "
+          + "left stick-press = E-STOP, hold right stick-press = reset"
     );
     renderer.setAnimationLoop((_t, frame) => this.onXRFrame(frame));
   }
@@ -211,8 +219,10 @@ export class VrSession {
         }
         // Resolve the configurable discrete actions from their bound buttons.
         vrFrame.controls = {
-          zUp: this.buttonDown(this.b.zUp, sources),
-          zDown: this.buttonDown(this.b.zDown, sources),
+          leftLiftUp: this.buttonDown(this.b.leftLiftUp, sources),
+          leftLiftDown: this.buttonDown(this.b.leftLiftDown, sources),
+          rightLiftUp: this.buttonDown(this.b.rightLiftUp, sources),
+          rightLiftDown: this.buttonDown(this.b.rightLiftDown, sources),
           estop: this.buttonDown(this.b.estop, sources),
         };
         const res = this.mapper.map(vrFrame);

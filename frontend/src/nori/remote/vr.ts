@@ -33,8 +33,12 @@ export interface VrControllerFrame {
 // layer — the mapper stays agnostic to which physical button/hand each came from. (reset is
 // a hold-gesture handled in the session, so it isn't here.)
 export interface VrControls {
-  zUp?: boolean;
-  zDown?: boolean;
+  // One lift per arm (independent). Each controller's face buttons drive its
+  // own arm's lift (resolved from bindings in the session layer).
+  leftLiftUp?: boolean;
+  leftLiftDown?: boolean;
+  rightLiftUp?: boolean;
+  rightLiftDown?: boolean;
   estop?: boolean;
 }
 
@@ -206,11 +210,10 @@ function baseFromThumb(f: VrControllerFrame | null | undefined): Record<string, 
   return { linear: capRate(linear), angular: capRate(angular) };
 }
 
-// z-lift from the resolved semantic controls. +1 up / -1 down (verify sign on hardware).
-function zLiftFromControls(c: VrControls | undefined): number {
-  if (!c) return 0;
-  if (c.zUp && !c.zDown) return 1;
-  if (c.zDown && !c.zUp) return -1;
+// lift from a resolved up/down button pair. +1 up / -1 down (verify sign on hardware).
+function liftFromControls(up?: boolean, down?: boolean): number {
+  if (up && !down) return 1;
+  if (down && !up) return -1;
   return 0; // none, or both (conflict) -> hold
 }
 
@@ -232,21 +235,24 @@ export class VrJogMapper {
     const lArm = this.left.step(frame.left);
     const rArm = this.right.step(frame.right);
     const base = baseFromThumb(frame.right);
-    const z = zLiftFromControls(frame.controls);
+    const c = frame.controls;
+    const leftLift = liftFromControls(c?.leftLiftUp, c?.leftLiftDown);
+    const rightLift = liftFromControls(c?.rightLiftUp, c?.rightLiftDown);
 
-    const estopNow = !!frame.controls?.estop;
+    const estopNow = !!c?.estop;
     const estopEdge = estopNow && !this.estopPrev;
     this.estopPrev = estopNow;
 
     // Nothing engaged at all -> null (let the keyboard keep the stream).
-    if (lArm == null && rArm == null && !base && !z) {
+    if (lArm == null && rArm == null && !base && !leftLift && !rightLift) {
       return { jog: null, estop: estopEdge };
     }
     const jog: ExternalJog = {};
     if (lArm) jog.left_arm = lArm;
     if (rArm) jog.right_arm = rArm;
     if (base) jog.base = base;
-    if (z) jog.z_lift = z;
+    if (leftLift) jog.left_lift = leftLift;
+    if (rightLift) jog.right_lift = rightLift;
     return { jog, estop: estopEdge };
   }
 }

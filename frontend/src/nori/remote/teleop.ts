@@ -43,6 +43,13 @@ export interface TelemetryView {
   // Per-motor Present_Current (the "virtual tactile" signal), keyed like "right_arm_gripper".
   // Same values fed to VR haptics; surfaced here for the on-screen grip-force readout.
   currents: Record<string, number>;
+  // The daemon's lerobot-native telemetry `state` dict: every joint's "<motor>.pos"
+  // (arm joints normalized [-100,100], grippers [0,100]) + base "x.vel"/"theta.vel".
+  // Carried verbatim so a 3D pose view (C6) can run FK off the joint angles. NOTE: these
+  // are NORMALIZED, not degrees — a future Pi-side `use_degrees` field will carry physical
+  // angles for FK (the Pi owns the calibration + kinematic convention). Empty until the
+  // daemon sends `state` (mock/real).
+  state: Record<string, number>;
 }
 
 // Two-way call state (Phase 7 §B). Reported to the page via onCall so it can render the
@@ -183,7 +190,7 @@ export class RemoteTeleop {
   // loop_hz / temp / status only ride the periodic telemetry block, not every per-tick
   // frame — keep last values so the readout doesn't flicker to 0.
   private tel: TelemetryView = {
-    loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {},
+    loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {}, state: {},
   };
   private stopped = false;
 
@@ -607,6 +614,11 @@ export class RemoteTeleop {
       if (m.currents && typeof m.currents === "object") {
         this.tel.currents = m.currents as Record<string, number>;
         this.o.onCurrents?.(this.tel.currents);
+      }
+      // lerobot-native `state` dict (every "<motor>.pos" + base "x.vel"/"theta.vel").
+      // Carried through so a 3D pose view (C6) can run FK off the joint angles.
+      if (m.state && typeof m.state === "object") {
+        this.tel.state = m.state as Record<string, number>;
       }
       // Reserved: robot reports whether its mic is live (Pi M3). Drives the "robot on air"
       // indicator; absent until the daemon sends it.

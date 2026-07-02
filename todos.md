@@ -78,8 +78,9 @@ Compressed — see git history / `full_nori_plan.md` for detail. Do not re-open 
   Today it only handles video (`videoEl.srcObject`). Add a hidden `<audio autoplay>` element (or
   set the audio track on a dedicated `MediaStream`) and attach it. Small jitter buffer; verify
   continuity, not latest-only.
-  - *Open:* one combined stream vs. split video/audio streams? Robot sends both in `ev.streams[0]`
-    or separate — confirm against `webrtc_robot.py` track layout. **DECIDE with Pi team.**
+  - ✅ *Resolved (2026-07-01, Pi team):* **route by `ev.track.kind`, never by stream grouping** —
+    the bridge's video + audio are separate gst tracks and msid grouping is not guaranteed
+    (`webrtc_operator.html` already routes by kind; do the same in `teleop.ts`).
 - [ ] **A2 — Operator mic capture (downlink; M3b).**
   `getUserMedia({ audio: true })`; attach the mic track to the **audio m-line the robot's offer
   proposes** (via the matching `RTCRtpTransceiver` — do **not** `addTrack` a new m-line, that
@@ -113,9 +114,14 @@ Compressed — see git history / `full_nori_plan.md` for detail. Do not re-open 
   `robot_mic_live` telemetry field + the inbound audio track's mute/ended events.
 - [x] **B3 — Call-state sync over the control channel** (done): `joinCall`/`leaveCall`/`setMicMuted`
   emit `{type:"call", ...}` over the existing control channel (same `dcSend` wire as `link`/`jog`).
-  - *Open (still):* mute authority — we currently **send intent + render local state**, and also
-    accept the robot's `robot_mic_live`. Confirm whether the robot echoes a consolidated call
-    state we should render from instead. **DECIDE with Pi team** (goes in §D message schema).
+  - ✅ *Resolved (2026-07-01, Pi team — robot side BUILT in `rpi5/media/webrtc_robot.py`):*
+    **no consolidated echo; keep exactly what you built.** Authority split: operator-mic state is
+    operator-authoritative (local `track.enabled` + local render); robot-mic state is
+    robot-authoritative via **`robot_mic_live` injected into telemetry by the media BRIDGE**
+    (not the daemon — `{type:"call"}` is intercepted at the bridge and never forwarded, so
+    there is **no `nori-protocol` change and no `protocol_version` bump**). A reserved
+    `robot_mic_muted: bool` field on `{type:"call"}` mutes the robot mic renegotiation-free
+    (gst `valve`) when the UI wants it. See `m3_m5_implementation_plan.md` §2.1-F.
 - [x] **B4 — Operator camera + self-view, GATED** (done): full capture + attach + self-view built;
   UI hidden unless `isM6VideoEnabled()`. **Flag decision:** localStorage `nori_m6_video=1` dev
   toggle (`remote/flags.ts`) — cheap to promote to a build-time default later.
@@ -135,17 +141,49 @@ Compressed — see git history / `full_nori_plan.md` for detail. Do not re-open 
 - [x] **C3 — Keybind discoverability** (done 2026-07-01): `ControlLegend` derived from the
   exported `keybindLegend(mode)` in `teleop.ts` (single source of truth — the maps the jog
   stream uses), mode-aware.
-- [x] **C4 — VR recenter/reposition** (done 2026-07-01): `VrSession.serviceRecenter()` moves the
-  video panel PANEL_DIST in front of the operator's current facing. Gesture = **double-tap the
-  right thumbstick press** (cleanly separable from hold-to-reset; no extra button spent).
+- [x] **C4 — VR recenter/reposition** (done 2026-07-01; trigger reworked 2026-07-02):
+  `VrSession.serviceRecenter()` moves the panel cluster PANEL_DIST in front of the operator's
+  current facing. Triggered by an **in-VR "Recenter" button anchored above the left controller,
+  poked with the right controller** (`updateRecenterButton` → `VrSession.recenter()`). Hand-anchored
+  so it stays reachable after the operator physically turns around; poke (not ray+trigger) because
+  both triggers are already the grippers. *(Evolution: double-tap right-thumbstick gesture → browser
+  "Recenter view" button → in-VR poke button. The browser button was unusable in-headset; recentering
+  has to be done from inside the VR environment while turning.)*
+- [x] **C4b — VR telemetry HUD parity** (done 2026-07-01): the VR scene previously showed *only*
+  the camera feed. Now forwards `TelemetryView` into `VrSession.setTelemetry()` and paints a
+  canvas-texture HUD with the **same stats as the keyboard `TelemetryPanel` + `GripForce`**
+  (control/path/loop/safety/watchdog/temp + grip-force bars, same tone thresholds + staleness).
+  Video panel shrunk (2.0×1.5 → 1.6×1.2) and both panels moved into a `THREE.Group` (recenter
+  moves the cluster; leaves room to the right/left for the C7 multi-cam + C6 cube panels).
 - [x] **C5 — Call-window layout** (basic, done 2026-07-01): robot video with an overlaid reserved
   self-view slot (hidden until M6), the `CallBar` beneath it, then telemetry / grip-force /
   legend. Throwaway visuals; front-end team owns the real design.
 - [ ] 🟡 **C6 — Basic 3D visual of robot** (arm/rail positioning as cubes, for fully-remote teleop).
-  **Gated:** telemetry today carries `loop_hz / temp / safety / watchdog / currents` but **no
-  joint/rail positions** (`teleop.ts` `handleTelemetry`). Need the daemon to include per-joint
-  positions in the telemetry frame before the cubes can reflect real pose. **CONFIRM schema with
-  Pi team**, then render with three.js (the VR scene already pulls in three).
+  **CORRECTION (2026-07-02):** the earlier "no joint positions in telemetry" note was **wrong**.
+  The daemon's telemetry frame **already carries a full `state` dict** with every `<motor>.pos`
+  (all 12 arm joints, normalized) + `x.vel`/`theta.vel` (`NoriTeleop` `main.cpp:386` `to_state`,
+  `nori_protocol_schema.md` §state). The laptop simply **was not parsing it** — `teleop.ts`
+  `handleTelemetry` read only `loop_hz/temp/status/currents/robot_mic_live`.
+  - [x] **Parse `state` into `TelemetryView.state`** (done 2026-07-02) — arm-joint positions now
+    received laptop-side; surfaced via `onTelemetry`.
+  - [ ] **Arm/gripper-tip 3D:** run forward kinematics from the joint angles in the VR three.js
+    scene (link geometry is static — hardcode in the descriptor). **Unit wrinkle:** `.pos` is
+    lerobot-normalized `[-100,100]` (grippers `[0,100]`), NOT degrees — see the Pi-side
+    `use_degrees` telemetry field decision below (normalize/convert on the Pi, which owns the
+    per-unit calibration + kinematic convention).
+  - [ ] **Base/body pose + Z-lift height:** still genuine gaps — telemetry has base *velocity*
+    only (no odometry) and no lift position (velocity-mode motor, single-turn encoder). Separate
+    robot-side work (odometry; lift encoder — see the z-lift task).
+- [ ] 🟡 **C7 — Multi-camera display (3 feeds: `left_wrist` / `right_wrist` / `overhead`).**
+  Today `teleop.ts` `ontrack` funnels all video to one `videoEl` and `remote.tsx` renders one
+  `<video>`. **Operator-side work (this repo):** route incoming video by `ev.transceiver.mid` →
+  role via a `Map<role, HTMLVideoElement>`; render a primary + thumbnails grid (throwaway visuals,
+  front-end redoes). In VR, add the two secondary feeds as extra panels. **Depends on:** the robot
+  offering 3 video m-lines + announcing a **`mid → role` map** on the media-bridge message layer
+  (robot-side port of `configure_cameras.py` + `webrtc_robot.py` multi-branch pipeline — see
+  `onboard_pi_plan.md` §f "Multi-camera video" and `SDK_DIRECTION.md`; that work lives in the
+  private `NoriTeleop` repo). **Testable now** by extending the mock `webrtc_robot.py --source test`
+  to emit 3 test patterns + the mid→role map. ⚠️ Pi CPU/thermal for 3× SW encode is unvalidated (R11/R-X.7).
 
 ### D. Shared protocol contract (`nori-protocol`)
 
@@ -157,9 +195,12 @@ Compressed — see git history / `full_nori_plan.md` for detail. Do not re-open 
   convention + golden-fixture test harness; wire it into NoriLeLab. **Blocked slice:** the
   concrete daemon struct/field layout is owned by the Pi team — leave a versioned placeholder
   until they pin it.
-- [ ] **D2 — Add the new fields:** mute state, call-state (join/leave/active), on-air/indicator
-  sync, **and reserved video/call fields** (used fully in M6). Bump `protocol_version`; add
-  golden fixtures (R8).
+- [x] ~~**D2 — Add the new fields** to `nori-protocol`~~ **SUPERSEDED (2026-07-01):** call-state /
+  mute / on-air fields deliberately stay **out of `nori-protocol`** — they live on the control
+  data channel but are **intercepted by the media bridge** (the daemon never sees audio; no
+  `protocol_version` bump; avoids a lockstep daemon+bridge+client redeploy). Already implemented
+  both ends (laptop B3 + bridge `_handle_call`/telemetry injection). D1/D3 remain valid for the
+  *existing* daemon contract (hello/control/command/telemetry).
 - [ ] **D3 — Migrate `teleop.ts` off hand-rolled JSON** to parse/serialize against the shared
   schema; **assert `protocol_version` on connect** (fail loudly on mismatch).
   - *Open:* how strict is version mismatch — hard-refuse, or warn + best-effort? **DECIDE.**

@@ -82,7 +82,7 @@ const Remote = () => {
   const [controlActive, setControlActive] = useState(false);
   const [mode, setMode] = useState<ControlMode>("cylindrical");
   const [tel, setTel] = useState<TelemetryView>({
-    loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {},
+    loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {}, state: {},
   });
   const [stale, setStale] = useState(false);
   const lastTelRef = useRef(0);
@@ -98,6 +98,7 @@ const Remote = () => {
     lastTelRef.current = Date.now();
     setStale(false);
     setTel(t);
+    vrRef.current?.setTelemetry(t); // mirror the same stats into the in-VR HUD
   }, []);
   useEffect(() => {
     if (!running) { setStale(false); return; }

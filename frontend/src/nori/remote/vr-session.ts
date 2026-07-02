@@ -15,24 +15,43 @@
 //               move/tilt/twist the controller -> that arm's x/y/pitch/roll + shoulder_pan
 //   each hand:  A/X = that arm's lift UP            B/Y = that arm's lift DOWN
 //   right only: thumbstick = base drive             thumbstick-press (hold 1.5s) = reset latch
-//               thumbstick-press (double-tap)        = recenter (video panel -> current facing)
 //   left only:  thumbstick-press = E-STOP (latches + re-clutch) (R13: the operator is
 //               in-headset seeing live video, satisfying the confirmation gate)
+//   Recenter (move the panel cluster to the operator's current facing) = an IN-VR "Recenter"
+//               button that floats above the LEFT controller and is activated by POKING it
+//               with the right controller. It's hand-anchored so it's always reachable even
+//               after the operator turns around; poke (not ray+trigger) because both triggers
+//               are already the grippers. -> VrSession.recenter().
 
 import * as THREE from "three";
 import { VrJogMapper, type VrControllerFrame, type VrFrame } from "./vr";
-import type { RemoteTeleop } from "./teleop";
+import type { RemoteTeleop, TelemetryView } from "./teleop";
 
 const RESET_HOLD_MS = 1500;
-// Recenter = a quick DOUBLE-TAP of the reset button (right thumbstick press). It's cleanly
-// separable from the hold-to-reset gesture on the same button: a hold is one long press
-// (recenter never sees a second edge); a double-tap is two short presses (reset's hold timer
-// never elapses). Costs no extra button in an already-full binding map.
-const RECENTER_DBLTAP_MS = 400;
-const PANEL_DIST = 2.0; // metres in front of the operator the video panel sits after recenter
+// Recenter is triggered by an in-VR button anchored above the LEFT controller, poked with
+// the right controller — see the recenter-button fields + updateRecenterButton() below.
+const PANEL_DIST = 2.0; // metres in front of the operator the panel cluster sits (recenter)
+// Uniform shrink applied to the whole in-VR UI (video + HUD panel cluster + recenter button).
+// 0.8 = 80% of the original size; distance/anchoring are unchanged, panels just read smaller.
+const UI_SCALE = 0.8;
+// Recenter poke button geometry (metres). The button floats this far above the left
+// controller, and fires when the right controller tip enters POKE_FIRE_R of it; it must
+// then leave POKE_REARM_R before it can fire again (hysteresis, no repeat-fire). NEAR_R
+// just drives the highlight.
+const RC_BTN_UP = 0.09;      // button offset above the left controller
+const RC_POKE_FIRE_R = 0.045;
+const RC_POKE_REARM_R = 0.08;
+const RC_POKE_NEAR_R = 0.11;
 // gripper Present_Current -> rumble. Raw sign-magnitude ints; tune on hardware.
-const HAPTIC_IDLE = 60;   // below this = no contact, no buzz
-const HAPTIC_FULL = 600;  // at/above this = full-strength rumble
+// Tuned stronger 2026-07-02 (was hard to feel): lower the contact threshold, reach full
+// rumble much sooner, and floor any real contact at HAPTIC_MIN so light grips still register.
+const HAPTIC_IDLE = 35;   // below this = no contact, no buzz
+const HAPTIC_FULL = 260;  // at/above this = full-strength rumble (was 600 -> ramps up faster)
+const HAPTIC_MIN = 0.45;  // any contact above idle buzzes at least this hard (was ~0, imperceptible)
+const HAPTIC_PULSE_MS = 100; // longer pulse per frame -> a more solid, continuous buzz (was 60)
+const CURRENT_FULL = 600; // Present_Current mapped to a full HUD bar (matches TeleopStatus)
+const TEL_STALE_MS = 1500; // no telemetry for this long -> HUD shows "stale" (matches remote.tsx)
+const HUD_REDRAW_MS = 250;  // repaint cadence so staleness updates even without new frames
 
 type Hand = "left" | "right";
 // A physical button on one controller: {hand, gamepad button index}. xr-standard indices:
@@ -75,17 +94,13 @@ export interface VrSessionOptions {
   bindings?: VrBindings; // defaults to DEFAULT_BINDINGS
 }
 
-// Quaternion -> {flex, roll} in degrees. Replicates NoriTeleopReference's quatToEulerDeg
-// EXACTLY (its handPayload maps roll=e.roll -> wrist_roll_deg, pitch=e.pitch -> wrist_flex_deg)
-// so the same physical twist produces the same flex/roll deltas the tested mapping expects.
-const DEG = 180 / Math.PI;
-function controllerAngles(o: DOMPointReadOnly): { flex: number; roll: number } {
-  const x = o.x, y = o.y, z = o.z, w = o.w;
-  const roll = Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y));
-  const sinp = 2 * (w * y - z * x);
-  const pitch = Math.abs(sinp) >= 1 ? Math.sign(sinp) * Math.PI / 2 : Math.asin(sinp);
-  return { flex: pitch * DEG, roll: roll * DEG };
-}
+// Wrist angles are NOT derived here anymore (2026-07-01). The session forwards the RAW
+// grip quaternion; VrJogMapper computes flex/roll the XLeVR-verified way — rotation
+// RELATIVE to the clutch-engage origin, rotation-vector components (see vr.ts). The old
+// code here replicated quest_vr_bridge.py's world-frame euler, which turned out to be an
+// UNVERIFIED reimplementation: its asin term tracks the Y axis, so pointing the controller
+// down never registered as wrist flex. The hardware-verified stack is XLeVR
+// (XLeRobot/XLeVR vr_ws_server.py extract_pitch/roll_from_quaternion).
 
 export class VrSession {
   private o: VrSessionOptions;
@@ -95,16 +110,31 @@ export class VrSession {
   private scene: THREE.Scene | null = null;
   private camera: THREE.PerspectiveCamera | null = null;
   private texture: THREE.VideoTexture | null = null;
-  private panel: THREE.Mesh | null = null;
+  // The video + HUD panels live in one group so recenter moves them together and later
+  // displays (multi-camera feeds, 3D cube view) can be added as more children.
+  private panelGroup: THREE.Group | null = null;
   private session: XRSession | null = null;
   private currents: Record<string, number> = {};
+  // Telemetry HUD (mirrors the keyboard TelemetryPanel + GripForce): a 2D canvas painted
+  // with the same stats, uploaded as a texture on a panel beside the video.
+  private tel: TelemetryView | null = null;
+  private lastTelAt = 0;
+  private hudCanvas: HTMLCanvasElement | null = null;
+  private hudCtx: CanvasRenderingContext2D | null = null;
+  private hudTexture: THREE.CanvasTexture | null = null;
+  private lastHudDraw = 0;
   private resetHeldSince = 0;
   private resetFired = false;
-  // Recenter gesture state: edge + last-tap timestamp for the double-tap detector, and a
-  // one-shot flag serviced on the next frame that has a viewer pose.
-  private resetPrev = false;
-  private lastResetTapAt = 0;
+  // Recenter is a one-shot flag set by the in-VR poke button (recenter()) and serviced on
+  // the next frame that has a viewer pose.
   private recenterPending = false;
+  // In-VR "Recenter" poke button: a small labeled plane anchored above the left controller.
+  private rcBtn: THREE.Mesh | null = null;
+  private rcBtnCanvas: HTMLCanvasElement | null = null;
+  private rcBtnCtx: CanvasRenderingContext2D | null = null;
+  private rcBtnTexture: THREE.CanvasTexture | null = null;
+  private rcPoked = false;      // armed-state: true between fire and re-arm (hysteresis)
+  private rcBtnHot = false;     // last painted highlight state (redraw only on change)
   private running = false;
 
   constructor(opts: VrSessionOptions) {
@@ -127,6 +157,13 @@ export class VrSession {
   // Latest per-motor currents (the page wires RemoteTeleop.onCurrents here for haptics).
   setCurrents(c: Record<string, number>) {
     this.currents = c;
+  }
+
+  // Latest telemetry for the in-VR HUD (the page wires RemoteTeleop.onTelemetry here). Same
+  // TelemetryView the keyboard panel renders — so the headset shows the same stats.
+  setTelemetry(t: TelemetryView) {
+    this.tel = t;
+    this.lastTelAt = performance.now();
   }
 
   // Force a fresh squeeze before driving resumes (after any safe-hold). The page calls
@@ -158,17 +195,68 @@ export class VrSession {
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.0));
 
-    // Robot video as a 2m-wide panel ~2m ahead at standing eye height.
+    // Panel cluster ~2 m ahead at standing eye height. The video panel is intentionally
+    // smaller than before (1.6×1.2, was 2.0×1.5) to leave room to the right for the HUD now
+    // and multi-camera / 3D-cube panels later. DoubleSide so it stays visible regardless of
+    // how recenter orients the group.
+    const group = new THREE.Group();
+    group.position.set(0, 1.4, -PANEL_DIST);
+    group.scale.setScalar(UI_SCALE); // shrink the whole panel cluster together (video + HUD)
+    scene.add(group);
+    this.panelGroup = group;
+
     const texture = new THREE.VideoTexture(this.o.videoEl);
     texture.colorSpace = THREE.SRGBColorSpace;
     this.texture = texture;
-    const panel = new THREE.Mesh(
-      new THREE.PlaneGeometry(2.0, 1.5),
-      new THREE.MeshBasicMaterial({ map: texture, toneMapped: false })
+    const video = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.6, 1.2),
+      new THREE.MeshBasicMaterial({ map: texture, toneMapped: false, side: THREE.DoubleSide })
     );
-    panel.position.set(0, 1.4, -PANEL_DIST);
-    scene.add(panel);
-    this.panel = panel;
+    video.position.set(0, 0, 0);
+    group.add(video);
+
+    // Telemetry HUD panel to the right of the video (0.6 m wide, same height). A 2D canvas
+    // painted with the keyboard stats + grip-force bars, uploaded as a CanvasTexture.
+    const hudCanvas = document.createElement("canvas");
+    hudCanvas.width = 512;
+    hudCanvas.height = 1024; // 0.5 aspect -> matches a 0.6×1.2 panel
+    this.hudCanvas = hudCanvas;
+    this.hudCtx = hudCanvas.getContext("2d");
+    const hudTexture = new THREE.CanvasTexture(hudCanvas);
+    hudTexture.colorSpace = THREE.SRGBColorSpace;
+    this.hudTexture = hudTexture;
+    const hud = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.6, 1.2),
+      new THREE.MeshBasicMaterial({ map: hudTexture, transparent: true, side: THREE.DoubleSide })
+    );
+    hud.position.set(1.15, 0, 0); // right of the 1.6 m video panel, small gap
+    group.add(hud);
+    this.drawHud(); // paint once so it's not blank before the first telemetry frame
+
+    // In-VR "Recenter" poke button — a small labeled plane added straight to the SCENE (not
+    // the panel group): it's hand-anchored (repositioned each frame above the left controller)
+    // so it stays reachable no matter where the operator turns. depthTest off + a high render
+    // order so it's never occluded by the panels.
+    const rcCanvas = document.createElement("canvas");
+    rcCanvas.width = 256;
+    rcCanvas.height = 128;
+    this.rcBtnCanvas = rcCanvas;
+    this.rcBtnCtx = rcCanvas.getContext("2d");
+    const rcTex = new THREE.CanvasTexture(rcCanvas);
+    rcTex.colorSpace = THREE.SRGBColorSpace;
+    this.rcBtnTexture = rcTex;
+    const rcBtn = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.1, 0.05),
+      new THREE.MeshBasicMaterial({
+        map: rcTex, transparent: true, side: THREE.DoubleSide, depthTest: false,
+      })
+    );
+    rcBtn.renderOrder = 999;
+    rcBtn.visible = false; // shown once the left controller is tracked
+    rcBtn.scale.setScalar(UI_SCALE); // match the rest of the UI (billboarding preserves scale)
+    scene.add(rcBtn);
+    this.rcBtn = rcBtn;
+    this.drawRecenterButton(false);
 
     const session = await xr.requestSession(mode, {
       optionalFeatures: ["local-floor", "bounded-floor"],
@@ -178,11 +266,16 @@ export class VrSession {
     await renderer.xr.setSession(session);
 
     this.running = true;
+    // Auto-recenter on the first frame with a viewer pose: the panel spawn pose assumes the
+    // operator faces the reference space's forward, which is only sometimes true. This makes
+    // session start and mid-session recenter the same path — panel AND control frame align
+    // with wherever the operator is actually facing when the session begins.
+    this.recenterPending = true;
     this.o.onLog(
       `${mode === "immersive-ar" ? "AR (passthrough)" : "VR"} session started — ` +
         "grip to engage clutch, A/X & B/Y = that arm's lift up/down, "
           + "left stick-press = E-STOP, hold right stick-press = reset, "
-          + "double-tap right stick-press = recenter"
+          + "poke the Recenter button above your left hand to recenter the view"
     );
     renderer.setAnimationLoop((_t, frame) => this.onXRFrame(frame));
   }
@@ -205,11 +298,23 @@ export class VrSession {
       try { this.renderer.dispose(); } catch { /* noop */ }
     }
     this.texture?.dispose();
+    this.hudTexture?.dispose();
+    this.rcBtnTexture?.dispose();
     this.renderer = null;
     this.scene = null;
     this.camera = null;
     this.texture = null;
-    this.panel = null;
+    this.panelGroup = null;
+    this.hudTexture = null;
+    this.hudCanvas = null;
+    this.hudCtx = null;
+    this.rcBtn = null;
+    this.rcBtnTexture = null;
+    this.rcBtnCanvas = null;
+    this.rcBtnCtx = null;
+    this.rcPoked = false;
+    this.rcBtnHot = false;
+    this.tel = null;
     this.session = null;
     this.o.onLog("VR session ended");
     this.o.onEnd();
@@ -250,12 +355,15 @@ export class VrSession {
           this.o.onLog("E-STOP — re-squeeze grip to resume");
         }
         const resetHeld = this.buttonDown(this.b.reset, sources);
-        this.detectRecenterTap(resetHeld); // double-tap of the same button = recenter
-        this.handleResetHold(resetHeld);   // sustained hold of it = reset_latch
+        this.handleResetHold(resetHeld);   // sustained hold of the reset button = reset_latch
+        this.updateRecenterButton(vrFrame); // in-VR poke button -> recenter()
         if (this.recenterPending) this.serviceRecenter(frame, refSpace);
         this.applyHaptics(session);
       }
     }
+    // Repaint the HUD on a slow cadence (keeps staleness/values fresh without redrawing text
+    // every 72–90 Hz frame).
+    if (performance.now() - this.lastHudDraw > HUD_REDRAW_MS) this.drawHud();
     renderer.render(scene, camera);
   }
 
@@ -278,24 +386,21 @@ export class VrSession {
     const gp = src.gamepad!;
     const hand = src.handedness as Hand;
     let position: [number, number, number] | null = null;
-    let flex: number | null = null;
-    let roll: number | null = null;
+    let orientation: [number, number, number, number] | null = null;
     const space = src.gripSpace ?? src.targetRaySpace; // reference falls back to the ray space
     if (space) {
       const pose = frame.getPose(space, refSpace);
       if (pose) {
         const p = pose.transform.position;
         position = [p.x, p.y, p.z];
-        const a = controllerAngles(pose.transform.orientation);
-        flex = a.flex;
-        roll = a.roll;
+        const q = pose.transform.orientation;
+        orientation = [q.x, q.y, q.z, q.w]; // raw quat; mapper does the XLeVR angle math
       }
     }
     const val = (i: number) => gp.buttons[i]?.value ?? 0;
     return {
       position,
-      wristFlexDeg: flex,
-      wristRollDeg: roll,
+      orientation,
       trigger: val(this.b.gripper[hand]), // gripper trigger (grip is the clutch, kept separate)
       squeeze: val(this.b.clutch[hand]),  // clutch (squeeze to move)
       // Touch controllers report the stick on axes[2]/[3]; fall back to [0]/[1] like the reference.
@@ -303,34 +408,20 @@ export class VrSession {
     };
   }
 
-  // Recenter on demand (public so the page could bind it too). Serviced on the next frame
-  // that has a viewer pose, so it always has a fresh head transform to face the panel to.
+  // Recenter on demand — fired by poking the in-VR Recenter button (updateRecenterButton),
+  // and public so a caller could bind it too. Serviced on the next frame that has a viewer
+  // pose, so it always has a fresh head transform to face the panel to.
   recenter() {
     this.recenterPending = true;
+    this.o.onLog("recenter — video panel moving to your current facing");
   }
 
-  // Double-tap detector on the reset button's rising edge. Two rising edges within
-  // RECENTER_DBLTAP_MS => recenter. A single press (or a long hold) never triggers it.
-  private detectRecenterTap(pressed: boolean) {
-    if (pressed && !this.resetPrev) {
-      const now = performance.now();
-      if (this.lastResetTapAt && now - this.lastResetTapAt < RECENTER_DBLTAP_MS) {
-        this.recenter();
-        this.lastResetTapAt = 0; // consume so a third tap starts a fresh pair
-        this.o.onLog("recenter — video panel moved to your current facing");
-      } else {
-        this.lastResetTapAt = now;
-      }
-    }
-    this.resetPrev = pressed;
-  }
-
-  // Reposition the video panel PANEL_DIST metres in front of where the operator is now
+  // Reposition the panel cluster PANEL_DIST metres in front of where the operator is now
   // facing (horizontal yaw only), at their current eye height, turned to face them. Lets an
   // operator who has physically turned re-orient the robot's view without walking back.
   private serviceRecenter(frame: XRFrame, refSpace: XRReferenceSpace) {
-    const panel = this.panel;
-    if (!panel) return;
+    const group = this.panelGroup;
+    if (!group) return;
     const pose = frame.getViewerPose(refSpace);
     if (!pose) return; // no head pose this frame — retry next frame (flag stays set)
     this.recenterPending = false;
@@ -342,8 +433,74 @@ export class VrSession {
     fwd.y = 0;
     if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1); // looking straight up/down -> keep prior facing
     fwd.normalize();
-    panel.position.set(p.x + fwd.x * PANEL_DIST, p.y, p.z + fwd.z * PANEL_DIST);
-    panel.lookAt(p.x, p.y, p.z); // face the operator (same height keeps it vertical)
+    group.position.set(p.x + fwd.x * PANEL_DIST, p.y, p.z + fwd.z * PANEL_DIST);
+    // Face the operator: rotate the group so its panels' +Z (their front face) points back
+    // toward the head, i.e. along -fwd. (yaw only; matches the initial fwd=(0,0,-1) -> yaw 0.)
+    const yaw = Math.atan2(-fwd.x, -fwd.z);
+    group.rotation.set(0, yaw, 0);
+    // The control frame follows the panel: after recenter, hand motion toward the video is
+    // robot-forward again, so an operator who turned with the robot keeps an intuitive map.
+    this.mapper.setControlYaw(yaw);
+  }
+
+  // Anchor the in-VR "Recenter" button above the left controller (so it travels with the
+  // operator when they turn), billboard it to face the head, and fire recenter() when the
+  // right controller pokes it. Hysteresis (FIRE_R enter -> REARM_R exit) prevents repeats.
+  private updateRecenterButton(f: VrFrame) {
+    const btn = this.rcBtn;
+    const camera = this.camera;
+    if (!btn || !camera) return;
+    const lp = f.left?.position;
+    if (!lp) { btn.visible = false; return; } // left hand not tracked -> hide the button
+    const lq = f.left?.orientation;
+    // Offset straight up in the left controller's local frame, so it floats above the hand.
+    const off = new THREE.Vector3(0, RC_BTN_UP, 0);
+    if (lq) off.applyQuaternion(new THREE.Quaternion(lq[0], lq[1], lq[2], lq[3]));
+    btn.position.set(lp[0] + off.x, lp[1] + off.y, lp[2] + off.z);
+    btn.visible = true;
+    // Billboard toward the head so the label always reads (XR camera = head pose).
+    const head = new THREE.Vector3();
+    this.renderer?.xr.getCamera().getWorldPosition(head);
+    btn.lookAt(head);
+
+    // Poke test against the right controller.
+    const rp = f.right?.position;
+    let hot = false;
+    if (rp) {
+      const d = Math.hypot(rp[0] - btn.position.x, rp[1] - btn.position.y, rp[2] - btn.position.z);
+      hot = d < RC_POKE_NEAR_R;
+      if (!this.rcPoked && d < RC_POKE_FIRE_R) {
+        this.rcPoked = true;
+        this.recenter();
+      } else if (this.rcPoked && d > RC_POKE_REARM_R) {
+        this.rcPoked = false; // moved away -> ready to fire again
+      }
+    }
+    // Redraw only when the highlight state flips (canvas upload isn't free).
+    if (hot !== this.rcBtnHot) { this.rcBtnHot = hot; this.drawRecenterButton(hot); }
+  }
+
+  // Paint the Recenter button canvas. `hot` = right controller is near / poking -> highlight.
+  private drawRecenterButton(hot: boolean) {
+    const ctx = this.rcBtnCtx;
+    const cv = this.rcBtnCanvas;
+    if (!ctx || !cv) return;
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = hot ? "rgba(34,197,94,0.92)" : "rgba(30,41,59,0.88)"; // green when hot
+    this.roundRect(ctx, 4, 4, W - 8, H - 8, 22);
+    ctx.fill();
+    ctx.strokeStyle = hot ? "#bbf7d0" : "#64748b";
+    ctx.lineWidth = 4;
+    this.roundRect(ctx, 4, 4, W - 8, H - 8, 22);
+    ctx.stroke();
+    ctx.fillStyle = "#f1f5f9";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "bold 44px system-ui, sans-serif";
+    ctx.fillText("⟳ Recenter", W / 2, H / 2 + 2);
+    ctx.textAlign = "start"; // restore (shared 2D ctx defaults elsewhere assume left align)
+    if (this.rcBtnTexture) this.rcBtnTexture.needsUpdate = true;
   }
 
   // Reset latch = hold the bound reset button for RESET_HOLD_MS. R13: the operator is
@@ -360,19 +517,130 @@ export class VrSession {
     }
   }
 
+  // Paint the telemetry HUD canvas (same stats as the keyboard TelemetryPanel + GripForce)
+  // and flag its texture for re-upload. Cheap 2D canvas draw, throttled to HUD_REDRAW_MS.
+  private drawHud() {
+    const ctx = this.hudCtx;
+    const cv = this.hudCanvas;
+    if (!ctx || !cv) return;
+    this.lastHudDraw = performance.now();
+    const W = cv.width, H = cv.height;
+    const GREEN = "#22c55e", AMBER = "#f59e0b", RED = "#ef4444", FG = "#e5e7eb", DIM = "#9ca3af";
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "rgba(16,18,22,0.82)";
+    this.roundRect(ctx, 0, 0, W, H, 28);
+    ctx.fill();
+
+    const pad = 34;
+    let y = pad + 30;
+    ctx.textBaseline = "alphabetic";
+    ctx.font = "bold 40px system-ui, sans-serif";
+    ctx.fillStyle = FG;
+    ctx.fillText("TELEMETRY", pad, y);
+    y += 20;
+
+    const t = this.tel;
+    const stale = !!t?.active && performance.now() - this.lastTelAt > TEL_STALE_MS;
+
+    // One label/value row; value tone-coloured like the 2D panel.
+    const row = (label: string, value: string, color = FG) => {
+      y += 54;
+      ctx.font = "26px system-ui, sans-serif";
+      ctx.fillStyle = DIM;
+      ctx.fillText(label, pad, y);
+      ctx.font = "bold 30px system-ui, sans-serif";
+      ctx.fillStyle = color;
+      const vw = ctx.measureText(value).width;
+      ctx.fillText(value, W - pad - vw, y);
+    };
+
+    if (!t) {
+      y += 54;
+      ctx.font = "28px system-ui, sans-serif";
+      ctx.fillStyle = DIM;
+      ctx.fillText("waiting for telemetry…", pad, y);
+    } else {
+      const hzTone = !t.active || stale ? DIM : t.loopHz >= 45 ? GREEN : t.loopHz >= 30 ? AMBER : RED;
+      const s = t.safety.toLowerCase();
+      const safetyTone = s === "-" || s === "" ? DIM
+        : ["ok", "normal", "nominal", "clear"].includes(s) ? GREEN : AMBER;
+      const tempTone = t.tempC >= 80 ? RED : t.tempC >= 70 ? AMBER : FG;
+      row("control", t.active ? (stale ? "stale" : "active") : "inactive",
+        !t.active ? DIM : stale ? AMBER : GREEN);
+      row("path", t.linkMode ? t.linkMode.toUpperCase() : "—",
+        t.linkMode === "lan" ? GREEN : t.linkMode === "wan" ? AMBER : DIM);
+      row("loop", `${t.loopHz.toFixed(1)} Hz`, hzTone);
+      row("safety", t.safety, safetyTone);
+      row("watchdog", t.watchdog, t.watchdog === "-" ? DIM : AMBER);
+      row("temp", t.tempC > 0 ? `${t.tempC.toFixed(0)}°C` : "—", tempTone);
+
+      // Grip-force bars (grippers first) — the virtual tactile signal, same source as haptics.
+      const currents = t.currents ?? {};
+      const keys = Object.keys(currents);
+      const grippers = keys.filter((k) => k.includes("gripper")).sort();
+      const rest = keys.filter((k) => !k.includes("gripper")).sort();
+      const ordered = [...grippers, ...rest];
+      if (ordered.length) {
+        y += 60;
+        ctx.font = "bold 28px system-ui, sans-serif";
+        ctx.fillStyle = FG;
+        ctx.fillText("GRIP FORCE", pad, y);
+        for (const k of ordered) {
+          y += 46;
+          const mag = Math.abs(currents[k] ?? 0);
+          const frac = Math.min(1, mag / CURRENT_FULL);
+          ctx.font = "22px system-ui, sans-serif";
+          ctx.fillStyle = k.includes("gripper") ? FG : DIM;
+          ctx.fillText(this.shortMotor(k), pad, y - 6);
+          const barX = pad, barY = y + 4, barW = W - pad * 2, barH = 16;
+          ctx.fillStyle = "rgba(255,255,255,0.12)";
+          this.roundRect(ctx, barX, barY, barW, barH, 8); ctx.fill();
+          ctx.fillStyle = frac >= 0.8 ? RED : frac >= 0.4 ? AMBER : GREEN;
+          this.roundRect(ctx, barX, barY, Math.max(2, barW * frac), barH, 8); ctx.fill();
+          y += barH;
+        }
+      }
+    }
+
+    if (this.hudTexture) this.hudTexture.needsUpdate = true;
+  }
+
+  private roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+    const rr = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+    ctx.closePath();
+  }
+
+  // "right_arm_gripper" -> "R gripper" (compact HUD label; mirrors TeleopStatus.shortMotor).
+  private shortMotor(key: string): string {
+    return key
+      .replace(/^left_arm_/, "L ").replace(/^right_arm_/, "R ")
+      .replace(/^left_/, "L ").replace(/^right_/, "R ")
+      .replace(/_/g, " ");
+  }
+
   // gripper current (virtual tactile signal) -> that hand's controller rumble.
   private applyHaptics(session: XRSession) {
     for (const src of session.inputSources) {
       if (!src.gamepad || !src.handedness) continue;
       const key = src.handedness === "left" ? "left_arm_gripper" : "right_arm_gripper";
       const cur = Math.abs(this.currents[key] ?? 0);
-      const intensity = THREE.MathUtils.clamp(
+      // No contact -> silent. Any contact above idle -> at least HAPTIC_MIN so it's felt,
+      // ramping to full by HAPTIC_FULL.
+      if (cur <= HAPTIC_IDLE) continue;
+      const frac = THREE.MathUtils.clamp(
         (cur - HAPTIC_IDLE) / (HAPTIC_FULL - HAPTIC_IDLE), 0, 1
       );
-      if (intensity <= 0.02) continue;
+      const intensity = HAPTIC_MIN + (1 - HAPTIC_MIN) * frac;
       const act = (src.gamepad as Gamepad & { hapticActuators?: GamepadHapticActuator[] })
         .hapticActuators?.[0] as (GamepadHapticActuator & { pulse?: (v: number, ms: number) => void }) | undefined;
-      act?.pulse?.(intensity, 60);
+      act?.pulse?.(intensity, HAPTIC_PULSE_MS);
     }
   }
 }

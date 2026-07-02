@@ -1,5 +1,11 @@
 # Nori Plan — LeLab Fork Implementation
 
+> ⚠️ **STATUS IS NOT TRACKED HERE — this doc is stale for progress.** The checkboxes
+> below are *not* kept current and under-report what's built (M1 remote teleop and most of
+> Phase 7 are done but still show unchecked here). For the authoritative, up-to-date status
+> see **[`todos.md`](todos.md)**. Treat this file as the "what / why / rationale" reference
+> only; treat `todos.md` as the source of truth for "what's done."
+
 This document is the concrete plan for adapting upstream LeLab (huggingface/leLab) into Nori's laptop application. It lives in the fork (`NoriLeLab`) and tracks decisions, open questions, and the implementation sequence.
 
 **Read alongside:**

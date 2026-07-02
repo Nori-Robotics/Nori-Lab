@@ -19,11 +19,12 @@
 import type { ExternalJog } from "./teleop";
 
 // Per-controller state sampled from WebXR each frame. position is the grip-space pose in
-// meters (headset/local reference space); angles in degrees; trigger/squeeze in [0,1].
+// meters (headset/local reference space); orientation is the RAW grip quaternion [x,y,z,w]
+// — the mapper derives the wrist angles from it (XLeVR-style, see HandState); trigger/
+// squeeze in [0,1].
 export interface VrControllerFrame {
   position: [number, number, number] | null;
-  wristFlexDeg?: number | null;
-  wristRollDeg?: number | null;
+  orientation?: [number, number, number, number] | null;
   trigger: number;   // analog gripper: 1 = close, 0 = open
   squeeze: number;   // grip button: the CLUTCH ("squeeze to move")
   thumbstick: { x: number; y: number };
@@ -61,10 +62,13 @@ const POS_SCALE = 0.01;
 const DELTA_LIMIT = 0.01; // max cartesian motion per frame (m)
 // Wrist scales/limits are PER-AXIS (verified on hardware 2026-06-25). Roll is deliberately
 // much gentler than pitch — matches NoriTeleopReference VR_WRIST_* defaults.
-const PITCH_SCALE = 4.0;  // VR_WRIST_PITCH_SCALE
+const PITCH_SCALE = 6.0;  // VR_WRIST_PITCH_SCALE (reference default 4.0 felt too
+                          // insensitive on hardware — large controller tilt for little flex)
 const PITCH_LIMIT = 8.0;  // VR_WRIST_PITCH_LIMIT (also clamps the shoulder_pan delta)
-const ROLL_SCALE = 1.0;   // VR_WRIST_ROLL_SCALE
-const ROLL_LIMIT = 2.5;   // VR_WRIST_ROLL_LIMIT
+const ROLL_SCALE = 2.5;   // VR_WRIST_ROLL_SCALE (reference 1.0 ≈ half-speed tracking —
+                          // operators had to roll ~2× the wrist angle; hardware 2026-07-02)
+const ROLL_LIMIT = 5.0;   // VR_WRIST_ROLL_LIMIT (raised with the scale so it clamps at the
+                          // same controller speed as before)
 const PAN_GAIN = 200.0;   // cartesian-x delta -> shoulder_pan deg
 const JUMP_POS = 50;      // reconnect guard on internal pos units
 const JUMP_ANGLE = 30;    // reconnect guard on wrist angles (deg)
@@ -85,11 +89,55 @@ const clamp1 = (v: number) => clamp(v, -1, 1);
 const VR_MAX_RATE = 0.7;
 const capRate = (v: number) => clamp(v, -VR_MAX_RATE, VR_MAX_RATE);
 
+// ---- wrist rates: per-frame BODY-FRAME angular increments -------------------
+// Deliberate deviation from XLeVR (2026-07-02). The reference
+// (vr_ws_server.py extract_pitch/roll_from_quaternion) reads rotvec components of the
+// rotation since clutch engage composed as rel = current · origin⁻¹ — a WORLD-frame
+// delta. Its X/Z components only mean "tilt"/"twist" while the hand faces the reference
+// space's −Z: face 90° sideways and tilt registers as roll (and vice versa); and far from
+// the engage pose the total-rotation rotvec cross-couples the axes even in the right
+// frame. Both made the mapping feel indirect on hardware.
+// Instead we differentiate the quaternion itself: each frame's increment in the
+// CONTROLLER's own frame, delta = prev⁻¹ · current. Per-frame increments are tiny, so the
+// rotvec is the body-frame angular velocity — x = tilt about the hand's own pitch axis,
+// z = twist about the handle — independent of facing direction and travel since engage.
+//     flex step = −deg(rotvec.x)   (sign flipped vs XLeVR — inverted on our hardware)
+//     roll step = −deg(rotvec.z)
+// Quats are [x,y,z,w], Hamilton (same as scipy). Do NOT copy quest_vr_bridge.py's
+// aerospace euler (asin = Y axis) — that unverified path never registered flex at all.
+type Quat = [number, number, number, number];
+const qConj = (q: Quat): Quat => [-q[0], -q[1], -q[2], q[3]];
+function qMul(a: Quat, b: Quat): Quat {
+  const [ax, ay, az, aw] = a, [bx, by, bz, bw] = b;
+  return [
+    aw * bx + ax * bw + ay * bz - az * by,
+    aw * by - ax * bz + ay * bw + az * bx,
+    aw * bz + ax * by - ay * bx + az * bw,
+    aw * bw - ax * bx - ay * by - az * bz,
+  ];
+}
+// quat -> rotation vector (axis·angle), degrees. Shortest arc (w >= 0).
+function qRotvecDeg(q: Quat): [number, number, number] {
+  let [x, y, z, w] = q;
+  if (w < 0) { x = -x; y = -y; z = -z; w = -w; }
+  const s = Math.hypot(x, y, z);
+  if (s < 1e-9) return [0, 0, 0];
+  const k = ((2 * Math.atan2(s, w)) / s) * (180 / Math.PI);
+  return [x * k, y * k, z * k];
+}
+// This frame's wrist steps (degrees) from the body-frame increment prev⁻¹ · cur.
+// Flex is NEGATED vs the reference's +rotvec.x: on our hardware the reference sign drove
+// the wrist opposite to the controller (tilt down moved the wrist up), so the sensing
+// direction is flipped here at the single source the pitch delta pipeline reads.
+function wristStepDeg(cur: Quat, prev: Quat): { flex: number; roll: number } {
+  const rv = qRotvecDeg(qMul(qConj(prev), cur));
+  return { flex: -rv[0], roll: -rv[2] };
+}
+
 // Stateful per-hand integrator. One instance per controller; the mapper owns two.
 class HandState {
   private prevPos: [number, number, number] | null = null;
-  private prevFlex: number | null = null;
-  private prevRoll: number | null = null;
+  private prevQuat: Quat | null = null; // last frame's orientation (body-frame increments)
   private engaged = false; // clutch latched on
 
   // Drop all baselines so a fresh squeeze re-establishes them with no jump (used on
@@ -97,13 +145,13 @@ class HandState {
   release() {
     this.engaged = false;
     this.prevPos = null;
-    this.prevFlex = null;
-    this.prevRoll = null;
+    this.prevQuat = null;
   }
 
   // Returns the arm jog rates for this hand, or null when the clutch is released
   // (caller treats null as "no contribution"; an engaged-but-still hand returns zeros).
-  step(f: VrControllerFrame | null | undefined): Record<string, number> | null {
+  // controlYaw = the control frame's yaw in reference-space radians (see setControlYaw).
+  step(f: VrControllerFrame | null | undefined, controlYaw: number): Record<string, number> | null {
     if (!f) { this.release(); return null; }
 
     // Clutch with hysteresis. Released -> hold (zero) and forget baselines so the next
@@ -120,16 +168,25 @@ class HandState {
     if (!cur) return zeroArm();
 
     // First engaged frame (or first frame after re-engage): establish baseline, hold.
+    // Wrist motion integrates per-frame increments from here, so it starts at rest no
+    // matter what pose the hand had when the clutch engaged.
     if (!wasEngaged || !this.prevPos) {
       this.prevPos = cur;
-      if (f.wristFlexDeg != null) this.prevFlex = f.wristFlexDeg;
-      if (f.wristRollDeg != null) this.prevRoll = f.wristRollDeg;
+      this.prevQuat = (f.orientation as Quat | null | undefined) ?? null;
       return gripperOnly(f.trigger);
     }
 
-    const vrX = (cur[0] - this.prevPos[0]) * POS_GAIN_X;
+    // World-frame metre deltas, rotated into the CONTROL frame (yaw set at recenter) before
+    // the per-axis gains — the gains belong to robot axes, not room axes. With yaw θ the
+    // control forward is (−sinθ, 0, −cosθ) (θ=0 = reference-space forward, matching the
+    // panel's spawn pose), so hand motion toward the video panel is always robot-reach
+    // regardless of which way the operator has turned. Height (Y) is yaw-invariant.
+    const wx = cur[0] - this.prevPos[0];
+    const wz = cur[2] - this.prevPos[2];
+    const cosY = Math.cos(controlYaw), sinY = Math.sin(controlYaw);
+    const vrX = (wx * cosY - wz * sinY) * POS_GAIN_X;
     const vrY = (cur[1] - this.prevPos[1]) * POS_GAIN_Y;
-    const vrZ = (cur[2] - this.prevPos[2]) * POS_GAIN_Z;
+    const vrZ = (wx * sinY + wz * cosY) * POS_GAIN_Z;
 
     // Controller reconnect / tracking glitch -> reset baseline, hold this frame.
     if (Math.abs(vrX) > JUMP_POS || Math.abs(vrY) > JUMP_POS || Math.abs(vrZ) > JUMP_POS) {
@@ -154,31 +211,26 @@ class HandState {
       arm.shoulder_pan = clamp1(clamp(dx * PAN_GAIN, -PITCH_LIMIT, PITCH_LIMIT) / DEG_STEP);
     }
 
-    // Wrist pitch from wrist_flex delta (rpi4 couples wrist_flex to pitch downstream).
-    if (f.wristFlexDeg != null) {
-      if (this.prevFlex == null) {
-        this.prevFlex = f.wristFlexDeg;
-      } else {
-        let dp = (f.wristFlexDeg - this.prevFlex) * PITCH_SCALE;
-        if (Math.abs(dp) > JUMP_ANGLE) dp = 0; // glitch guard
-        else dp = clamp(dp, -PITCH_LIMIT, PITCH_LIMIT);
-        arm.pitch = clamp1(dp / DEG_STEP);
-        this.prevFlex = f.wristFlexDeg;
-      }
-    }
+    // Wrist steps: this frame's rotation increment in the CONTROLLER's own frame
+    // (flex = −rotvec.x — tilt about the hand's pitch axis; roll = −rotvec.z — twist
+    // about the handle). Same scale/limit/step pipeline as the reference's
+    // handle_vr_input, fed body-frame increments instead of world-frame angle diffs.
+    if (f.orientation && this.prevQuat) {
+      const step = wristStepDeg(f.orientation as Quat, this.prevQuat);
 
-    // Wrist roll delta (gentler than pitch — separate scale/limit, matches reference).
-    if (f.wristRollDeg != null) {
-      if (this.prevRoll == null) {
-        this.prevRoll = f.wristRollDeg;
-      } else {
-        let dr = (f.wristRollDeg - this.prevRoll) * ROLL_SCALE;
-        if (Math.abs(dr) > JUMP_ANGLE) dr = 0;
-        else dr = clamp(dr, -ROLL_LIMIT, ROLL_LIMIT);
-        arm.wrist_roll = clamp1(dr / DEG_STEP);
-        this.prevRoll = f.wristRollDeg;
-      }
+      // Wrist pitch from the flex step (rpi4 couples wrist_flex to pitch downstream).
+      let dp = step.flex * PITCH_SCALE;
+      if (Math.abs(dp) > JUMP_ANGLE) dp = 0; // glitch guard
+      else dp = clamp(dp, -PITCH_LIMIT, PITCH_LIMIT);
+      arm.pitch = clamp1(dp / DEG_STEP);
+
+      // Wrist roll step (gentler than pitch — separate scale/limit).
+      let dr = step.roll * ROLL_SCALE;
+      if (Math.abs(dr) > JUMP_ANGLE) dr = 0;
+      else dr = clamp(dr, -ROLL_LIMIT, ROLL_LIMIT);
+      arm.wrist_roll = clamp1(dr / DEG_STEP);
     }
+    this.prevQuat = (f.orientation as Quat | null | undefined) ?? this.prevQuat;
 
     // Cap top speed on the continuous motion DOFs (not the binary gripper).
     for (const k of Object.keys(arm)) if (k !== "gripper") arm[k] = capRate(arm[k]);
@@ -221,6 +273,20 @@ export class VrJogMapper {
   private readonly left = new HandState();
   private readonly right = new HandState();
   private estopPrev = false;
+  // Yaw (radians, reference space) of the control frame the arm TRANSLATIONS are expressed
+  // in. 0 = reference-space forward (the panel's spawn facing). The session updates this on
+  // every recenter so "toward the video panel" always means robot-forward, even after the
+  // operator physically turns. Wrist rates are body-frame (facing-independent) and the base
+  // is thumbstick-driven (robot-relative), so neither consumes this.
+  private controlYaw = 0;
+
+  // Called by the session whenever recenter re-aims the panel cluster (same yaw it applies
+  // to the panel group). Deliberately does NOT force a re-clutch: translation is per-frame
+  // deltas, so a mid-hold yaw change can't jump — future motion just maps through the new
+  // frame.
+  setControlYaw(yawRad: number) {
+    this.controlYaw = yawRad;
+  }
 
   // Force both hands to require a fresh squeeze before driving again. Call after any
   // safe-hold (link drop / E-STOP latch) so resume can't snap to a drifted pose.
@@ -232,8 +298,8 @@ export class VrJogMapper {
   // Map one VR frame to a jog payload. Left controller -> left arm, right -> right arm;
   // base comes from the right controller; z-lift + E-STOP come from the resolved controls.
   map(frame: VrFrame): VrMapResult {
-    const lArm = this.left.step(frame.left);
-    const rArm = this.right.step(frame.right);
+    const lArm = this.left.step(frame.left, this.controlYaw);
+    const rArm = this.right.step(frame.right, this.controlYaw);
     const base = baseFromThumb(frame.right);
     const c = frame.controls;
     const leftLift = liftFromControls(c?.leftLiftUp, c?.leftLiftDown);

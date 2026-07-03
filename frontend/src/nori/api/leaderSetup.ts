@@ -100,7 +100,7 @@ export function manualStart(
 export function manualCaptureCenter(baseUrl: string, fetcher: Fetcher): Promise<unknown> {
   return apiRequest(baseUrl, fetcher, "/nori/leader/manual/capture-center", {
     method: "POST",
-    action: "Capture center",
+    action: "Set center",
   });
 }
 
@@ -136,7 +136,7 @@ export function autoStart(
   fetcher: Fetcher,
   side: LeaderAutoSide,
   calibrationId: string,
-  confirmPowered: boolean,
+  confirmAuto: boolean,
   port?: string
 ): Promise<unknown> {
   return apiRequest(baseUrl, fetcher, "/nori/leader/auto/start", {
@@ -144,23 +144,23 @@ export function autoStart(
     body: {
       side,
       calibration_id: calibrationId,
-      confirm_powered: confirmPowered,
+      confirm_powered: confirmAuto,
       port: port || null,
     },
-    action: "Start powered auto calibration",
+    action: "Start auto calibration",
   });
 }
 
 export function autoStop(baseUrl: string, fetcher: Fetcher): Promise<unknown> {
   return apiRequest(baseUrl, fetcher, "/nori/leader/auto/stop", {
     method: "POST",
-    action: "Stop powered auto calibration",
+    action: "Stop auto calibration",
   });
 }
 
 export function getAutoStatus(baseUrl: string, fetcher: Fetcher): Promise<AutoStatus> {
   return apiRequest<AutoStatus>(baseUrl, fetcher, "/nori/leader/auto/status", {
-    action: "Load powered auto calibration status",
+    action: "Load auto calibration status",
   });
 }
 

@@ -221,6 +221,78 @@ def test_read_shared_live_positions_maps_both_leaders(
     leader.close_shared_live_reader()
 
 
+def test_shared_live_reader_backs_off_missing_arm(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lelab import nori_leader_setup as leader
+
+    calls: list[tuple[int, ...]] = []
+
+    class FakeBus:
+        def __init__(self, port: str, **_kwargs) -> None:
+            self.port = port
+
+        def open(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+        def read_positions(self, motor_ids):
+            ids = tuple(motor_ids)
+            calls.append(ids)
+            return {motor_id: 2000 + motor_id for motor_id in ids if motor_id in leader.LEFT_LEADER_IDS}
+
+    monkeypatch.setattr(leader, "SCSBus", FakeBus)
+    monkeypatch.setattr(leader, "load_leader_calibration", lambda _calibration_id: {})
+    manager = leader.SharedLivePositionManager()
+
+    first = manager.read(port="/dev/ttyUSB0", calibration_id="demo")
+    second = manager.read(port="/dev/ttyUSB0", calibration_id="demo")
+
+    assert calls[0] == leader.ALL_LEADER_IDS
+    assert calls[1] == leader.LEFT_LEADER_IDS
+    assert first["leaders"]["left"]["visible"] == 6
+    assert first["leaders"]["right"]["visible"] == 0
+    assert second["leaders"]["left"]["visible"] == 6
+    assert second["leaders"]["right"]["visible"] == 0
+
+
+def test_manual_start_captures_center_and_initial_ranges(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lelab import nori_leader_setup as leader
+
+    disabled: list[tuple[int, ...]] = []
+
+    class FakeBus:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc) -> None:
+            pass
+
+        def ping(self, motor_id: int) -> bool:
+            return motor_id in leader.LEFT_LEADER_IDS
+
+        def read_positions(self, motor_ids):
+            return {motor_id: 2000 + motor_id for motor_id in motor_ids}
+
+        def disable_torque(self, ids) -> None:
+            disabled.append(tuple(ids))
+
+    monkeypatch.setattr(leader, "SCSBus", FakeBus)
+    manager = leader.ManualCalibrationManager()
+
+    result = manager.start("left", port="/dev/ttyUSB0")
+
+    assert result["success"] is True
+    session = manager.status()["session"]
+    assert session["center"][1] == 2001
+    assert session["mins"][5] == 2005
+    assert session["maxes"][5] == 2005
+    assert disabled == [leader.LEFT_LEADER_IDS]
+
+
 def test_manual_manager_observes_live_positions_for_ranges() -> None:
     from lelab import nori_leader_setup as leader
 

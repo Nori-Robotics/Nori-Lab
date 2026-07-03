@@ -68,6 +68,9 @@ CONFIG_DIR = (
 )
 PORTS_PATH = CONFIG_DIR / "leader_ports.json"
 DEFAULT_CALIBRATION_ID = "nori_l2_dual_leader_dev"
+LIVE_READ_TIMEOUT = 0.012
+LIVE_MISSING_RETRY_BASE_SEC = 0.25
+LIVE_MISSING_RETRY_MAX_SEC = 1.0
 
 
 def _require_serial():
@@ -625,13 +628,21 @@ class ManualCalibrationManager:
                 hits = [motor_id for motor_id in ids if bus.ping(motor_id)]
                 if len(hits) != len(ids):
                     return {"success": False, "message": f"{side} leader missing IDs", "hits": hits}
+                center = bus.read_positions(ids)
+                missing = [motor_id for motor_id in ids if motor_id not in center]
+                if missing:
+                    return {"success": False, "message": f"failed to read IDs {missing}"}
                 bus.disable_torque(ids)
+            range_ids = [motor_id for _joint, motor_id, _norm, _circular in leader_joint_specs(side)]
             self._session = ManualSession(
                 id=str(uuid.uuid4()),
                 side=side,
                 calibration_id=calibration_id,
                 port_identity=port_identity,
                 ids=ids,
+                center=center,
+                mins={motor_id: center[motor_id] for motor_id in range_ids},
+                maxes={motor_id: center[motor_id] for motor_id in range_ids},
             )
             return {"success": True, "session": self._session.to_json()}
 
@@ -644,7 +655,7 @@ class ManualCalibrationManager:
             if missing:
                 return {"success": False, "message": f"failed to read IDs {missing}"}
             session.center = center
-            range_ids = [motor_id for joint, motor_id, _norm, circular in leader_joint_specs(session.side) if not circular]
+            range_ids = [motor_id for _joint, motor_id, _norm, _circular in leader_joint_specs(session.side)]
             session.mins = {motor_id: center[motor_id] for motor_id in range_ids}
             session.maxes = {motor_id: center[motor_id] for motor_id in range_ids}
             return {"success": True, "session": session.to_json()}
@@ -821,7 +832,7 @@ class AutoCalibrationManager:
                 status="running",
                 side=side,
                 calibration_id=calibration_id,
-                message="Starting powered leader auto-calibration",
+                message="Starting leader auto-calibration",
             )
             self._thread = threading.Thread(
                 target=self._worker,
@@ -850,7 +861,7 @@ class AutoCalibrationManager:
                 if self._stop.is_set():
                     break
                 with self._lock:
-                    self.status.message = f"Starting {current_side} leader powered auto-calibration"
+                    self.status.message = f"Starting {current_side} leader auto-calibration"
                 result = run_powered_auto_calibration(
                     current_side,
                     calibration_id=calibration_id,
@@ -868,13 +879,13 @@ class AutoCalibrationManager:
             with self._lock:
                 self.status.active = False
                 self.status.status = "completed"
-                self.status.message = "Powered auto-calibration completed"
+                self.status.message = "Auto calibration completed"
                 self.status.result = results
         except Exception as exc:
             with self._lock:
                 self.status.active = False
                 self.status.status = "error" if not self._stop.is_set() else "cancelled"
-                self.status.message = "Powered auto-calibration stopped" if self._stop.is_set() else "Powered auto-calibration failed"
+                self.status.message = "Auto calibration stopped" if self._stop.is_set() else "Auto calibration failed"
                 self.status.error = str(exc) if not self._stop.is_set() else None
 
     def stop(self) -> dict[str, Any]:
@@ -995,6 +1006,8 @@ class SharedLivePositionManager:
         self._port: str | None = None
         self._calibration_id: str | None = None
         self._calibration: dict[str, Any] = {}
+        self._missing_until: dict[int, float] = {}
+        self._miss_counts: dict[int, int] = {}
 
     def close(self) -> None:
         with self._lock:
@@ -1009,6 +1022,8 @@ class SharedLivePositionManager:
         self._port = None
         self._calibration_id = None
         self._calibration = {}
+        self._missing_until = {}
+        self._miss_counts = {}
 
     def _ensure_open(self, port: str, calibration_id: str) -> None:
         if self._bus is not None and self._port == port and self._calibration_id == calibration_id:
@@ -1018,10 +1033,35 @@ class SharedLivePositionManager:
             self._calibration = load_leader_calibration(calibration_id)
         except RuntimeError:
             self._calibration = {}
-        self._bus = SCSBus(port, timeout=0.025)
+        self._bus = SCSBus(port, timeout=LIVE_READ_TIMEOUT)
         self._bus.open()
         self._port = port
         self._calibration_id = calibration_id
+
+    def _ids_for_live_read(self, now: float) -> tuple[int, ...]:
+        healthy: list[int] = []
+        due_missing: list[int] = []
+        for motor_id in ALL_LEADER_IDS:
+            if self._missing_until.get(motor_id, 0.0) > now:
+                continue
+            if self._miss_counts.get(motor_id, 0) > 0:
+                due_missing.append(motor_id)
+            else:
+                healthy.append(motor_id)
+        # Retry at most one missing motor per frame so an unplugged arm cannot
+        # spend the entire live-read budget timing out.
+        return tuple(healthy + due_missing[:1])
+
+    def _update_missing_backoff(self, attempted_ids: Iterable[int], raw_positions: dict[int, int], now: float) -> None:
+        for motor_id in attempted_ids:
+            if motor_id in raw_positions:
+                self._miss_counts.pop(motor_id, None)
+                self._missing_until.pop(motor_id, None)
+                continue
+            misses = self._miss_counts.get(motor_id, 0) + 1
+            self._miss_counts[motor_id] = misses
+            delay = min(LIVE_MISSING_RETRY_MAX_SEC, LIVE_MISSING_RETRY_BASE_SEC * (2 ** min(misses - 1, 3)))
+            self._missing_until[motor_id] = now + delay
 
     def read(self, *, port: str | None = None, calibration_id: str = DEFAULT_CALIBRATION_ID) -> dict[str, Any]:
         resolved = port or _port_for_side("left")
@@ -1030,7 +1070,10 @@ class SharedLivePositionManager:
                 self._ensure_open(resolved, calibration_id)
                 if self._bus is None:
                     raise RuntimeError("leader live reader failed to open")
-                raw_positions = self._bus.read_positions(ALL_LEADER_IDS)
+                now = time.monotonic()
+                read_ids = self._ids_for_live_read(now)
+                raw_positions = self._bus.read_positions(read_ids) if read_ids else {}
+                self._update_missing_backoff(read_ids, raw_positions, now)
                 manual_manager.observe_positions(raw_positions)
                 return _format_shared_live_positions(
                     raw_positions,

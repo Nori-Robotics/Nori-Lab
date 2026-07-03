@@ -552,7 +552,7 @@ def nori_leader_manual_status():
 @app.post("/nori/leader/auto/start")
 def nori_leader_auto_start(body: NoriLeaderAutoStartBody):
     if not body.confirm_powered:
-        raise HTTPException(status_code=400, detail="confirm_powered must be true")
+        raise HTTPException(status_code=400, detail="confirm auto calibration before starting")
 
     def run():
         close_shared_live_reader()

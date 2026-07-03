@@ -141,7 +141,14 @@ export function GripForce({ currents }: { currents: Record<string, number> }) {
 // when a rail moves down from where it booted. The Pi OMITS the key whenever its tracker
 // isn't valid (pre-first-read / desynced) — render that as "unknown", never as 0.
 // Center-zero bar: right of center = up from boot pose, left = down.
-const RAIL_HALF_SPAN_MM = 500; // bar half-span; full travel is 950 mm (tall) / 650 (short)
+// Bar half-span in mm: how much travel (up OR down from boot pose) fills half the bar.
+
+// SMALLER = more sensitive. Full mechanical travel is 950 mm (tall) / 650 (short), but with
+// no homing yet the boot pose is arbitrary and real working excursions are far smaller, so a
+// full-travel span left the bar nearly flat. 200 mm makes typical moves clearly visible;
+// excursions beyond ±200 mm saturate the bar (numeric mm readout stays exact). Revisit once
+// stall-homing lands and we can render a true absolute full-scale bar. Tune freely.
+const RAIL_HALF_SPAN_MM = 150;
 export function RailHeight({ state }: { state: Record<string, number> }) {
   const rails: { key: string; label: string }[] = [
     { key: "left_lift.pos", label: "L rail" },

@@ -159,7 +159,13 @@ Compressed — see git history / `full_nori_plan.md` for detail. Do not re-open 
 - [x] **C5 — Call-window layout** (basic, done 2026-07-01): robot video with an overlaid reserved
   self-view slot (hidden until M6), the `CallBar` beneath it, then telemetry / grip-force /
   legend. Throwaway visuals; front-end team owns the real design.
-- [ ] 🟡 **C6 — Basic 3D visual of robot** (arm/rail positioning as cubes, for fully-remote teleop).
+- [x] 🟢 **C6 — Basic 3D visual of robot** (basic done 2026-07-03; arm/rail positioning as cubes, for fully-remote teleop).
+  **Basic version DONE (2026-07-03):** `Robot3D.tsx` (R3F + drei) renders both arms as nested
+  cube chains driven live off the telemetry `state` dict, plus the two vertical rails with a
+  carriage that slides down by rail depth (shares `railReading()` with the Rail-height card).
+  Wired into `remote.tsx` as the "Robot 3D (schematic)" card. **SCHEMATIC, not calibrated FK:**
+  joint values are mapped linearly (normalized→angle) so the pose is directionally correct but
+  not metric — the real-FK sub-item below supersedes this once the Pi publishes degrees.
   **CORRECTION (2026-07-02):** the earlier "no joint positions in telemetry" note was **wrong**.
   The daemon's telemetry frame **already carries a full `state` dict** with every `<motor>.pos`
   (all 12 arm joints, normalized) + `x.vel`/`theta.vel` (`NoriTeleop` `main.cpp:386` `to_state`,
@@ -178,9 +184,16 @@ Compressed — see git history / `full_nori_plan.md` for detail. Do not re-open 
     daemon start (startup-relative until Pi-side stall homing lands; keys **omitted** while the
     tracker isn't valid — treat absence as unknown, never 0). Rendered live in the remote page's
     **"Rail height" card** (`RailHeight` in `TeleopStatus.tsx`: center-zero bar + signed mm).
-    The C6 3D scene should consume the same keys for the Z offset.
-  - [ ] **Base/body pose:** still a genuine gap — telemetry has base *velocity* only (no
-    odometry). Separate robot-side work.
+    The C6 3D scene should consume the same keys for the Z offset. **DONE — `Robot3D.tsx`
+    positions each carriage via `railReading()`.** Rail-height CARD also reworked (2026-07-03)
+    from a center-zero bar to a **top-anchored descent gauge**, given the confirmed setup fact
+    that the arms ALWAYS park at the TOP of the rails at daemon start (boot pose = top, carriage
+    only ever travels down; full scale = `RAIL_TRAVEL_MM`, default short-variant 650 mm).
+  - [ ] 🔴 **Base/body pose:** confirmed **NOT complete** and **not fixable laptop-side** —
+    verified the Pi's `to_state` (`NoriTeleop` `main.cpp:205-211`) emits only `x.vel`/`theta.vel`
+    for the base: **velocity, no odometry / no `x.pos`/`theta.pos`**. So the 3D scene can't place
+    the base — it's a robot-side gap (the Pi must integrate wheel odometry and add base pose to
+    the telemetry `state`). Blocked on that Pi work; nothing to do in this repo until then.
 - [ ] 🟡 **C7 — Multi-camera display (3 feeds: `left_wrist` / `right_wrist` / `overhead`).**
   Today `teleop.ts` `ontrack` funnels all video to one `videoEl` and `remote.tsx` renders one
   `<video>`. **Operator-side work (this repo):** route incoming video by `ev.transceiver.mid` →

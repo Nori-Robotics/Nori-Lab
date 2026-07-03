@@ -24,6 +24,7 @@ import {
 } from "@/nori/remote/teleop";
 import { VrSession } from "@/nori/remote/vr-session";
 import { TelemetryPanel, GripForce, ControlLegend, CallBar, RailHeight } from "@/nori/remote/TeleopStatus";
+import { Robot3D } from "@/nori/remote/Robot3D";
 import { isM6VideoEnabled } from "@/nori/remote/flags";
 
 const DEFAULT_STUN = "stun:stun.l.google.com:19302";
@@ -358,6 +359,15 @@ const Remote = () => {
             stale={stale}
             inVr={inVr}
           />
+
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-sm">Robot 3D (schematic)</CardTitle>
+            </CardHeader>
+            <CardContent className="pb-3">
+              <Robot3D state={tel.state} />
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader className="py-3">

@@ -137,18 +137,32 @@ export function GripForce({ currents }: { currents: Record<string, number> }) {
 
 // Rail (lift) height per arm, from telemetry `state` `left_lift.pos`/`right_lift.pos` —
 // real millimeters (28.455 mm/rev, Pi-side multi-turn tracker, m3_m5 §5.5). Zero is the
-// pose at DAEMON START (startup-relative until stall-homing lands), so values go negative
-// when a rail moves down from where it booted. The Pi OMITS the key whenever its tracker
-// isn't valid (pre-first-read / desynced) — render that as "unknown", never as 0.
-// Center-zero bar: right of center = up from boot pose, left = down.
-// Bar half-span in mm: how much travel (up OR down from boot pose) fills half the bar.
+// pose at DAEMON START (startup-relative until stall-homing lands). The Pi OMITS the key
+// whenever its tracker isn't valid (pre-first-read / desynced) — render as "unknown".
+//
+// SETUP ASSUMPTION (2026-07-03): the arms are ALWAYS parked at the TOP of the rails at
+// daemon start, so boot pose (h≈0) IS the top and the carriage can only ever travel DOWN.
+// That makes the old center-zero bar wrong (it reserved half the bar for "up", which never
+// happens). We now render a TOP-ANCHORED descent gauge: empty at the top (home), filling as
+// the rail dives. depth-below-top = |h| (sign-agnostic: NORI_LIFT_SIGN is still pending a HW
+// test, and from the top the only direction is down, so magnitude is unambiguous).
+//
+// RAIL_TRAVEL_MM = full downward travel = the gauge's full scale. Per robot variant:
+// 950 mm (tall) / 650 mm (short) — the Pi's NORI_LIFT_TRAVEL_MM. Not carried in telemetry
+// yet, so it's a tunable constant here; default to the short variant. Bump to 950 for a tall
+// unit. (When the Pi starts publishing travel_mm, consume that instead of this constant.)
+const RAIL_TRAVEL_MM = 650;
 
-// SMALLER = more sensitive. Full mechanical travel is 950 mm (tall) / 650 (short), but with
-// no homing yet the boot pose is arbitrary and real working excursions are far smaller, so a
-// full-travel span left the bar nearly flat. 200 mm makes typical moves clearly visible;
-// excursions beyond ±200 mm saturate the bar (numeric mm readout stays exact). Revisit once
-// stall-homing lands and we can render a true absolute full-scale bar. Tune freely.
-const RAIL_HALF_SPAN_MM = 150;
+// Shared reading so the C6 3D scene and this gauge agree. `depthMm` = distance below the top
+// (>=0), `frac` = fraction of full travel descended (0 = at top/home, 1 = at bottom).
+export function railReading(state: Record<string, number>, key: string):
+  { known: boolean; depthMm: number; frac: number } {
+  const h = state[key];
+  if (typeof h !== "number") return { known: false, depthMm: 0, frac: 0 };
+  const depthMm = Math.min(RAIL_TRAVEL_MM, Math.abs(h));
+  return { known: true, depthMm, frac: depthMm / RAIL_TRAVEL_MM };
+}
+
 export function RailHeight({ state }: { state: Record<string, number> }) {
   const rails: { key: string; label: string }[] = [
     { key: "left_lift.pos", label: "L rail" },
@@ -157,34 +171,32 @@ export function RailHeight({ state }: { state: Record<string, number> }) {
   return (
     <div className="space-y-1">
       {rails.map(({ key, label }) => {
-        const h = state[key];
-        const known = typeof h === "number";
-        const frac = known ? Math.max(-1, Math.min(1, h / RAIL_HALF_SPAN_MM)) : 0;
+        const { known, depthMm, frac } = railReading(state, key);
+        const pct = frac * 100;
+        // green near home (top), amber mid, red as it approaches the bottom hard stop.
+        const tone = frac >= 0.85 ? "bg-destructive" : frac >= 0.6 ? "bg-amber-500" : "bg-primary";
+        const atTop = known && depthMm < 3;
         return (
           <div key={key} className="flex items-center gap-2">
             <span className="w-24 shrink-0 font-mono text-[11px] text-foreground">{label}</span>
             <div className="relative h-2 flex-1 overflow-hidden rounded bg-muted">
-              {/* center-zero marker */}
-              <div className="absolute left-1/2 top-0 h-full w-px bg-muted-foreground/40" />
+              {/* top-anchored descent gauge: fills from the left (top/home) as the rail dives */}
               {known && (
                 <div
-                  className="absolute top-0 h-full rounded bg-primary transition-[width,left] duration-100"
-                  style={
-                    frac >= 0
-                      ? { left: "50%", width: `${frac * 50}%` }
-                      : { left: `${50 + frac * 50}%`, width: `${-frac * 50}%` }
-                  }
+                  className={cn("absolute left-0 top-0 h-full rounded transition-[width] duration-100", tone)}
+                  style={{ width: `${pct}%` }}
                 />
               )}
             </div>
-            <span className="w-20 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
-              {known ? `${h >= 0 ? "+" : ""}${h.toFixed(1)} mm` : "unknown"}
+            <span className="w-24 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+              {!known ? "unknown" : atTop ? "top" : `↓ ${depthMm.toFixed(0)} mm`}
             </span>
           </div>
         );
       })}
       <p className="text-[10px] text-muted-foreground">
-        height vs. robot boot pose (absolute homing pending); “unknown” = tracker not valid
+        0 = top of rail (start pose); bar fills as the carriage descends. Full scale ={" "}
+        {RAIL_TRAVEL_MM} mm travel. “unknown” = tracker not valid.
       </p>
     </div>
   );

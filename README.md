@@ -76,6 +76,26 @@ lelab --dev
 
 Vite on `:8080`, uvicorn `--reload` on `:8000`.
 
+## Nori L2 Dual Leader Setup
+
+Nori L2 leader setup is local to the laptop and talks only to the two USB leader arms.
+Both leaders are expected on one shared Feetech USB bus.
+
+```bash
+python -m lelab.nori_leader_setup plan
+python -m lelab.nori_leader_setup ports --save
+python -m lelab.nori_leader_setup set-id --wizard --side left
+python -m lelab.nori_leader_setup set-id --wizard --side right
+python -m lelab.nori_leader_setup calibrate --mode manual --side both
+```
+
+The same flow is available in the UI at `/nori/leader-setup` and from the normal
+Calibration page. Calibration is saved under:
+
+```text
+~/.cache/huggingface/lerobot/calibration/teleoperators/nori_l2_dual_leader/
+```
+
 <div align="center">
 <sub>Originally hacked together by <a href="https://www.linkedin.com/posts/nicolas-rabault-_lerobot-hackathon-lerobot-ugcPost-7341065019368828930-jTnl/">Team LeLab at the 2025 LeRobot Worldwide Hackathon 🏆</a>, now maintained by the <a href="https://huggingface.co/lerobot">LeRobot</a> team at <a href="https://huggingface.co">Hugging Face</a> with ❤️</sub>
 </div>

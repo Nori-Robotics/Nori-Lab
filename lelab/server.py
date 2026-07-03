@@ -48,6 +48,22 @@ from .jobs import (
     job_registry,
 )
 from .nori_client import ManifestError, NoriBackendError, NoriClient  # NORI: cloud API client
+from .nori_leader_setup import (
+    DEFAULT_CALIBRATION_ID as DEFAULT_LEADER_CALIBRATION_ID,
+    auto_manager as nori_leader_auto_manager,
+    auto_save_detected_ports,
+    close_shared_live_reader,
+    expected_joint_ids,
+    identify_leader_motors,
+    list_directions as list_nori_leader_directions,
+    manual_manager as nori_leader_manual_manager,
+    probe_leader_ports,
+    read_live_targets,
+    read_shared_live_positions,
+    save_ports_from_paths,
+    set_connected_servo_id,
+    set_direction as set_nori_leader_direction,
+)
 
 # Import our custom recording functionality
 from .record import (
@@ -388,6 +404,195 @@ def _nori_proxy(call):
         return call()
     except NoriBackendError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+NoriLeaderSide = Literal["left", "right"]
+NoriLeaderAutoSide = Literal["left", "right", "both"]
+
+
+class NoriLeaderPortSaveBody(BaseModel):
+    left_port: str
+    right_port: str | None = None
+
+
+class NoriLeaderSetIdBody(BaseModel):
+    target_id: int | None = None
+    side: NoriLeaderSide | None = None
+    joint: str | None = None
+    port: str
+    scan_max: int = 253
+
+
+class NoriLeaderManualStartBody(BaseModel):
+    side: NoriLeaderSide
+    calibration_id: str = DEFAULT_LEADER_CALIBRATION_ID
+    port: str | None = None
+
+
+class NoriLeaderAutoStartBody(BaseModel):
+    side: NoriLeaderAutoSide
+    calibration_id: str = DEFAULT_LEADER_CALIBRATION_ID
+    port: str | None = None
+    confirm_powered: bool = False
+
+
+class NoriLeaderDirectionBody(BaseModel):
+    side: NoriLeaderSide
+    joint: str
+    mode: Literal["normal", "inverted"] | None = None
+    calibration_id: str = DEFAULT_LEADER_CALIBRATION_ID
+
+
+def _leader_guard(call):
+    try:
+        return call()
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=f"unknown key: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# NORI: local dual-leader setup. These endpoints only touch the laptop-attached
+# leader arms; they deliberately do not connect to the robot core agent.
+@app.get("/nori/leader/plan")
+def nori_leader_plan():
+    return {
+        "left": expected_joint_ids("left"),
+        "right": expected_joint_ids("right"),
+        "default_calibration_id": DEFAULT_LEADER_CALIBRATION_ID,
+    }
+
+
+@app.get("/nori/leader/ports")
+def nori_leader_ports(include_all: bool = False):
+    return _leader_guard(lambda: {"success": True, "probes": probe_leader_ports(include_all=include_all)})
+
+
+@app.post("/nori/leader/ports/auto-save")
+def nori_leader_ports_auto_save():
+    return _leader_guard(auto_save_detected_ports)
+
+
+@app.post("/nori/leader/ports")
+def nori_leader_ports_save(body: NoriLeaderPortSaveBody):
+    return _leader_guard(lambda: save_ports_from_paths(body.left_port, body.right_port))
+
+
+@app.post("/nori/leader/set-id")
+def nori_leader_set_id(body: NoriLeaderSetIdBody):
+    def run():
+        close_shared_live_reader()
+        target_id = body.target_id
+        if target_id is None:
+            if body.side is None or body.joint is None:
+                raise ValueError("target_id or side+joint is required")
+            target_id = expected_joint_ids(body.side)[body.joint]
+        return set_connected_servo_id(
+            target_id=target_id,
+            port=body.port,
+            scan_max=body.scan_max,
+        )
+
+    return _leader_guard(run)
+
+
+@app.get("/nori/leader/identify")
+def nori_leader_identify(port: str | None = None, all_ids: bool = False, cycles: int = 1):
+    def run():
+        close_shared_live_reader()
+        return identify_leader_motors(port=port, all_ids=all_ids, cycles=cycles)
+
+    return _leader_guard(run)
+
+
+@app.post("/nori/leader/manual/start")
+def nori_leader_manual_start(body: NoriLeaderManualStartBody):
+    def run():
+        close_shared_live_reader()
+        return nori_leader_manual_manager.start(body.side, body.calibration_id, body.port)
+
+    return _leader_guard(run)
+
+
+@app.post("/nori/leader/manual/capture-center")
+def nori_leader_manual_capture_center():
+    return _leader_guard(nori_leader_manual_manager.capture_center)
+
+
+@app.post("/nori/leader/manual/sample")
+def nori_leader_manual_sample():
+    return _leader_guard(nori_leader_manual_manager.sample)
+
+
+@app.post("/nori/leader/manual/finish")
+def nori_leader_manual_finish():
+    return _leader_guard(nori_leader_manual_manager.finish)
+
+
+@app.post("/nori/leader/manual/cancel")
+def nori_leader_manual_cancel():
+    return nori_leader_manual_manager.cancel()
+
+
+@app.get("/nori/leader/manual/status")
+def nori_leader_manual_status():
+    return nori_leader_manual_manager.status()
+
+
+@app.post("/nori/leader/auto/start")
+def nori_leader_auto_start(body: NoriLeaderAutoStartBody):
+    if not body.confirm_powered:
+        raise HTTPException(status_code=400, detail="confirm_powered must be true")
+
+    def run():
+        close_shared_live_reader()
+        return nori_leader_auto_manager.start(body.side, body.calibration_id, body.port)
+
+    return _leader_guard(run)
+
+
+@app.post("/nori/leader/auto/stop")
+def nori_leader_auto_stop():
+    return nori_leader_auto_manager.stop()
+
+
+@app.get("/nori/leader/auto/status")
+def nori_leader_auto_status():
+    return nori_leader_auto_manager.get_status()
+
+
+@app.get("/nori/leader/directions")
+def nori_leader_directions(calibration_id: str = DEFAULT_LEADER_CALIBRATION_ID):
+    return _leader_guard(lambda: list_nori_leader_directions(calibration_id))
+
+
+@app.post("/nori/leader/directions")
+def nori_leader_direction_set(body: NoriLeaderDirectionBody):
+    return _leader_guard(
+        lambda: set_nori_leader_direction(
+            body.side,
+            body.joint,
+            mode=body.mode,
+            calibration_id=body.calibration_id,
+        )
+    )
+
+
+@app.get("/nori/leader/targets")
+def nori_leader_targets(calibration_id: str = DEFAULT_LEADER_CALIBRATION_ID):
+    return _leader_guard(lambda: read_live_targets(calibration_id))
+
+
+@app.get("/nori/leader/live")
+def nori_leader_live(port: str | None = None, calibration_id: str = DEFAULT_LEADER_CALIBRATION_ID):
+    return _leader_guard(lambda: read_shared_live_positions(port=port, calibration_id=calibration_id))
+
+
+@app.post("/nori/leader/live/stop")
+def nori_leader_live_stop():
+    return close_shared_live_reader()
 
 
 # NORI: Nori-Backend proxy routes. The browser calls these same-origin (on the LeLab

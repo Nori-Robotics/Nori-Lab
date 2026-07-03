@@ -23,7 +23,7 @@ import {
   type TelemetryView,
 } from "@/nori/remote/teleop";
 import { VrSession } from "@/nori/remote/vr-session";
-import { TelemetryPanel, GripForce, ControlLegend, CallBar } from "@/nori/remote/TeleopStatus";
+import { TelemetryPanel, GripForce, ControlLegend, CallBar, RailHeight } from "@/nori/remote/TeleopStatus";
 import { isM6VideoEnabled } from "@/nori/remote/flags";
 
 const DEFAULT_STUN = "stun:stun.l.google.com:19302";
@@ -358,6 +358,15 @@ const Remote = () => {
             stale={stale}
             inVr={inVr}
           />
+
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-sm">Rail height</CardTitle>
+            </CardHeader>
+            <CardContent className="pb-3">
+              <RailHeight state={tel.state} />
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader className="py-3">

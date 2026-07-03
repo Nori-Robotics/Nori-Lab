@@ -45,9 +45,18 @@ const RC_POKE_NEAR_R = 0.11;
 // gripper Present_Current -> rumble. Raw sign-magnitude ints; tune on hardware.
 // Tuned stronger 2026-07-02 (was hard to feel): lower the contact threshold, reach full
 // rumble much sooner, and floor any real contact at HAPTIC_MIN so light grips still register.
-const HAPTIC_IDLE = 35;   // below this = no contact, no buzz
-const HAPTIC_FULL = 260;  // at/above this = full-strength rumble (was 600 -> ramps up faster)
-const HAPTIC_MIN = 0.45;  // any contact above idle buzzes at least this hard (was ~0, imperceptible)
+// Haptics thresholds are DELTAS above a per-arm adaptive baseline, not absolute currents:
+// the two gripper motors idle at different holding currents (one arm buzzed constantly at
+// any fixed threshold that felt right on the other; 2026-07-02). The baseline tracks each
+// gripper's idle draw — snaps down instantly, creeps up slowly — so "contact" means current
+// above THAT arm's own idle.
+const HAPTIC_IDLE = 50;   // delta above baseline = no contact below this, no buzz
+const HAPTIC_FULL = 250;  // delta at/above this = full-strength rumble
+const HAPTIC_MIN = 0.3;   // any contact above idle buzzes at least this hard (0.45 slammed
+                          // on too hard right at the threshold)
+const HAPTIC_BASE_RISE = 3; // baseline upward creep (units/s): slow enough that a real grip
+                            // (deltas of hundreds) keeps buzzing for minutes, fast enough to
+                            // absorb idle-current drift
 const HAPTIC_PULSE_MS = 100; // longer pulse per frame -> a more solid, continuous buzz (was 60)
 const CURRENT_FULL = 600; // Present_Current mapped to a full HUD bar (matches TeleopStatus)
 const TEL_STALE_MS = 1500; // no telemetry for this long -> HUD shows "stale" (matches remote.tsx)
@@ -115,6 +124,9 @@ export class VrSession {
   private panelGroup: THREE.Group | null = null;
   private session: XRSession | null = null;
   private currents: Record<string, number> = {};
+  // Per-gripper adaptive idle-current baseline for haptics (see applyHaptics).
+  private hapticBase: Record<string, number> = {};
+  private lastHapticAt = 0;
   // Telemetry HUD (mirrors the keyboard TelemetryPanel + GripForce): a 2D canvas painted
   // with the same stats, uploaded as a texture on a panel beside the video.
   private tel: TelemetryView | null = null;
@@ -626,16 +638,28 @@ export class VrSession {
   }
 
   // gripper current (virtual tactile signal) -> that hand's controller rumble.
+  // Contact is measured as current above a PER-ARM adaptive baseline (see HAPTIC_* consts):
+  // the baseline snaps down to any lower reading instantly and creeps up at HAPTIC_BASE_RISE,
+  // so it settles on each motor's own idle holding current and rides out slow drift, while a
+  // real grip (a fast rise of hundreds of units) stays above it for minutes.
   private applyHaptics(session: XRSession) {
+    const now = performance.now();
+    const dt = this.lastHapticAt ? Math.min((now - this.lastHapticAt) / 1000, 0.25) : 0;
+    this.lastHapticAt = now;
     for (const src of session.inputSources) {
       if (!src.gamepad || !src.handedness) continue;
       const key = src.handedness === "left" ? "left_arm_gripper" : "right_arm_gripper";
       const cur = Math.abs(this.currents[key] ?? 0);
+      const prev = this.hapticBase[key];
+      if (prev === undefined) { this.hapticBase[key] = cur; continue; } // first reading = idle
+      const base = cur < prev ? cur : Math.min(cur, prev + HAPTIC_BASE_RISE * dt);
+      this.hapticBase[key] = base;
       // No contact -> silent. Any contact above idle -> at least HAPTIC_MIN so it's felt,
       // ramping to full by HAPTIC_FULL.
-      if (cur <= HAPTIC_IDLE) continue;
+      const contact = cur - base;
+      if (contact <= HAPTIC_IDLE) continue;
       const frac = THREE.MathUtils.clamp(
-        (cur - HAPTIC_IDLE) / (HAPTIC_FULL - HAPTIC_IDLE), 0, 1
+        (contact - HAPTIC_IDLE) / (HAPTIC_FULL - HAPTIC_IDLE), 0, 1
       );
       const intensity = HAPTIC_MIN + (1 - HAPTIC_MIN) * frac;
       const act = (src.gamepad as Gamepad & { hapticActuators?: GamepadHapticActuator[] })

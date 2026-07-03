@@ -135,6 +135,54 @@ export function GripForce({ currents }: { currents: Record<string, number> }) {
   );
 }
 
+// Rail (lift) height per arm, from telemetry `state` `left_lift.pos`/`right_lift.pos` —
+// real millimeters (28.455 mm/rev, Pi-side multi-turn tracker, m3_m5 §5.5). Zero is the
+// pose at DAEMON START (startup-relative until stall-homing lands), so values go negative
+// when a rail moves down from where it booted. The Pi OMITS the key whenever its tracker
+// isn't valid (pre-first-read / desynced) — render that as "unknown", never as 0.
+// Center-zero bar: right of center = up from boot pose, left = down.
+const RAIL_HALF_SPAN_MM = 500; // bar half-span; full travel is 950 mm (tall) / 650 (short)
+export function RailHeight({ state }: { state: Record<string, number> }) {
+  const rails: { key: string; label: string }[] = [
+    { key: "left_lift.pos", label: "L rail" },
+    { key: "right_lift.pos", label: "R rail" },
+  ];
+  return (
+    <div className="space-y-1">
+      {rails.map(({ key, label }) => {
+        const h = state[key];
+        const known = typeof h === "number";
+        const frac = known ? Math.max(-1, Math.min(1, h / RAIL_HALF_SPAN_MM)) : 0;
+        return (
+          <div key={key} className="flex items-center gap-2">
+            <span className="w-24 shrink-0 font-mono text-[11px] text-foreground">{label}</span>
+            <div className="relative h-2 flex-1 overflow-hidden rounded bg-muted">
+              {/* center-zero marker */}
+              <div className="absolute left-1/2 top-0 h-full w-px bg-muted-foreground/40" />
+              {known && (
+                <div
+                  className="absolute top-0 h-full rounded bg-primary transition-[width,left] duration-100"
+                  style={
+                    frac >= 0
+                      ? { left: "50%", width: `${frac * 50}%` }
+                      : { left: `${50 + frac * 50}%`, width: `${-frac * 50}%` }
+                  }
+                />
+              )}
+            </div>
+            <span className="w-20 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+              {known ? `${h >= 0 ? "+" : ""}${h.toFixed(1)} mm` : "unknown"}
+            </span>
+          </div>
+        );
+      })}
+      <p className="text-[10px] text-muted-foreground">
+        height vs. robot boot pose (absolute homing pending); “unknown” = tracker not valid
+      </p>
+    </div>
+  );
+}
+
 // A pulsing "on air" dot + label. Bright red when live, dim otherwise.
 function OnAir({ live, label }: { live: boolean; label: string }) {
   return (

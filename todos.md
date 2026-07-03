@@ -73,27 +73,28 @@ Compressed — see git history / `full_nori_plan.md` for detail. Do not re-open 
 
 *Target: `remote/teleop.ts` (`RemoteTeleop`), reused by `remote/vr-session.ts`.*
 
-- [ ] **A1 — Robot audio playback (uplink; M3a, ship first, no AEC dependency).**
-  Extend `pc.ontrack` (`teleop.ts:259`) to route an **incoming audio** track to an audio sink.
-  Today it only handles video (`videoEl.srcObject`). Add a hidden `<audio autoplay>` element (or
-  set the audio track on a dedicated `MediaStream`) and attach it. Small jitter buffer; verify
-  continuity, not latest-only.
+- [x] **A1 — Robot audio playback (uplink; M3a).** ✅ Done + hardware-validated 2026-07-02.
+  `pc.ontrack` routes the incoming audio track (by `ev.track.kind`) to a hidden `<audio autoplay>`
+  sink, kept muted until Join call. Operator hears the room.
   - ✅ *Resolved (2026-07-01, Pi team):* **route by `ev.track.kind`, never by stream grouping** —
-    the bridge's video + audio are separate gst tracks and msid grouping is not guaranteed
-    (`webrtc_operator.html` already routes by kind; do the same in `teleop.ts`).
-- [ ] **A2 — Operator mic capture (downlink; M3b).**
-  `getUserMedia({ audio: true })`; attach the mic track to the **audio m-line the robot's offer
-  proposes** (via the matching `RTCRtpTransceiver` — do **not** `addTrack` a new m-line, that
-  forces renegotiation). Gate acquisition behind an explicit "join call" action (permission
-  prompt UX), not on page load.
-  - *Open:* mic constraints — echoCancellation/noiseSuppression/autoGainControl on the browser
-    side? (Robot-side AEC is the real fix per M3-D, but browser AEC is free insurance.) **TWEAK.**
-- [ ] **A3 — Establishment-time track contract.** On building the answer, ensure the peer has
-  transceivers for: robot-video (recv), robot-audio (recv), operator-audio (send), and a
-  **reserved operator-video transceiver set to `inactive`/muted** (M6). No mid-call `addTrack`.
-  - *Depends on §D + Pi:* the browser can only fill m-lines the robot offered. If the robot's
-    current offer is video-only (`SENDONLY` video, per `m3_m5_implementation_plan.md` R-X.1),
-    this is **coordination-gated** on the Pi adding the audio + reserved-video m-lines to its offer.
+    the bridge's video + audio are separate gst tracks and msid grouping is not guaranteed.
+- [x] **A2 — Operator mic capture (downlink; M3b).** ✅ Done + hardware-validated 2026-07-02.
+  `joinCall` does `getUserMedia({ audio: {EC/NS/AGC on} })` and `replaceTrack`s the mic onto the
+  robot's audio transceiver (no `addTrack`, no renegotiation). Confirmed playing through the robot
+  speaker (robot on `--voice`). Browser AEC/NS/AGC are on as cheap insurance; **robot-side AEC
+  (M3-D) is still the real fix** — until then, headphones on the robot (no echo).
+- [x] **A3 — Establishment-time track contract.** ✅ Done 2026-07-02. **Key fix:** a browser
+  *answers* the robot's `sendrecv` audio offer as **recvonly** by default → no send transceiver →
+  the mic never transmitted ("robot offered no audio uplink"). `teleop.ts` now flips its audio
+  transceiver to `sendrecv` **before `createAnswer`** (`offerWantsAudioUplink`), reserving the
+  uplink so Join is a pure `replaceTrack`. Robot-side confirmed offering `SENDRECV` (per-session
+  fresh offer, `--voice`); the reserved M6 operator-*video* m-line stays deferred.
+  - ⚠️ **Playback mixing gap (R-X.4, robot-side):** while `--voice` is live the robot's `alsasink`
+    holds the speaker exclusively, so safety chimes can't play mid-call. Deferred with AEC.
+- [x] **Audio-latency harness (R-X.2) — added 2026-07-02.** `remote/audioLatency.ts` +
+  `teleop.ts`: `/nori/remote?audiolatency` logs the audio path's **network RTT/2 + jitter-buffer**
+  breakdown every ~3 s (works on the M3a uplink now; reused for M3b). The mic/speaker **acoustic**
+  delay still needs a real-HW loopback (hardware-day). Public `logAudioLatency()` for on-demand.
 
 ### B. Call UI + control-channel state sync
 
@@ -171,9 +172,15 @@ Compressed — see git history / `full_nori_plan.md` for detail. Do not re-open 
     lerobot-normalized `[-100,100]` (grippers `[0,100]`), NOT degrees — see the Pi-side
     `use_degrees` telemetry field decision below (normalize/convert on the Pi, which owns the
     per-unit calibration + kinematic convention).
-  - [ ] **Base/body pose + Z-lift height:** still genuine gaps — telemetry has base *velocity*
-    only (no odometry) and no lift position (velocity-mode motor, single-turn encoder). Separate
-    robot-side work (odometry; lift encoder — see the z-lift task).
+  - [x] **Z-lift height — SOLVED robot-side + surfaced in the app (2026-07-02):** the Pi's
+    software multi-turn tracker (NoriTeleop m3_m5 §5.5) now puts `left_lift.pos`/`right_lift.pos`
+    in telemetry `state` — real **millimeters** (28.455 mm/rev, HW-confirmed), zero = pose at
+    daemon start (startup-relative until Pi-side stall homing lands; keys **omitted** while the
+    tracker isn't valid — treat absence as unknown, never 0). Rendered live in the remote page's
+    **"Rail height" card** (`RailHeight` in `TeleopStatus.tsx`: center-zero bar + signed mm).
+    The C6 3D scene should consume the same keys for the Z offset.
+  - [ ] **Base/body pose:** still a genuine gap — telemetry has base *velocity* only (no
+    odometry). Separate robot-side work.
 - [ ] 🟡 **C7 — Multi-camera display (3 feeds: `left_wrist` / `right_wrist` / `overhead`).**
   Today `teleop.ts` `ontrack` funnels all video to one `videoEl` and `remote.tsx` renders one
   `<video>`. **Operator-side work (this repo):** route incoming video by `ev.transceiver.mid` →

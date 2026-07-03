@@ -13,6 +13,7 @@
 //   * TURN is additive (STUN-direct preferred); forceRelay validates the relay path
 
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
+import { AudioLatencyProbe, audioLatencyEnabled } from "./audioLatency";
 
 export type ControlMode = "cylindrical" | "joint";
 export type ArmSide = "left" | "right";
@@ -49,6 +50,12 @@ export interface TelemetryView {
   // are NORMALIZED, not degrees — a future Pi-side `use_degrees` field will carry physical
   // angles for FK (the Pi owns the calibration + kinematic convention). Empty until the
   // daemon sends `state` (mock/real).
+  // Since 2026-07-02 the daemon also adds "left_lift.pos"/"right_lift.pos" — software
+  // multi-turn lift height (m3_m5 §5.5), rendered by the "Rail height" card (RailHeight in
+  // TeleopStatus.tsx) and intended for the C6 Z offset. Units are real MILLIMETERS
+  // (28.455 mm/rev, HW-confirmed), zero = pose at daemon start (startup-relative until
+  // Pi-side stall homing lands, so values can be negative). The keys are OMITTED while the
+  // Pi's tracker isn't valid — treat absence as "height unknown", not zero.
   state: Record<string, number>;
 }
 
@@ -176,6 +183,7 @@ export class RemoteTeleop {
   private pendingIce: RTCIceCandidateInit[] = [];
   private connected = false;
   private retryTimer: ReturnType<typeof setInterval> | null = null;
+  private latencyProbe: AudioLatencyProbe | null = null; // R-X.2 audio-latency harness (per peer)
   private jogTimer: ReturnType<typeof setInterval> | null = null;
   private controlCh: RTCDataChannel | null = null;
   private curMac = ""; // HMAC of the robot's nonce, proving we hold the token
@@ -358,6 +366,17 @@ export class RemoteTeleop {
     return null;
   }
 
+  // True if the robot's offer invites our voice (audio m-line is sendrecv → the robot will
+  // RECEIVE). We reserve the uplink only then; an M3a sendonly offer stays recvonly (no uplink).
+  private offerWantsAudioUplink(sdp: string): boolean {
+    let inAudio = false;
+    for (const line of sdp.split(/\r?\n/)) {
+      if (line.startsWith("m=")) inAudio = line.startsWith("m=audio");
+      else if (inAudio && line.startsWith("a=sendrecv")) return true;
+    }
+    return false;
+  }
+
   private stopStream(s: MediaStream | null) {
     s?.getTracks().forEach((t) => t.stop());
   }
@@ -397,6 +416,18 @@ export class RemoteTeleop {
         try { await pc.addIceCandidate(c); } catch (e) { this.log("ice warn", (e as Error).message); }
       }
       this.pendingIce = [];
+      // Reserve the audio UPLINK before answering: the robot offers audio sendrecv (M3b), but a
+      // browser answers RECVONLY by default (it only agreed to receive the robot mic). Flip our
+      // audio transceiver to sendrecv now so the ANSWER advertises send — then joining the call
+      // is a pure replaceTrack, never a renegotiation (R-X.1). Only when the robot actually
+      // invites our voice, so the M3a sendonly path stays recvonly.
+      if (this.offerWantsAudioUplink(payload.sdp)) {
+        const at = pc.getTransceivers().find((t) => t.receiver.track?.kind === "audio");
+        if (at && at.direction !== "sendrecv") {
+          try { at.direction = "sendrecv"; this.log("reserved audio uplink (sendrecv) for the call"); }
+          catch (e) { this.log("could not reserve audio uplink:", (e as Error).message); }
+        }
+      }
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       channel.send({ type: "broadcast", event: "sdp", payload: { type: "answer", sdp: answer.sdp } });
@@ -454,6 +485,7 @@ export class RemoteTeleop {
     this.emitCall();
     if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
     if (this.jogTimer) { clearInterval(this.jogTimer); this.jogTimer = null; }
+    this.latencyProbe?.stop();
     // tell the robot to exit (clean restart) before we tear down
     try { this.channel?.send({ type: "broadcast", event: "bye", payload: {} }); } catch { /* noop */ }
     if (this.pc) { try { this.pc.close(); } catch { /* noop */ } this.pc = null; }
@@ -464,6 +496,12 @@ export class RemoteTeleop {
     this.o.onTelemetry({ ...this.tel });
     this.o.onControlActive(false);
     this.o.onConnState("closed");
+  }
+
+  // On-demand audio-latency snapshot (R-X.2). Logs + returns the network+jitter-buffer breakdown;
+  // null if there's no active peer yet. Also auto-runs every 3 s when the page URL has ?audiolatency.
+  async logAudioLatency() {
+    return this.latencyProbe ? this.latencyProbe.logOnce() : null;
   }
 
   private sendReady() {
@@ -485,6 +523,8 @@ export class RemoteTeleop {
       iceTransportPolicy: this.o.forceRelay ? "relay" : "all",
     });
     this.pc = pc;
+    this.latencyProbe?.stop();
+    this.latencyProbe = new AudioLatencyProbe(pc, (...a) => this.log(...a));
     this.linkMode = null; // recomputed per connection from the selected candidate pair
     this.tel.linkMode = null;
     pc.ontrack = (ev) => {
@@ -517,8 +557,12 @@ export class RemoteTeleop {
         this.connected = true;
         if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
         this.logSelectedPath();
+        // Latency harness (R-X.2): with ?audiolatency, log the network+jitter-buffer breakdown
+        // of the audio path every few seconds. Works on the M3a uplink today; reused for M3b.
+        if (audioLatencyEnabled()) this.latencyProbe?.start();
       } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
         this.connected = false; // robot will exit + restart; keep asking for a new offer
+        this.latencyProbe?.stop();
         if (!this.retryTimer && !this.stopped) {
           this.retryTimer = setInterval(() => { if (!this.connected) this.sendReady(); }, 2000);
         }

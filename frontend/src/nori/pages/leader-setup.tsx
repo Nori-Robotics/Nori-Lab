@@ -8,7 +8,6 @@ import {
   Gauge,
   Loader2,
   Radio,
-  RotateCcw,
   Save,
   Search,
   StopCircle,
@@ -37,7 +36,6 @@ import {
   manualCancel,
   manualCaptureCenter,
   manualFinish,
-  manualSample,
   manualStart,
   readLeaderLive,
   saveLeaderPorts,
@@ -53,6 +51,7 @@ import {
 const SIDES: LeaderSide[] = ["left", "right"];
 const AUTO_SIDES: LeaderAutoSide[] = ["both", "left", "right"];
 const JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"];
+const CIRCULAR_JOINTS = new Set(["wrist_roll"]);
 const DEFAULT_CALIBRATION_ID = "nori_l2_dual_leader_dev";
 const LIVE_POLL_MS = 50;
 const FIELD_CLASS =
@@ -88,6 +87,34 @@ function formatAge(timestamp: number | null): string {
   const ageMs = Math.max(0, Date.now() - timestamp);
   if (ageMs < 1000) return "now";
   return `${Math.round(ageMs / 1000)}s`;
+}
+
+function jointId(side: LeaderSide, joint: string): number {
+  return JOINTS.indexOf(joint) + 1 + (side === "right" ? 6 : 0);
+}
+
+function recordValue(record: Record<string, number> | undefined, id: number): number | null {
+  if (!record) return null;
+  const value = record[String(id)];
+  return typeof value === "number" ? value : null;
+}
+
+function manualJointComplete(status: ManualStatus | null, side: LeaderSide, joint: string): boolean {
+  const session = status?.session;
+  if (!status?.active || !session || session.side !== side) return false;
+  const id = jointId(side, joint);
+  const center = recordValue(session.center, id);
+  if (center == null) return false;
+  if (CIRCULAR_JOINTS.has(joint)) return true;
+  const min = recordValue(session.mins, id);
+  const max = recordValue(session.maxes, id);
+  if (min == null || max == null) return false;
+  const threshold = joint === "gripper" ? 100 : 256;
+  return max - min >= threshold;
+}
+
+function autoSideComplete(status: AutoStatus | null, side: LeaderSide): boolean {
+  return status?.status === "completed" && (status.side === "both" || status.side === side);
 }
 
 function StatusPill({
@@ -189,6 +216,58 @@ function ControlBlock({
   );
 }
 
+function JointChecklist({
+  side,
+  frame,
+  manualStatus,
+  autoStatus,
+}: {
+  side: LeaderSide;
+  frame: LeaderLiveResponse | null;
+  manualStatus: ManualStatus | null;
+  autoStatus: AutoStatus | null;
+}) {
+  const motors = frame?.leaders?.[side]?.motors ?? {};
+  return (
+    <div className="rounded-md border border-[#f5f0e6]/10 bg-[#15130f] p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#9f9486]">{side}</span>
+        <StatusPill tone={(frame?.leaders?.[side]?.visible ?? 0) === 6 ? "green" : "neutral"}>
+          {frame?.leaders?.[side]?.visible ?? 0}/6 live
+        </StatusPill>
+      </div>
+      <div className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
+        {JOINTS.map((joint) => {
+          const motor = motors[joint];
+          const complete =
+            manualJointComplete(manualStatus, side, joint) ||
+            autoSideComplete(autoStatus, side) ||
+            motor?.target != null;
+          return (
+            <div
+              key={joint}
+              className="flex min-h-8 items-center gap-2 rounded-md border border-[#f5f0e6]/8 bg-[#211e19] px-2 text-xs"
+            >
+              <span
+                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                  complete
+                    ? "border-[#7bbf7a]/50 bg-[#18301d] text-[#bde8b6]"
+                    : motor?.ok
+                      ? "border-[#db9346]/45 bg-[#2b2115] text-[#f0ba78]"
+                      : "border-[#f5f0e6]/15 text-[#7d746a]"
+                }`}
+              >
+                {complete ? <Check className="h-3 w-3" /> : null}
+              </span>
+              <span className="truncate font-mono text-[#d9d1c5]">{joint}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 const LeaderSetup = () => {
   const { baseUrl, fetchWithHeaders } = useApi();
   const { toast } = useToast();
@@ -205,7 +284,6 @@ const LeaderSetup = () => {
 
   const [manualSide, setManualSide] = useState<LeaderSide>("left");
   const [manualStatus, setManualStatus] = useState<ManualStatus | null>(null);
-  const [sampling, setSampling] = useState(false);
 
   const [autoSide, setAutoSide] = useState<LeaderAutoSide>("both");
   const [confirmPowered, setConfirmPowered] = useState(false);
@@ -287,8 +365,7 @@ const LeaderSetup = () => {
   }, [autoDetectPort]);
 
   useEffect(() => {
-    const calibrationBusy = Boolean(manualStatus?.active || autoStatus?.active);
-    if (!liveActive || calibrationBusy) {
+    if (!liveActive) {
       void stopLeaderLive(baseUrl, fetchWithHeaders).catch(() => undefined);
       return undefined;
     }
@@ -314,7 +391,7 @@ const LeaderSetup = () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [autoStatus?.active, baseUrl, fetchWithHeaders, liveActive, manualStatus?.active, readLiveOnce]);
+  }, [baseUrl, fetchWithHeaders, liveActive, readLiveOnce]);
 
   useEffect(() => {
     return () => {
@@ -323,17 +400,12 @@ const LeaderSetup = () => {
   }, [baseUrl, fetchWithHeaders]);
 
   useEffect(() => {
-    if (!sampling || !manualStatus?.active) return undefined;
+    if (!manualStatus?.active) return undefined;
     const id = window.setInterval(() => {
-      void manualSample(baseUrl, fetchWithHeaders)
-        .then(() => refreshManualStatus())
-        .catch((err) => {
-          setSampling(false);
-          setError(errorMessage(err));
-        });
+      void refreshManualStatus().catch((err) => setError(errorMessage(err)));
     }, 250);
     return () => window.clearInterval(id);
-  }, [baseUrl, fetchWithHeaders, manualStatus?.active, refreshManualStatus, sampling]);
+  }, [manualStatus?.active, refreshManualStatus]);
 
   useEffect(() => {
     if (!autoStatus?.active) return undefined;
@@ -353,7 +425,7 @@ const LeaderSetup = () => {
   const calibrationBusy = Boolean(manualStatus?.active || autoStatus?.active);
   const manualMessage = manualStatus?.active ? `${manualStatus.session?.side ?? manualSide} side active` : "idle";
   const autoMessage = autoStatus?.error || autoStatus?.message || (autoStatus?.active ? "running" : "idle");
-  const liveLabel = calibrationBusy ? "paused" : liveActive ? "live" : "paused";
+  const liveLabel = liveActive ? "live" : "paused";
 
   return (
     <section className="min-h-[calc(100vh-2rem)] space-y-5 rounded-md bg-[#0f0e0c] px-4 py-5 text-[#f8f4ea] sm:px-5">
@@ -442,10 +514,9 @@ const LeaderSetup = () => {
               className={`h-10 rounded-md border-[#f5f0e6]/12 ${
                 liveActive ? "bg-[#d98b3d] text-white hover:bg-[#c97929]" : "bg-[#1a1814] text-[#f8f4ea] hover:bg-[#242019]"
               }`}
-              disabled={calibrationBusy}
             >
               <Radio className="mr-2 h-4 w-4" />
-              {calibrationBusy ? "calibrating" : liveActive ? "live on" : "live off"}
+              {liveActive ? "live on" : "live off"}
             </Button>
           </div>
         </div>
@@ -466,6 +537,11 @@ const LeaderSetup = () => {
             <StatusPill tone={manualStatus?.active || autoStatus?.active ? "amber" : "neutral"}>
               {manualStatus?.active || autoStatus?.active ? "running" : "ready"}
             </StatusPill>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-2">
+            <JointChecklist side="left" frame={liveFrame} manualStatus={manualStatus} autoStatus={autoStatus} />
+            <JointChecklist side="right" frame={liveFrame} manualStatus={manualStatus} autoStatus={autoStatus} />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -511,18 +587,8 @@ const LeaderSetup = () => {
                     center
                   </Button>
                   <Button
-                    variant={sampling ? "secondary" : "outline"}
-                    onClick={() => setSampling((value) => !value)}
-                    disabled={!manualStatus?.active}
-                    className={OUTLINE_BUTTON_CLASS}
-                  >
-                    <RotateCcw className="mr-2 h-4 w-4" />
-                    {sampling ? "stop sample" : "sample"}
-                  </Button>
-                  <Button
                     onClick={() =>
                       run("Finish manual calibration", () => manualFinish(baseUrl, fetchWithHeaders), () => {
-                        setSampling(false);
                         void refreshManualStatus();
                         void readLiveOnce();
                       })
@@ -537,7 +603,6 @@ const LeaderSetup = () => {
                     variant="outline"
                     onClick={() =>
                       run("Cancel manual calibration", () => manualCancel(baseUrl, fetchWithHeaders), () => {
-                        setSampling(false);
                         void refreshManualStatus();
                       })
                     }

@@ -219,3 +219,49 @@ def test_read_shared_live_positions_maps_both_leaders(
     assert result["leaders"]["left"]["motors"]["wrist_roll"]["raw"] == 2500
     assert result["leaders"]["right"]["motors"]["gripper"]["target"] == 100
     leader.close_shared_live_reader()
+
+
+def test_manual_manager_observes_live_positions_for_ranges() -> None:
+    from lelab import nori_leader_setup as leader
+
+    manager = leader.ManualCalibrationManager()
+    manager._session = leader.ManualSession(  # noqa: SLF001 - targeted state-machine unit test
+        id="demo",
+        side="left",
+        calibration_id="demo",
+        port_identity=leader.PortIdentity(device="/dev/ttyUSB0"),
+        ids=leader.LEFT_LEADER_IDS,
+        center={1: 2048, 2: 2048},
+        mins={1: 2048, 2: 2048},
+        maxes={1: 2048, 2: 2048},
+    )
+
+    manager.observe_positions({1: 1800, 2: 2300, 7: 1000})
+    manager.observe_positions({1: 2200, 2: 1900})
+
+    session = manager.status()["session"]
+    assert session["mins"][1] == 1800
+    assert session["maxes"][1] == 2200
+    assert session["mins"][2] == 1900
+    assert session["maxes"][2] == 2300
+    assert 7 not in session["mins"]
+
+
+def test_auto_manager_live_frame_uses_position_callback_state() -> None:
+    from lelab import nori_leader_setup as leader
+
+    manager = leader.AutoCalibrationManager()
+    manager.status = leader.AutoCalibrationStatus(
+        active=True,
+        status="running",
+        side="left",
+        current_positions={"left": {"shoulder_pan": 2058, "wrist_roll": 2500}},
+    )
+
+    frame = manager.live_frame(port="/dev/ttyUSB0", calibration_id="missing")
+
+    assert frame is not None
+    assert frame["port"] == "/dev/ttyUSB0"
+    assert frame["leaders"]["left"]["visible"] == 2
+    assert frame["leaders"]["left"]["motors"]["shoulder_pan"]["raw"] == 2058
+    assert frame["leaders"]["left"]["motors"]["wrist_roll"]["raw"] == 2500

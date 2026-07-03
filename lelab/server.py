@@ -518,12 +518,20 @@ def nori_leader_manual_start(body: NoriLeaderManualStartBody):
 
 @app.post("/nori/leader/manual/capture-center")
 def nori_leader_manual_capture_center():
-    return _leader_guard(nori_leader_manual_manager.capture_center)
+    def run():
+        close_shared_live_reader()
+        return nori_leader_manual_manager.capture_center()
+
+    return _leader_guard(run)
 
 
 @app.post("/nori/leader/manual/sample")
 def nori_leader_manual_sample():
-    return _leader_guard(nori_leader_manual_manager.sample)
+    def run():
+        close_shared_live_reader()
+        return nori_leader_manual_manager.sample()
+
+    return _leader_guard(run)
 
 
 @app.post("/nori/leader/manual/finish")

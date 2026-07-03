@@ -656,10 +656,22 @@ class ManualCalibrationManager:
                 return {"success": False, "message": "capture center before sampling ranges"}
             with SCSBus(session.port_identity.open_path) as bus:
                 positions = bus.read_positions(session.mins.keys())
-            for motor_id, pos in positions.items():
-                session.mins[motor_id] = min(session.mins[motor_id], pos)
-                session.maxes[motor_id] = max(session.maxes[motor_id], pos)
+            self._observe_positions_unlocked(positions)
             return {"success": True, "positions": positions, "session": session.to_json()}
+
+    def observe_positions(self, positions: dict[int, int]) -> None:
+        with self._lock:
+            self._observe_positions_unlocked(positions)
+
+    def _observe_positions_unlocked(self, positions: dict[int, int]) -> None:
+        session = self._session
+        if not session or not session.active or not session.center:
+            return
+        for motor_id, pos in positions.items():
+            if motor_id not in session.mins:
+                continue
+            session.mins[motor_id] = min(session.mins[motor_id], pos)
+            session.maxes[motor_id] = max(session.maxes[motor_id], pos)
 
     def finish(self) -> dict[str, Any]:
         with self._lock:
@@ -751,6 +763,7 @@ def run_powered_auto_calibration(
     port: str | None = None,
     stop_requested: Any | None = None,
     status_callback: Any | None = None,
+    position_callback: Any | None = None,
 ) -> dict[str, Any]:
     from .so101_auto_calibration import run_so101_auto_calibration
 
@@ -761,6 +774,7 @@ def run_powered_auto_calibration(
         result = run_so101_auto_calibration(
             bus,
             status_callback=status_callback,
+            position_callback=position_callback,
             stop_requested=stop_requested,
         )
     finally:
@@ -782,6 +796,7 @@ class AutoCalibrationStatus:
     message: str = ""
     error: str | None = None
     result: dict[str, Any] | None = None
+    current_positions: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 class AutoCalibrationManager:
@@ -822,6 +837,12 @@ class AutoCalibrationManager:
             with self._lock:
                 self.status.message = message
 
+        def set_positions(current_side: LeaderSide, positions: dict[str, int]) -> None:
+            with self._lock:
+                side_positions = self.status.current_positions.setdefault(current_side, {})
+                for joint, position in positions.items():
+                    side_positions[joint] = int(position)
+
         try:
             sides: list[LeaderSide] = ["left", "right"] if side == "both" else [side]
             results: dict[str, Any] = {}
@@ -837,6 +858,10 @@ class AutoCalibrationManager:
                     stop_requested=self._stop.is_set,
                     status_callback=lambda message, current_side=current_side: set_message(
                         f"{current_side}: {message.replace('SO-101', 'Nori L2 leader')}"
+                    ),
+                    position_callback=lambda positions, current_side=current_side: set_positions(
+                        current_side,
+                        positions,
                     ),
                 )
                 results[current_side] = result
@@ -862,6 +887,32 @@ class AutoCalibrationManager:
     def get_status(self) -> dict[str, Any]:
         with self._lock:
             return asdict(self.status)
+
+    def live_frame(self, *, port: str | None, calibration_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            active = self.status.active
+            positions_by_side = {
+                side: dict(positions)
+                for side, positions in self.status.current_positions.items()
+            }
+        if not active and not positions_by_side:
+            return None
+        raw_positions: dict[int, int] = {}
+        for side, positions in positions_by_side.items():
+            if side not in ("left", "right"):
+                continue
+            joint_ids = expected_joint_ids(side)  # type: ignore[arg-type]
+            for joint, position in positions.items():
+                motor_id = joint_ids.get(joint)
+                if motor_id is not None:
+                    raw_positions[motor_id] = int(position)
+        if not raw_positions:
+            return None
+        try:
+            calibration = load_leader_calibration(calibration_id)
+        except RuntimeError:
+            calibration = {}
+        return _format_shared_live_positions(raw_positions, port=port or "", calibration=calibration)
 
 
 auto_manager = AutoCalibrationManager()
@@ -980,6 +1031,7 @@ class SharedLivePositionManager:
                 if self._bus is None:
                     raise RuntimeError("leader live reader failed to open")
                 raw_positions = self._bus.read_positions(ALL_LEADER_IDS)
+                manual_manager.observe_positions(raw_positions)
                 return _format_shared_live_positions(
                     raw_positions,
                     port=resolved,
@@ -1031,6 +1083,9 @@ def read_shared_live_positions(
     port: str | None = None,
     calibration_id: str = DEFAULT_CALIBRATION_ID,
 ) -> dict[str, Any]:
+    auto_frame = auto_manager.live_frame(port=port, calibration_id=calibration_id)
+    if auto_frame is not None:
+        return auto_frame
     return shared_live_manager.read(port=port, calibration_id=calibration_id)
 
 

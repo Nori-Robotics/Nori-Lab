@@ -16,6 +16,7 @@ import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { useMemo } from "react";
 import { railReading } from "./TeleopStatus";
+import type { ArmSide } from "./teleop";
 
 // Normalized [-100,100] -> radians, clamped, scaled to `spanDeg` of half-travel each way.
 function jointRad(state: Record<string, number>, key: string, spanDeg: number): number {
@@ -25,33 +26,51 @@ function jointRad(state: Record<string, number>, key: string, spanDeg: number): 
 }
 
 // Scene geometry (arbitrary units; ~1 unit ≈ the rail travel). Tuned for legibility, not scale.
-const RAIL_TOP_Y = 1.35;
-const RAIL_LEN = 0.9; // vertical travel the carriage sweeps
-const UPPER_LEN = 0.42;
-const FORE_LEN = 0.36;
+const RAIL_TOP_Y = 1.5;
+const RAIL_LEN = 1.15; // vertical distance the carriage sweeps across full travel
+// Visual gain on the rail depth fraction. Was 4 to compensate for the Pi UNDER-reporting
+// height ~4x (mm_per_rev mis-scale). Fixed at the source 2026-07-03 (NORI_LIFT_MM_PER_REV
+// 28.455 -> 115.6), so the Pi now reports true mm across the full 0..650 mm travel — the full
+// range already maps to the full sweep. Keep at 1 (true tracking); a gain >1 now just clips
+// the lower travel. Raise only if you deliberately want an exaggerated view.
+const RAIL_VIS_GAIN = 1;
+const UPPER_LEN = 0.40;
+const FORE_LEN = 0.35;
 const WRIST_LEN = 0.12;
+const GRIP_LEN = 0.10;
 
 // One schematic arm: a chain of boxes nested through the joint rotations. `side` selects the
 // state keys and the base X offset / handedness.
-function Arm({ state, side }: { state: Record<string, number>; side: "left" | "right" }) {
+function Arm({ state, side, active }: { state: Record<string, number>; side: "left" | "right"; active: boolean }) {
   const p = `${side}_arm_`;
-  const sign = side === "left" ? -1 : 1;
+  // The model faces +Z (arm segments extend +Z), +Y up. For that frame the robot's LEFT is +X
+  // (right = cross(forward,up) = cross(+Z,+Y) = -X). So the left arm sits at +X, right at -X.
+  // (Was inverted, which drew the left_arm_* chain — and its green "active" highlight — on the
+  // robot's right side, so selecting "left" lit the wrong arm.)
+  const sign = side === "left" ? 1 : -1;
 
-  // Rail carriage height for this arm (0 = top, grows downward).
+  // Rail carriage height for this arm (0 = top, grows downward). Amplified for a punchier
+  // visual (see RAIL_VIS_GAIN); clamped so it never overruns the rail.
   const { frac } = railReading(state, `${side}_lift.pos`);
-  const carriageY = RAIL_TOP_Y - frac * RAIL_LEN;
+  const visFrac = Math.min(1, frac * RAIL_VIS_GAIN);
+  const carriageY = RAIL_TOP_Y - visFrac * RAIL_LEN;
 
   // Joint angles (schematic mapping; see file header).
-  const pan = jointRad(state, `${p}shoulder_pan.pos`, 90) * sign;
+  // `-sign`: pan yaw was inverted vs. the real joint; the -1 flips the direction while keeping
+  // the left/right mirror (the arms are mirror-mounted, so +joint yaws them opposite ways).
+  const pan = jointRad(state, `${p}shoulder_pan.pos`, 90) * -sign;
   const lift = jointRad(state, `${p}shoulder_lift.pos`, 90);
   const elbow = jointRad(state, `${p}elbow_flex.pos`, 90);
   const wristFlex = jointRad(state, `${p}wrist_flex.pos`, 90);
   const wristRoll = jointRad(state, `${p}wrist_roll.pos`, 180);
   const gripN = state[`${p}gripper.pos`];
   const grip = typeof gripN === "number" ? Math.max(0, Math.min(100, gripN)) : 0;
-  const jaw = 0.02 + (grip / 100) * 0.05; // half-gap between the two jaw cubes
+  // Default CLOSED (jaws touching at grip=0), swinging wide as grip opens. Exaggerated range
+  // so the open/close is obvious at a glance.
+  const jaw = 0.006 + (grip / 100) * 0.1; // half-gap between the two jaw cubes
 
-  const color = side === "left" ? "#38bdf8" : "#f472b6";
+  // Both arms white; the arm being teleoperated right now is highlighted green.
+  const color = active ? "#57d753" : "#f1f5f9";
 
   return (
     <group position={[sign * 0.28, 0, 0]}>
@@ -89,8 +108,8 @@ function Arm({ state, side }: { state: Record<string, number>; side: "left" | "r
               <group position={[0, 0, WRIST_LEN]}>
                 {[-1, 1].map((s) => (
                   <mesh key={s} position={[s * jaw, 0, 0.03]}>
-                    <boxGeometry args={[0.02, 0.05, 0.06]} />
-                    <meshStandardMaterial color="#e2e8f0" />
+                    <boxGeometry args={[0.02, 0.05, GRIP_LEN]} />
+                    <meshStandardMaterial color={color} />
                   </mesh>
                 ))}
               </group>
@@ -102,7 +121,7 @@ function Arm({ state, side }: { state: Record<string, number>; side: "left" | "r
   );
 }
 
-export function Robot3D({ state }: { state: Record<string, number> }) {
+export function Robot3D({ state, activeArm }: { state: Record<string, number>; activeArm: ArmSide }) {
   // Only render arms whose lift/joint keys are actually present in telemetry.
   const hasAny = useMemo(
     () => Object.keys(state).some((k) => k.endsWith("_arm_shoulder_pan.pos") || k.endsWith("_lift.pos")),
@@ -124,8 +143,8 @@ export function Robot3D({ state }: { state: Record<string, number> }) {
           <boxGeometry args={[0.8, 0.06, 0.4]} />
           <meshStandardMaterial color="#1e293b" />
         </mesh>
-        <Arm state={state} side="left" />
-        <Arm state={state} side="right" />
+        <Arm state={state} side="left" active={activeArm === "left"} />
+        <Arm state={state} side="right" active={activeArm === "right"} />
         <gridHelper args={[3, 12, "#1f2937", "#1f2937"]} position={[0, 0.34, 0]} />
         <OrbitControls enablePan={false} minDistance={0.9} maxDistance={4} target={[0, 0.9, 0]} />
       </Canvas>

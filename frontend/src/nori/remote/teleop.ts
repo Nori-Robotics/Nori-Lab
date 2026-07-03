@@ -12,7 +12,7 @@
 //   * auth: prove possession of the room token via HMAC-SHA256(token, robot-nonce)
 //   * TURN is additive (STUN-direct preferred); forceRelay validates the relay path
 
-import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
+import type { SignalingTransport } from "./signaling";
 import { AudioLatencyProbe, audioLatencyEnabled } from "./audioLatency";
 
 export type ControlMode = "cylindrical" | "joint";
@@ -53,7 +53,8 @@ export interface TelemetryView {
   // Since 2026-07-02 the daemon also adds "left_lift.pos"/"right_lift.pos" — software
   // multi-turn lift height (m3_m5 §5.5), rendered by the "Rail height" card (RailHeight in
   // TeleopStatus.tsx) and intended for the C6 Z offset. Units are real MILLIMETERS
-  // (28.455 mm/rev, HW-confirmed), zero = pose at daemon start (startup-relative until
+  // (~115.6 mm per encoder rev — the HW-quoted 28.455 is for a shaft ~4x faster than the
+  // encoder; corrected on-unit 2026-07-03), zero = pose at daemon start (startup-relative until
   // Pi-side stall homing lands, so values can be negative). The keys are OMITTED while the
   // Pi's tracker isn't valid — treat absence as "height unknown", not zero.
   state: Record<string, number>;
@@ -73,12 +74,16 @@ export interface CallState {
 }
 
 export interface RemoteTeleopOptions {
-  supabase: SupabaseClient;
+  // Out-of-band signaling transport (SDP/ICE + room handshake). The fork injects a
+  // SupabaseSignaling; an external SDK consumer supplies their own. See signaling.ts.
+  signaling: SignalingTransport;
   videoEl: HTMLVideoElement;
   // Sink for the robot's inbound audio track. A separate element from videoEl because the
   // video element is muted for autoplay; audio must play from its own unmuted element.
   audioEl?: HTMLAudioElement;
-  room: string;
+  // NOTE: the signaling ROOM is now owned by the SignalingTransport (it addresses the room),
+  // so it's no longer a RemoteTeleop option. `token` stays here because RemoteTeleop itself
+  // performs the HMAC auth handshake over whatever transport is injected.
   token: string; // room token (HMAC secret); "" = open dev room
   stun: string;
   turnUrls: string[];
@@ -177,7 +182,6 @@ async function hmacHex(key: string, msg: string): Promise<string> {
 
 export class RemoteTeleop {
   private o: RemoteTeleopOptions;
-  private channel: RealtimeChannel | null = null;
   private pc: RTCPeerConnection | null = null;
   private remoteSet = false;
   private pendingIce: RTCIceCandidateInit[] = [];
@@ -392,7 +396,6 @@ export class RemoteTeleop {
   // ---- lifecycle -----------------------------------------------------------
   async start() {
     this.stopped = false;
-    const supabase = this.o.supabase;
     if (this.o.forceRelay && !this.o.turnUrls.length) {
       this.log("force relay is on but no TURN URL set — connect will fail");
     }
@@ -401,72 +404,69 @@ export class RemoteTeleop {
         (this.o.forceRelay ? "  [FORCE RELAY]" : "")
     );
 
-    if (this.channel) { try { await this.channel.unsubscribe(); } catch { /* noop */ } }
-    const channel = supabase.channel(this.o.room, { config: { broadcast: { self: false } } });
-    this.channel = channel;
-
-    // a fresh offer => a fresh peer connection (handles robot restarts / reconnects)
-    channel.on("broadcast", { event: "sdp" }, async ({ payload }) => {
-      if (!payload || payload.type !== "offer") return;
-      this.log("offer received; building fresh peer + answering...");
-      const pc = this.freshPeer();
-      await pc.setRemoteDescription({ type: "offer", sdp: payload.sdp });
-      this.remoteSet = true;
-      for (const c of this.pendingIce) {
-        try { await pc.addIceCandidate(c); } catch (e) { this.log("ice warn", (e as Error).message); }
-      }
-      this.pendingIce = [];
-      // Reserve the audio UPLINK before answering: the robot offers audio sendrecv (M3b), but a
-      // browser answers RECVONLY by default (it only agreed to receive the robot mic). Flip our
-      // audio transceiver to sendrecv now so the ANSWER advertises send — then joining the call
-      // is a pure replaceTrack, never a renegotiation (R-X.1). Only when the robot actually
-      // invites our voice, so the M3a sendonly path stays recvonly.
-      if (this.offerWantsAudioUplink(payload.sdp)) {
-        const at = pc.getTransceivers().find((t) => t.receiver.track?.kind === "audio");
-        if (at && at.direction !== "sendrecv") {
-          try { at.direction = "sendrecv"; this.log("reserved audio uplink (sendrecv) for the call"); }
-          catch (e) { this.log("could not reserve audio uplink:", (e as Error).message); }
+    // All SDP/ICE + the room handshake ride the injected SignalingTransport (Supabase in the
+    // fork, BYO for external SDK consumers). The WebRTC/auth/jog logic below is transport-agnostic.
+    await this.o.signaling.connect({
+      // a fresh offer => a fresh peer connection (handles robot restarts / reconnects)
+      onSdp: async (payload) => {
+        if (!payload || payload.type !== "offer") return;
+        this.log("offer received; building fresh peer + answering...");
+        const pc = this.freshPeer();
+        await pc.setRemoteDescription({ type: "offer", sdp: payload.sdp });
+        this.remoteSet = true;
+        for (const c of this.pendingIce) {
+          try { await pc.addIceCandidate(c); } catch (e) { this.log("ice warn", (e as Error).message); }
         }
-      }
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      channel.send({ type: "broadcast", event: "sdp", payload: { type: "answer", sdp: answer.sdp } });
-      this.log("answer sent");
-      // If a call was already joined before (re)connect, re-wire mic/cam onto this fresh
-      // peer's transceivers. Pure replaceTrack — no renegotiation (R-X.1).
-      this.attachLocalMedia();
-    });
+        this.pendingIce = [];
+        // Reserve the audio UPLINK before answering: the robot offers audio sendrecv (M3b), but a
+        // browser answers RECVONLY by default (it only agreed to receive the robot mic). Flip our
+        // audio transceiver to sendrecv now so the ANSWER advertises send — then joining the call
+        // is a pure replaceTrack, never a renegotiation (R-X.1). Only when the robot actually
+        // invites our voice, so the M3a sendonly path stays recvonly.
+        if (this.offerWantsAudioUplink(payload.sdp)) {
+          const at = pc.getTransceivers().find((t) => t.receiver.track?.kind === "audio");
+          if (at && at.direction !== "sendrecv") {
+            try { at.direction = "sendrecv"; this.log("reserved audio uplink (sendrecv) for the call"); }
+            catch (e) { this.log("could not reserve audio uplink:", (e as Error).message); }
+          }
+        }
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        this.o.signaling.sendSdp({ type: "answer", sdp: answer.sdp ?? "" });
+        this.log("answer sent");
+        // If a call was already joined before (re)connect, re-wire mic/cam onto this fresh
+        // peer's transceivers. Pure replaceTrack — no renegotiation (R-X.1).
+        this.attachLocalMedia();
+      },
 
-    channel.on("broadcast", { event: "ice" }, async ({ payload }) => {
-      const cand = { candidate: payload.candidate, sdpMLineIndex: payload.sdpMLineIndex };
-      if (this.pc && this.remoteSet) {
-        try { await this.pc.addIceCandidate(cand); } catch (e) { this.log("ice warn", (e as Error).message); }
-      } else {
-        this.pendingIce.push(cand);
-      }
-    });
+      onIce: async (payload) => {
+        const cand = { candidate: payload.candidate, sdpMLineIndex: payload.sdpMLineIndex };
+        if (this.pc && this.remoteSet) {
+          try { await this.pc.addIceCandidate(cand); } catch (e) { this.log("ice warn", (e as Error).message); }
+        } else {
+          this.pendingIce.push(cand);
+        }
+      },
 
-    // robot (re)joined -> it carries the auth nonce; prove we hold the token (HMAC),
-    // then ask for a fresh offer. (No token configured on either side = open room.)
-    channel.on("broadcast", { event: "robot_here" }, async ({ payload }) => {
-      this.connected = false;
-      try {
-        this.curMac =
-          this.o.token && payload && payload.nonce ? await hmacHex(this.o.token, payload.nonce) : "";
-      } catch (e) { this.log("auth error:", (e as Error).message); this.curMac = ""; }
-      this.log("robot announced — sending 'ready'" + (this.curMac ? " (authenticated)" : ""));
-      this.sendReady();
-    });
+      // robot (re)joined -> it carries the auth nonce; prove we hold the token (HMAC),
+      // then ask for a fresh offer. (No token configured on either side = open room.)
+      onRobotHere: async (payload) => {
+        this.connected = false;
+        try {
+          this.curMac =
+            this.o.token && payload && payload.nonce ? await hmacHex(this.o.token, payload.nonce) : "";
+        } catch (e) { this.log("auth error:", (e as Error).message); this.curMac = ""; }
+        this.log("robot announced — sending 'ready'" + (this.curMac ? " (authenticated)" : ""));
+        this.sendReady();
+      },
 
-    channel.subscribe((status) => {
-      this.log("channel:", status);
-      if (status === "SUBSCRIBED") {
+      onOpen: () => {
         this.connected = false;
         this.sendReady();
         this.log("announced 'ready' — waiting for robot offer");
         if (this.retryTimer) clearInterval(this.retryTimer);
         this.retryTimer = setInterval(() => { if (!this.connected) this.sendReady(); }, 2000);
-      }
+      },
     });
 
     if (!this.jogTimer) this.jogTimer = setInterval(() => this.jogTick(), JOG_HZ_MS);
@@ -487,9 +487,9 @@ export class RemoteTeleop {
     if (this.jogTimer) { clearInterval(this.jogTimer); this.jogTimer = null; }
     this.latencyProbe?.stop();
     // tell the robot to exit (clean restart) before we tear down
-    try { this.channel?.send({ type: "broadcast", event: "bye", payload: {} }); } catch { /* noop */ }
+    this.o.signaling.sendBye();
     if (this.pc) { try { this.pc.close(); } catch { /* noop */ } this.pc = null; }
-    if (this.channel) { try { await this.channel.unsubscribe(); } catch { /* noop */ } this.channel = null; }
+    await this.o.signaling.close();
     this.controlCh = null;
     this.connected = false;
     this.tel.active = false;
@@ -505,13 +505,7 @@ export class RemoteTeleop {
   }
 
   private sendReady() {
-    if (this.channel) {
-      this.channel.send({
-        type: "broadcast",
-        event: "ready",
-        payload: this.curMac ? { mac: this.curMac } : {},
-      });
-    }
+    this.o.signaling.sendReady(this.curMac ? { mac: this.curMac } : {});
   }
 
   private freshPeer(): RTCPeerConnection {
@@ -569,11 +563,10 @@ export class RemoteTeleop {
       }
     };
     pc.onicecandidate = (ev) => {
-      if (ev.candidate && this.channel) {
-        this.channel.send({
-          type: "broadcast",
-          event: "ice",
-          payload: { sdpMLineIndex: ev.candidate.sdpMLineIndex, candidate: ev.candidate.candidate },
+      if (ev.candidate) {
+        this.o.signaling.sendIce({
+          sdpMLineIndex: ev.candidate.sdpMLineIndex,
+          candidate: ev.candidate.candidate,
         });
       }
     };

@@ -22,6 +22,7 @@ import {
   type ControlMode,
   type TelemetryView,
 } from "@/nori/remote/teleop";
+import { SupabaseSignaling } from "@/nori/remote/signaling-supabase";
 import { VrSession } from "@/nori/remote/vr-session";
 import { TelemetryPanel, GripForce, ControlLegend, CallBar, RailHeight } from "@/nori/remote/TeleopStatus";
 import { Robot3D } from "@/nori/remote/Robot3D";
@@ -149,11 +150,12 @@ const Remote = () => {
     setConnecting(true);
     setLogLines([]);
     const turnUrls = settings.turn.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+    const room = settings.room.trim() || serial || "nori-dev";
     const teleop = new RemoteTeleop({
-      supabase: getSupabase(),
+      // The fork's transport is Supabase Realtime; the room lives on the transport now.
+      signaling: new SupabaseSignaling(getSupabase(), room, appendLog),
       videoEl: videoRef.current,
       audioEl: audioRef.current ?? undefined,
-      room: settings.room.trim() || serial || "nori-dev",
       token: settings.token.trim(),
       stun: settings.stun.trim() || DEFAULT_STUN,
       turnUrls,
@@ -365,7 +367,7 @@ const Remote = () => {
               <CardTitle className="text-sm">Robot 3D (schematic)</CardTitle>
             </CardHeader>
             <CardContent className="pb-3">
-              <Robot3D state={tel.state} />
+              <Robot3D state={tel.state} activeArm={settings.arm} />
             </CardContent>
           </Card>
 

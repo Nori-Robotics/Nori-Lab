@@ -7,7 +7,10 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@nori/sdk": ["./packages/nori-sdk/src/index.ts"],
+      "@nori/sdk/vr": ["./packages/nori-sdk/src/entry-vr.ts"],
+      "@nori/sdk/supabase": ["./packages/nori-sdk/src/signaling-supabase.ts"]
     },
     "noImplicitAny": false,
     "noUnusedParameters": false,

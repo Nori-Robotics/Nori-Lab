@@ -24,8 +24,14 @@ export default defineConfig(({ mode }) => ({
     allowedHosts: ["lerobot-lelab.hf.space"],
   },
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
+    // Array form: order matters — the @nori/sdk subpaths must precede the bare "@nori/sdk"
+    // prefix (which would otherwise swallow "@nori/sdk/vr" etc). External devs resolve these
+    // via the package's `exports` map; the app resolves them straight to source (no build step).
+    alias: [
+      { find: "@nori/sdk/vr", replacement: path.resolve(__dirname, "./packages/nori-sdk/src/entry-vr.ts") },
+      { find: "@nori/sdk/supabase", replacement: path.resolve(__dirname, "./packages/nori-sdk/src/signaling-supabase.ts") },
+      { find: "@nori/sdk", replacement: path.resolve(__dirname, "./packages/nori-sdk/src/index.ts") },
+      { find: "@", replacement: path.resolve(__dirname, "./src") },
+    ],
   },
 }));

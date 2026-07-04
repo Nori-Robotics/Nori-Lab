@@ -12,7 +12,7 @@ import {
   type CallState,
   type ControlMode,
   type TelemetryView,
-} from "./teleop";
+} from "@nori/sdk";
 
 // A labelled stat chip: dim label over a mono value, with an optional tone.
 function Stat({

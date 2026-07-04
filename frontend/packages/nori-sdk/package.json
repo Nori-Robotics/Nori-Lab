@@ -1,0 +1,45 @@
+{
+  "name": "@nori/sdk",
+  "version": "0.0.0",
+  "description": "Robot-local teleop SDK for the Nori daemon (nori-protocol over WebRTC). Connect, jog, stream telemetry/video — the daemon defends itself.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "private": true,
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "src",
+    "examples",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./vr": {
+      "types": "./dist/entry-vr.d.ts",
+      "import": "./dist/entry-vr.js"
+    },
+    "./supabase": {
+      "types": "./dist/signaling-supabase.d.ts",
+      "import": "./dist/signaling-supabase.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@supabase/supabase-js": "^2.0.0",
+    "three": "^0.177.0"
+  },
+  "peerDependenciesMeta": {
+    "@supabase/supabase-js": {
+      "optional": true
+    },
+    "three": {
+      "optional": true
+    }
+  }
+}

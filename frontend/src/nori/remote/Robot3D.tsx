@@ -16,7 +16,7 @@ import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { useMemo } from "react";
 import { railReading } from "./TeleopStatus";
-import type { ArmSide } from "./teleop";
+import type { ArmSide } from "@nori/sdk";
 
 // Normalized [-100,100] -> radians, clamped, scaled to `spanDeg` of half-travel each way.
 function jointRad(state: Record<string, number>, key: string, spanDeg: number): number {

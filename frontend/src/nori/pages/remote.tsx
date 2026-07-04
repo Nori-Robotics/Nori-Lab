@@ -21,9 +21,9 @@ import {
   type CallState,
   type ControlMode,
   type TelemetryView,
-} from "@/nori/remote/teleop";
-import { SupabaseSignaling } from "@/nori/remote/signaling-supabase";
-import { VrSession } from "@/nori/remote/vr-session";
+} from "@nori/sdk";
+import { SupabaseSignaling } from "@nori/sdk/supabase";
+import { VrSession } from "@nori/sdk/vr";
 import { TelemetryPanel, GripForce, ControlLegend, CallBar, RailHeight } from "@/nori/remote/TeleopStatus";
 import { Robot3D } from "@/nori/remote/Robot3D";
 import { isM6VideoEnabled } from "@/nori/remote/flags";

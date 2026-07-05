@@ -32,6 +32,16 @@ export interface ExternalJog {
   right_lift?: number;
 }
 
+// A ready-to-send `leader_action_deg` payload (the inner object of
+// {type:"control", leader_action_deg:{...}}). Unlike ExternalJog (velocity rates), this is
+// an ABSOLUTE-pose input: physical SO101 leader arms feed their measured joint targets
+// straight through and the daemon does calibration-normalize + IK + a server-side slew
+// clamp (NORI_LEADER_SLEW). Keys are flat "<side>_arm_<joint>.pos" (the follower motor
+// names) — e.g. "left_arm_shoulder_pan.pos". Body joints are DEGREES around the calibrated
+// leader zero; grippers are normalized [0,100]. Matches nori-protocol control.json
+// $defs/leaderActionDeg and the daemon's normalize_leader_action_deg().
+export type LeaderActionDeg = Record<string, number>;
+
 export interface TelemetryView {
   loopHz: number;
   safety: string;
@@ -81,18 +91,6 @@ export interface RemoteTeleopOptions {
   // Sink for the robot's inbound audio track. A separate element from videoEl because the
   // video element is muted for autoplay; audio must play from its own unmuted element.
   audioEl?: HTMLAudioElement;
-  // --- multi-camera (optional; single-camera robots ignore all of this) ---------------------
-  // The robot may send more than one video track (one per camera). `videoEl` above always
-  // receives the PRIMARY feed (first track) so VR and single-camera clients keep working
-  // unchanged. To render every feed (a grid), provide these:
-  //   onVideoTrack   — fired once per inbound video track, keyed by a STABLE id (the transceiver
-  //                    mid). Attach the stream to your own <video>; key your UI by this id.
-  //   onVideoRemoved — that track ended (camera unplugged / pipeline restart).
-  //   onCameraNames  — id -> human camera name, from the robot's `video_map` control message.
-  //                    Arrives independently of the tracks (either order); relabel your tiles.
-  onVideoTrack?: (id: string, stream: MediaStream) => void;
-  onVideoRemoved?: (id: string) => void;
-  onCameraNames?: (namesById: Record<string, string>) => void;
   // NOTE: the signaling ROOM is now owned by the SignalingTransport (it addresses the room),
   // so it's no longer a RemoteTeleop option. `token` stays here because RemoteTeleop itself
   // performs the HMAC auth handshake over whatever transport is injected.
@@ -202,10 +200,6 @@ export class RemoteTeleop {
   private latencyProbe: AudioLatencyProbe | null = null; // R-X.2 audio-latency harness (per peer)
   private jogTimer: ReturnType<typeof setInterval> | null = null;
   private controlCh: RTCDataChannel | null = null;
-  // --- multi-camera track routing (reset per fresh peer) ---
-  private videoByMid = new Map<string, MediaStream>(); // mid -> its inbound stream
-  private camNameByMid = new Map<string, string>();     // mid -> camera name (from video_map)
-  private primaryMid: string | null = null;             // which track feeds `videoEl`
   private curMac = ""; // HMAC of the robot's nonce, proving we hold the token
   private linkMode: "lan" | "wan" | null = null; // measured ICE path -> daemon watchdog
   private mode: ControlMode = "cylindrical";
@@ -213,6 +207,11 @@ export class RemoteTeleop {
   // (set by the VR session each frame; null = keyboard owns the stream). An all-zeros
   // payload is a deliberate "hold" (e.g. clutch released) — distinct from null.
   private externalJog: ExternalJog | null = null;
+  // When non-null, the jog tick attaches these ABSOLUTE leader targets to the control
+  // frame (arms follow the physical leader arms); base + lift still come from the keyboard.
+  // Set by the leader driver each poll; null = no leader source (arms owned by keyboard/VR).
+  private externalLeader: LeaderActionDeg | null = null;
+  private seq = 0; // monotonic control-frame counter (nori-protocol control.seq)
   private readonly pressed = new Set<string>();
   private readonly cmdDown = new Set<string>();
   // loop_hz / temp / status only ride the periodic telemetry block, not every per-tick
@@ -246,6 +245,14 @@ export class RemoteTeleop {
   // to release the stream back to the keyboard. The next jogTick uses it as-is.
   setExternalJog(jog: ExternalJog | null) {
     this.externalJog = jog;
+  }
+
+  // Physical leader arms hand the jog tick their measured absolute targets (degrees /
+  // gripper [0,100]) keyed "<side>_arm_<joint>.pos". Pass null to release the arms back to
+  // the keyboard/VR. Coexists with jog: the leader owns the arms, base + lift stay on the
+  // keyboard, so the operator can drive the base while the arms mirror the leaders.
+  setLeaderAction(leader: LeaderActionDeg | null) {
+    this.externalLeader = leader;
   }
 
   // Public command surface for non-keyboard inputs (VR E-STOP / reset). Mirrors sendCmd.
@@ -528,10 +535,6 @@ export class RemoteTeleop {
     if (this.pc) { try { this.pc.close(); } catch { /* noop */ } }
     this.remoteSet = false;
     this.pendingIce = [];
-    // A fresh peer renegotiates all media, so drop the old per-camera track routing.
-    this.videoByMid.clear();
-    this.camNameByMid.clear();
-    this.primaryMid = null;
     const pc = new RTCPeerConnection({
       iceServers: this.iceServers(),
       iceTransportPolicy: this.o.forceRelay ? "relay" : "all",
@@ -557,25 +560,10 @@ export class RemoteTeleop {
         this.emitCall();
         return;
       }
-      // ---- video: one track per camera. Route each by its transceiver mid (stable id). ----
-      const mid = ev.transceiver?.mid ?? `idx${this.videoByMid.size}`;
-      const stream = ev.streams[0];
-      this.videoByMid.set(mid, stream);
-      // Primary feed (first video track) -> videoEl, so VR + single-camera clients are unchanged.
-      if (this.primaryMid === null) {
-        this.primaryMid = mid;
-        if (this.o.videoEl.srcObject !== stream) this.o.videoEl.srcObject = stream;
-        this.log("video track attached (primary)");
-      } else {
-        this.log(`video track attached (camera ${this.camNameByMid.get(mid) ?? mid})`);
+      if (this.o.videoEl.srcObject !== ev.streams[0]) {
+        this.o.videoEl.srcObject = ev.streams[0];
+        this.log("video track attached");
       }
-      // Per-camera routing for a multi-feed grid (no-op if the app didn't opt in).
-      this.o.onVideoTrack?.(mid, stream);
-      ev.track.onended = () => {
-        this.videoByMid.delete(mid);
-        this.o.onVideoRemoved?.(mid);
-        if (this.primaryMid === mid) this.primaryMid = null; // let the next track become primary
-      };
     };
     pc.ondatachannel = (ev) => this.setupControl(ev.channel); // robot opens 'control'
     pc.oniceconnectionstatechange = () => this.log("ice:", pc.iceConnectionState);
@@ -699,18 +687,6 @@ export class RemoteTeleop {
         this.emitCall();
       }
       this.o.onTelemetry({ ...this.tel });
-    } else if (m.type === "video_map") {
-      // Robot maps each video m-line (by transceiver mid) to a camera name. May arrive before
-      // or after the tracks themselves; the app relabels its tiles from onCameraNames.
-      const cams = Array.isArray(m.cameras) ? m.cameras : [];
-      for (const c of cams) {
-        const cc = c as { mid?: unknown; name?: unknown };
-        if (cc && cc.mid != null && typeof cc.name === "string") {
-          this.camNameByMid.set(String(cc.mid), cc.name);
-        }
-      }
-      this.o.onCameraNames?.(Object.fromEntries(this.camNameByMid));
-      this.log("video_map: " + JSON.stringify(Object.fromEntries(this.camNameByMid)));
     } else if (m.type === "ack") {
       this.log("daemon ack (watchdog=" + JSON.stringify(m.watchdog_profile || m.watchdog || "?") + ")");
     } else if (m.type === "error") {
@@ -778,11 +754,15 @@ export class RemoteTeleop {
     if (!ch || ch.readyState !== "open") return;
     if (ch.bufferedAmount > BUFFER_LIMIT) return; // congested -> skip, don't pile up latency
 
+    const leader = this.externalLeader;
+
     // VR (or another mapper) owns the stream: send its payload verbatim. It already
     // carries left_arm/right_arm/base/left_lift/right_lift in the daemon's jog vocabulary, so this is
     // the identical wire frame the keyboard path below produces — just a different source.
-    if (this.externalJog) {
-      this.dcSend({ type: "control", jog: this.externalJog });
+    // Suppressed while a leader source drives the arms: leader (absolute) and VR-jog would
+    // otherwise fight over the same arm joints.
+    if (this.externalJog && !leader) {
+      this.dcSend({ type: "control", seq: this.seq++, jog: this.externalJog });
       return;
     }
 
@@ -796,14 +776,22 @@ export class RemoteTeleop {
     const base: Record<string, number> = {};
     let z = 0;
     for (const k of this.pressed) {
-      if (k in km) { const [d, s] = km[k]; a[d] = s; }
+      // While a leader source drives the arms, arm keys are ignored (leader wins on those
+      // joints); base + lift keys still apply so the operator drives the base/rails by hand.
+      if (!leader && k in km) { const [d, s] = km[k]; a[d] = s; }
       else if (k in BASE_KEYS) { const [dof, s] = BASE_KEYS[k]; base[dof] = s; }
       else if (k in ZLIFT_KEYS) z = ZLIFT_KEYS[k];
     }
-    const jog: Record<string, unknown> = { [`${this.o.arm}_arm`]: a };
-    if (Object.keys(base).length) jog.base = base;
+    // Leader mode: arms come from leader_action_deg, so the jog carries only base + lift.
+    // Always include a base object (even empty) so the daemon keeps commanding base velocity
+    // every frame — parity with the keyboard-arm path, whose ever-present arm dict is what
+    // keeps the daemon's latest_jog fresh so a released base key can't latch its last speed.
+    const jog: Record<string, unknown> = leader ? { base } : { [`${this.o.arm}_arm`]: a };
+    if (!leader && Object.keys(base).length) jog.base = base;
     // u/o lift the CURRENTLY SELECTED arm (the dropdown that scopes the arm keys).
     if (z) jog[`${this.o.arm}_lift`] = z;
-    this.dcSend({ type: "control", jog });
+    const frame: Record<string, unknown> = { type: "control", seq: this.seq++, jog };
+    if (leader) frame.leader_action_deg = leader;
+    this.dcSend(frame);
   }
 }

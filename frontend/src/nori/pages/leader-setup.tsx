@@ -321,6 +321,15 @@ const LeaderSetup = () => {
   }, [autoDetectPort]);
 
   useEffect(() => {
+    // Don't poll live telemetry until a leader USB port is known (auto-detected or
+    // manually saved). Before setup there's no hardware to read, so polling would just
+    // spam the backend with requests that resolve to a "not connected" frame.
+    if (!sharedPort.trim()) {
+      setLiveFrame(null);
+      setLiveError(null);
+      return undefined;
+    }
+
     let cancelled = false;
     let timer: number | undefined;
 
@@ -342,7 +351,7 @@ const LeaderSetup = () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [readLiveOnce]);
+  }, [readLiveOnce, sharedPort]);
 
   useEffect(() => {
     return () => {

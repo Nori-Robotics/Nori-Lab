@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNori } from "@/nori/NoriContext";
+import { useApi } from "@/contexts/ApiContext";
 import { getSupabase } from "@/nori/auth/supabase";
 import {
   RemoteTeleop,
@@ -26,7 +27,7 @@ import { SupabaseSignaling } from "@nori/sdk/supabase";
 import { VrSession } from "@nori/sdk/vr";
 import { TelemetryPanel, GripForce, ControlLegend, CallBar, RailHeight } from "@/nori/remote/TeleopStatus";
 import { Robot3D } from "@/nori/remote/Robot3D";
-import { CameraGrid } from "@/nori/remote/CameraGrid";
+import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import { isM6VideoEnabled } from "@/nori/remote/flags";
 
 const DEFAULT_STUN = "stun:stun.l.google.com:19302";
@@ -68,11 +69,13 @@ function loadSettings(): Settings {
 
 const Remote = () => {
   const { ready, customer } = useNori();
+  const { baseUrl, fetchWithHeaders } = useApi();
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const selfViewRef = useRef<HTMLVideoElement>(null);
   const teleopRef = useRef<RemoteTeleop | null>(null);
   const vrRef = useRef<VrSession | null>(null);
+  const leaderRef = useRef<LeaderDriver | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const m6 = isM6VideoEnabled();
 
@@ -81,14 +84,14 @@ const Remote = () => {
   const [running, setRunning] = useState(false);
   const [inVr, setInVr] = useState(false);
   const [xrSupported, setXrSupported] = useState<boolean | null>(null);
+  // Leader-arm control: when active the physical dual leaders drive the robot's arms
+  // (absolute leader_action_deg); base + lift stay on the keyboard. leaderCount is how many
+  // motors fed the last frame (0 = arms unplugged / bus paused).
+  const [leaderActive, setLeaderActive] = useState(false);
+  const [leaderCount, setLeaderCount] = useState(0);
   const [connState, setConnState] = useState("idle");
   const [controlActive, setControlActive] = useState(false);
   const [mode, setMode] = useState<ControlMode>("cylindrical");
-  // Multi-camera: inbound robot video feeds keyed by stable id (transceiver mid), their names,
-  // and which one is promoted to the big <video>. Populated via the RemoteTeleop video callbacks.
-  const [camStreams, setCamStreams] = useState<Record<string, MediaStream>>({});
-  const [camNames, setCamNames] = useState<Record<string, string>>({});
-  const [activeCam, setActiveCam] = useState<string | null>(null);
   const [tel, setTel] = useState<TelemetryView>({
     loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {}, state: {},
   });
@@ -155,9 +158,6 @@ const Remote = () => {
     if (!videoRef.current) return;
     setConnecting(true);
     setLogLines([]);
-    setCamStreams({});
-    setCamNames({});
-    setActiveCam(null);
     const turnUrls = settings.turn.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
     const room = settings.room.trim() || serial || "nori-dev";
     const teleop = new RemoteTeleop({
@@ -179,16 +179,6 @@ const Remote = () => {
       onControlActive: setControlActive,
       onCurrents: (c) => vrRef.current?.setCurrents(c), // gripper current -> VR haptics
       onCall: setCall,
-      // Multi-camera feeds: collect each track by id, and default the first one as the "main".
-      onVideoTrack: (id, stream) => {
-        setCamStreams((s) => ({ ...s, [id]: stream }));
-        setActiveCam((cur) => cur ?? id); // first feed becomes the main view (matches videoEl)
-      },
-      onVideoRemoved: (id) => {
-        setCamStreams((s) => { const n = { ...s }; delete n[id]; return n; });
-        setActiveCam((cur) => (cur === id ? null : cur));
-      },
-      onCameraNames: setCamNames,
     });
     teleopRef.current = teleop;
     try {
@@ -203,6 +193,10 @@ const Remote = () => {
   };
 
   const disconnect = useCallback(async () => {
+    leaderRef.current?.stop();
+    leaderRef.current = null;
+    setLeaderActive(false);
+    setLeaderCount(0);
     await vrRef.current?.stop();
     vrRef.current = null;
     const t = teleopRef.current;
@@ -234,6 +228,37 @@ const Remote = () => {
       vrRef.current = null;
     }
   };
+
+  // ---- leader-arm control -------------------------------------------------
+  // Start/stop the physical dual leader arms driving the robot's arms over the same live
+  // session. The driver polls /nori/leader/live and feeds absolute targets to RemoteTeleop;
+  // base + lift keep working on the keyboard. Toggling off releases the arms to the keyboard.
+  const stopLeader = useCallback(() => {
+    leaderRef.current?.stop();
+    leaderRef.current = null;
+    setLeaderActive(false);
+    setLeaderCount(0);
+  }, []);
+
+  const enterLeader = useCallback(() => {
+    const teleop = teleopRef.current;
+    if (!teleop) return;
+    const driver = new LeaderDriver({
+      teleop,
+      baseUrl,
+      fetcher: fetchWithHeaders,
+      onFrame: (count) => setLeaderCount(count),
+      onError: (msg) => appendLog("leader read paused: " + msg),
+    });
+    leaderRef.current = driver;
+    driver.start();
+    setLeaderActive(true);
+  }, [baseUrl, fetchWithHeaders, appendLog]);
+
+  const toggleLeader = useCallback(() => {
+    if (leaderActive) stopLeader();
+    else enterLeader();
+  }, [leaderActive, enterLeader, stopLeader]);
 
   // ---- two-way audio call (Phase 7 §B) ------------------------------------
   const joinCall = async () => {
@@ -276,7 +301,7 @@ const Remote = () => {
   }, [running]);
 
   // Tear down on unmount / navigate away (also fires the robot 'bye' for a clean restart).
-  useEffect(() => () => { vrRef.current?.stop(); teleopRef.current?.stop(); }, []);
+  useEffect(() => () => { leaderRef.current?.stop(); vrRef.current?.stop(); teleopRef.current?.stop(); }, []);
 
   return (
     <section className="space-y-4">
@@ -320,24 +345,6 @@ const Remote = () => {
               style={{ aspectRatio: "4 / 3" }}
             />
           </div>
-
-          {/* Multi-camera strip — only when the robot sends more than one feed. Click a tile to
-              promote it to the main view above. Single-camera robots show nothing extra here. */}
-          {Object.keys(camStreams).length > 1 && (
-            <CameraGrid
-              streams={camStreams}
-              names={camNames}
-              activeId={activeCam}
-              onSelect={(id) => {
-                const stream = camStreams[id];
-                if (stream && videoRef.current && videoRef.current.srcObject !== stream) {
-                  videoRef.current.srcObject = stream;
-                }
-                setActiveCam(id);
-              }}
-            />
-          )}
-
           {/* Robot inbound audio — unmuted sink, no video element can play it (video is muted). */}
           <audio ref={audioRef} autoPlay className="hidden" />
 
@@ -369,6 +376,14 @@ const Remote = () => {
                 {inVr ? "In VR" : "Enter VR"}
               </Button>
             )}
+            <Button
+              variant={leaderActive ? "default" : "secondary"}
+              onClick={toggleLeader}
+              disabled={!running || connState !== "connected"}
+              title="Drive the robot's arms from the physical dual leader arms (base + lift stay on the keyboard)"
+            >
+              {leaderActive ? `Leader on · ${leaderCount}/12` : "Leader control"}
+            </Button>
             <label className="flex items-center gap-2 text-sm">
               Arm
               <select

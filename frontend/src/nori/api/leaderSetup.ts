@@ -58,6 +58,10 @@ export interface LeaderLiveSide {
 
 export interface LeaderLiveResponse {
   success: boolean;
+  // false when no leader hardware is reachable (ports unconfigured or arm unplugged);
+  // the frame is still well-formed with visible === 0 and reason set.
+  connected?: boolean;
+  reason?: string | null;
   port: string;
   leaders: Record<LeaderSide, LeaderLiveSide>;
   updated_at: number;

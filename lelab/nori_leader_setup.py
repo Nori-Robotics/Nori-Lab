@@ -1112,10 +1112,25 @@ def _format_shared_live_positions(
 
     return {
         "success": True,
+        "connected": True,
+        "reason": None,
         "port": port,
         "leaders": leaders,
         "updated_at": time.time(),
     }
+
+
+def _disconnected_live_frame(*, port: str, reason: str) -> dict[str, Any]:
+    """A well-formed live frame for when no leader hardware is reachable.
+
+    Returned instead of raising so the UI's live poll gets a clean 200
+    "nothing connected" state rather than a stream of 400s whenever the arms
+    aren't plugged in or ports haven't been configured yet.
+    """
+    frame = _format_shared_live_positions({}, port=port, calibration={})
+    frame["connected"] = False
+    frame["reason"] = reason
+    return frame
 
 
 shared_live_manager = SharedLivePositionManager()
@@ -1129,7 +1144,16 @@ def read_shared_live_positions(
     auto_frame = auto_manager.live_frame(port=port, calibration_id=calibration_id)
     if auto_frame is not None:
         return auto_frame
-    return shared_live_manager.read(port=port, calibration_id=calibration_id)
+    try:
+        resolved = port or _port_for_side("left")
+    except RuntimeError as exc:
+        # Ports not configured yet — expected before hardware setup.
+        return _disconnected_live_frame(port="", reason=str(exc))
+    try:
+        return shared_live_manager.read(port=resolved, calibration_id=calibration_id)
+    except (OSError, RuntimeError) as exc:
+        # Serial port present but unreadable (arm unplugged / busy / missing driver).
+        return _disconnected_live_frame(port=resolved, reason=str(exc))
 
 
 def close_shared_live_reader() -> dict[str, Any]:

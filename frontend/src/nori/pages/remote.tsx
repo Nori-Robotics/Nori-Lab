@@ -26,6 +26,7 @@ import { SupabaseSignaling } from "@nori/sdk/supabase";
 import { VrSession } from "@nori/sdk/vr";
 import { TelemetryPanel, GripForce, ControlLegend, CallBar, RailHeight } from "@/nori/remote/TeleopStatus";
 import { Robot3D } from "@/nori/remote/Robot3D";
+import { CameraGrid } from "@/nori/remote/CameraGrid";
 import { isM6VideoEnabled } from "@/nori/remote/flags";
 
 const DEFAULT_STUN = "stun:stun.l.google.com:19302";
@@ -83,6 +84,11 @@ const Remote = () => {
   const [connState, setConnState] = useState("idle");
   const [controlActive, setControlActive] = useState(false);
   const [mode, setMode] = useState<ControlMode>("cylindrical");
+  // Multi-camera: inbound robot video feeds keyed by stable id (transceiver mid), their names,
+  // and which one is promoted to the big <video>. Populated via the RemoteTeleop video callbacks.
+  const [camStreams, setCamStreams] = useState<Record<string, MediaStream>>({});
+  const [camNames, setCamNames] = useState<Record<string, string>>({});
+  const [activeCam, setActiveCam] = useState<string | null>(null);
   const [tel, setTel] = useState<TelemetryView>({
     loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {}, state: {},
   });
@@ -149,6 +155,9 @@ const Remote = () => {
     if (!videoRef.current) return;
     setConnecting(true);
     setLogLines([]);
+    setCamStreams({});
+    setCamNames({});
+    setActiveCam(null);
     const turnUrls = settings.turn.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
     const room = settings.room.trim() || serial || "nori-dev";
     const teleop = new RemoteTeleop({
@@ -170,6 +179,16 @@ const Remote = () => {
       onControlActive: setControlActive,
       onCurrents: (c) => vrRef.current?.setCurrents(c), // gripper current -> VR haptics
       onCall: setCall,
+      // Multi-camera feeds: collect each track by id, and default the first one as the "main".
+      onVideoTrack: (id, stream) => {
+        setCamStreams((s) => ({ ...s, [id]: stream }));
+        setActiveCam((cur) => cur ?? id); // first feed becomes the main view (matches videoEl)
+      },
+      onVideoRemoved: (id) => {
+        setCamStreams((s) => { const n = { ...s }; delete n[id]; return n; });
+        setActiveCam((cur) => (cur === id ? null : cur));
+      },
+      onCameraNames: setCamNames,
     });
     teleopRef.current = teleop;
     try {
@@ -301,6 +320,24 @@ const Remote = () => {
               style={{ aspectRatio: "4 / 3" }}
             />
           </div>
+
+          {/* Multi-camera strip — only when the robot sends more than one feed. Click a tile to
+              promote it to the main view above. Single-camera robots show nothing extra here. */}
+          {Object.keys(camStreams).length > 1 && (
+            <CameraGrid
+              streams={camStreams}
+              names={camNames}
+              activeId={activeCam}
+              onSelect={(id) => {
+                const stream = camStreams[id];
+                if (stream && videoRef.current && videoRef.current.srcObject !== stream) {
+                  videoRef.current.srcObject = stream;
+                }
+                setActiveCam(id);
+              }}
+            />
+          )}
+
           {/* Robot inbound audio — unmuted sink, no video element can play it (video is muted). */}
           <audio ref={audioRef} autoPlay className="hidden" />
 

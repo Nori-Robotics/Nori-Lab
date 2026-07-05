@@ -81,6 +81,18 @@ export interface RemoteTeleopOptions {
   // Sink for the robot's inbound audio track. A separate element from videoEl because the
   // video element is muted for autoplay; audio must play from its own unmuted element.
   audioEl?: HTMLAudioElement;
+  // --- multi-camera (optional; single-camera robots ignore all of this) ---------------------
+  // The robot may send more than one video track (one per camera). `videoEl` above always
+  // receives the PRIMARY feed (first track) so VR and single-camera clients keep working
+  // unchanged. To render every feed (a grid), provide these:
+  //   onVideoTrack   — fired once per inbound video track, keyed by a STABLE id (the transceiver
+  //                    mid). Attach the stream to your own <video>; key your UI by this id.
+  //   onVideoRemoved — that track ended (camera unplugged / pipeline restart).
+  //   onCameraNames  — id -> human camera name, from the robot's `video_map` control message.
+  //                    Arrives independently of the tracks (either order); relabel your tiles.
+  onVideoTrack?: (id: string, stream: MediaStream) => void;
+  onVideoRemoved?: (id: string) => void;
+  onCameraNames?: (namesById: Record<string, string>) => void;
   // NOTE: the signaling ROOM is now owned by the SignalingTransport (it addresses the room),
   // so it's no longer a RemoteTeleop option. `token` stays here because RemoteTeleop itself
   // performs the HMAC auth handshake over whatever transport is injected.
@@ -190,6 +202,10 @@ export class RemoteTeleop {
   private latencyProbe: AudioLatencyProbe | null = null; // R-X.2 audio-latency harness (per peer)
   private jogTimer: ReturnType<typeof setInterval> | null = null;
   private controlCh: RTCDataChannel | null = null;
+  // --- multi-camera track routing (reset per fresh peer) ---
+  private videoByMid = new Map<string, MediaStream>(); // mid -> its inbound stream
+  private camNameByMid = new Map<string, string>();     // mid -> camera name (from video_map)
+  private primaryMid: string | null = null;             // which track feeds `videoEl`
   private curMac = ""; // HMAC of the robot's nonce, proving we hold the token
   private linkMode: "lan" | "wan" | null = null; // measured ICE path -> daemon watchdog
   private mode: ControlMode = "cylindrical";
@@ -512,6 +528,10 @@ export class RemoteTeleop {
     if (this.pc) { try { this.pc.close(); } catch { /* noop */ } }
     this.remoteSet = false;
     this.pendingIce = [];
+    // A fresh peer renegotiates all media, so drop the old per-camera track routing.
+    this.videoByMid.clear();
+    this.camNameByMid.clear();
+    this.primaryMid = null;
     const pc = new RTCPeerConnection({
       iceServers: this.iceServers(),
       iceTransportPolicy: this.o.forceRelay ? "relay" : "all",
@@ -537,10 +557,25 @@ export class RemoteTeleop {
         this.emitCall();
         return;
       }
-      if (this.o.videoEl.srcObject !== ev.streams[0]) {
-        this.o.videoEl.srcObject = ev.streams[0];
-        this.log("video track attached");
+      // ---- video: one track per camera. Route each by its transceiver mid (stable id). ----
+      const mid = ev.transceiver?.mid ?? `idx${this.videoByMid.size}`;
+      const stream = ev.streams[0];
+      this.videoByMid.set(mid, stream);
+      // Primary feed (first video track) -> videoEl, so VR + single-camera clients are unchanged.
+      if (this.primaryMid === null) {
+        this.primaryMid = mid;
+        if (this.o.videoEl.srcObject !== stream) this.o.videoEl.srcObject = stream;
+        this.log("video track attached (primary)");
+      } else {
+        this.log(`video track attached (camera ${this.camNameByMid.get(mid) ?? mid})`);
       }
+      // Per-camera routing for a multi-feed grid (no-op if the app didn't opt in).
+      this.o.onVideoTrack?.(mid, stream);
+      ev.track.onended = () => {
+        this.videoByMid.delete(mid);
+        this.o.onVideoRemoved?.(mid);
+        if (this.primaryMid === mid) this.primaryMid = null; // let the next track become primary
+      };
     };
     pc.ondatachannel = (ev) => this.setupControl(ev.channel); // robot opens 'control'
     pc.oniceconnectionstatechange = () => this.log("ice:", pc.iceConnectionState);
@@ -664,6 +699,18 @@ export class RemoteTeleop {
         this.emitCall();
       }
       this.o.onTelemetry({ ...this.tel });
+    } else if (m.type === "video_map") {
+      // Robot maps each video m-line (by transceiver mid) to a camera name. May arrive before
+      // or after the tracks themselves; the app relabels its tiles from onCameraNames.
+      const cams = Array.isArray(m.cameras) ? m.cameras : [];
+      for (const c of cams) {
+        const cc = c as { mid?: unknown; name?: unknown };
+        if (cc && cc.mid != null && typeof cc.name === "string") {
+          this.camNameByMid.set(String(cc.mid), cc.name);
+        }
+      }
+      this.o.onCameraNames?.(Object.fromEntries(this.camNameByMid));
+      this.log("video_map: " + JSON.stringify(Object.fromEntries(this.camNameByMid)));
     } else if (m.type === "ack") {
       this.log("daemon ack (watchdog=" + JSON.stringify(m.watchdog_profile || m.watchdog || "?") + ")");
     } else if (m.type === "error") {

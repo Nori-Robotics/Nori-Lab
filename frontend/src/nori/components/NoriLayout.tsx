@@ -7,13 +7,14 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useNori } from "@/nori/NoriContext";
 
 const NAV: { to: string; label: string }[] = [
-  { to: "/nori/account", label: "Account" },
   { to: "/nori/remote", label: "Remote" },
-  { to: "/nori/leader-setup", label: "Leader Setup" },
+  { to: "/nori/coding", label: "Coding" },
+  { to: "/nori/training", label: "Training" },
   { to: "/nori/marketplace", label: "Marketplace" },
-  { to: "/nori/training-history", label: "Training" },
-  { to: "/nori/consents", label: "Consents" },
+  { to: "/nori/training-history", label: "Training History" },
+  { to: "/nori/leader-setup", label: "Leader Setup" },
   { to: "/nori/pairing", label: "Pairing" },
+  { to: "/nori/account", label: "Account" },
 ];
 
 const NoriLayout = () => {

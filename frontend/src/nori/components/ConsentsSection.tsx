@@ -1,4 +1,5 @@
-// NORI: Additive file. Consent management + data deletion (Phase 6).
+// NORI: Additive file. Consent management + data deletion (Phase 6), rendered as a
+// section at the bottom of the Account page (formerly its own /nori/consents page).
 // Toggles for train_self / publish_public (POST /consents, /consents/{id}/revoke,
 // GET /consents) plus a data-deletion request (POST /deletion-requests; backend purge
 // sweeper not yet wired — records a status row only).
@@ -30,7 +31,7 @@ const CONSENT_DEFS: { type: ConsentType; label: string; desc: string }[] = [
   },
 ];
 
-const Consents = () => {
+const ConsentsSection = () => {
   const { baseUrl, fetchWithHeaders } = useApi();
   const [consents, setConsents] = useState<Consent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -83,8 +84,8 @@ const Consents = () => {
   };
 
   return (
-    <section className="max-w-2xl space-y-4">
-      <h1 className="text-2xl font-bold">Consents</h1>
+    <div className="space-y-4">
+      <h2 className="text-lg font-semibold">Consents</h2>
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <Card>
@@ -137,8 +138,8 @@ const Consents = () => {
           {delStatus && <p className="text-xs text-muted-foreground">{delStatus}</p>}
         </CardContent>
       </Card>
-    </section>
+    </div>
   );
 };
 
-export default Consents;
+export default ConsentsSection;

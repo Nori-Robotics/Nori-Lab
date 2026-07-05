@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNori } from "@/nori/NoriContext";
 import { signOut } from "@/nori/auth/session";
+import ConsentsSection from "@/nori/components/ConsentsSection";
 
 function fmtSeconds(s: number): string {
   if (s <= 0) return "0m";
@@ -98,6 +99,8 @@ const Account = () => {
           )}
         </CardContent>
       </Card>
+
+      <ConsentsSection />
     </section>
   );
 };

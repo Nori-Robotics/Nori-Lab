@@ -75,8 +75,8 @@ function Arm({ state, side, active }: { state: Record<string, number>; side: "le
   return (
     <group position={[sign * 0.15, 0, 0]}>
       {/* Vertical rail (static) + carriage block that slides down it */}
-      <mesh position={[0, RAIL_TOP_Y - RAIL_LEN / 2 + 0.15, 0]}>
-        <boxGeometry args={[0.04, RAIL_LEN + 0.1, 0.04]} />
+      <mesh position={[0, RAIL_TOP_Y - RAIL_LEN / 2 + 0.2, 0]}>
+        <boxGeometry args={[0.04, RAIL_LEN , 0.04]} />
         <meshStandardMaterial color="#757c86" />
       </mesh>
       <mesh position={[0, carriageY, 0]}>
@@ -129,7 +129,7 @@ export function Robot3D({ state, activeArm }: { state: Record<string, number>; a
   );
 
   return (
-    <div className="relative h-72 w-full overflow-hidden rounded-md border bg-[#14131a]">
+    <div className="relative h-72 w-full overflow-hidden rounded-md border bg-[#f6f4eb]">
       {!hasAny && (
         <div className="absolute inset-0 z-10 flex items-center justify-center text-[11px] text-muted-foreground">
           waiting for joint telemetry…
@@ -139,37 +139,39 @@ export function Robot3D({ state, activeArm }: { state: Record<string, number>; a
         <ambientLight intensity={1.0} />
         <directionalLight position={[2, 4, 3]} intensity={0.9} />
         {/* base platform */}
-        <mesh position={[0, 0.4, -0.05]} rotation={[0, 0, 0]}>
-          <boxGeometry args={[0.4, 0.18, 0.5]} />
-          <meshStandardMaterial color="#acb9cb" />
+        <mesh position={[0, 0.5, -0.05]} rotation={[0, 0, 0]}>
+          <boxGeometry args={[0.39, 0.22, 0.45]} />
+          <meshStandardMaterial color="#c3c9d2" />
         </mesh>
-        <mesh position={[0.23, 0.35, 0.1]} rotation={[0, 0, 1.55]}>
+        {/* wheels */}
+        <mesh position={[0.23, 0.46, 0.1]} rotation={[0, 0, 1.55]}>
           <cylinderGeometry args={[0.12, 0.12, 0.05]} />
-          <meshStandardMaterial color="#acb9cb" />
+          <meshStandardMaterial color="#c3c9d2" />
         </mesh>
-        <mesh position={[-0.23, 0.35, 0.1]} rotation={[0, 0, 1.55]}>
+        <mesh position={[-0.23, 0.46, 0.1]} rotation={[0, 0, 1.55]}>
           <cylinderGeometry args={[0.12, 0.12, 0.05]} />
-          <meshStandardMaterial color="#acb9cb" />
+          <meshStandardMaterial color="#c3c9d2" />
         </mesh>
         {/*body*/}
         <mesh position={[0, 1.0, 0]} rotation={[0, 0, 0]}>
           <boxGeometry args={[0.25, 1.0, 0.10]} />
           <meshStandardMaterial color="#5e6268" />
         </mesh>
-        <mesh position={[0, 0.6, -0.10]} rotation={[0, 0, 0]}>
+        <mesh position={[0, 0.7, -0.10]} rotation={[0, 0, 0]}>
           <boxGeometry args={[0.19, 0.22, 0.19]} />
           <meshStandardMaterial color="#7a7e84" />
         </mesh>
         <mesh position={[0, 1.45, 0]} rotation={[0, 0, 0]}>
           <boxGeometry args={[0.33, 0.12, 0.15]} />
-          <meshStandardMaterial color="#acb9cb" />
+          <meshStandardMaterial color="#c3c9d2" />
         </mesh>
         <mesh position={[0, 1.55, 0]} rotation={[0, 0, 0]}>
           <boxGeometry args={[0.15, 0.13, 0.115]} />
-          <meshStandardMaterial color="#acb9cb" />
+          <meshStandardMaterial color="#c3c9d2" />
         </mesh>
+        {/*head*/}
         <mesh position={[0, 1.68, 0]} rotation={[0, 0, 0]}>
-          <boxGeometry args={[0.25, 0.18, 0.13]} />
+          <boxGeometry args={[0.25, 0.16, 0.13]} />
           <meshStandardMaterial color="#5e6268" />
         </mesh>
         <mesh position={[0, 1.75, 0.05]} rotation={[125, 0, 0]}>
@@ -178,7 +180,7 @@ export function Robot3D({ state, activeArm }: { state: Record<string, number>; a
         </mesh>
         <Arm state={state} side="left" active={activeArm === "left"} />
         <Arm state={state} side="right" active={activeArm === "right"} />
-        <gridHelper args={[3, 12, "#636d7c", "#5b636e"]} position={[0, 0.34, 0]} />
+        <gridHelper args={[3, 12, "#cdc1a8", "#ccc4b6"]} position={[0, 0.34, 0]} />
         <OrbitControls enablePan={true} minDistance={0.9} maxDistance={4} target={[0, 0.9, 0]} />
       </Canvas>
       <p className="pointer-events-none absolute bottom-1 left-2 text-[9px] text-muted-foreground/70">

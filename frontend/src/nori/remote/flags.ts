@@ -16,3 +16,15 @@ export function isM6VideoEnabled(): boolean {
     return false;
   }
 }
+
+// Tier-1 script console (docs/llm_integration_plan.md): paste / run a TS script that drives the
+// robot through @nori/sdk in a sandboxed Web Worker. Shipped DARK — the panel is hidden and no
+// script can run unless this flag is on. Flip for local dev:
+//   localStorage.setItem("nori_script_console", "1"); location.reload();
+export function isScriptConsoleEnabled(): boolean {
+  try {
+    return localStorage.getItem("nori_script_console") === "1";
+  } catch {
+    return false;
+  }
+}

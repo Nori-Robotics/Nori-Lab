@@ -23,6 +23,7 @@ and starts uvicorn with --reload. Opens the browser to :8080.
 """
 
 import argparse
+import atexit
 import logging
 import os
 import signal
@@ -152,9 +153,14 @@ def _run_dev():
     logger.info("   Frontend: http://localhost:%d", FRONTEND_DEV_PORT)
     logger.info("   Backend:  http://localhost:%d", BACKEND_PORT)
 
-    def shutdown(signum, frame):
-        logger.info("🛑 Shutting down...")
-        for name, p in [("backend", backend_process), ("frontend", frontend_process)]:
+    # Both children run in their own sessions (start_new_session=True), so the
+    # terminal's Ctrl+C never reaches them directly — this launcher is the only
+    # thing that kills them. Guard cleanup so a rapid second Ctrl+C can't
+    # interrupt killpg mid-flight and orphan the detached sessions.
+    _shutting_down = threading.Event()
+
+    def _kill_children():
+        for p in (backend_process, frontend_process):
             try:
                 os.killpg(os.getpgid(p.pid), signal.SIGTERM)
                 p.wait(timeout=5)
@@ -165,7 +171,22 @@ def _run_dev():
                     p.kill()
             except Exception:
                 pass
-            logger.info(f"  ✅ {name} stopped")
+
+    # Backstop: runs on any normal interpreter exit (including an unhandled
+    # exception in the watchdog loop), even if `shutdown` never fires.
+    atexit.register(_kill_children)
+
+    def shutdown(signum, frame):
+        if _shutting_down.is_set():
+            return
+        _shutting_down.set()
+        # Ignore further Ctrl+C / SIGTERM while we tear down, so mashing ^C
+        # can't interrupt cleanup and leave detached orphans behind.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        logger.info("🛑 Shutting down...")
+        _kill_children()
+        logger.info("  ✅ backend + frontend stopped")
         sys.exit(0)
 
     signal.signal(signal.SIGINT, shutdown)

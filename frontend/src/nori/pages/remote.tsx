@@ -29,7 +29,8 @@ import { TelemetryPanel, GripForce, ControlLegend, CallBar, RailHeight } from "@
 import { Robot3D } from "@/nori/remote/Robot3D";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import { playAudioFile, type ClipHandle } from "@/nori/remote/audioClip";
-import { isM6VideoEnabled } from "@/nori/remote/flags";
+import { ScriptPanel } from "@/nori/remote/ScriptPanel";
+import { isM6VideoEnabled, isScriptConsoleEnabled } from "@/nori/remote/flags";
 
 const DEFAULT_STUN = "stun:stun.l.google.com:19302";
 
@@ -79,6 +80,11 @@ const Remote = () => {
   const leaderRef = useRef<LeaderDriver | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const m6 = isM6VideoEnabled();
+  const scriptConsole = isScriptConsoleEnabled();
+  // One-writer arbitration: true while a pasted/LLM script is driving via ScriptDriver. Disables
+  // VR / leader / keyboard-jog so there is never a second writer to setExternalJog (the SPACE
+  // E-STOP key stays live).
+  const [scriptActive, setScriptActive] = useState(false);
 
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [showSettings, setShowSettings] = useState(false);
@@ -208,6 +214,7 @@ const Remote = () => {
     teleopRef.current = null;
     if (t) await t.stop();
     setRunning(false);
+    setScriptActive(false);
     setInVr(false);
     setControlActive(false);
     setConnState("idle");
@@ -332,15 +339,22 @@ const Remote = () => {
   // form fields and only emits jog when the control channel is open.
   useEffect(() => {
     if (!running) return;
-    const down = (e: KeyboardEvent) => { if (teleopRef.current?.onKeyDown(e)) e.preventDefault(); };
-    const up = (e: KeyboardEvent) => teleopRef.current?.onKeyUp(e);
+    const down = (e: KeyboardEvent) => {
+      // While a script drives, suppress keyboard-jog (one writer) but keep the SPACE E-STOP live.
+      if (scriptActive && e.key !== " ") return;
+      if (teleopRef.current?.onKeyDown(e)) e.preventDefault();
+    };
+    const up = (e: KeyboardEvent) => {
+      if (scriptActive && e.key !== " ") return;
+      teleopRef.current?.onKeyUp(e);
+    };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, [running]);
+  }, [running, scriptActive]);
 
   // Tear down on unmount / navigate away (also fires the robot 'bye' for a clean restart).
   useEffect(() => () => { clipRef.current?.stop(); leaderRef.current?.stop(); vrRef.current?.stop(); teleopRef.current?.stop(); }, []);
@@ -402,7 +416,7 @@ const Remote = () => {
               <Button
                 variant="secondary"
                 onClick={enterVr}
-                disabled={!running || inVr || connState !== "connected"}
+                disabled={!running || inVr || scriptActive || connState !== "connected"}
                 title="Open the headset (AR passthrough) on this same session"
               >
                 {inVr ? "In VR" : "Enter VR"}
@@ -411,7 +425,7 @@ const Remote = () => {
             <Button
               variant={leaderActive ? "default" : "secondary"}
               onClick={toggleLeader}
-              disabled={!running || connState !== "connected"}
+              disabled={!running || scriptActive || connState !== "connected"}
               title="Drive the robot's arms from the physical dual leader arms (base + lift stay on the keyboard)"
             >
               {leaderActive ? `Leader on · ${leaderCount}/12` : "Leader control"}
@@ -475,6 +489,17 @@ const Remote = () => {
                 </Button>
               )}
             </div>
+          )}
+
+          {/* Tier-1 script console (docs/llm_integration_plan.md). Shipped dark behind
+              nori_script_console; only live on a connected session. */}
+          {scriptConsole && running && connState === "connected" && teleopRef.current && (
+            <ScriptPanel
+              teleop={teleopRef.current}
+              telemetry={tel}
+              onLog={appendLog}
+              onActiveChange={setScriptActive}
+            />
           )}
 
           <TelemetryPanel

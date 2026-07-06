@@ -32,6 +32,13 @@ from ..train import TrainingRequest
 logger = logging.getLogger(__name__)
 
 _LOG_POLL_INTERVAL_S = 2.0
+# Ceiling for the exponential backoff applied while Nori-Backend is unreachable.
+_MAX_POLL_BACKOFF_S = 30.0
+# Give up streaming after this many *consecutive* unreachable/errored polls, so a
+# detached or orphaned lelab process doesn't retry (and log) forever when
+# Nori-Backend is down. The job keeps running on Nori; the Training history page
+# re-attaches with a fresh token.
+_MAX_CONSECUTIVE_POLL_FAILURES = 10
 # job_status substrings (case-insensitive) that count as a successful terminal run.
 _SUCCESS_MARKERS = ("succeed", "success", "complete", "promot", "done")
 
@@ -88,6 +95,7 @@ class NoriCloudJobRunner:
 
     def _poll_loop(self) -> None:
         assert self._job_uuid is not None
+        failures = 0
         while not self._stop_event.is_set():
             try:
                 resp = self._client.get_job_logs(self._job_uuid, since=self._log_offset)
@@ -98,11 +106,32 @@ class NoriCloudJobRunner:
                         "continues on Nori; watch it on the Training history page."
                     )
                     return
-                logger.warning("Nori log poll failed for %s: %s", self._job_uuid, exc)
-                if self._stop_event.wait(_LOG_POLL_INTERVAL_S):
+                failures += 1
+                # Log the first failure at WARNING, then drop to DEBUG so a
+                # persistently-unreachable backend doesn't spam the console every
+                # poll (the symptom this guard fixes).
+                logger.log(
+                    logging.WARNING if failures == 1 else logging.DEBUG,
+                    "Nori log poll failed for %s (attempt %d/%d): %s",
+                    self._job_uuid,
+                    failures,
+                    _MAX_CONSECUTIVE_POLL_FAILURES,
+                    exc,
+                )
+                if failures >= _MAX_CONSECUTIVE_POLL_FAILURES:
+                    self._log_line(
+                        "[nori] Nori-Backend unreachable — stopping log streaming after "
+                        f"{failures} consecutive failures. The job continues on Nori; "
+                        "watch it on the Training history page."
+                    )
+                    return
+                # Exponential backoff (2s, 4s, 8s, … capped) instead of a tight 2s retry.
+                backoff = min(_LOG_POLL_INTERVAL_S * 2 ** (failures - 1), _MAX_POLL_BACKOFF_S)
+                if self._stop_event.wait(backoff):
                     return
                 continue
 
+            failures = 0
             for raw in resp.get("lines", []):
                 stripped = raw.rstrip()
                 if not stripped:

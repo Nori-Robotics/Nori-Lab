@@ -5,6 +5,10 @@
 // setLeaderAction(). RemoteTeleop's 50 Hz jogTick then attaches them to the control frame,
 // so the arms follow the leaders while base + lift stay on the keyboard.
 //
+// When only ONE leader arm is connected, its targets are routed to the currently-selected
+// follower arm (the on-screen arm switch) instead of its own side — so a single leader can
+// drive both follower arms, one at a time, by flipping the selector. See frameToLeaderAction.
+//
 // This is the operator-app half of NoriTeleop m3_m5 §5.6.3: the daemon already accepts
 // absolute leader_action_deg (degrees / gripper [0,100]) and does the calibration-normalize
 // + IK + server-side slew clamp (NORI_LEADER_SLEW). We send raw leader degrees straight
@@ -12,7 +16,7 @@
 // "<side>_arm_<joint>.pos" key format match l2_leader_common.py exactly, so this is the
 // same wire the daemon-native leader_teleop_client.py produces.
 
-import type { RemoteTeleop, LeaderActionDeg } from "@nori/sdk";
+import type { RemoteTeleop, LeaderActionDeg, ArmSide } from "@nori/sdk";
 import { readLeaderLive, type LeaderLiveResponse } from "@/nori/api/leaderSetup";
 import type { Fetcher } from "@/lib/apiClient";
 
@@ -23,7 +27,7 @@ export const DEFAULT_LEADER_CALIBRATION_ID = "nori_l2_dual_leader_dev";
 // await-then-schedule loop self-throttles, so this is a floor, not a fixed rate.
 const DEFAULT_POLL_MS = 33;
 
-const SIDES: Array<keyof LeaderLiveResponse["leaders"]> = ["left", "right"];
+const SIDES: ArmSide[] = ["left", "right"];
 
 export interface LeaderDriverOptions {
   teleop: RemoteTeleop;
@@ -37,20 +41,41 @@ export interface LeaderDriverOptions {
   onError?: (message: string) => void;
 }
 
-// Turn a /nori/leader/live frame into the flat absolute leader_action_deg dict the daemon
-// expects. Only motors the bus actually read this frame (ok + non-null target) are
-// included; a momentarily-missing motor is simply omitted, so the daemon holds that joint's
-// last target rather than yanking it. Returns an empty object when nothing was readable.
-export function frameToLeaderAction(frame: LeaderLiveResponse): LeaderActionDeg {
-  const targets: LeaderActionDeg = {};
-  if (!frame?.leaders) return targets;
+// Pull each leader side's readable joint targets out of a live frame. Only motors the bus
+// actually read this frame (ok + non-null target) are included; a momentarily-missing motor
+// is simply omitted so the daemon holds that joint's last target rather than yanking it.
+function readSideTargets(frame: LeaderLiveResponse): Record<ArmSide, Record<string, number>> {
+  const bySide: Record<ArmSide, Record<string, number>> = { left: {}, right: {} };
+  if (!frame?.leaders) return bySide;
   for (const side of SIDES) {
     const motors = frame.leaders[side]?.motors ?? {};
     for (const [joint, m] of Object.entries(motors)) {
       if (m.ok && m.target !== null && m.target !== undefined) {
-        // "<side>_arm_<joint>.pos" — the follower motor name the daemon keys on.
-        targets[`${side}_arm_${joint}.pos`] = m.target;
+        bySide[side][joint] = m.target;
       }
+    }
+  }
+  return bySide;
+}
+
+// Turn a /nori/leader/live frame into the flat absolute leader_action_deg dict the daemon
+// expects, keyed "<follower_side>_arm_<joint>.pos" (the follower motor names the daemon keys on).
+//
+// SINGLE-LEADER routing: when exactly ONE leader arm is readable this frame, its joints are
+// routed to `soloArm` — the currently-selected follower arm (the on-screen arm switch) — so a
+// single physical leader can drive BOTH follower arms, one at a time, by flipping the selector.
+// When BOTH leaders are connected we keep the natural left->left / right->right mapping and
+// ignore soloArm. Returns an empty object when nothing was readable.
+export function frameToLeaderAction(frame: LeaderLiveResponse, soloArm?: ArmSide): LeaderActionDeg {
+  const bySide = readSideTargets(frame);
+  const connected = SIDES.filter((side) => Object.keys(bySide[side]).length > 0);
+  const targets: LeaderActionDeg = {};
+  // Solo leader -> the selected follower arm; otherwise each leader drives its own side.
+  const routeFor = (src: ArmSide): ArmSide => (connected.length === 1 && soloArm ? soloArm : src);
+  for (const src of connected) {
+    const dst = routeFor(src);
+    for (const [joint, target] of Object.entries(bySide[src])) {
+      targets[`${dst}_arm_${joint}.pos`] = target;
     }
   }
   return targets;
@@ -89,7 +114,9 @@ export class LeaderDriver {
     try {
       const frame = await readLeaderLive(this.o.baseUrl, this.o.fetcher, this.calibrationId);
       if (this.stopped) return;
-      const targets = frameToLeaderAction(frame);
+      // Route a solo leader to the currently-selected follower arm, read live so flipping the
+      // on-screen arm switch re-targets the single leader mid-session (the "switch arm" flow).
+      const targets = frameToLeaderAction(frame, this.o.teleop.getArm());
       // Only push when we actually read something. If the whole frame is empty (arms
       // unplugged / bus dropped), leave the last targets in place so the daemon's slew
       // guard holds the pose instead of us clearing to null and handing control back.

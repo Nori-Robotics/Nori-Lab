@@ -246,6 +246,13 @@ export class RemoteTeleop {
     this.o.arm = arm;
   }
 
+  // The follower arm the keyboard / selected-arm inputs currently target (the
+  // on-screen arm switch). The leader driver reads this to route a SINGLE
+  // connected leader to whichever arm is selected.
+  getArm(): ArmSide {
+    return this.o.arm;
+  }
+
   // VR (or any external input mapper) hands the jog tick a ready jog payload. Pass null
   // to release the stream back to the keyboard. The next jogTick uses it as-is.
   setExternalJog(jog: ExternalJog | null) {

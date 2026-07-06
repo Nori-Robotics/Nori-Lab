@@ -1,19 +1,20 @@
 // NORI: Additive file. Training history (Phase 6).
-// Lists the customer's Nori-Backend training jobs (GET /nori/training/jobs), with per-job
-// live log polling (GET …/{id}/logs?since=, ~2s) and a "Start training" trigger that
-// dispatches a nori_cloud job (also visible in LeLab's watch-training UI).
+// Lists the customer's durable Nori-Backend training jobs (GET /nori/training/jobs), with
+// per-job live log polling (GET …/{id}/logs?since=, ~2s). Rows for jobs this LeLab process
+// is watching link into the rich local monitor (/nori/training/:leLabJobId); others fall
+// back to the inline log expander. "Start training" jumps to the config form.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useApi } from "@/contexts/ApiContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useNori } from "@/nori/NoriContext";
 import {
   getJobLogs,
   listJobs,
-  startNoriTraining,
   type TrainingJob,
 } from "@/nori/api/client";
+import { listJobs as listLeLabJobs } from "@/lib/jobsApi";
 
 const statusTone = (s: string) => {
   const low = s.toLowerCase();
@@ -63,12 +64,12 @@ const JobLogs = ({ jobId }: { jobId: string }) => {
 
 const TrainingHistory = () => {
   const { baseUrl, fetchWithHeaders } = useApi();
-  const { customer } = useNori();
+  const navigate = useNavigate();
   const [jobs, setJobs] = useState<TrainingJob[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
-  const [startMsg, setStartMsg] = useState<string | null>(null);
+  // Map Nori job uuid -> local LeLab job id, for jobs this process is watching.
+  const [localByUuid, setLocalByUuid] = useState<Record<string, string>>({});
 
   const reload = useCallback(async () => {
     try {
@@ -76,37 +77,30 @@ const TrainingHistory = () => {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
+    // Best-effort bridge to local records; failure just means no deep links.
+    try {
+      const local = await listLeLabJobs(baseUrl, fetchWithHeaders, 200);
+      const map: Record<string, string> = {};
+      for (const r of local) {
+        if (r.runner === "nori_cloud" && r.nori_job_uuid) map[r.nori_job_uuid] = r.id;
+      }
+      setLocalByUuid(map);
+    } catch {
+      setLocalByUuid({});
+    }
   }, [baseUrl, fetchWithHeaders]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  const start = async () => {
-    if (!customer) return;
-    setStarting(true);
-    setStartMsg(null);
-    try {
-      await startNoriTraining(baseUrl, fetchWithHeaders, customer.hf_dataset_repo);
-      setStartMsg("Training dispatched.");
-      await reload();
-    } catch (e) {
-      setStartMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setStarting(false);
-    }
-  };
-
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Training history</h1>
-        <div className="flex items-center gap-2">
-          {startMsg && <span className="text-xs text-muted-foreground">{startMsg}</span>}
-          <Button size="sm" onClick={start} disabled={starting || !customer}>
-            {starting ? "Dispatching…" : "Start training"}
-          </Button>
-        </div>
+        <Button size="sm" onClick={() => navigate("/nori/training")}>
+          Start new training
+        </Button>
       </div>
 
       {error ? (
@@ -117,39 +111,56 @@ const TrainingHistory = () => {
         <p className="text-sm text-muted-foreground">No training jobs yet.</p>
       ) : (
         <div className="space-y-2">
-          {jobs.map((job) => (
-            <Card key={job.id}>
-              <CardHeader className="cursor-pointer" onClick={() => setOpenId(openId === job.id ? null : job.id)}>
-                <div className="flex items-center justify-between gap-4">
-                  <CardTitle className="text-sm font-medium">{job.dataset_repo}</CardTitle>
-                  <span className={`text-xs ${statusTone(job.status)}`}>{job.status}</span>
-                </div>
-              </CardHeader>
-              {openId === job.id && (
-                <CardContent>
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                    <span>Created</span>
-                    <span className="text-right">{new Date(job.created_at).toLocaleString()}</span>
-                    <span>Timeout</span>
-                    <span className="text-right">{job.timeout_duration_seconds}s</span>
-                    {job.final_cost_usd != null && (
-                      <>
-                        <span>Cost</span>
-                        <span className="text-right">${job.final_cost_usd}</span>
-                      </>
-                    )}
-                    {job.failure_reason && (
-                      <>
-                        <span>Failure</span>
-                        <span className="text-right text-destructive">{job.failure_reason}</span>
-                      </>
-                    )}
+          {jobs.map((job) => {
+            const localId = localByUuid[job.id];
+            return (
+              <Card key={job.id}>
+                <CardHeader
+                  className="cursor-pointer"
+                  onClick={() =>
+                    localId
+                      ? navigate(`/nori/training/${localId}`)
+                      : setOpenId(openId === job.id ? null : job.id)
+                  }
+                >
+                  <div className="flex items-center justify-between gap-4">
+                    <CardTitle className="text-sm font-medium">
+                      {job.dataset_repo}
+                      {localId && (
+                        <span className="ml-2 text-xs font-normal text-[#b06a1c]">
+                          view live ↗
+                        </span>
+                      )}
+                    </CardTitle>
+                    <span className={`text-xs ${statusTone(job.status)}`}>{job.status}</span>
                   </div>
-                  <JobLogs jobId={job.id} />
-                </CardContent>
-              )}
-            </Card>
-          ))}
+                </CardHeader>
+                {openId === job.id && !localId && (
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                      <span>Created</span>
+                      <span className="text-right">{new Date(job.created_at).toLocaleString()}</span>
+                      <span>Timeout</span>
+                      <span className="text-right">{job.timeout_duration_seconds}s</span>
+                      {job.final_cost_usd != null && (
+                        <>
+                          <span>Cost</span>
+                          <span className="text-right">${job.final_cost_usd}</span>
+                        </>
+                      )}
+                      {job.failure_reason && (
+                        <>
+                          <span>Failure</span>
+                          <span className="text-right text-destructive">{job.failure_reason}</span>
+                        </>
+                      )}
+                    </div>
+                    <JobLogs jobId={job.id} />
+                  </CardContent>
+                )}
+              </Card>
+            );
+          })}
         </div>
       )}
     </section>

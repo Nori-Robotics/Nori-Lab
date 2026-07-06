@@ -75,6 +75,7 @@ function App() {
                           <Route path="account" element={<Account />} />
                           <Route path="coding" element={<NoriCoding />} />
                           <Route path="training" element={<NoriTraining />} />
+                          <Route path="training/:jobId" element={<NoriTraining />} />
                           <Route path="remote" element={<Remote />} />
                           <Route path="leader-setup" element={<LeaderSetup />} />
                           <Route path="pairing" element={<Pairing />} />

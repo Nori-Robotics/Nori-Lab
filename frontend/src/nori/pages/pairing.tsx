@@ -210,7 +210,7 @@ const Pairing = () => {
                 id="serial"
                 value={serial}
                 onChange={(e) => setSerial(e.target.value)}
-                placeholder="e.g. XLR-2W-000123"
+                placeholder="e.g. NORI-L0-1234"
                 required
               />
             </div>

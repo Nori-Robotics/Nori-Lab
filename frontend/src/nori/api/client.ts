@@ -9,6 +9,10 @@
 import { apiRequest, type Fetcher, type ApiRequestOptions } from "@/lib/apiClient";
 import { getAccessToken } from "@/nori/auth/session";
 import type { components } from "@/nori/api/types";
+import type { JobRecord, TrainingRequest } from "@/lib/jobsApi";
+
+/** The training config Nori forwards to LeLab's /jobs/training (target is added here). */
+export type NoriTrainingConfig = Omit<TrainingRequest, "target">;
 
 export type CustomerProfile = components["schemas"]["CustomerProfile"];
 export type PolicyListEntry = components["schemas"]["PolicyListEntry"];
@@ -163,19 +167,24 @@ export function dispatchTraining(
 /**
  * Start a Nori-dispatched training via LeLab's existing /jobs/training endpoint with a
  * `nori_cloud` target. The job lands in LeLab's job registry + watch UI (NoriCloudJobRunner)
- * AND, since it dispatches to the backend, in GET /nori/training/jobs. `datasetRepoId`
- * satisfies LeLab's TrainingRequest schema; the backend decides what to actually train.
+ * AND, since it dispatches to the backend, in GET /nori/training/jobs. Returns the LeLab
+ * JobRecord (its `id` keys the local monitor at /nori/training/:jobId).
+ *
+ * NOTE: the whole `config` (policy/steps/optimizer/…) is forwarded and recorded on the
+ * LeLab JobRecord, but Nori-Backend's dispatch is currently config-less — it only reads
+ * `target.timeout_seconds` and decides what to train from the customer's data + consents.
+ * The extra fields have no training effect until Nori-Backend honors them.
  */
 export function startNoriTraining(
   baseUrl: string,
   fetcher: Fetcher,
-  datasetRepoId: string,
+  config: NoriTrainingConfig,
   timeoutSeconds = 900
-): Promise<unknown> {
-  return noriRequest(baseUrl, fetcher, "/jobs/training", {
+): Promise<JobRecord> {
+  return noriRequest<JobRecord>(baseUrl, fetcher, "/jobs/training", {
     method: "POST",
     body: {
-      config: { dataset_repo_id: datasetRepoId },
+      config,
       target: { runner: "nori_cloud", timeout_seconds: timeoutSeconds },
     },
     action: "Start training",

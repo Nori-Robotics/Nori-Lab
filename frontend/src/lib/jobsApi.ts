@@ -64,7 +64,10 @@ export interface JobRecord {
   exit_code: number | null;
   error_message: string | null;
   metrics: TrainingMetrics;
-  runner: "local" | "hf_cloud" | "imported";
+  runner: "local" | "hf_cloud" | "nori_cloud" | "imported";
+  // NORI: Nori-Backend internal job uuid (nori_cloud runner only). Lets the
+  // Training History page bridge a durable Nori job to its local LeLab record.
+  nori_job_uuid?: string | null;
   hf_job_id: string | null;
   hf_flavor: string | null;
   hf_repo_id: string | null;

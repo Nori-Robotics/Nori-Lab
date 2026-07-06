@@ -30,11 +30,23 @@ export interface ClipHandle {
   done: Promise<void>;
 }
 
+// Client-side output level for a clip, in [0,1]. The HARD safety cap now lives on the ROBOT
+// (webrtc_robot.py `volume volume=NORI_SPEAKER_GAIN`, default 0.7) so NO client can overdrive the
+// speaker into the P10S brownout/USB-re-enumeration we hit — that's the self-defending layer.
+// This client value is therefore defense-in-depth / an optional attenuation, and defaults to
+// unity so a well-behaved client isn't double-attenuated (1.0 x 0.7 = the verified-safe level).
+// NOTE: unity here assumes the robot has the backstop; against an OLD robot without it, pass a
+// lower gain (e.g. 0.7) explicitly.
+const DEFAULT_CLIP_GAIN = 1.0;
+
 // Fetch + decode + stream `url` to the robot speaker. Rejects if the URL can't be
 // fetched/decoded (CORS, 404, unsupported codec) BEFORE anything is sent to the robot.
 // Requires the robot's voice downlink to be on (see sendClipAudio); if it's off the clip
 // still "plays" locally-silently and simply isn't transmitted (SDK logs it).
-export async function playAudioUrl(teleop: RemoteTeleop, url: string): Promise<ClipHandle> {
+// `gain` caps the output level (default DEFAULT_CLIP_GAIN); pass 1 for unity.
+export async function playAudioUrl(
+  teleop: RemoteTeleop, url: string, gain: number = DEFAULT_CLIP_GAIN,
+): Promise<ClipHandle> {
   // Pull the bytes first so a bad URL fails loudly here, not mid-stream.
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`clip fetch ${resp.status} for ${url}`);
@@ -45,10 +57,13 @@ export async function playAudioUrl(teleop: RemoteTeleop, url: string): Promise<C
 
   const src = ctx.createBufferSource();
   src.buffer = buffer;
-  // Route to a MediaStream sink ONLY (not ctx.destination) -> the robot hears it, the laptop
-  // doesn't. This is deliberate: teleop already plays the robot's OWN mic back to the operator.
+  // src -> gain (level cap) -> MediaStream sink ONLY (not ctx.destination) so the robot hears
+  // it and the laptop doesn't (teleop already plays the robot's own mic back to the operator).
+  const gainNode = ctx.createGain();
+  gainNode.gain.value = Math.max(0, Math.min(1, gain));
   const dest = ctx.createMediaStreamDestination();
-  src.connect(dest);
+  src.connect(gainNode);
+  gainNode.connect(dest);
   const track = dest.stream.getAudioTracks()[0];
 
   let settled = false;
@@ -75,9 +90,11 @@ export async function playAudioUrl(teleop: RemoteTeleop, url: string): Promise<C
 }
 
 // Convenience for a user-picked File (drag/drop or <input type=file>): no CORS, no network.
-export function playAudioFile(teleop: RemoteTeleop, file: File): Promise<ClipHandle> {
+export function playAudioFile(
+  teleop: RemoteTeleop, file: File, gain: number = DEFAULT_CLIP_GAIN,
+): Promise<ClipHandle> {
   const url = URL.createObjectURL(file);
-  return playAudioUrl(teleop, url).then((h) => ({
+  return playAudioUrl(teleop, url, gain).then((h) => ({
     ...h,
     stop: () => { h.stop(); URL.revokeObjectURL(url); },
   }));

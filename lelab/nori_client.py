@@ -136,6 +136,34 @@ class NoriClient:
             "POST", f"{API}/customers/me/pair", json={"robot_serial_number": robot_serial_number}
         )
 
+    def unpair_robot(self, robot_serial_number: str | None = None) -> dict[str, Any]:
+        """POST /customers/me/unpair — detach a robot; idempotent if already unpaired.
+
+        Pass a serial to unpair a specific robot (multi-robot); omit for the sole/active one.
+        NOTE: the Nori-Backend endpoint is not built yet (tracked in Nori-Backend/todos.md);
+        until it ships this returns the backend's 404/405.
+        """
+        json = {"robot_serial_number": robot_serial_number} if robot_serial_number else None
+        return self._request("POST", f"{API}/customers/me/unpair", json=json)
+
+    def list_robots(self) -> Any:
+        """GET /customers/me/robots — all robots paired to the customer (multi-robot).
+
+        NOTE: not built in Nori-Backend yet (tracked in Nori-Backend/todos.md).
+        """
+        return self._request("GET", f"{API}/customers/me/robots")
+
+    def select_robot(self, robot_serial_number: str) -> dict[str, Any]:
+        """POST /customers/me/robots/{serial}/select — set the active robot.
+
+        NOTE: not built in Nori-Backend yet (tracked in Nori-Backend/todos.md).
+        """
+        from urllib.parse import quote
+
+        return self._request(
+            "POST", f"{API}/customers/me/robots/{quote(robot_serial_number, safe='')}/select"
+        )
+
     # -- marketplace (Phase 3) -----------------------------------------------------
 
     def list_policies(self, source: PolicySource | None = None) -> Any:

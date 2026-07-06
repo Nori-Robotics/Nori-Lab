@@ -716,6 +716,29 @@ def nori_pair_robot(body: NoriPairBody, request: Request):
     return _nori_proxy(lambda: client.pair_robot(body.robot_serial_number))
 
 
+class NoriUnpairBody(BaseModel):
+    robot_serial_number: str | None = None
+
+
+@app.post("/nori/customers/me/unpair")
+def nori_unpair_robot(request: Request, body: NoriUnpairBody | None = None):
+    client = _nori_client(request)
+    serial = body.robot_serial_number if body else None
+    return _nori_proxy(lambda: client.unpair_robot(serial))
+
+
+@app.get("/nori/customers/me/robots")
+def nori_list_robots(request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(client.list_robots)
+
+
+@app.post("/nori/customers/me/robots/{serial}/select")
+def nori_select_robot(serial: str, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.select_robot(serial))
+
+
 @app.get("/nori/consents")
 def nori_list_consents(request: Request):
     client = _nori_client(request)

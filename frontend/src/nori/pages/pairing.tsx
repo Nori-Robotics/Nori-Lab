@@ -1,44 +1,81 @@
 // NORI: Additive file. Pairing page (Phase 6, manual serial entry).
 // Manual serial → POST /nori/customers/me/pair. mDNS/QR discovery is blocked on the Pi
 // daemon's presence advertisement.
+//
+// Multi-robot: the customer can pair several robots and choose which one teleop/remote
+// connects to (the "active" robot — see NoriContext.activeRobotSerial). The backend
+// multi-robot endpoints (list / per-robot unpair / server-side active selection) aren't
+// built yet (tracked in Nori-Backend/todos.md); until they land this page derives a
+// single-robot list from the customer profile and persists the active choice locally.
 
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
 import { useApi } from "@/contexts/ApiContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNori } from "@/nori/NoriContext";
-import { pairRobot } from "@/nori/api/client";
+import {
+  listRobots,
+  pairRobot,
+  selectRobot,
+  unpairRobot,
+  type CustomerProfile,
+  type PairedRobot,
+} from "@/nori/api/client";
+
+/** Single-robot list derived from the profile — the fallback until the backend's
+ * multi-robot GET /customers/me/robots ships. See Nori-Backend/todos.md. */
+function robotsFromCustomer(customer: CustomerProfile | null): PairedRobot[] {
+  if (!customer?.is_paired || !customer.robot_serial_number) return [];
+  return [{ robot_serial_number: customer.robot_serial_number, is_active: true }];
+}
 
 const Pairing = () => {
   const { baseUrl, fetchWithHeaders } = useApi();
-  const { customer, setCustomer } = useNori();
-  const navigate = useNavigate();
+  const { customer, setCustomer, activeRobotSerial, setActiveRobotSerial } = useNori();
+
+  const [robots, setRobots] = useState<PairedRobot[] | null>(null);
   const [serial, setSerial] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [busySerial, setBusySerial] = useState<string | null>(null);
+  const [confirmSerial, setConfirmSerial] = useState<string | null>(null);
 
-  if (customer?.is_paired) {
-    return (
-      <section className="space-y-3">
-        <h1 className="text-3xl font-bold">Robot paired</h1>
-        <p className="text-sm text-muted-foreground">
-          Paired to <span className="font-mono">{customer.robot_serial_number}</span>.
-        </p>
-      </section>
-    );
-  }
+  const loadRobots = useCallback(async () => {
+    try {
+      setRobots(await listRobots(baseUrl, fetchWithHeaders));
+    } catch {
+      // Multi-robot endpoint not available yet — derive the list from the profile.
+      setRobots(robotsFromCustomer(customer));
+    }
+  }, [baseUrl, fetchWithHeaders, customer]);
 
-  const onSubmit = async (e: React.FormEvent) => {
+  useEffect(() => {
+    loadRobots();
+  }, [loadRobots]);
+
+  // Keep the active selection pointing at a robot that still exists. Runs when the list
+  // changes (e.g. after unpair) or when a stale localStorage serial doesn't match.
+  useEffect(() => {
+    if (!robots || robots.length === 0) return;
+    if (robots.some((r) => r.robot_serial_number === activeRobotSerial)) return;
+    const preferred = robots.find((r) => r.is_active) ?? robots[0];
+    setActiveRobotSerial(preferred.robot_serial_number);
+  }, [robots, activeRobotSerial, setActiveRobotSerial]);
+
+  const onPair = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
+    const next = serial.trim();
     try {
-      const updated = await pairRobot(baseUrl, fetchWithHeaders, serial.trim());
+      const updated = await pairRobot(baseUrl, fetchWithHeaders, next);
       setCustomer(updated);
-      navigate("/nori/account");
+      setSerial("");
+      // First robot paired becomes active automatically.
+      if (!robots || robots.length === 0) setActiveRobotSerial(next);
+      await loadRobots();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -46,15 +83,127 @@ const Pairing = () => {
     }
   };
 
+  // Selection is a local concept today (feeds remote.tsx's session room). We apply it
+  // immediately, then best-effort sync to the backend so the choice can move server-side
+  // once that endpoint exists — a not-yet-built endpoint failing is expected, not an error.
+  const onSelect = async (s: string) => {
+    setActiveRobotSerial(s);
+    try {
+      setCustomer(await selectRobot(baseUrl, fetchWithHeaders, s));
+    } catch {
+      // Server-side active-robot selection not available yet; local choice stands.
+    }
+  };
+
+  const onUnpair = async (s: string) => {
+    setError(null);
+    setBusySerial(s);
+    try {
+      const updated = await unpairRobot(baseUrl, fetchWithHeaders, s);
+      setCustomer(updated);
+      if (activeRobotSerial === s) setActiveRobotSerial(null); // reconcile effect re-points
+      setConfirmSerial(null);
+      await loadRobots();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusySerial(null);
+    }
+  };
+
+  const paired = robots ?? [];
+  const hasRobots = paired.length > 0;
+
   return (
     <section className="max-w-md space-y-4">
-      <h1 className="text-3xl font-bold">Pair your robot</h1>
+      <h1 className="text-3xl font-bold">{hasRobots ? "Your robots" : "Pair your robot"}</h1>
+
+      {error && <p className="text-sm text-destructive">{error}</p>}
+
+      {hasRobots && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              Paired robots{paired.length > 1 ? " — select which to connect" : ""}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {paired.map((r) => {
+              const s = r.robot_serial_number;
+              const active = s === activeRobotSerial;
+              const confirming = confirmSerial === s;
+              const busy = busySerial === s;
+              return (
+                <div
+                  key={s}
+                  className={`flex items-center gap-3 rounded-md border p-3 ${
+                    active ? "border-primary" : "border-border"
+                  }`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-mono text-sm">{s}</div>
+                    {r.nickname && (
+                      <div className="truncate text-xs text-muted-foreground">{r.nickname}</div>
+                    )}
+                  </div>
+                  {active ? (
+                    <span className="shrink-0 rounded bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                      Connected
+                    </span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onSelect(s)}
+                      disabled={busy}
+                    >
+                      Connect
+                    </Button>
+                  )}
+                  {confirming ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => onUnpair(s)}
+                        disabled={busy}
+                      >
+                        {busy ? "Unpairing…" : "Confirm"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setConfirmSerial(null)}
+                        disabled={busy}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => setConfirmSerial(s)}
+                    >
+                      Unpair
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Enter serial number</CardTitle>
+          <CardTitle className="text-base">
+            {hasRobots ? "Pair another robot" : "Enter serial number"}
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={onSubmit} className="space-y-4">
+          <form onSubmit={onPair} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="serial">Robot serial number</Label>
               <Input
@@ -65,13 +214,13 @@ const Pairing = () => {
                 required
               />
             </div>
-            {error && <p className="text-sm text-destructive">{error}</p>}
             <Button type="submit" disabled={submitting || !serial.trim()}>
               {submitting ? "Pairing…" : "Pair robot"}
             </Button>
           </form>
         </CardContent>
       </Card>
+
       <p className="text-xs text-muted-foreground">
         Automatic discovery (mDNS / QR) arrives once the robot daemon ships. For now, find
         the serial on the sticker under your robot.

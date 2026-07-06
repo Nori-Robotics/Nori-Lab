@@ -69,7 +69,7 @@ function loadSettings(): Settings {
 }
 
 const Remote = () => {
-  const { ready, customer } = useNori();
+  const { ready, customer, activeRobotSerial } = useNori();
   const { baseUrl, fetchWithHeaders } = useApi();
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -142,10 +142,12 @@ const Remote = () => {
     teleopRef.current?.setArm(settings.arm);
   }, [settings.arm]);
 
-  // Default the room to the paired robot's serial: the Supabase channel is keyed by
+  // Default the room to the active robot's serial: the Supabase channel is keyed by
   // NORI_ROOM, and a paired robot's room == its serial, so a paired operator never has
-  // to type it. Only fills when the room is still unset (a manual value always wins).
-  const serial = customer?.robot_serial_number ?? "";
+  // to type it. With multi-robot pairing this follows the Pairing page's active-robot
+  // selection; it falls back to the profile serial. Only fills when the room is still
+  // unset (a manual value always wins).
+  const serial = activeRobotSerial ?? customer?.robot_serial_number ?? "";
   useEffect(() => {
     if (!settings.room && serial) set("room", serial);
   }, [serial, settings.room]);
@@ -512,7 +514,7 @@ const Remote = () => {
 
         <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
           <CardHeader className="py-3">
-            <CardTitle className="text-sm">Controls</CardTitle>
+            <CardTitle className="text-sm">Keyboard controls</CardTitle>
           </CardHeader>
           <CardContent className="pb-3">
             <ControlLegend mode={mode} />

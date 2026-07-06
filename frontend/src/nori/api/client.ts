@@ -227,6 +227,60 @@ export function pairRobot(
   });
 }
 
+/**
+ * One robot paired to the customer. Multi-robot pairing is not in the backend yet
+ * (tracked in Nori-Backend/todos.md) — until it ships, the Pairing page derives a
+ * single-element list from the customer profile. Shape is forward-looking so the UI
+ * doesn't change when `GET /customers/me/robots` lands.
+ */
+export interface PairedRobot {
+  robot_serial_number: string;
+  nickname?: string | null;
+  paired_at?: string | null;
+  /** True for the robot teleop/remote currently targets. */
+  is_active?: boolean;
+}
+
+/** GET /nori/customers/me/robots — all robots paired to the customer (multi-robot). */
+export function listRobots(baseUrl: string, fetcher: Fetcher): Promise<PairedRobot[]> {
+  return noriRequest<PairedRobot[]>(baseUrl, fetcher, "/nori/customers/me/robots", {
+    action: "Load robots",
+  });
+}
+
+/**
+ * POST /nori/customers/me/unpair — detach a robot. Pass the serial to unpair a specific
+ * robot (multi-robot); omit to unpair the sole/active robot. Idempotent if already gone.
+ */
+export function unpairRobot(
+  baseUrl: string,
+  fetcher: Fetcher,
+  robotSerialNumber?: string
+): Promise<CustomerProfile> {
+  return noriRequest<CustomerProfile>(baseUrl, fetcher, "/nori/customers/me/unpair", {
+    method: "POST",
+    body: robotSerialNumber ? { robot_serial_number: robotSerialNumber } : undefined,
+    action: "Unpair robot",
+  });
+}
+
+/**
+ * POST /nori/customers/me/robots/{serial}/select — set which paired robot is active
+ * (the one teleop/remote connects to). Returns the updated profile.
+ */
+export function selectRobot(
+  baseUrl: string,
+  fetcher: Fetcher,
+  robotSerialNumber: string
+): Promise<CustomerProfile> {
+  return noriRequest<CustomerProfile>(
+    baseUrl,
+    fetcher,
+    `/nori/customers/me/robots/${encodeURIComponent(robotSerialNumber)}/select`,
+    { method: "POST", action: "Select robot" }
+  );
+}
+
 export function listConsents(baseUrl: string, fetcher: Fetcher): Promise<Consent[]> {
   return noriRequest<Consent[]>(baseUrl, fetcher, "/nori/consents", {
     action: "Load consents",

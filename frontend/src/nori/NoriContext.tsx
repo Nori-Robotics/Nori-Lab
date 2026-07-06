@@ -38,7 +38,19 @@ interface NoriContextType {
   customerError: string | null;
   /** Replace the cached customer (e.g. after pairing returns an updated profile). */
   setCustomer: (c: CustomerProfile) => void;
+  /**
+   * Serial of the robot the app connects to (the "active" robot). With multi-robot
+   * pairing the customer can own several; this is the one teleop/remote targets. Defaults
+   * to the profile's `robot_serial_number` and is overridable from the Pairing page.
+   * Persisted per-user in localStorage so the choice survives reloads. Null when unpaired.
+   */
+  activeRobotSerial: string | null;
+  /** Pick which paired robot is active. Pass null to clear. */
+  setActiveRobotSerial: (serial: string | null) => void;
 }
+
+/** localStorage key for the active-robot choice, scoped per auth user. */
+const activeRobotKey = (userId: string) => `nori:activeRobot:${userId}`;
 
 const NoriContext = createContext<NoriContextType | undefined>(undefined);
 
@@ -51,6 +63,7 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [customer, setCustomer] = useState<CustomerProfile | null>(null);
   const [provisioning, setProvisioning] = useState(false);
   const [customerError, setCustomerError] = useState<string | null>(null);
+  const [activeRobotSerial, setActiveRobotSerialState] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,6 +124,38 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
   }, [userId, baseUrl, fetchWithHeaders]);
 
+  // Seed the active-robot choice when the customer (or account) changes: prefer a
+  // previously-persisted selection for this user, else fall back to the profile's serial.
+  // The Pairing page corrects a stale/removed selection once it has the full robot list.
+  const pairedSerial = customer?.robot_serial_number ?? null;
+  useEffect(() => {
+    if (!userId) {
+      setActiveRobotSerialState(null);
+      return;
+    }
+    let stored: string | null = null;
+    try {
+      stored = window.localStorage.getItem(activeRobotKey(userId));
+    } catch {
+      // localStorage may be unavailable (private mode); fall back to the profile serial.
+    }
+    setActiveRobotSerialState(stored ?? pairedSerial);
+  }, [userId, pairedSerial]);
+
+  const setActiveRobotSerial = React.useCallback(
+    (serial: string | null) => {
+      setActiveRobotSerialState(serial);
+      if (!userId) return;
+      try {
+        if (serial) window.localStorage.setItem(activeRobotKey(userId), serial);
+        else window.localStorage.removeItem(activeRobotKey(userId));
+      } catch {
+        // Non-fatal: the choice still applies for this session, just won't persist.
+      }
+    },
+    [userId]
+  );
+
   const value = useMemo<NoriContextType>(
     () => ({
       config,
@@ -122,8 +167,20 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       provisioning,
       customerError,
       setCustomer,
+      activeRobotSerial,
+      setActiveRobotSerial,
     }),
-    [config, loading, error, session, customer, provisioning, customerError]
+    [
+      config,
+      loading,
+      error,
+      session,
+      customer,
+      provisioning,
+      customerError,
+      activeRobotSerial,
+      setActiveRobotSerial,
+    ]
   );
 
   return <NoriContext.Provider value={value}>{children}</NoriContext.Provider>;

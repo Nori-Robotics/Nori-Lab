@@ -23,13 +23,10 @@ const Pairing = () => {
   if (customer?.is_paired) {
     return (
       <section className="space-y-3">
-        <h1 className="text-2xl font-bold">Robot paired</h1>
+        <h1 className="text-3xl font-bold">Robot paired</h1>
         <p className="text-sm text-muted-foreground">
           Paired to <span className="font-mono">{customer.robot_serial_number}</span>.
         </p>
-        <Button variant="outline" onClick={() => navigate("/nori/account")}>
-          Back to account
-        </Button>
       </section>
     );
   }
@@ -51,7 +48,7 @@ const Pairing = () => {
 
   return (
     <section className="max-w-md space-y-4">
-      <h1 className="text-2xl font-bold">Pair your robot</h1>
+      <h1 className="text-3xl font-bold">Pair your robot</h1>
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Enter serial number</CardTitle>

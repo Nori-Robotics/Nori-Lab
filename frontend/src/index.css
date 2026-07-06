@@ -2,93 +2,98 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. */
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here.
+   Palette ported from the NORI website: warm paper background, ink text,
+   custard/blush/leaf accents. Fonts: Fredoka (body), Bagel Fat One (display),
+   JetBrains Mono (mono). */
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* paper #fbfaf5 */
+    --background: 50 43% 97%;
+    /* ink #14131a */
+    --foreground: 249 16% 9%;
 
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card: 50 43% 97%;
+    --card-foreground: 249 16% 9%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover: 50 43% 97%;
+    --popover-foreground: 249 16% 9%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 249 16% 9%;
+    --primary-foreground: 50 43% 97%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    /* paper-2 #f3f1e8 */
+    --secondary: 49 31% 93%;
+    --secondary-foreground: 249 16% 9%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 49 31% 93%;
+    /* mute #6b6878 */
+    --muted-foreground: 251 7% 44%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    /* sticker #ffe9a8 (soft custard highlight) */
+    --accent: 45 100% 83%;
+    --accent-foreground: 249 16% 9%;
 
     --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive-foreground: 50 43% 97%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    /* paper-3 #ebe8db */
+    --border: 49 29% 89%;
+    --input: 49 29% 89%;
+    --ring: 249 16% 9%;
 
-    --radius: 0.5rem;
+    --radius: 1rem;
 
-    --sidebar-background: 0 0% 98%;
-
-    --sidebar-foreground: 240 5.3% 26.1%;
-
-    --sidebar-primary: 240 5.9% 10%;
-
-    --sidebar-primary-foreground: 0 0% 98%;
-
-    --sidebar-accent: 240 4.8% 95.9%;
-
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-background: 49 31% 93%;
+    --sidebar-foreground: 251 12% 18%;
+    --sidebar-primary: 249 16% 9%;
+    --sidebar-primary-foreground: 50 43% 97%;
+    --sidebar-accent: 49 29% 89%;
+    --sidebar-accent-foreground: 249 16% 9%;
+    --sidebar-border: 49 29% 89%;
+    --sidebar-ring: 249 16% 9%;
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
+    /* warm ink dark, matching the NORI ink palette */
+    --background: 249 16% 9%;
+    --foreground: 50 43% 97%;
 
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
+    --card: 251 12% 13%;
+    --card-foreground: 50 43% 97%;
 
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 251 12% 13%;
+    --popover-foreground: 50 43% 97%;
 
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary: 50 43% 97%;
+    --primary-foreground: 249 16% 9%;
 
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
+    /* ink-2 #2a2833 */
+    --secondary: 251 12% 18%;
+    --secondary-foreground: 50 43% 97%;
 
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
+    --muted: 251 12% 18%;
+    --muted-foreground: 251 8% 65%;
 
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
+    --accent: 45 100% 83%;
+    --accent-foreground: 249 16% 9%;
 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 45%;
+    --destructive-foreground: 50 43% 97%;
 
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --border: 251 12% 22%;
+    --input: 251 12% 22%;
+    --ring: 49 31% 93%;
+
+    --sidebar-background: 251 12% 13%;
+    --sidebar-foreground: 49 31% 93%;
+    --sidebar-primary: 50 43% 97%;
+    --sidebar-primary-foreground: 249 16% 9%;
+    --sidebar-accent: 251 12% 18%;
+    --sidebar-accent-foreground: 49 31% 93%;
+    --sidebar-border: 251 12% 22%;
+    --sidebar-ring: 49 31% 93%;
   }
 }
 
@@ -97,7 +102,47 @@
     @apply border-border;
   }
 
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans;
+  }
+
+  /* Only the page-level heading uses the stylized display font (it's hard
+     to read small); everything below is bolded sans. */
+  h1 {
+    @apply font-display text-4xl;
+    letter-spacing: -0.01em;
+  }
+
+  h2,
+  h3,
+  h4 {
+    @apply font-sans font-bold;
+    letter-spacing: -0.01em;
+  }
+
+  ::selection {
+    background: hsl(var(--foreground));
+    color: hsl(var(--background));
+  }
+}
+
+@layer utilities {
+  .eyebrow {
+    @apply font-mono uppercase text-muted-foreground;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+  }
+
+  .dot-grid {
+    background-image: radial-gradient(
+      hsl(var(--foreground) / 0.08) 1px,
+      transparent 1px
+    );
+    background-size: 22px 22px;
   }
 }

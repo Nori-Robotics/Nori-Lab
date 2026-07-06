@@ -69,7 +69,7 @@ const Inference: React.FC = () => {
               variant: next.exit_code === 0 ? "default" : "destructive",
             });
           }
-          navigate("/");
+          navigate("/lelab");
           return;
         }
         // Safety net: only fire after the rollout *main loop* has actually
@@ -128,7 +128,7 @@ const Inference: React.FC = () => {
 
   if (!status) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
         <Loader2 className="w-6 h-6 animate-spin mr-3" /> Connecting to inference…
       </div>
     );
@@ -153,28 +153,28 @@ const Inference: React.FC = () => {
   const timerSeconds = isRunning ? rolloutElapsed : setupElapsed;
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col p-4 sm:p-6 lg:p-8">
+    <div className="min-h-screen bg-background text-foreground flex flex-col p-4 sm:p-6 lg:p-8">
       <div className="flex items-center gap-4 mb-8">
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => navigate("/")}
-          className="text-slate-400 hover:bg-slate-800 hover:text-white rounded-lg"
+          onClick={() => navigate("/lelab")}
+          className="text-muted-foreground hover:bg-secondary hover:text-foreground rounded-lg"
         >
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <Logo />
-        <h1 className="font-bold text-white text-2xl">Inference</h1>
+        <h1 className="font-bold text-foreground text-3xl">Inference</h1>
       </div>
 
       <div className="flex-1 flex items-center justify-center">
-        <div className="bg-gray-900 rounded-lg border border-gray-700 p-8 w-full max-w-xl">
+        <div className="bg-card rounded-lg border border-border p-8 w-full max-w-xl">
           <div className="text-center mb-6">
             <div
               className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold tracking-widest ${
                 isSettingUp
-                  ? "bg-amber-500/15 text-amber-300"
-                  : "bg-green-500/15 text-green-300"
+                  ? "bg-amber-500/15 text-amber-700"
+                  : "bg-green-500/15 text-green-700"
               }`}
             >
               <span
@@ -189,19 +189,19 @@ const Inference: React.FC = () => {
           <div className="text-center mb-4">
             <div
               className={`text-7xl font-mono font-bold leading-none ${
-                isSettingUp ? "text-amber-400" : "text-green-400"
+                isSettingUp ? "text-amber-600" : "text-green-600"
               }`}
             >
               {formatTime(timerSeconds)}
             </div>
-            <div className="text-sm text-gray-500 mt-2">
+            <div className="text-sm text-muted-foreground mt-2">
               {isSettingUp
                 ? "Loading policy & connecting hardware…"
                 : `/ ${formatTime(duration)}`}
             </div>
           </div>
 
-          <div className="w-full bg-gray-800 rounded-full h-1.5 mb-8">
+          <div className="w-full bg-secondary rounded-full h-1.5 mb-8">
             <div
               className={`h-1.5 rounded-full transition-all duration-500 ${
                 isSettingUp
@@ -212,7 +212,7 @@ const Inference: React.FC = () => {
             />
           </div>
 
-          <div className="text-xs text-slate-500 break-all mb-6">
+          <div className="text-xs text-muted-foreground break-all mb-6">
             policy: {status.policy_ref ?? "(unknown)"}
           </div>
 
@@ -228,16 +228,16 @@ const Inference: React.FC = () => {
       </div>
 
       <AlertDialog open={showStopConfirm} onOpenChange={setShowStopConfirm}>
-        <AlertDialogContent className="bg-gray-900 border-gray-700 text-white">
+        <AlertDialogContent className="bg-card border-border text-foreground">
           <AlertDialogHeader>
             <AlertDialogTitle>Stop inference?</AlertDialogTitle>
-            <AlertDialogDescription className="text-gray-400">
+            <AlertDialogDescription className="text-muted-foreground">
               The follower will hold its current pose. You can launch another
               run from the job tile.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="bg-gray-800 border-gray-700 text-white hover:bg-gray-700">
+            <AlertDialogCancel className="bg-secondary border-border text-foreground hover:bg-muted">
               Keep running
             </AlertDialogCancel>
             <AlertDialogAction

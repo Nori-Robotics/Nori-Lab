@@ -115,7 +115,7 @@ const Recording = () => {
         description: "Please start recording from the main page.",
         variant: "destructive",
       });
-      navigate("/");
+      navigate("/lelab");
     }
   }, [recordingConfig, navigate, toast]);
 
@@ -236,7 +236,7 @@ const Recording = () => {
           description: data.message || "Failed to start recording session.",
           variant: "destructive",
         });
-        navigate("/");
+        navigate("/lelab");
       }
     } catch (error) {
       toast({
@@ -244,7 +244,7 @@ const Recording = () => {
         description: "Could not connect to the backend server.",
         variant: "destructive",
       });
-      navigate("/");
+      navigate("/lelab");
     }
   };
 
@@ -392,10 +392,10 @@ const Recording = () => {
 
   if (!recordingConfig) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
         <div className="text-center">
           <p className="text-lg">No recording configuration found.</p>
-          <Button onClick={() => navigate("/")} className="mt-4">
+          <Button onClick={() => navigate("/lelab")} className="mt-4">
             Return to Home
           </Button>
         </div>
@@ -406,7 +406,7 @@ const Recording = () => {
   // Show loading state while waiting for backend status
   if (!backendStatus) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-500 mx-auto mb-4"></div>
           <p className="text-lg">Connecting to recording session...</p>
@@ -442,10 +442,10 @@ const Recording = () => {
 
   const phaseColor =
     currentPhase === "recording"
-      ? { dot: "bg-red-500", pill: "bg-red-500/15 text-red-300", timer: "text-green-400", bar: "bg-green-500", button: "bg-green-500 hover:bg-green-600" }
+      ? { dot: "bg-red-500", pill: "bg-red-500/15 text-red-700", timer: "text-green-600", bar: "bg-green-500", button: "bg-green-500 hover:bg-green-600" }
       : currentPhase === "resetting"
-      ? { dot: "bg-orange-500", pill: "bg-orange-500/15 text-orange-300", timer: "text-orange-400", bar: "bg-orange-500", button: "bg-orange-500 hover:bg-orange-600" }
-      : { dot: "bg-gray-500", pill: "bg-gray-500/15 text-gray-300", timer: "text-gray-400", bar: "bg-gray-500", button: "bg-gray-500" };
+      ? { dot: "bg-orange-500", pill: "bg-orange-500/15 text-orange-700", timer: "text-orange-600", bar: "bg-orange-500", button: "bg-orange-500 hover:bg-orange-600" }
+      : { dot: "bg-muted", pill: "bg-muted/15 text-muted-foreground", timer: "text-muted-foreground", bar: "bg-muted", button: "bg-muted" };
 
   const primaryLabel =
     currentPhase === "recording"
@@ -457,23 +457,23 @@ const Recording = () => {
   const PrimaryIcon = currentPhase === "recording" ? SkipForward : Play;
 
   return (
-    <div className="min-h-screen bg-black text-white p-8">
+    <div className="min-h-screen bg-background text-foreground p-8">
       <div className="max-w-2xl mx-auto">
         <div className="mb-8">
           <Button
-            onClick={() => navigate("/")}
+            onClick={() => navigate("/lelab")}
             variant="outline"
-            className="border-gray-500 hover:border-gray-200 text-gray-300 hover:text-white"
+            className="border-border hover:border-muted-foreground text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Home
           </Button>
         </div>
 
-        <div className="bg-gray-900 rounded-lg border border-gray-700 p-8">
-          <div className="flex justify-end items-center gap-4 mb-6 text-sm text-gray-400">
+        <div className="bg-card rounded-lg border border-border p-8">
+          <div className="flex justify-end items-center gap-4 mb-6 text-sm text-muted-foreground">
             <span aria-label={`Episode ${currentEpisode} of ${totalEpisodes}`}>
-              Episode <span className="text-white font-semibold">{currentEpisode}</span> / {totalEpisodes}
+              Episode <span className="text-foreground font-semibold">{currentEpisode}</span> / {totalEpisodes}
             </span>
             <span className="font-mono" aria-label={`Total session time ${formatTime(sessionElapsedTime)}`}>
               {formatTime(sessionElapsedTime)}
@@ -483,7 +483,7 @@ const Recording = () => {
               size="icon"
               onClick={toggleMute}
               aria-label={muted ? "Unmute" : "Mute"}
-              className="h-8 w-8 text-gray-400 hover:text-white hover:bg-gray-800"
+              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-secondary"
             >
               {muted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
             </Button>
@@ -492,7 +492,7 @@ const Recording = () => {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 text-gray-400 hover:text-white hover:bg-gray-800"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-secondary"
                   aria-label="More actions"
                 >
                   <MoreHorizontal className="w-5 h-5" />
@@ -501,12 +501,12 @@ const Recording = () => {
               <DropdownMenuContent
                 align="end"
                 onCloseAutoFocus={(e) => e.preventDefault()}
-                className="bg-gray-900 border-gray-700 text-white"
+                className="bg-card border-border text-foreground"
               >
                 <DropdownMenuItem
                   onClick={handleRerecordEpisode}
                   disabled={!backendStatus.available_controls.rerecord_episode}
-                  className="focus:bg-gray-800 focus:text-white"
+                  className="focus:bg-secondary focus:text-foreground"
                 >
                   <RotateCcw className="w-4 h-4 mr-2" />
                   Re-record episode
@@ -514,7 +514,7 @@ const Recording = () => {
                 <DropdownMenuItem
                   onClick={requestStopRecording}
                   disabled={!backendStatus.available_controls.stop_recording}
-                  className="text-red-400 focus:bg-gray-800 focus:text-red-300"
+                  className="text-red-600 focus:bg-secondary focus:text-red-700"
                 >
                   <Square className="w-4 h-4 mr-2" />
                   Stop recording
@@ -538,12 +538,12 @@ const Recording = () => {
             <div className={`text-7xl font-mono font-bold leading-none ${phaseColor.timer}`}>
               {formatTime(phaseElapsedTime)}
             </div>
-            <div className="text-sm text-gray-500 mt-2">
+            <div className="text-sm text-muted-foreground mt-2">
               / {formatTime(phaseTimeLimit)}
             </div>
           </div>
 
-          <div className="w-full bg-gray-800 rounded-full h-1.5 mb-8">
+          <div className="w-full bg-secondary rounded-full h-1.5 mb-8">
             <div
               className={`h-1.5 rounded-full transition-all duration-500 ${phaseColor.bar}`}
               style={{
@@ -559,17 +559,17 @@ const Recording = () => {
               optimisticPhase !== null ||
               currentPhase === "completed"
             }
-            className={`w-full text-white font-semibold py-6 text-lg disabled:opacity-50 ${phaseColor.button}`}
+            className={`w-full text-foreground font-semibold py-6 text-lg disabled:opacity-50 ${phaseColor.button}`}
           >
             <PrimaryIcon className="w-5 h-5 mr-2" />
             {primaryLabel}
             {currentPhase !== "completed" && (
-              <span className="ml-3 px-2 py-0.5 rounded text-xs font-mono bg-black/30 text-white/70">SPACE / →</span>
+              <span className="ml-3 px-2 py-0.5 rounded text-xs font-mono bg-background/30 text-foreground/70">SPACE / →</span>
             )}
           </Button>
 
           {currentPhase === "completed" && (
-            <p className="text-center text-sm text-gray-400 mt-6">
+            <p className="text-center text-sm text-muted-foreground mt-6">
               Recording complete — redirecting to upload…
             </p>
           )}
@@ -577,15 +577,15 @@ const Recording = () => {
       </div>
 
       <AlertDialog open={showStopConfirm} onOpenChange={setShowStopConfirm}>
-        <AlertDialogContent className="bg-gray-900 border-gray-700 text-white">
+        <AlertDialogContent className="bg-card border-border text-foreground">
           <AlertDialogHeader>
             <AlertDialogTitle>Stop recording?</AlertDialogTitle>
-            <AlertDialogDescription className="text-gray-400">
+            <AlertDialogDescription className="text-muted-foreground">
               Saved episodes are kept. The session will end and you'll be taken to the upload page.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="bg-gray-800 border-gray-700 text-white hover:bg-gray-700">
+            <AlertDialogCancel className="bg-secondary border-border text-foreground hover:bg-muted">
               Keep recording
             </AlertDialogCancel>
             <AlertDialogAction

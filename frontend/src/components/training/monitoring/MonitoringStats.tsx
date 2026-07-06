@@ -117,31 +117,31 @@ const MonitoringStats: React.FC<MonitoringStatsProps> = ({
 
   return (
     <div className="space-y-6">
-      <Card className="bg-slate-800/50 border-slate-700 rounded-xl">
+      <Card className="bg-secondary/50 border-border rounded-xl">
         <CardContent className="p-6">
           <div className="flex items-baseline justify-between mb-3">
             <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/20 text-blue-400">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/20 text-blue-600">
                 <Activity className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm text-slate-400">Progress</h3>
-                <div className="text-base font-semibold text-white">{stepLabel}</div>
+                <h3 className="text-sm text-muted-foreground">Progress</h3>
+                <div className="text-base font-semibold text-foreground">{stepLabel}</div>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-slate-300">
-              <Clock className="w-4 h-4 text-purple-400" />
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Clock className="w-4 h-4 text-purple-600" />
               <span className="text-sm">
-                ETA <span className="font-semibold text-white">{etaLabel}</span>
+                ETA <span className="font-semibold text-foreground">{etaLabel}</span>
               </span>
             </div>
           </div>
-          <div className="relative h-8 w-full overflow-hidden rounded-md bg-slate-900 border border-slate-700">
+          <div className="relative h-8 w-full overflow-hidden rounded-md bg-card border border-border">
             <div
               className="h-full bg-gradient-to-r from-blue-500 to-sky-400 transition-[width] duration-500"
               style={{ width: `${progress}%` }}
             />
-            <div className="absolute inset-0 flex items-center justify-center font-semibold text-white text-sm tabular-nums drop-shadow">
+            <div className="absolute inset-0 flex items-center justify-center font-semibold text-foreground text-sm tabular-nums drop-shadow">
               {isStarting ? 'warming up…' : `${progress.toFixed(1)}%`}
             </div>
           </div>
@@ -149,15 +149,15 @@ const MonitoringStats: React.FC<MonitoringStatsProps> = ({
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="bg-slate-800/50 border-slate-700 rounded-xl">
+        <Card className="bg-secondary/50 border-border rounded-xl">
           <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-3 text-white text-base">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-500/20 text-green-400">
+            <CardTitle className="flex items-center gap-3 text-foreground text-base">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-500/20 text-green-600">
                 <CheckCircle className="w-4 h-4" />
               </div>
               <span>
                 Loss{' '}
-                <span className="text-slate-400 text-sm font-normal">
+                <span className="text-muted-foreground text-sm font-normal">
                   ({trainingStatus.current_loss?.toFixed(4) ?? '—'})
                 </span>
               </span>
@@ -166,7 +166,7 @@ const MonitoringStats: React.FC<MonitoringStatsProps> = ({
           <CardContent className="pt-0">
             <div className="h-48">
               {lossHistory.length === 0 ? (
-                <div className="flex h-full items-center justify-center text-slate-500 text-sm">
+                <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
                   Waiting for first metric tick…
                 </div>
               ) : (
@@ -210,15 +210,15 @@ const MonitoringStats: React.FC<MonitoringStatsProps> = ({
           </CardContent>
         </Card>
 
-        <Card className="bg-slate-800/50 border-slate-700 rounded-xl">
+        <Card className="bg-secondary/50 border-border rounded-xl">
           <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-3 text-white text-base">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-500/20 text-orange-400">
+            <CardTitle className="flex items-center gap-3 text-foreground text-base">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-500/20 text-orange-600">
                 <Activity className="w-4 h-4" />
               </div>
               <span>
                 Learning Rate{' '}
-                <span className="text-slate-400 text-sm font-normal">
+                <span className="text-muted-foreground text-sm font-normal">
                   ({trainingStatus.current_lr?.toExponential(2) ?? '—'})
                 </span>
               </span>
@@ -227,7 +227,7 @@ const MonitoringStats: React.FC<MonitoringStatsProps> = ({
           <CardContent className="pt-0">
             <div className="h-48">
               {lrHistory.length === 0 ? (
-                <div className="flex h-full items-center justify-center text-slate-500 text-sm">
+                <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
                   Waiting for first metric tick…
                 </div>
               ) : (

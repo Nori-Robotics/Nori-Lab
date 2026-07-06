@@ -9,7 +9,7 @@ const HfAuthChip: React.FC = () => {
 
   if (auth.status === "loading") {
     return (
-      <div className="inline-flex items-center gap-2 rounded-full border border-gray-800 bg-gray-900/60 px-3 py-1 text-xs text-gray-400">
+      <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card/60 px-3 py-1 text-xs text-muted-foreground">
         <Loader2 className="w-3 h-3 animate-spin" />
         <span>Checking HF…</span>
       </div>
@@ -19,7 +19,7 @@ const HfAuthChip: React.FC = () => {
   if (auth.status === "authenticated") {
     return (
       <div
-        className="inline-flex items-center gap-2 rounded-full border border-gray-800 bg-gray-900/60 px-3 py-1 text-xs text-gray-200"
+        className="inline-flex items-center gap-2 rounded-full border border-border bg-card/60 px-3 py-1 text-xs text-foreground"
         title="Hugging Face authenticated"
       >
         <span
@@ -37,7 +37,7 @@ const HfAuthChip: React.FC = () => {
       <button
         type="button"
         onClick={() => setDialogOpen(true)}
-        className="inline-flex items-center gap-2 rounded-full border border-amber-700/60 bg-amber-950/40 px-3 py-1 text-xs text-amber-100 hover:bg-amber-900/40 transition-colors"
+        className="inline-flex items-center gap-2 rounded-full border border-amber-300 bg-amber-100 px-3 py-1 text-xs text-amber-700 hover:bg-amber-100 transition-colors"
         aria-label="Hugging Face not configured — show login instructions"
       >
         <span

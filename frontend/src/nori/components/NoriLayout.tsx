@@ -35,7 +35,8 @@ const NoriLayout = () => {
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b">
         <nav className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-3">
-          <Link to="/nori/account" className="font-semibold">
+          <Link to="/nori/account" className="flex items-center gap-2 font-semibold">
+            <img src="/nori-logo.png" alt="Nori" className="h-7 w-7" />
             Nori
           </Link>
           <div className="flex gap-3 text-sm">
@@ -53,9 +54,6 @@ const NoriLayout = () => {
               </Link>
             ))}
           </div>
-          <Link to="/" className="ml-auto text-sm text-muted-foreground hover:text-foreground">
-            ← LeLab
-          </Link>
         </nav>
       </header>
 

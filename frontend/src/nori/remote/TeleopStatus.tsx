@@ -24,16 +24,17 @@ function Stat({
   value: React.ReactNode;
   tone?: "default" | "good" | "warn" | "bad";
 }) {
+  // Tinted chips in the leader-setup palette: neutral cream, green/amber/red badges.
   const toneClass = {
-    default: "text-foreground",
-    good: "text-green-500",
-    warn: "text-amber-500",
-    bad: "text-destructive",
+    default: "border-[#14131a]/12 bg-[#f3f1e8] text-[#14131a]",
+    good: "border-[#4e9d55]/35 bg-[#e4f3e2] text-[#2a6b33]",
+    warn: "border-[#db9346]/35 bg-[#fdf1de] text-[#8a5a12]",
+    bad: "border-[#d24a3d]/35 bg-[#fde7e4] text-[#a3271c]",
   }[tone];
   return (
-    <div className="flex flex-col gap-0.5 rounded-md border bg-background px-2.5 py-1.5">
-      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
-      <span className={cn("font-mono text-sm leading-none", toneClass)}>{value}</span>
+    <div className={cn("flex flex-col gap-1 rounded-md border px-2.5 py-1.5", toneClass)}>
+      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[#857b6b]">{label}</span>
+      <span className="font-mono text-sm leading-none">{value}</span>
     </div>
   );
 }
@@ -65,7 +66,9 @@ export function TelemetryPanel({
   const hzTone = !controlActive || stale ? "default" : tel.loopHz >= 45 ? "good" : tel.loopHz >= 30 ? "warn" : "bad";
 
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
+      <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// telemetry</p>
+      <div className="mt-3 flex flex-wrap gap-2">
       <Stat
         label="link"
         value={connected ? connState : connState}
@@ -84,6 +87,7 @@ export function TelemetryPanel({
       <Stat label="temp" value={tel.tempC > 0 ? `${tel.tempC.toFixed(0)}°C` : "—"}
         tone={tel.tempC >= 80 ? "bad" : tel.tempC >= 70 ? "warn" : "default"} />
       {inVr && <Stat label="mode" value="VR" tone="good" />}
+      </div>
     </div>
   );
 }
@@ -104,28 +108,28 @@ const CURRENT_FULL = 600;
 export function GripForce({ currents }: { currents: Record<string, number> }) {
   const keys = Object.keys(currents);
   if (keys.length === 0) {
-    return <p className="text-xs text-muted-foreground">no current telemetry yet</p>;
+    return <p className="font-mono text-xs text-[#857b6b]">no current telemetry yet</p>;
   }
   const grippers = keys.filter((k) => k.includes("gripper")).sort();
   const rest = keys.filter((k) => !k.includes("gripper")).sort();
   const ordered = [...grippers, ...rest];
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-2">
       {ordered.map((k) => {
         const mag = Math.abs(currents[k] ?? 0);
         const pct = Math.min(100, (mag / CURRENT_FULL) * 100);
         const isGrip = k.includes("gripper");
-        const tone = pct >= 80 ? "bg-destructive" : pct >= 40 ? "bg-amber-500" : "bg-primary";
+        const tone = pct >= 80 ? "bg-[#d24a3d]" : pct >= 40 ? "bg-[#c97929]" : "bg-[#d98b3d]";
         return (
-          <div key={k} className="flex items-center gap-2">
-            <span className={cn("w-24 shrink-0 font-mono text-[11px]", isGrip ? "text-foreground" : "text-muted-foreground")}>
+          <div key={k} className="grid grid-cols-[minmax(6rem,auto)_1fr_3rem] items-center gap-3 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-3 py-2">
+            <span className={cn("truncate font-mono text-xs", isGrip ? "text-[#14131a]" : "text-[#5c564b]")}>
               {shortMotor(k)}
             </span>
-            <div className="h-2 flex-1 overflow-hidden rounded bg-muted">
-              <div className={cn("h-full rounded transition-[width] duration-100", tone)} style={{ width: `${pct}%` }} />
+            <div className="h-1.5 overflow-hidden rounded-full bg-[#e5e1d2]">
+              <div className={cn("h-full rounded-full transition-[width] duration-100", tone)} style={{ width: `${pct}%` }} />
             </div>
-            <span className="w-10 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+            <span className="text-right font-mono text-xs text-[#5c564b]">
               {mag.toFixed(0)}
             </span>
           </div>
@@ -169,32 +173,32 @@ export function RailHeight({ state }: { state: Record<string, number> }) {
     { key: "right_lift.pos", label: "R rail" },
   ];
   return (
-    <div className="space-y-1">
+    <div className="space-y-2">
       {rails.map(({ key, label }) => {
         const { known, depthMm, frac } = railReading(state, key);
         const pct = frac * 100;
-        // green near home (top), amber mid, red as it approaches the bottom hard stop.
-        const tone = frac >= 0.85 ? "bg-destructive" : frac >= 0.6 ? "bg-amber-500" : "bg-primary";
+        // orange through descent, darker mid, red as it approaches the bottom hard stop.
+        const tone = frac >= 0.85 ? "bg-[#d24a3d]" : frac >= 0.6 ? "bg-[#c97929]" : "bg-[#d98b3d]";
         const atTop = known && depthMm < 3;
         return (
-          <div key={key} className="flex items-center gap-2">
-            <span className="w-24 shrink-0 font-mono text-[11px] text-foreground">{label}</span>
-            <div className="relative h-2 flex-1 overflow-hidden rounded bg-muted">
+          <div key={key} className="grid grid-cols-[minmax(6rem,auto)_1fr_6rem] items-center gap-3 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-3 py-2">
+            <span className="truncate font-mono text-xs text-[#14131a]">{label}</span>
+            <div className="relative h-1.5 overflow-hidden rounded-full bg-[#e5e1d2]">
               {/* top-anchored descent gauge: fills from the left (top/home) as the rail dives */}
               {known && (
                 <div
-                  className={cn("absolute left-0 top-0 h-full rounded transition-[width] duration-100", tone)}
+                  className={cn("absolute left-0 top-0 h-full rounded-full transition-[width] duration-100", tone)}
                   style={{ width: `${pct}%` }}
                 />
               )}
             </div>
-            <span className="w-24 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+            <span className="text-right font-mono text-xs text-[#5c564b]">
               {!known ? "unknown" : atTop ? "top" : `↓ ${depthMm.toFixed(0)} mm`}
             </span>
           </div>
         );
       })}
-      <p className="text-[10px] text-muted-foreground">
+      <p className="font-mono text-[10px] text-[#857b6b]">
         0 = top of rail (start pose); bar fills as the carriage descends. Full scale ={" "}
         {RAIL_TRAVEL_MM} mm travel. “unknown” = tracker not valid.
       </p>
@@ -245,6 +249,7 @@ export function CallBar({
     <div className="flex flex-wrap items-center gap-3 rounded-md border bg-background px-3 py-2">
       {!call.active ? (
         <Button size="sm" onClick={onJoin} disabled={!running || !connected}
+          className="bg-[#8ab135] text-foreground hover:bg-[#7a9d2f]"
           title="Capture your mic and join the two-way audio call">
           Join call
         </Button>

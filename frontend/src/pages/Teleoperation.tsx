@@ -63,11 +63,11 @@ const TeleoperationPage = () => {
 
   const handleGoBack = async () => {
     await stopTeleoperation();
-    navigate("/");
+    navigate("/lelab");
   };
 
   return (
-    <div className="min-h-screen bg-black flex items-center justify-center p-2 sm:p-4">
+    <div className="min-h-screen bg-background flex items-center justify-center p-2 sm:p-4">
       <div className="w-full h-[95vh] flex">
         <VisualizerPanel onGoBack={handleGoBack} className="lg:w-full" />
       </div>

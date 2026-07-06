@@ -48,18 +48,18 @@ const TargetCard: React.FC<TargetCardProps> = ({
   };
 
   return (
-    <Card className="bg-slate-800/50 border-slate-700 rounded-xl">
+    <Card className="bg-secondary/50 border-border rounded-xl">
       <CardHeader>
-        <CardTitle className="text-white">Compute target</CardTitle>
+        <CardTitle className="text-foreground">Compute target</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <div>
-          <Label className="text-slate-300">Run training on</Label>
+          <Label className="text-muted-foreground">Run training on</Label>
           <Select value={value} onValueChange={handleChange}>
-            <SelectTrigger className="bg-slate-900 border-slate-600 text-white rounded-lg mt-1">
+            <SelectTrigger className="bg-card border-border text-foreground rounded-lg mt-1">
               <SelectValue placeholder={loading ? "Loading…" : "Select target"} />
             </SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-600 text-white">
+            <SelectContent className="bg-secondary border-border text-foreground">
               <SelectItem value="local">Local — your machine (free)</SelectItem>
               {flavors.map((f) => (
                 <SelectItem
@@ -69,7 +69,7 @@ const TargetCard: React.FC<TargetCardProps> = ({
                 >
                   {formatFlavorLine(f)}
                   {!authenticated && (
-                    <span className="text-amber-300 ml-2 text-xs">
+                    <span className="text-amber-700 ml-2 text-xs">
                       log in to HF
                     </span>
                   )}
@@ -77,7 +77,7 @@ const TargetCard: React.FC<TargetCardProps> = ({
               ))}
             </SelectContent>
           </Select>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-xs text-muted-foreground mt-1">
             Cost shown is per running hour. Final policy uploads to your HF
             account when training completes.
           </p>

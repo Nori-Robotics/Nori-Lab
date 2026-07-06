@@ -41,15 +41,15 @@ const HfAuthBanner: React.FC = () => {
   };
 
   return (
-    <div className="bg-amber-950/40 border border-amber-700/60 rounded-lg p-4 mb-6">
+    <div className="bg-amber-100 border border-amber-300 rounded-lg p-4 mb-6">
       <div className="flex items-start gap-3">
-        <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+        <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
         <div className="flex-1 space-y-3">
           <div>
-            <p className="text-sm text-amber-100 font-medium">
+            <p className="text-sm text-amber-700 font-medium">
               Hugging Face access required for cloud training
             </p>
-            <p className="text-xs text-amber-200/80 mt-1">
+            <p className="text-xs text-amber-700/80 mt-1">
               Create a token at{" "}
               <a
                 href="https://huggingface.co/settings/tokens"
@@ -76,7 +76,7 @@ const HfAuthBanner: React.FC = () => {
               placeholder="hf_..."
               value={token}
               onChange={(e) => setToken(e.target.value)}
-              className="bg-slate-900 border-slate-600 text-white placeholder:text-slate-500"
+              className="bg-card border-border text-foreground placeholder:text-muted-foreground"
               disabled={submitting}
               autoComplete="off"
             />
@@ -96,7 +96,7 @@ const HfAuthBanner: React.FC = () => {
             </Button>
           </form>
           {error && (
-            <p className="text-xs text-red-300">{error}</p>
+            <p className="text-xs text-red-700">{error}</p>
           )}
         </div>
       </div>

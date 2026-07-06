@@ -35,12 +35,12 @@ export const CheckpointDropdown: React.FC<Props> = ({
       disabled={disabled || checkpoints.length === 0}
     >
       <SelectTrigger
-        className="bg-slate-800 border-slate-700 text-white h-8 text-xs px-2 w-auto min-w-[110px]"
+        className="bg-secondary border-border text-foreground h-8 text-xs px-2 w-auto min-w-[110px]"
         onClick={(e) => e.stopPropagation()}
       >
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
-      <SelectContent className="bg-slate-900 border-slate-700 text-white">
+      <SelectContent className="bg-card border-border text-foreground">
         {checkpoints.map((c) => (
           <SelectItem
             key={c.step}

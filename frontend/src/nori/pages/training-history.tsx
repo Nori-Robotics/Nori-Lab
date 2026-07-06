@@ -17,7 +17,7 @@ import {
 
 const statusTone = (s: string) => {
   const low = s.toLowerCase();
-  if (/(succeed|success|complete|promot|done)/.test(low)) return "text-green-400";
+  if (/(succeed|success|complete|promot|done)/.test(low)) return "text-green-600";
   if (/(fail|error|cancel)/.test(low)) return "text-destructive";
   return "text-muted-foreground";
 };
@@ -54,7 +54,7 @@ const JobLogs = ({ jobId }: { jobId: string }) => {
   }, [jobId, baseUrl, fetchWithHeaders]);
 
   return (
-    <pre className="mt-2 max-h-64 overflow-auto rounded bg-black/60 p-2 text-xs text-gray-300">
+    <pre className="mt-2 max-h-64 overflow-auto rounded bg-background/60 p-2 text-xs text-muted-foreground">
       {lines.length ? lines.join("\n") : "Waiting for logs…"}
       {done && "\n— end of logs —"}
     </pre>
@@ -100,7 +100,7 @@ const TrainingHistory = () => {
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Training history</h1>
+        <h1 className="text-3xl font-bold">Training history</h1>
         <div className="flex items-center gap-2">
           {startMsg && <span className="text-xs text-muted-foreground">{startMsg}</span>}
           <Button size="sm" onClick={start} disabled={starting || !customer}>

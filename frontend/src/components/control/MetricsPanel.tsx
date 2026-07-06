@@ -36,7 +36,7 @@ const MetricsPanel: React.FC<MetricsPanelProps> = ({
 
   return (
     <div className="w-full lg:w-1/2 p-2 sm:p-4">
-      <div className="bg-gray-900 rounded-lg p-4 h-full flex flex-col">
+      <div className="bg-card rounded-lg p-4 h-full flex flex-col">
         {/* Tab Headers */}
         <div className="flex mb-4">
           <button
@@ -44,7 +44,7 @@ const MetricsPanel: React.FC<MetricsPanelProps> = ({
             className={`px-6 py-2 rounded-t-lg text-sm sm:text-base ${
               activeTab === 'MOTORS'
                 ? 'bg-orange-500 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                : 'bg-muted text-muted-foreground hover:bg-muted'
             }`}
           >
             MOTORS
@@ -54,7 +54,7 @@ const MetricsPanel: React.FC<MetricsPanelProps> = ({
             className={`px-6 py-2 rounded-t-lg ml-2 text-sm sm:text-base ${
               activeTab === 'SENSORS'
                 ? 'bg-orange-500 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                : 'bg-muted text-muted-foreground hover:bg-muted'
             }`}
           >
             SENSORS
@@ -66,10 +66,10 @@ const MetricsPanel: React.FC<MetricsPanelProps> = ({
           {activeTab === 'SENSORS' && (
             <div className="space-y-4">
               {/* Webcam Feed */}
-              <div className="border border-gray-800 rounded p-2 flex flex-col h-64">
-                <h3 className="text-sm text-white font-medium mb-2">Live Camera Feed</h3>
+              <div className="border border-border rounded p-2 flex flex-col h-64">
+                <h3 className="text-sm text-foreground font-medium mb-2">Live Camera Feed</h3>
                 {hasPermissions ? (
-                  <div className="flex-1 bg-black rounded overflow-hidden">
+                  <div className="flex-1 bg-background rounded overflow-hidden">
                     <video
                       ref={sensorVideoRef}
                       autoPlay
@@ -79,10 +79,10 @@ const MetricsPanel: React.FC<MetricsPanelProps> = ({
                     />
                   </div>
                 ) : (
-                  <div className="flex-1 flex items-center justify-center bg-black rounded">
+                  <div className="flex-1 flex items-center justify-center bg-background rounded">
                     <div className="text-center">
-                      <Camera className="w-12 h-12 mx-auto text-gray-500 mb-2" />
-                      <p className="text-gray-400">Camera permission not granted.</p>
+                      <Camera className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
+                      <p className="text-muted-foreground">Camera permission not granted.</p>
                     </div>
                   </div>
                 )}
@@ -90,8 +90,8 @@ const MetricsPanel: React.FC<MetricsPanelProps> = ({
 
               {/* Mic Detection & Other Sensors */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="border border-gray-800 rounded p-2 flex flex-col justify-center min-h-[120px]">
-                    <h3 className="text-sm text-center text-white font-medium mb-2">Voice Activity</h3>
+                <div className="border border-border rounded p-2 flex flex-col justify-center min-h-[120px]">
+                    <h3 className="text-sm text-center text-foreground font-medium mb-2">Voice Activity</h3>
                   {hasPermissions ? (
                     <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center">
                       <div className="flex items-end h-10 gap-px w-full justify-center">
@@ -100,21 +100,21 @@ const MetricsPanel: React.FC<MetricsPanelProps> = ({
                           return (
                             <div
                               key={i}
-                              className={`w-1.5 rounded-full transition-colors duration-75 ${barIsActive ? 'bg-orange-500' : 'bg-gray-700'}`}
+                              className={`w-1.5 rounded-full transition-colors duration-75 ${barIsActive ? 'bg-orange-500' : 'bg-muted'}`}
                               style={{ height: `${(i / 15 * 60) + 20}%` }}
                             />
                           );
                         })}
                       </div>
-                      <p className="text-xs text-gray-300">
+                      <p className="text-xs text-muted-foreground">
                         {isVoiceActive ? "Voice commands active" : "Voice commands muted"}
                       </p>
                     </div>
                   ) : (
-                    <div className="flex-1 flex items-center justify-center bg-black rounded">
+                    <div className="flex-1 flex items-center justify-center bg-background rounded">
                       <div className="text-center">
-                        <MicOff className="w-8 h-8 mx-auto text-gray-500 mb-2" />
-                        <p className="text-gray-400">Microphone permission not granted.</p>
+                        <MicOff className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                        <p className="text-muted-foreground">Microphone permission not granted.</p>
                       </div>
                     </div>
                   )}
@@ -122,8 +122,8 @@ const MetricsPanel: React.FC<MetricsPanelProps> = ({
 
                 {/* Sensor Charts */}
                 {['sensor3', 'sensor4'].map((sensor, index) => (
-                  <div key={sensor} className="border border-gray-800 rounded p-2 flex flex-col h-auto min-h-[120px]">
-                    <h3 className="text-sm text-white font-medium mb-2">Sensor {index + 3}</h3>
+                  <div key={sensor} className="border border-border rounded p-2 flex flex-col h-auto min-h-[120px]">
+                    <h3 className="text-sm text-foreground font-medium mb-2">Sensor {index + 3}</h3>
                     <ResponsiveContainer width="100%" height="90%">
                       <LineChart data={sensorData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -154,8 +154,8 @@ const MetricsPanel: React.FC<MetricsPanelProps> = ({
           {activeTab === 'MOTORS' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {['motor1', 'motor2', 'motor3', 'motor4', 'motor5', 'motor6'].map((motor, index) => (
-                <div key={motor} className="border border-gray-800 rounded p-2 h-40">
-                  <h3 className="text-sm text-white font-medium mb-2">Motor {index + 1}</h3>
+                <div key={motor} className="border border-border rounded p-2 h-40">
+                  <h3 className="text-sm text-foreground font-medium mb-2">Motor {index + 1}</h3>
                   <ResponsiveContainer width="100%" height="80%">
                     <LineChart data={motorData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#374151" />

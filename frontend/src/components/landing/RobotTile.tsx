@@ -45,7 +45,7 @@ const RobotTile: React.FC<RobotTileProps> = ({
   const teleopDisabled = !robot || !robot.is_clean;
 
   return (
-    <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 flex flex-col gap-2 relative">
+    <div className="bg-secondary rounded-lg border border-border p-3 flex flex-col gap-2 relative">
       <div className="flex items-center gap-2">
         <div className="flex-1 min-w-0">
           <RobotSelector
@@ -59,7 +59,7 @@ const RobotTile: React.FC<RobotTileProps> = ({
         {status && (
           <p
             className={`text-xs truncate shrink-0 ${
-              robot!.is_clean ? "text-green-400" : "text-amber-400"
+              robot!.is_clean ? "text-green-600" : "text-amber-600"
             }`}
           >
             {status}
@@ -72,7 +72,7 @@ const RobotTile: React.FC<RobotTileProps> = ({
                 <Button
                   size="icon"
                   variant="ghost"
-                  className="h-8 w-8 text-gray-300 hover:text-white"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
                   onClick={() => onConfigure(robot.name)}
                   aria-label="Configure"
                 >
@@ -86,7 +86,7 @@ const RobotTile: React.FC<RobotTileProps> = ({
                 <Button
                   size="icon"
                   variant="ghost"
-                  className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-900/20"
+                  className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-100"
                   onClick={() => setConfirmDelete(true)}
                   aria-label="Delete robot"
                 >
@@ -108,8 +108,8 @@ const RobotTile: React.FC<RobotTileProps> = ({
                 disabled={teleopDisabled}
                 className={`w-full ${
                   teleopDisabled
-                    ? "bg-red-500/30 hover:bg-red-500/30 text-red-200 cursor-not-allowed"
-                    : "bg-yellow-500 hover:bg-yellow-600 text-white"
+                    ? "bg-red-500/30 hover:bg-red-500/30 text-red-700 cursor-not-allowed"
+                    : "bg-yellow-500 hover:bg-yellow-600 text-foreground"
                 }`}
               >
                 Teleoperation
@@ -124,10 +124,10 @@ const RobotTile: React.FC<RobotTileProps> = ({
 
       {robot && (
         <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-          <DialogContent className="bg-gray-900 border-gray-800 text-white">
+          <DialogContent className="bg-card border-border text-foreground">
             <DialogHeader>
               <DialogTitle>Delete robot config?</DialogTitle>
-              <DialogDescription className="text-gray-400">
+              <DialogDescription className="text-muted-foreground">
                 This deletes the robot config file from disk. Calibration files
                 are not removed. This cannot be undone.
               </DialogDescription>
@@ -135,7 +135,7 @@ const RobotTile: React.FC<RobotTileProps> = ({
             <DialogFooter className="flex gap-2 justify-end">
               <Button
                 variant="outline"
-                className="border-gray-600 text-gray-300"
+                className="border-border text-muted-foreground"
                 onClick={() => setConfirmDelete(false)}
               >
                 Cancel

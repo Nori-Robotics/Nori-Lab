@@ -221,13 +221,13 @@ const Landing = () => {
 
   return (
     <div
-      className="min-h-screen bg-black text-white pb-16"
+      className="min-h-screen bg-background text-foreground pb-16"
       style={{ ["--lelab-topbar-h" as string]: "48px" }}
     >
       <LandingTopBar />
 
       <div
-        className="sticky z-20 bg-black/95 backdrop-blur supports-[backdrop-filter]:bg-black/70 border-b border-gray-800"
+        className="sticky z-20 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70 border-b border-border"
         style={{ top: "var(--lelab-topbar-h)" }}
       >
         <div className="mx-auto max-w-7xl px-4 py-4 grid gap-4 grid-cols-1 lg:grid-cols-[1.2fr_2fr]">
@@ -241,7 +241,7 @@ const Landing = () => {
             deleteRobot={deleteRobot}
           />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 flex flex-col gap-2">
+            <div className="bg-secondary rounded-lg border border-border p-3 flex flex-col gap-2">
               <h3 className="font-semibold text-lg text-left h-10 flex items-center">
                 Dataset
               </h3>
@@ -255,9 +255,9 @@ const Landing = () => {
                 <Button
                   variant="outline"
                   role="combobox"
-                  className="w-full justify-between bg-gray-800 border-gray-600 text-white hover:bg-gray-700"
+                  className="w-full justify-between bg-secondary border-border text-foreground hover:bg-muted"
                 >
-                  <span className="truncate text-gray-300">
+                  <span className="truncate text-muted-foreground">
                     {datasetsLoading
                       ? "Loading datasets…"
                       : "Select or create a dataset…"}
@@ -266,7 +266,7 @@ const Landing = () => {
                 </Button>
               </DatasetPicker>
             </div>
-            <div className="bg-gray-800 rounded-lg border border-gray-700 p-3 flex flex-col gap-2">
+            <div className="bg-secondary rounded-lg border border-border p-3 flex flex-col gap-2">
               <h3 className="font-semibold text-lg text-left h-10 flex items-center">
                 Create a model
               </h3>

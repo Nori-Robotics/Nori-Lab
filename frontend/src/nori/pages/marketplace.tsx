@@ -27,11 +27,11 @@ type InstallState = { status: "idle" | "working" | "done" | "error"; message?: s
 
 const sourceBadge = (source: string) => {
   const map: Record<string, string> = {
-    own: "bg-blue-500/15 text-blue-300",
-    first_party: "bg-green-500/15 text-green-300",
-    community: "bg-purple-500/15 text-purple-300",
+    own: "bg-blue-500/15 text-blue-700",
+    first_party: "bg-green-500/15 text-green-700",
+    community: "bg-purple-500/15 text-purple-700",
   };
-  return map[source] ?? "bg-gray-500/15 text-gray-300";
+  return map[source] ?? "bg-muted/15 text-muted-foreground";
 };
 
 const PolicyCard = ({
@@ -145,7 +145,7 @@ const Marketplace = () => {
 
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-bold">Marketplace</h1>
+      <h1 className="text-3xl font-bold">Marketplace</h1>
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex gap-1">

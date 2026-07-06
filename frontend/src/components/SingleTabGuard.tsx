@@ -113,7 +113,7 @@ const SingleTabGuard = ({ children }: { children: ReactNode }) => {
       {children}
       {!isPrimary && (
         <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-background/80 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
         >

@@ -35,21 +35,21 @@ interface StagePresentation {
 }
 
 const stagePresentation: Record<string, StagePresentation> = {
-  RUNNING: { label: "Running", color: "text-green-400", Icon: Loader2, spin: true },
-  QUEUED: { label: "Queued", color: "text-amber-400", Icon: Clock },
-  SCHEDULING: { label: "Scheduling", color: "text-amber-400", Icon: Clock },
-  COMPLETED: { label: "Done", color: "text-slate-400", Icon: CheckCircle2 },
-  FAILED: { label: "Failed", color: "text-red-400", Icon: XCircle },
+  RUNNING: { label: "Running", color: "text-green-600", Icon: Loader2, spin: true },
+  QUEUED: { label: "Queued", color: "text-amber-600", Icon: Clock },
+  SCHEDULING: { label: "Scheduling", color: "text-amber-600", Icon: Clock },
+  COMPLETED: { label: "Done", color: "text-muted-foreground", Icon: CheckCircle2 },
+  FAILED: { label: "Failed", color: "text-red-600", Icon: XCircle },
   // HF API uses "CANCELED" (single L); accept both spellings.
-  CANCELED: { label: "Cancelled", color: "text-amber-400", Icon: AlertTriangle },
-  CANCELLED: { label: "Cancelled", color: "text-amber-400", Icon: AlertTriangle },
+  CANCELED: { label: "Cancelled", color: "text-amber-600", Icon: AlertTriangle },
+  CANCELLED: { label: "Cancelled", color: "text-amber-600", Icon: AlertTriangle },
 };
 
 const HubJobCard: React.FC<Props> = ({ job }) => {
   const stage = job.status?.stage?.toUpperCase() ?? "";
   const present: StagePresentation = stagePresentation[stage] ?? {
     label: stage || "Unknown",
-    color: "text-slate-400",
+    color: "text-muted-foreground",
     Icon: HelpCircle,
   };
   const Icon = present.Icon;
@@ -59,7 +59,7 @@ const HubJobCard: React.FC<Props> = ({ job }) => {
   return (
     <Card
       onClick={() => window.open(job.url, "_blank", "noopener,noreferrer")}
-      className="bg-slate-800/50 border-slate-700 rounded-xl cursor-pointer hover:border-slate-500 transition-colors"
+      className="bg-secondary/50 border-border rounded-xl cursor-pointer hover:border-muted-foreground transition-colors"
     >
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-2">
@@ -71,7 +71,7 @@ const HubJobCard: React.FC<Props> = ({ job }) => {
             variant="ghost"
             size="icon"
             asChild
-            className="h-7 w-7 text-slate-400 hover:text-white"
+            className="h-7 w-7 text-muted-foreground hover:text-foreground"
             aria-label="View on Hub"
           >
             <a
@@ -85,16 +85,16 @@ const HubJobCard: React.FC<Props> = ({ job }) => {
           </Button>
         </div>
         <div>
-          <div className="text-white font-semibold truncate" title={title}>
+          <div className="text-foreground font-semibold truncate" title={title}>
             {title}
           </div>
-          <div className="text-xs text-slate-400 truncate">
+          <div className="text-xs text-muted-foreground truncate">
             {job.flavor ?? "—"} · {relativeTime(job.created_at)}
             {job.owner ? ` · ${job.owner}` : ""}
           </div>
         </div>
         {job.status?.message ? (
-          <div className="text-xs text-slate-500 truncate" title={job.status.message}>
+          <div className="text-xs text-muted-foreground truncate" title={job.status.message}>
             {job.status.message}
           </div>
         ) : null}

@@ -30,15 +30,15 @@ function CameraFeed({
       type="button"
       onClick={onClick}
       className={
-        "group relative overflow-hidden rounded-md border bg-black/60 focus:outline-none " +
+        "group relative overflow-hidden rounded-md border bg-background/60 focus:outline-none " +
         (active ? "ring-2 ring-emerald-400 border-emerald-400" : "hover:border-muted-foreground/50")
       }
       title={`Show ${label} in the main view`}
     >
       <video ref={ref} autoPlay muted playsInline className="aspect-video w-full object-cover" />
-      <span className="pointer-events-none absolute bottom-0 left-0 right-0 truncate bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white">
+      <span className="pointer-events-none absolute bottom-0 left-0 right-0 truncate bg-background/55 px-1.5 py-0.5 text-[10px] font-medium text-foreground">
         {label}
-        {active && <span className="ml-1 text-emerald-300">• main</span>}
+        {active && <span className="ml-1 text-emerald-700">• main</span>}
       </span>
     </button>
   );

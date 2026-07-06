@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useApi } from "@/contexts/ApiContext";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import Panel from "@/nori/components/Panel";
 import {
   createDeletionRequest,
   grantConsent,
@@ -88,18 +88,14 @@ const ConsentsSection = () => {
       <h2 className="text-lg font-semibold">Consents</h2>
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Data usage</CardTitle>
-        </CardHeader>
-        <CardContent className="divide-y">
+      <Panel eyebrow="consents" title="Data usage" bodyClassName="divide-y divide-[#14131a]/10">
           {CONSENT_DEFS.map((def) => {
             const active = activeOf(def.type);
             return (
               <div key={def.type} className="flex items-center justify-between gap-4 py-3">
                 <div>
-                  <p className="text-sm font-medium">{def.label}</p>
-                  <p className="text-xs text-muted-foreground">{def.desc}</p>
+                  <p className="text-sm font-medium text-[#14131a]">{def.label}</p>
+                  <p className="text-xs text-[#5c564b]">{def.desc}</p>
                 </div>
                 <Button
                   size="sm"
@@ -112,14 +108,9 @@ const ConsentsSection = () => {
               </div>
             );
           })}
-        </CardContent>
-      </Card>
+      </Panel>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Delete my data</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
+      <Panel eyebrow="consents" title="Delete my data" bodyClassName="space-y-3">
           <div className="flex gap-2">
             {(["data_only", "full"] as DeletionScope[]).map((s) => (
               <Button
@@ -135,9 +126,8 @@ const ConsentsSection = () => {
           <Button size="sm" variant="destructive" onClick={requestDeletion}>
             Request deletion
           </Button>
-          {delStatus && <p className="text-xs text-muted-foreground">{delStatus}</p>}
-        </CardContent>
-      </Card>
+          {delStatus && <p className="text-xs text-[#857b6b]">{delStatus}</p>}
+      </Panel>
     </div>
   );
 };

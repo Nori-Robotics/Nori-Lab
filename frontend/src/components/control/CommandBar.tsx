@@ -26,13 +26,13 @@ const CommandBar: React.FC<CommandBarProps> = ({
   handleEndSession
 }) => {
   return (
-    <div className="bg-gray-900 p-4 space-y-4">
+    <div className="bg-card p-4 space-y-4">
       <div className="flex flex-col sm:flex-row gap-4 items-center max-w-4xl mx-auto w-full">
         <Input
           value={command}
           onChange={(e) => setCommand(e.target.value)}
           placeholder="Tell the robot what to do..."
-          className="flex-1 bg-gray-800 border-gray-600 text-white placeholder-gray-400 text-lg py-3"
+          className="flex-1 bg-secondary border-border text-foreground placeholder:text-muted-foreground text-lg py-3"
           onKeyPress={(e) => e.key === 'Enter' && handleSendCommand()}
         />
         <Button
@@ -49,7 +49,7 @@ const CommandBar: React.FC<CommandBarProps> = ({
           <Button
             onClick={() => setIsVoiceActive(!isVoiceActive)}
             className={`px-6 py-2 ${
-              isVoiceActive ? 'bg-gray-600 text-white hover:bg-gray-500' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              isVoiceActive ? 'bg-muted text-foreground hover:bg-muted' : 'bg-secondary text-muted-foreground hover:bg-muted'
             }`}
           >
             {isVoiceActive ? <Mic strokeWidth={1.5} /> : <MicOff strokeWidth={1.5} />}
@@ -59,7 +59,7 @@ const CommandBar: React.FC<CommandBarProps> = ({
           <Button
             onClick={() => setShowCamera(!showCamera)}
             className={`px-6 py-2 ${
-              showCamera ? 'bg-gray-600 text-white hover:bg-gray-500' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              showCamera ? 'bg-muted text-foreground hover:bg-muted' : 'bg-secondary text-muted-foreground hover:bg-muted'
             }`}
           >
             <Camera strokeWidth={1.5} />

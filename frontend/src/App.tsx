@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { UrdfProvider } from "@/contexts/UrdfContext";
@@ -39,7 +39,7 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <ThemeProvider>
+        <ThemeProvider defaultTheme="light" storageKey="nori-ui-theme">
           <ApiProvider>
             <HfAuthProvider>
               <UrdfProvider>
@@ -49,7 +49,9 @@ function App() {
                       <TeleopStopNotice />
                       <UpdateNotice />
                       <Routes>
-                        <Route path="/" element={<Landing />} />
+                        {/* NORI: start on the Nori app; the upstream LeLab landing lives at /lelab. */}
+                        <Route path="/" element={<Navigate to="/nori" replace />} />
+                        <Route path="/lelab" element={<Landing />} />
                         <Route path="/teleoperation" element={<Teleoperation />} />
                         <Route path="/recording" element={<Recording />} />
                         <Route path="/upload" element={<Upload />} />

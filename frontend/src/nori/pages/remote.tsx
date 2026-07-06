@@ -306,7 +306,7 @@ const Remote = () => {
   return (
     <section className="space-y-4">
       <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-bold">Remote teleop</h1>
+        <h1 className="text-3xl font-bold">Remote teleop</h1>
         <span className="text-sm text-muted-foreground">
           {running ? `conn: ${connState}` : "not connected"}
           {inVr ? "  · in VR" : ""}
@@ -329,7 +329,7 @@ const Remote = () => {
               playsInline
               muted
               controls
-              className="w-full rounded-md bg-black"
+              className="w-full rounded-md bg-background"
               style={{ aspectRatio: "4 / 3" }}
             />
             {/* Reserved operator self-view slot (M6). Hidden until the camera is on. */}
@@ -339,7 +339,7 @@ const Remote = () => {
               playsInline
               muted
               className={
-                "absolute bottom-2 right-2 w-32 rounded border-2 border-background bg-black shadow " +
+                "absolute bottom-2 right-2 w-32 rounded border-2 border-background bg-background shadow " +
                 (m6 && call.cameraOn ? "" : "hidden")
               }
               style={{ aspectRatio: "4 / 3" }}
@@ -348,16 +348,6 @@ const Remote = () => {
           {/* Robot inbound audio — unmuted sink, no video element can play it (video is muted). */}
           <audio ref={audioRef} autoPlay className="hidden" />
 
-          <CallBar
-            call={call}
-            running={running}
-            connected={connState === "connected"}
-            m6={m6}
-            onJoin={joinCall}
-            onLeave={leaveCall}
-            onToggleMute={toggleMute}
-            onToggleCamera={toggleCamera}
-          />
           <div className="flex flex-wrap items-center gap-3">
             {!running ? (
               <Button onClick={connect} disabled={connecting || !ready}>
@@ -406,6 +396,17 @@ const Remote = () => {
             </Button>
           </div>
 
+          <CallBar
+            call={call}
+            running={running}
+            connected={connState === "connected"}
+            m6={m6}
+            onJoin={joinCall}
+            onLeave={leaveCall}
+            onToggleMute={toggleMute}
+            onToggleCamera={toggleCamera}
+          />
+
           <TelemetryPanel
             connState={running ? connState : "idle"}
             tel={tel}
@@ -423,23 +424,21 @@ const Remote = () => {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm">Rail height</CardTitle>
-            </CardHeader>
-            <CardContent className="pb-3">
+          <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// telemetry</p>
+            <h2 className="mt-1 text-lg font-semibold">Rail height</h2>
+            <div className="mt-3">
               <RailHeight state={tel.state} />
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm">Grip force / motor current</CardTitle>
-            </CardHeader>
-            <CardContent className="pb-3">
+          <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// telemetry</p>
+            <h2 className="mt-1 text-lg font-semibold">Grip force / motor current</h2>
+            <div className="mt-3">
               <GripForce currents={tel.currents} />
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
           <Card>
             <CardHeader className="py-3">

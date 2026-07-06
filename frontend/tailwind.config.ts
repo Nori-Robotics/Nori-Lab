@@ -18,7 +18,48 @@ export default {
 			}
 		},
 		extend: {
+			fontFamily: {
+				sans: [
+					'Fredoka',
+					'ui-rounded',
+					'ui-sans-serif',
+					'system-ui',
+					'-apple-system',
+					'sans-serif'
+				],
+				display: [
+					'"Bagel Fat One"',
+					'Fredoka',
+					'ui-rounded',
+					'ui-sans-serif',
+					'system-ui',
+					'sans-serif'
+				],
+				mono: [
+					'"JetBrains Mono"',
+					'ui-monospace',
+					'SFMono-Regular',
+					'Menlo',
+					'monospace'
+				]
+			},
 			colors: {
+				// NORI website palette
+				paper: {
+					DEFAULT: '#fbfaf5',
+					2: '#f3f1e8',
+					3: '#ebe8db'
+				},
+				ink: {
+					DEFAULT: '#14131a',
+					2: '#2a2833'
+				},
+				mute: '#6b6878',
+				sticker: {
+					DEFAULT: '#ffe9a8',
+					2: '#ffd4d4'
+				},
+				leaf: '#cde8b5',
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
 				ring: 'hsl(var(--ring))',
@@ -62,6 +103,14 @@ export default {
 					border: 'hsl(var(--sidebar-border))',
 					ring: 'hsl(var(--sidebar-ring))'
 				}
+			},
+			transitionTimingFunction: {
+				nori: 'cubic-bezier(0.22, 1, 0.36, 1)',
+				bounce: 'cubic-bezier(0.34, 1.56, 0.64, 1)'
+			},
+			boxShadow: {
+				soft: '0 1px 0 rgba(20, 19, 26, 0.04), 0 8px 24px -12px rgba(20, 19, 26, 0.12)',
+				pop: '0 2px 0 rgba(20, 19, 26, 0.06), 0 20px 40px -20px rgba(20, 19, 26, 0.25)'
 			},
 			borderRadius: {
 				lg: 'var(--radius)',

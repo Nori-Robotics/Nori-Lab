@@ -46,14 +46,14 @@ const UsageInstructionsModal: React.FC<UsageInstructionsModalProps> = ({
       onOpenChange={dismissible ? onOpenChange : () => undefined}
     >
       <DialogContent
-        className="bg-gray-900 border-gray-700 text-gray-300 sm:max-w-xl"
+        className="bg-card border-border text-muted-foreground sm:max-w-xl"
         hideClose={!dismissible}
         onEscapeKeyDown={blockClose}
         onPointerDownOutside={blockClose}
         onInteractOutside={blockClose}
       >
         <DialogHeader className="text-center sm:text-center min-w-0">
-          <DialogTitle className="text-white flex items-center justify-center gap-2 text-xl">
+          <DialogTitle className="text-foreground flex items-center justify-center gap-2 text-xl">
             <Terminal className="w-6 h-6" />
             Get Started with LeLab
           </DialogTitle>
@@ -67,15 +67,15 @@ const UsageInstructionsModal: React.FC<UsageInstructionsModalProps> = ({
             type="button"
             onClick={handleCopy}
             aria-label="Copy command to clipboard"
-            className="group relative w-full bg-gray-800 hover:bg-gray-750 rounded-lg border border-gray-700 hover:border-gray-600 text-left transition-colors cursor-pointer"
+            className="group relative w-full bg-secondary hover:bg-muted rounded-lg border border-border hover:border-muted-foreground text-left transition-colors cursor-pointer"
           >
             <pre className="p-4 pr-12 text-xs sm:text-sm overflow-x-auto whitespace-pre-wrap break-all">
-              <code className="text-green-400">{ONE_LINER}</code>
+              <code className="text-green-600">{ONE_LINER}</code>
             </pre>
-            <span className="absolute right-2 top-2 flex items-center gap-1 px-2 py-1 rounded text-xs text-gray-400 group-hover:text-white bg-gray-900/80">
+            <span className="absolute right-2 top-2 flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground group-hover:text-foreground bg-card/80">
               {copied ? (
                 <>
-                  <Check className="w-3.5 h-3.5 text-green-400" />
+                  <Check className="w-3.5 h-3.5 text-green-600" />
                   Copied
                 </>
               ) : (
@@ -86,7 +86,7 @@ const UsageInstructionsModal: React.FC<UsageInstructionsModalProps> = ({
               )}
             </span>
           </button>
-          <p className="text-gray-400 text-sm text-center">
+          <p className="text-muted-foreground text-sm text-center">
             After running, your browser will open the local LeLab app.
           </p>
           <Button

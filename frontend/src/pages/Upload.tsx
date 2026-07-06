@@ -82,7 +82,7 @@ const Upload = () => {
           description: "Please complete a recording session first.",
           variant: "destructive",
         });
-        navigate("/");
+        navigate("/lelab");
         return;
       }
 
@@ -222,7 +222,7 @@ const Upload = () => {
       title: "Upload Skipped",
       description: "Dataset saved locally. You can upload it manually later.",
     });
-    navigate("/");
+    navigate("/lelab");
   };
 
   const handleDeleteDataset = async () => {
@@ -239,7 +239,7 @@ const Upload = () => {
           title: "Dataset Deleted",
           description: `${datasetInfo.dataset_repo_id} has been removed from disk.`,
         });
-        navigate("/");
+        navigate("/lelab");
       } else {
         toast({
           title: "Delete Failed",
@@ -262,7 +262,7 @@ const Upload = () => {
   // Show loading state while fetching dataset info
   if (isLoadingDatasetInfo || !datasetInfo) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
           <p className="text-lg">Loading dataset information...</p>
@@ -274,15 +274,15 @@ const Upload = () => {
   const isAlreadyOnHub = datasetInfo.source === "both";
 
   return (
-    <div className="min-h-screen bg-black text-white p-8">
+    <div className="min-h-screen bg-background text-foreground p-8">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3">
             <Button
-              onClick={() => navigate("/")}
+              onClick={() => navigate("/lelab")}
               variant="outline"
-              className="border-gray-500 hover:border-gray-200 text-gray-300 hover:text-white"
+              className="border-border hover:border-muted-foreground text-muted-foreground hover:text-foreground"
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
               Back to Home
@@ -293,7 +293,7 @@ const Upload = () => {
               size="icon"
               disabled={isDeleting}
               aria-label="Delete dataset from disk"
-              className="border-red-500/40 text-red-400 hover:border-red-400 hover:text-red-300 hover:bg-red-500/10"
+              className="border-red-500/40 text-red-600 hover:border-red-400 hover:text-red-700 hover:bg-red-500/10"
             >
               <Trash2 className="w-4 h-4" />
             </Button>
@@ -305,7 +305,7 @@ const Upload = () => {
             ) : (
               <Database className="w-8 h-8 text-blue-500" />
             )}
-            <h1 className="text-3xl font-bold">
+            <h1 className="text-4xl font-bold">
               {uploadSuccess ? "Upload Complete" : "Dataset Upload"}
             </h1>
           </div>
@@ -313,14 +313,14 @@ const Upload = () => {
 
         {/* Success State */}
         {uploadSuccess && (
-          <div className="bg-green-900/20 border border-green-600 rounded-lg p-6 mb-8">
+          <div className="bg-green-100 border border-green-600 rounded-lg p-6 mb-8">
             <div className="flex items-center gap-3 mb-4">
               <CheckCircle className="w-6 h-6 text-green-500" />
-              <h2 className="text-xl font-semibold text-green-400">
+              <h2 className="text-xl font-semibold text-green-600">
                 Successfully Uploaded!
               </h2>
             </div>
-            <p className="text-gray-300 mb-4">
+            <p className="text-muted-foreground mb-4">
               Your dataset has been uploaded to HuggingFace Hub and is now
               available for training and sharing.
             </p>
@@ -358,42 +358,42 @@ const Upload = () => {
         {!uploadSuccess && (
           <>
             {/* Dataset Summary */}
-            <div className="bg-gray-900 rounded-lg p-6 border border-gray-700 mb-8">
-              <h2 className="text-xl font-semibold text-white mb-4">
+            <div className="bg-card rounded-lg p-6 border border-border mb-8">
+              <h2 className="text-xl font-semibold text-foreground mb-4">
                 Dataset Summary
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-3">
                   <div>
-                    <span className="text-gray-400">Repository ID:</span>
-                    <p className="text-white font-mono text-lg">
+                    <span className="text-muted-foreground">Repository ID:</span>
+                    <p className="text-foreground font-mono text-lg">
                       {datasetInfo.dataset_repo_id}
                     </p>
                   </div>
                   <div>
-                    <span className="text-gray-400">Task:</span>
-                    <p className="text-white">{datasetInfo.single_task}</p>
+                    <span className="text-muted-foreground">Task:</span>
+                    <p className="text-foreground">{datasetInfo.single_task}</p>
                   </div>
                 </div>
                 <div className="space-y-3">
                   <div>
-                    <span className="text-gray-400">Episodes Recorded:</span>
-                    <p className="text-white text-2xl font-bold text-green-400">
+                    <span className="text-muted-foreground">Episodes Recorded:</span>
+                    <p className="text-foreground text-2xl font-bold text-green-600">
                       {datasetInfo.saved_episodes || datasetInfo.num_episodes}
                     </p>
                     {datasetInfo.total_frames && (
-                      <p className="text-gray-400 text-sm">
+                      <p className="text-muted-foreground text-sm">
                         {datasetInfo.total_frames} total frames
                       </p>
                     )}
                   </div>
                   <div>
-                    <span className="text-gray-400">Session Duration:</span>
-                    <p className="text-white">
+                    <span className="text-muted-foreground">Session Duration:</span>
+                    <p className="text-foreground">
                       {formatDuration(datasetInfo.session_elapsed_seconds || 0)}
                     </p>
                     {datasetInfo.fps && (
-                      <p className="text-gray-400 text-sm">
+                      <p className="text-muted-foreground text-sm">
                         {datasetInfo.fps} FPS
                       </p>
                     )}
@@ -404,15 +404,15 @@ const Upload = () => {
 
             {/* Upload Configuration */}
             {!isAlreadyOnHub && (
-              <div className="bg-gray-900 rounded-lg p-6 border border-gray-700 mb-8">
-                <h2 className="text-xl font-semibold text-white mb-6">
+              <div className="bg-card rounded-lg p-6 border border-border mb-8">
+                <h2 className="text-xl font-semibold text-foreground mb-6">
                   Upload Configuration
                 </h2>
 
                 <div className="space-y-6">
                   {/* Tags */}
                   <div>
-                    <Label htmlFor="tags" className="text-gray-300 mb-2 block">
+                    <Label htmlFor="tags" className="text-muted-foreground mb-2 block">
                       Tags (comma-separated)
                     </Label>
                     <Input
@@ -420,9 +420,9 @@ const Upload = () => {
                       value={tagsInput}
                       onChange={(e) => setTagsInput(e.target.value)}
                       placeholder="robotics, lerobot, manipulation"
-                      className="bg-gray-800 border-gray-600 text-white"
+                      className="bg-secondary border-border text-foreground"
                     />
-                    <p className="text-sm text-gray-500 mt-1">
+                    <p className="text-sm text-muted-foreground mt-1">
                       Tags help others discover your dataset on HuggingFace Hub
                     </p>
                   </div>
@@ -441,16 +441,16 @@ const Upload = () => {
                     />
                     <div className="flex items-center gap-2">
                       {uploadConfig.private ? (
-                        <EyeOff className="w-4 h-4 text-gray-400" />
+                        <EyeOff className="w-4 h-4 text-muted-foreground" />
                       ) : (
-                        <Eye className="w-4 h-4 text-gray-400" />
+                        <Eye className="w-4 h-4 text-muted-foreground" />
                       )}
-                      <Label htmlFor="private" className="text-gray-300">
+                      <Label htmlFor="private" className="text-muted-foreground">
                         Make dataset private
                       </Label>
                     </div>
                   </div>
-                  <p className="text-sm text-gray-500 ml-6">
+                  <p className="text-sm text-muted-foreground ml-6">
                     {uploadConfig.private
                       ? "Only you will be able to access this dataset"
                       : "Dataset will be publicly accessible on HuggingFace Hub"}
@@ -493,7 +493,7 @@ const Upload = () => {
                     onClick={handleSkipUpload}
                     disabled={isUploading}
                     variant="outline"
-                    className="border-gray-600 text-gray-300 hover:bg-gray-800 hover:text-white py-4 px-8 text-lg"
+                    className="border-border text-muted-foreground hover:bg-secondary hover:text-foreground py-4 px-8 text-lg"
                   >
                     Skip Upload
                   </Button>
@@ -503,14 +503,14 @@ const Upload = () => {
 
             {/* Info Box */}
             {!isAlreadyOnHub && (
-              <div className="mt-8 p-4 bg-blue-900/20 border border-blue-600 rounded-lg">
+              <div className="mt-8 p-4 bg-blue-100 border border-blue-600 rounded-lg">
                 <div className="flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-blue-400 mt-0.5" />
+                  <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5" />
                   <div>
-                    <h3 className="font-semibold text-blue-400 mb-2">
+                    <h3 className="font-semibold text-blue-600 mb-2">
                       About HuggingFace Hub Upload
                     </h3>
-                    <ul className="text-sm text-gray-300 space-y-1">
+                    <ul className="text-sm text-muted-foreground space-y-1">
                       <li>
                         • Your dataset will be uploaded to HuggingFace Hub for
                         sharing and collaboration
@@ -537,15 +537,15 @@ const Upload = () => {
       </div>
 
       <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <AlertDialogContent className="bg-gray-900 border-gray-700 text-white">
+        <AlertDialogContent className="bg-card border-border text-foreground">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete dataset from disk?</AlertDialogTitle>
-            <AlertDialogDescription className="text-gray-400">
-              This permanently removes <span className="font-mono text-white">{datasetInfo.dataset_repo_id}</span> from your local cache. This action cannot be undone.
+            <AlertDialogDescription className="text-muted-foreground">
+              This permanently removes <span className="font-mono text-foreground">{datasetInfo.dataset_repo_id}</span> from your local cache. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="bg-gray-800 border-gray-700 text-white hover:bg-gray-700">
+            <AlertDialogCancel className="bg-secondary border-border text-foreground hover:bg-muted">
               Keep dataset
             </AlertDialogCancel>
             <AlertDialogAction

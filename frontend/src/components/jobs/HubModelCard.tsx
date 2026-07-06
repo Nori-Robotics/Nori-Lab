@@ -28,11 +28,11 @@ const HubModelCard: React.FC<Props> = ({ model }) => {
   return (
     <Card
       onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
-      className="bg-slate-800/50 border-slate-700 rounded-xl cursor-pointer hover:border-slate-500 transition-colors"
+      className="bg-secondary/50 border-border rounded-xl cursor-pointer hover:border-muted-foreground transition-colors"
     >
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-400">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-600">
             <Upload className="w-3.5 h-3.5" />
             Uploaded
           </div>
@@ -40,7 +40,7 @@ const HubModelCard: React.FC<Props> = ({ model }) => {
             variant="ghost"
             size="icon"
             asChild
-            className="h-7 w-7 text-slate-400 hover:text-white"
+            className="h-7 w-7 text-muted-foreground hover:text-foreground"
             aria-label="View on Hub"
           >
             <a
@@ -55,15 +55,15 @@ const HubModelCard: React.FC<Props> = ({ model }) => {
         </div>
         <div>
           <div
-            className="text-white font-semibold truncate flex items-center gap-1.5"
+            className="text-foreground font-semibold truncate flex items-center gap-1.5"
             title={model.repo_id}
           >
             {model.private ? (
-              <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <Lock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
             ) : null}
             <span className="truncate">{shortName}</span>
           </div>
-          <div className="text-xs text-slate-400 truncate" title={model.repo_id}>
+          <div className="text-xs text-muted-foreground truncate" title={model.repo_id}>
             {model.repo_id} · updated {relativeTime(model.last_modified)}
           </div>
         </div>

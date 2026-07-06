@@ -37,12 +37,12 @@ const DatasetCombobox: React.FC<Props> = ({ datasets, loading, value, onChange }
       key={d.repo_id}
       value={d.repo_id}
       onSelect={() => { onChange(d.repo_id); setOpen(false); }}
-      className="text-white aria-selected:bg-gray-700"
+      className="text-foreground aria-selected:bg-muted"
     >
       <Check className={cn("mr-2 h-4 w-4", value === d.repo_id ? "opacity-100" : "opacity-0")} />
       <span className="flex-1 truncate">{d.repo_id}</span>
-      {d.source === "both" && <span className="text-xs text-gray-400 mr-2">on Hub</span>}
-      {d.private && <span className="text-xs text-amber-400">private</span>}
+      {d.source === "both" && <span className="text-xs text-muted-foreground mr-2">on Hub</span>}
+      {d.private && <span className="text-xs text-amber-600">private</span>}
     </CommandItem>
   );
 
@@ -55,7 +55,7 @@ const DatasetCombobox: React.FC<Props> = ({ datasets, loading, value, onChange }
           onChange={(e) => setCustomValue(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") submitCustom(); }}
           placeholder="org/dataset-name"
-          className="bg-gray-800 border-gray-600 text-white"
+          className="bg-secondary border-border text-foreground"
         />
         <Button onClick={submitCustom} disabled={!REPO_ID_RE.test(customValue.trim())}>
           Use
@@ -74,15 +74,15 @@ const DatasetCombobox: React.FC<Props> = ({ datasets, loading, value, onChange }
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-full justify-between bg-gray-800 border-gray-600 text-white hover:bg-gray-700"
+          className="w-full justify-between bg-secondary border-border text-foreground hover:bg-muted"
         >
           {value ?? (loading ? "Loading datasets…" : "Select a dataset…")}
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[--radix-popover-trigger-width] p-0 bg-gray-800 border-gray-700" align="start">
-        <Command className="bg-gray-800 text-white">
-          <CommandInput placeholder="Search datasets…" className="text-white" />
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0 bg-secondary border-border" align="start">
+        <Command className="bg-secondary text-foreground">
+          <CommandInput placeholder="Search datasets…" className="text-foreground" />
           <CommandList>
             <CommandEmpty>{loading ? "Loading…" : "No datasets."}</CommandEmpty>
             {localDatasets.length > 0 && (
@@ -98,7 +98,7 @@ const DatasetCombobox: React.FC<Props> = ({ datasets, loading, value, onChange }
             <CommandGroup>
               <CommandItem
                 onSelect={() => { setCustomMode(true); setOpen(false); }}
-                className="text-purple-300 aria-selected:bg-gray-700"
+                className="text-purple-700 aria-selected:bg-muted"
               >
                 <Pencil className="mr-2 h-4 w-4" />
                 Use custom repo ID…

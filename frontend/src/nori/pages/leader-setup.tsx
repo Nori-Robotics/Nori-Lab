@@ -60,11 +60,11 @@ const MANUAL_READY_SPAN_TICKS: Record<string, number> = {
   gripper: 1050,
 };
 const FIELD_CLASS =
-  "h-10 rounded-md border-[#f5f0e6]/12 bg-[#1a1814] text-[#f8f4ea] placeholder:text-[#8d8275] focus-visible:ring-[#d98b3d]";
+  "h-10 rounded-md border-[#14131a]/12 bg-[#fffdf7] text-[#14131a] placeholder:text-[#a39887] focus-visible:ring-[#d98b3d]";
 const OUTLINE_BUTTON_CLASS =
-  "rounded-md border-[#f5f0e6]/12 bg-[#1a1814] text-[#f8f4ea] hover:bg-[#242019] hover:text-[#f8f4ea]";
-const SELECT_CONTENT_CLASS = "border-[#f5f0e6]/12 bg-[#1a1814] text-[#f8f4ea]";
-const SELECT_ITEM_CLASS = "focus:bg-[#2a241d] focus:text-[#f8f4ea]";
+  "rounded-md border-[#14131a]/12 bg-[#fffdf7] text-[#14131a] hover:bg-[#ebe8db] hover:text-[#14131a]";
+const SELECT_CONTENT_CLASS = "border-[#14131a]/12 bg-[#fffdf7] text-[#14131a]";
+const SELECT_ITEM_CLASS = "focus:bg-[#ebe8db] focus:text-[#14131a]";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -133,10 +133,10 @@ function StatusPill({
   children: React.ReactNode;
 }) {
   const colors = {
-    green: "border-[#7bbf7a]/35 bg-[#18301d] text-[#bde8b6]",
-    amber: "border-[#db9346]/35 bg-[#2b2115] text-[#f0ba78]",
-    red: "border-[#d24a3d]/35 bg-[#321817] text-[#ffb3a9]",
-    neutral: "border-[#f5f0e6]/12 bg-[#1b1814] text-[#d9d1c5]",
+    green: "border-[#4e9d55]/35 bg-[#e4f3e2] text-[#2a6b33]",
+    amber: "border-[#db9346]/35 bg-[#fdf1de] text-[#8a5a12]",
+    red: "border-[#d24a3d]/35 bg-[#fde7e4] text-[#a3271c]",
+    neutral: "border-[#14131a]/12 bg-[#f3f1e8] text-[#5c564b]",
   };
   return (
     <span className={`inline-flex h-7 items-center gap-2 rounded-md border px-2.5 text-xs font-medium ${colors[tone]}`}>
@@ -167,14 +167,14 @@ function LeaderPane({
   }));
 
   return (
-    <div className="rounded-md border border-[#f5f0e6]/10 bg-[#161411] p-4 text-[#f8f4ea] shadow-sm">
+    <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#d98b3d]">// {side}</p>
+          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// {side}</p>
           <h2 className="mt-1 text-lg font-semibold tracking-normal">{side} leader</h2>
         </div>
         <StatusPill tone={visible === 6 ? "green" : visible > 0 ? "amber" : "red"}>
-          <span className={`h-2 w-2 rounded-full ${visible === 6 ? "bg-[#5fb86a]" : visible > 0 ? "bg-[#db9346]" : "bg-[#d24a3d]"}`} />
+          <span className={`h-2 w-2 rounded-full ${visible === 6 ? "bg-[#3f9a4c]" : visible > 0 ? "bg-[#db9346]" : "bg-[#d24a3d]"}`} />
           {visible}/6
         </StatusPill>
       </div>
@@ -188,33 +188,33 @@ function LeaderPane({
             ? manualJointReady(manualStatus, side, joint)
             : completedManualSide === side || autoJointComplete(autoStatus, side);
           return (
-            <div key={joint} className="grid min-h-11 grid-cols-[minmax(7rem,1fr)_4.5rem_4.5rem] items-center gap-3 rounded-md border border-[#f5f0e6]/10 bg-[#211e19] px-3 py-2">
+            <div key={joint} className="grid min-h-11 grid-cols-[minmax(7rem,1fr)_4.5rem_4.5rem] items-center gap-3 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-3 py-2">
               <div className="min-w-0">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2">
                     <span
                       className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
                         calibrationComplete
-                          ? "border-[#7bbf7a]/50 bg-[#18301d] text-[#bde8b6]"
+                          ? "border-[#4e9d55]/50 bg-[#e4f3e2] text-[#2a6b33]"
                           : "border-transparent text-transparent"
                       }`}
                     >
                       {calibrationComplete ? <Check className="h-3 w-3" /> : null}
                     </span>
-                    <span className="truncate font-mono text-xs text-[#f8f4ea]">{joint}</span>
+                    <span className="truncate font-mono text-xs text-[#14131a]">{joint}</span>
                   </div>
-                  <span className={`h-2 w-2 rounded-full ${motor?.ok ? "bg-[#74c66d]" : "bg-[#d24a3d]"}`} />
+                  <span className={`h-2 w-2 rounded-full ${motor?.ok ? "bg-[#43a04e]" : "bg-[#d24a3d]"}`} />
                 </div>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#3a3329]">
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#e5e1d2]">
                   <div className="h-full rounded-full bg-[#d98b3d]" style={{ width: `${pct}%` }} />
                 </div>
               </div>
               <div className="text-right font-mono text-xs">
-                <div className="text-[10px] uppercase text-[#a99f92]">raw</div>
+                <div className="text-[10px] uppercase text-[#857b6b]">raw</div>
                 <div>{raw == null ? "--" : Math.round(raw)}</div>
               </div>
               <div className="text-right font-mono text-xs">
-                <div className="text-[10px] uppercase text-[#a99f92]">deg</div>
+                <div className="text-[10px] uppercase text-[#857b6b]">deg</div>
                 <div>{target == null ? "--" : target.toFixed(1)}</div>
               </div>
             </div>
@@ -402,16 +402,16 @@ const LeaderSetup = () => {
         : "ready");
 
   return (
-    <section className="min-h-[calc(100vh-2rem)] space-y-5 rounded-md bg-[#0f0e0c] px-4 py-5 text-[#f8f4ea] sm:px-5">
+    <section className="min-h-[calc(100vh-2rem)] space-y-5 rounded-md bg-[#fbfaf5] px-4 py-5 text-[#14131a] sm:px-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-2">
-          <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#9f9486]">// nori robotics</p>
-          <h1 className="text-3xl font-semibold tracking-normal sm:text-4xl">leader setup</h1>
-          <p className="max-w-2xl text-sm text-[#c2b8a9]">nori l2 dual leader calibration</p>
+          <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#7a7060]">// nori robotics</p>
+          <h1 className="text-4xl font-semibold tracking-normal sm:text-5xl">Leader setup</h1>
+          <p className="max-w-2xl text-sm text-[#6f6858]">nori l2 dual leader calibration</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <StatusPill tone={liveTone}>
-            <span className={`h-2 w-2 rounded-full ${liveError ? "bg-[#d24a3d]" : "bg-[#5fb86a]"}`} />
+            <span className={`h-2 w-2 rounded-full ${liveError ? "bg-[#d24a3d]" : "bg-[#3f9a4c]"}`} />
             live · {formatAge(lastLiveAt)}
           </StatusPill>
           {busy && (
@@ -424,16 +424,16 @@ const LeaderSetup = () => {
       </div>
 
       {(error || liveError) && (
-        <Alert className="border-[#d24a3d]/35 bg-[#321817] text-[#ffd2cc]">
+        <Alert className="border-[#d24a3d]/35 bg-[#fde7e4] text-[#8f2318]">
           <AlertTitle>{error ? "setup needs attention" : "live read paused"}</AlertTitle>
           <AlertDescription>{error || liveError}</AlertDescription>
         </Alert>
       )}
 
-      <div className="rounded-md border border-[#f5f0e6]/10 bg-[#15130f] p-3 shadow-sm">
+      <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-3 shadow-sm">
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_14rem_auto] lg:items-end">
           <div className="space-y-1.5">
-            <Label htmlFor="leader-port" className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#9f9486]">
+            <Label htmlFor="leader-port" className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#7a7060]">
               shared usb
             </Label>
             <div className="flex gap-2">
@@ -456,7 +456,7 @@ const LeaderSetup = () => {
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="calibration-id" className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#9f9486]">
+            <Label htmlFor="calibration-id" className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#7a7060]">
               calibration
             </Label>
             <Input
@@ -497,11 +497,11 @@ const LeaderSetup = () => {
         />
       </div>
 
-      <Card className="rounded-md border-[#f5f0e6]/10 bg-[#13110e] text-[#f8f4ea] shadow-sm">
+      <Card className="rounded-md border-[#14131a]/10 bg-[#f6f4eb] text-[#14131a] shadow-sm">
         <CardContent className="space-y-4 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#9f9486]">// calibration</p>
+              <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#7a7060]">// calibration</p>
               <h2 className="mt-1 text-xl font-semibold">calibrate leader</h2>
             </div>
             <StatusPill tone={manualStatus?.active || autoStatus?.active ? "amber" : "neutral"}>
@@ -511,7 +511,7 @@ const LeaderSetup = () => {
 
           <div className="grid gap-3 lg:grid-cols-[9rem_13rem_minmax(0,1fr)] lg:items-end">
             <div className="space-y-1.5">
-              <Label className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#9f9486]">side</Label>
+              <Label className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#7a7060]">side</Label>
               <Select value={calibrationSide} onValueChange={(value) => setCalibrationSide(value as LeaderSide)} disabled={calibrationBusy}>
                 <SelectTrigger className={FIELD_CLASS}><SelectValue /></SelectTrigger>
                 <SelectContent className={SELECT_CONTENT_CLASS}>
@@ -524,8 +524,8 @@ const LeaderSetup = () => {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#9f9486]">mode</Label>
-              <div className="grid h-10 grid-cols-2 rounded-md border border-[#f5f0e6]/12 bg-[#1a1814] p-1">
+              <Label className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#7a7060]">mode</Label>
+              <div className="grid h-10 grid-cols-2 rounded-md border border-[#14131a]/12 bg-[#fffdf7] p-1">
                 {CALIBRATION_MODES.map((mode) => (
                   <button
                     key={mode}
@@ -534,8 +534,8 @@ const LeaderSetup = () => {
                     disabled={calibrationBusy}
                     className={`rounded px-2 text-sm ${
                       calibrationMode === mode
-                        ? "bg-[#d98b3d] text-white"
-                        : "text-[#d9d1c5] hover:bg-[#242019] hover:text-[#f8f4ea]"
+                        ? "bg-[#d98b3d] text-foreground"
+                        : "text-[#5c564b] hover:bg-[#ebe8db] hover:text-[#14131a]"
                     }`}
                   >
                     {mode}
@@ -562,13 +562,13 @@ const LeaderSetup = () => {
                   );
                 }}
                 disabled={busy != null || calibrationBusy || !portReady || (calibrationMode === "auto" && !autoConfirmed)}
-                className="rounded-md bg-[#d98b3d] text-white hover:bg-[#c97929]"
+                className="rounded-md bg-[#d98b3d] text-foreground hover:bg-[#c97929]"
               >
                 {calibrationMode === "manual" ? <Crosshair className="mr-2 h-4 w-4" /> : <Gauge className="mr-2 h-4 w-4" />}
                 start
               </Button>
               {calibrationMode === "auto" && (
-                <label className="flex min-h-10 items-center gap-2 rounded-md border border-[#f5f0e6]/10 bg-[#171512] px-3 text-sm text-[#d9d1c5]">
+                <label className="flex min-h-10 items-center gap-2 rounded-md border border-[#14131a]/10 bg-[#f6f4eb] px-3 text-sm text-[#5c564b]">
                   <Checkbox
                     checked={autoConfirmed}
                     onCheckedChange={(value) => setAutoConfirmed(value === true)}
@@ -591,7 +591,7 @@ const LeaderSetup = () => {
                   })
                 }
                 disabled={busy != null || !manualStatus?.active || !manualReady}
-                className="rounded-md bg-[#5f9f66] text-white hover:bg-[#4d8754]"
+                className="rounded-md bg-[#5f9f66] text-foreground hover:bg-[#4d8754]"
               >
                 <Save className="mr-2 h-4 w-4" />
                 finish

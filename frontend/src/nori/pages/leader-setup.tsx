@@ -405,7 +405,7 @@ const LeaderSetup = () => {
     <section className="min-h-[calc(100vh-2rem)] space-y-5 rounded-md bg-[#fbfaf5] px-4 py-5 text-[#14131a] sm:px-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-2">
-          <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#7a7060]">// nori robotics</p>
+          <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#7a7060]">// Teleoperation</p>
           <h1 className="text-4xl font-semibold tracking-normal sm:text-5xl">Leader setup</h1>
           <p className="max-w-2xl text-sm text-[#6f6858]">nori l2 dual leader calibration</p>
         </div>

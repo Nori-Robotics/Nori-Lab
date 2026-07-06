@@ -28,6 +28,7 @@ import { VrSession } from "@nori/sdk/vr";
 import { TelemetryPanel, GripForce, ControlLegend, CallBar, RailHeight } from "@/nori/remote/TeleopStatus";
 import { Robot3D } from "@/nori/remote/Robot3D";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
+import { playAudioFile, type ClipHandle } from "@/nori/remote/audioClip";
 import { isM6VideoEnabled } from "@/nori/remote/flags";
 
 const DEFAULT_STUN = "stun:stun.l.google.com:19302";
@@ -80,6 +81,8 @@ const Remote = () => {
   const m6 = isM6VideoEnabled();
 
   const [settings, setSettings] = useState<Settings>(loadSettings);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showLog, setShowLog] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [running, setRunning] = useState(false);
   const [inVr, setInVr] = useState(false);
@@ -270,6 +273,43 @@ const Remote = () => {
   };
   const leaveCall = () => teleopRef.current?.leaveCall();
   const toggleMute = () => teleopRef.current?.setMicMuted(!call.micMuted);
+
+  // ---- clip audio (laptop file -> robot speaker; reuses the M3b downlink) ----
+  const clipRef = useRef<ClipHandle | null>(null);
+  const [clipPlaying, setClipPlaying] = useState(false);
+  const stopClip = useCallback(() => {
+    clipRef.current?.stop();
+    clipRef.current = null;
+    setClipPlaying(false);
+    teleopRef.current?.setVideoQuality("normal"); // restore camera bitrate
+  }, []);
+  const playClipFile = async (file: File) => {
+    const t = teleopRef.current;
+    if (!t) return;
+    stopClip(); // one clip at a time (single audio uplink)
+    try {
+      const handle = await playAudioFile(t, file);
+      clipRef.current = handle;
+      setClipPlaying(true);
+      t.setVideoQuality("low"); // free Pi headroom while the clip streams
+      appendLog(`clip: streaming "${file.name}" to robot speaker`);
+      handle.done.then(() => { // clears when the clip ends naturally or is stopped
+        if (clipRef.current === handle) {
+          clipRef.current = null;
+          setClipPlaying(false);
+          teleopRef.current?.setVideoQuality("normal"); // covers natural end (stopClip not called)
+        }
+      });
+    } catch (e) {
+      appendLog("clip failed: " + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+  // Tear the clip down the moment the session drops — src.onended only fires on a clip's
+  // NATURAL end, so a mid-clip disconnect would otherwise leak the AudioContext + track and
+  // leave the SDK re-attaching a stale track on every reconnect.
+  useEffect(() => {
+    if (clipPlaying && connState !== "connected") stopClip();
+  }, [clipPlaying, connState, stopClip]);
   const toggleCamera = async () => {
     const t = teleopRef.current;
     if (!t) return;
@@ -301,13 +341,13 @@ const Remote = () => {
   }, [running]);
 
   // Tear down on unmount / navigate away (also fires the robot 'bye' for a clean restart).
-  useEffect(() => () => { leaderRef.current?.stop(); vrRef.current?.stop(); teleopRef.current?.stop(); }, []);
+  useEffect(() => () => { clipRef.current?.stop(); leaderRef.current?.stop(); vrRef.current?.stop(); teleopRef.current?.stop(); }, []);
 
   return (
     <section className="space-y-4">
       <div className="flex items-center gap-3">
         <h1 className="text-3xl font-bold">Remote teleop</h1>
-        <span className="text-sm text-muted-foreground">
+        <span className="mt-1 self-end font-mono text-sm text-[#b06a1c]">
           {running ? `conn: ${connState}` : "not connected"}
           {inVr ? "  · in VR" : ""}
           {controlActive ? "  · control active" : ""}
@@ -320,7 +360,7 @@ const Remote = () => {
         </p>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+      <div className="grid gap-4 lg:grid-cols-[1fr_400px]">
         <div className="space-y-3">
           <div className="relative">
             <video
@@ -407,6 +447,34 @@ const Remote = () => {
             onToggleCamera={toggleCamera}
           />
 
+          {/* Clip audio: stream a local audio file to the robot speaker (reuses the M3b
+              downlink). Needs the robot's voice downlink on (--voice / NORI_SPEAKER). */}
+          {running && connState === "connected" && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">
+                // play to robot speaker
+              </span>
+              <label className="cursor-pointer rounded border border-[#14131a]/20 px-2 py-1 hover:bg-[#14131a]/5">
+                Choose audio file…
+                <input
+                  type="file"
+                  accept="audio/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = ""; // allow re-picking the same file
+                    if (f) void playClipFile(f);
+                  }}
+                />
+              </label>
+              {clipPlaying && (
+                <Button size="sm" variant="secondary" onClick={stopClip}>
+                  Stop clip
+                </Button>
+              )}
+            </div>
+          )}
+
           <TelemetryPanel
             connState={running ? connState : "idle"}
             tel={tel}
@@ -415,16 +483,7 @@ const Remote = () => {
             inVr={inVr}
           />
 
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm">Robot 3D (schematic)</CardTitle>
-            </CardHeader>
-            <CardContent className="pb-3">
-              <Robot3D state={tel.state} activeArm={settings.arm} />
-            </CardContent>
-          </Card>
-
-          <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
+          <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
             <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// telemetry</p>
             <h2 className="mt-1 text-lg font-semibold">Rail height</h2>
             <div className="mt-3">
@@ -432,35 +491,65 @@ const Remote = () => {
             </div>
           </div>
 
-          <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
+          <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
             <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// telemetry</p>
             <h2 className="mt-1 text-lg font-semibold">Grip force / motor current</h2>
             <div className="mt-3">
               <GripForce currents={tel.currents} />
             </div>
           </div>
-
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm">Controls</CardTitle>
-            </CardHeader>
-            <CardContent className="pb-3">
-              <ControlLegend mode={mode} />
-            </CardContent>
-          </Card>
-
-          <div
-            ref={logRef}
-            className="max-h-44 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-xs"
-          >
-            {logLines.join("\n")}
-          </div>
         </div>
 
-        <Card className="h-fit">
-          <CardHeader>
-            <CardTitle className="text-base">Session settings</CardTitle>
+        <div className="h-fit space-y-4">
+        <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm">Robot 3D (schematic)</CardTitle>
           </CardHeader>
+          <CardContent className="pb-3">
+            <Robot3D state={tel.state} activeArm={settings.arm} />
+          </CardContent>
+        </Card>
+
+        <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm">Controls</CardTitle>
+          </CardHeader>
+          <CardContent className="pb-3">
+            <ControlLegend mode={mode} />
+          </CardContent>
+        </Card>
+
+        <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
+          <CardHeader className="cursor-pointer" onClick={() => setShowLog((v) => !v)}>
+            <CardTitle className="flex items-center justify-between text-base">
+              Robot logs
+              <span className="text-sm text-muted-foreground">{showLog ? "▲ hide" : "▼ show"}</span>
+            </CardTitle>
+          </CardHeader>
+          {showLog && (
+          <CardContent className="pb-3">
+            <div
+              ref={logRef}
+              className="max-h-44 overflow-auto whitespace-pre-wrap rounded border border-[#14131a]/10 bg-[#f3f1e8] p-2 font-mono text-xs"
+            >
+              {logLines.length > 0 ? (
+                logLines.join("\n")
+              ) : (
+                <span className="text-muted-foreground">Connect to Nori to view logs</span>
+              )}
+            </div>
+          </CardContent>
+          )}
+        </Card>
+
+        <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
+          <CardHeader className="cursor-pointer" onClick={() => setShowSettings((v) => !v)}>
+            <CardTitle className="flex items-center justify-between text-base">
+              Session settings
+              <span className="text-sm text-muted-foreground">{showSettings ? "▲ hide" : "▼ show"}</span>
+            </CardTitle>
+          </CardHeader>
+          {showSettings && (
           <CardContent className="space-y-3">
             <div className="space-y-1.5">
               <Label htmlFor="room">Room (NORI_ROOM — must match the Pi)</Label>
@@ -523,7 +612,9 @@ const Remote = () => {
               Change while connected to apply on the next session (Disconnect → Connect).
             </p>
           </CardContent>
+          )}
         </Card>
+        </div>
       </div>
     </section>
   );

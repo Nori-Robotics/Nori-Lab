@@ -129,7 +129,7 @@ export function Robot3D({ state, activeArm }: { state: Record<string, number>; a
   );
 
   return (
-    <div className="relative h-56 w-full overflow-hidden rounded-md border bg-[#0b1220]">
+    <div className="relative h-72 w-full overflow-hidden rounded-md border bg-[#0b1220]">
       {!hasAny && (
         <div className="absolute inset-0 z-10 flex items-center justify-center text-[11px] text-muted-foreground">
           waiting for joint telemetry…

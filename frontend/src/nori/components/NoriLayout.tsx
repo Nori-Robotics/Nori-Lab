@@ -8,11 +8,11 @@ import { useNori } from "@/nori/NoriContext";
 
 const NAV: { to: string; label: string }[] = [
   { to: "/nori/remote", label: "Remote" },
+  { to: "/nori/leader-setup", label: "Leader Setup" },
   { to: "/nori/coding", label: "Coding" },
   { to: "/nori/training", label: "Training" },
   { to: "/nori/marketplace", label: "Marketplace" },
   { to: "/nori/training-history", label: "Training History" },
-  { to: "/nori/leader-setup", label: "Leader Setup" },
   { to: "/nori/pairing", label: "Pairing" },
   { to: "/nori/account", label: "Account" },
 ];
@@ -39,7 +39,7 @@ const NoriLayout = () => {
             <img src="/nori-logo.png" alt="Nori" className="h-7 w-7" />
             Nori
           </Link>
-          <div className="flex gap-3 text-sm">
+          <div className="flex gap-6 text-sm">
             {NAV.map((item) => (
               <Link
                 key={item.to}

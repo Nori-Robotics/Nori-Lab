@@ -906,7 +906,13 @@ class AutoCalibrationManager:
                 side: dict(positions)
                 for side, positions in self.status.current_positions.items()
             }
-        if not active and not positions_by_side:
+        # Only serve the auto worker's readings while a calibration session is
+        # actively running (it owns the bus then, so the shared live reader must
+        # not also open it). Once the session ends, fall through to None so
+        # read_shared_live_positions does a real live bus read — otherwise the
+        # last-read positions get served forever with a deceptively fresh
+        # updated_at, and the live view freezes on a stale frame.
+        if not active:
             return None
         raw_positions: dict[int, int] = {}
         for side, positions in positions_by_side.items():

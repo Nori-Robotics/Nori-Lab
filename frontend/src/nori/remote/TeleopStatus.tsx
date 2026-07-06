@@ -66,7 +66,7 @@ export function TelemetryPanel({
   const hzTone = !controlActive || stale ? "default" : tel.loopHz >= 45 ? "good" : tel.loopHz >= 30 ? "warn" : "bad";
 
   return (
-    <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
+    <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
       <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// telemetry</p>
       <div className="mt-3 flex flex-wrap gap-2">
       <Stat
@@ -246,7 +246,7 @@ export function CallBar({
   onToggleCamera: () => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-md border bg-background px-3 py-2">
+    <div className="flex flex-wrap items-center gap-3 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-3 py-2 text-[#14131a]">
       {!call.active ? (
         <Button size="sm" onClick={onJoin} disabled={!running || !connected}
           className="bg-[#8ab135] text-foreground hover:bg-[#7a9d2f]"
@@ -307,7 +307,7 @@ export function ControlLegend({ mode }: { mode: ControlMode }) {
         ))}
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        <span className="font-medium">Base</span>
+        <span className="w-full font-medium">Base</span>
         {legend.base.map((r) => (
           <div key={r.dof} className="flex items-center gap-1.5">
             <Key>{r.posKey.toUpperCase()}</Key><Key>{r.negKey.toUpperCase()}</Key>

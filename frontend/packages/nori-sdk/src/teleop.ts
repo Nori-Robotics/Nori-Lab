@@ -226,6 +226,11 @@ export class RemoteTeleop {
   private micTrack: MediaStreamTrack | null = null;
   private camStream: MediaStream | null = null;
   private camTrack: MediaStreamTrack | null = null;
+  // Outbound CLIP audio (laptop file/TTS/Web-Audio -> robot speaker). Shares the ONE audio
+  // uplink transceiver with the mic, so while a clip plays it owns the uplink; sending null
+  // hands the uplink back to the mic (if a call is live) or detaches. The track itself is
+  // owned by the CALLER (built from an <audio>/AudioContext) — the SDK only references it.
+  private clipTrack: MediaStreamTrack | null = null;
   private call: CallState = {
     active: false, micMuted: true, micSending: false,
     robotAudio: false, robotMicLive: false, cameraOn: false,
@@ -258,6 +263,14 @@ export class RemoteTeleop {
   // Public command surface for non-keyboard inputs (VR E-STOP / reset). Mirrors sendCmd.
   command(cmd: "estop" | "reset_latch" | "reset") {
     this.sendCmd(cmd);
+  }
+
+  // Ask the robot to drop / restore its camera-encoder bitrate to free CPU+bandwidth while
+  // the laptop adds load (e.g. streaming a clip to the speaker). "low" halves the x264 bitrate
+  // on the robot; "normal" restores the default. Intercepted by webrtc_robot.py (never reaches
+  // the daemon), exactly like {type:"call"} — no nori-protocol change, no version bump.
+  setVideoQuality(quality: "low" | "normal") {
+    this.dcSend({ type: "video", quality });
   }
 
   // Flip cylindrical <-> per-motor from the UI (same effect as the 'm' key). onMode fires.
@@ -341,6 +354,51 @@ export class RemoteTeleop {
     this.emitCall();
   }
 
+  // Stream an arbitrary audio track (a decoded file, TTS, or Web-Audio graph) to the robot's
+  // speaker over the SAME reserved audio uplink the two-way call uses — renegotiation-free
+  // (replaceTrack onto the sendrecv transceiver the robot offered; R-X.1). This is the
+  // laptop->robot M3b downlink with a NON-mic source; the robot's `_on_incoming_audio` links
+  // whatever arrives on the audio m-line to its ALSA speaker.
+  //
+  //   const track = mediaStreamDestination.stream.getAudioTracks()[0]; // Web Audio, or
+  //   const track = audioEl.captureStream().getAudioTracks()[0];       // <audio> element
+  //   await teleop.sendClipAudio(track);   // ... on 'ended':  await teleop.sendClipAudio(null)
+  //
+  // Requirements & caveats:
+  //  - The robot must run its voice downlink (webrtc_robot.py --voice / NORI_VOICE + a
+  //    speaker). Only then is the audio m-line sendrecv and does the robot play what we send;
+  //    otherwise capture succeeds locally but nothing transmits (returns false, logs).
+  //  - ONE audio m-line: a clip and the mic can't transmit at once. Starting a clip takes the
+  //    uplink; sendClipAudio(null) restores the mic if a call is active, else detaches.
+  //  - Real-time Opus, not a file transfer: audio plays as it streams; a network drop drops
+  //    the audio. The caller owns the track's lifetime (stop it when the source ends).
+  // Returns whether the track was actually wired to a robot uplink.
+  async sendClipAudio(track: MediaStreamTrack | null): Promise<boolean> {
+    this.clipTrack = track;
+    if (track) {
+      const wired = this.attachTrack("audio", track);
+      // Announce over the control channel like a call-join so the robot links its speaker
+      // branch + shows "on air" (it intercepts {type:"call"} frames). Skip if a call is
+      // already joined — the uplink is already announced; we're just swapping the source.
+      if (!this.call.active) this.dcSend({ type: "call", state: "join", mic_muted: true });
+      this.log(wired
+        ? "clip audio -> robot speaker"
+        : "clip audio: robot offered no audio uplink — enable --voice on the robot (not transmitting)");
+      return wired;
+    }
+    // Stopping the clip: hand the uplink back to the mic if we're in a call, else detach and
+    // announce leave (parity with leaveCall so the robot drops "on air").
+    if (this.call.active && this.micTrack) {
+      this.attachTrack("audio", this.micTrack);
+      this.call.micSending = !this.call.micMuted && !!this.audioSender();
+      this.emitCall();
+    } else {
+      this.detachTrack("audio");
+      this.dcSend({ type: "call", state: "leave" });
+    }
+    return false;
+  }
+
   private emitCall() {
     this.o.onCall?.({ ...this.call });
   }
@@ -354,7 +412,14 @@ export class RemoteTeleop {
   // Re-attach whatever the operator already captured onto the current peer (used after a
   // fresh peer is built mid-call). No-op if nothing captured.
   private attachLocalMedia() {
-    if (this.micTrack) {
+    // Drop a stale clip ref (the app already stopped the track) so a dead track is never
+    // re-piled onto a reconnecting session — every restart would otherwise accrete one.
+    if (this.clipTrack && this.clipTrack.readyState !== "live") this.clipTrack = null;
+    // A live clip owns the single audio uplink; otherwise the mic does. Re-assert that on the
+    // fresh peer so clip playback survives a robot restart / reconnect mid-stream.
+    if (this.clipTrack) {
+      this.attachTrack("audio", this.clipTrack);
+    } else if (this.micTrack) {
       const wired = this.attachTrack("audio", this.micTrack);
       this.call.micSending = wired && this.call.active && !this.call.micMuted;
     }
@@ -501,6 +566,7 @@ export class RemoteTeleop {
     // release mic/camera capture (safe if never joined)
     this.stopStream(this.micStream); this.micStream = null; this.micTrack = null;
     this.stopStream(this.camStream); this.camStream = null; this.camTrack = null;
+    this.clipTrack = null; // caller owns the clip track's lifetime; just drop our reference
     this.call = {
       active: false, micMuted: true, micSending: false,
       robotAudio: false, robotMicLive: false, cameraOn: false,

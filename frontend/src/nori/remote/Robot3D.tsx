@@ -26,18 +26,18 @@ function jointRad(state: Record<string, number>, key: string, spanDeg: number): 
 }
 
 // Scene geometry (arbitrary units; ~1 unit ≈ the rail travel). Tuned for legibility, not scale.
-const RAIL_TOP_Y = 1.5;
-const RAIL_LEN = 1.15; // vertical distance the carriage sweeps across full travel
+const RAIL_TOP_Y = 1.20;
+const RAIL_LEN = 1.0; // vertical distance the carriage sweeps across full travel
 // Visual gain on the rail depth fraction. Was 4 to compensate for the Pi UNDER-reporting
 // height ~4x (mm_per_rev mis-scale). Fixed at the source 2026-07-03 (NORI_LIFT_MM_PER_REV
 // 28.455 -> 115.6), so the Pi now reports true mm across the full 0..650 mm travel — the full
 // range already maps to the full sweep. Keep at 1 (true tracking); a gain >1 now just clips
 // the lower travel. Raise only if you deliberately want an exaggerated view.
-const RAIL_VIS_GAIN = 1;
-const UPPER_LEN = 0.40;
-const FORE_LEN = 0.35;
+const RAIL_VIS_GAIN = 2;
+const UPPER_LEN = 0.20;
+const FORE_LEN = 0.14;
 const WRIST_LEN = 0.12;
-const GRIP_LEN = 0.10;
+const GRIP_LEN = 0.15;
 
 // One schematic arm: a chain of boxes nested through the joint rotations. `side` selects the
 // state keys and the base X offset / handedness.
@@ -70,18 +70,18 @@ function Arm({ state, side, active }: { state: Record<string, number>; side: "le
   const jaw = 0.006 + (grip / 100) * 0.1; // half-gap between the two jaw cubes
 
   // Both arms white; the arm being teleoperated right now is highlighted green.
-  const color = active ? "#57d753" : "#f1f5f9";
+  const color = active ? "#a1d873" : "#f1f5f9";
 
   return (
-    <group position={[sign * 0.28, 0, 0]}>
+    <group position={[sign * 0.15, 0, 0]}>
       {/* Vertical rail (static) + carriage block that slides down it */}
-      <mesh position={[0, RAIL_TOP_Y - RAIL_LEN / 2, 0]}>
+      <mesh position={[0, RAIL_TOP_Y - RAIL_LEN / 2 + 0.15, 0]}>
         <boxGeometry args={[0.04, RAIL_LEN + 0.1, 0.04]} />
-        <meshStandardMaterial color="#334155" />
+        <meshStandardMaterial color="#757c86" />
       </mesh>
       <mesh position={[0, carriageY, 0]}>
         <boxGeometry args={[0.12, 0.08, 0.12]} />
-        <meshStandardMaterial color="#94a3b8" />
+        <meshStandardMaterial color="#acb9cb" />
       </mesh>
 
       {/* Articulated arm rooted at the carriage */}
@@ -108,7 +108,7 @@ function Arm({ state, side, active }: { state: Record<string, number>; side: "le
               <group position={[0, 0, WRIST_LEN]}>
                 {[-1, 1].map((s) => (
                   <mesh key={s} position={[s * jaw, 0, 0.03]}>
-                    <boxGeometry args={[0.02, 0.05, GRIP_LEN]} />
+                    <boxGeometry args={[0.02, 0.075, GRIP_LEN]} />
                     <meshStandardMaterial color={color} />
                   </mesh>
                 ))}
@@ -135,18 +135,51 @@ export function Robot3D({ state, activeArm }: { state: Record<string, number>; a
           waiting for joint telemetry…
         </div>
       )}
-      <Canvas camera={{ position: [0.9, 1.1, 1.4], fov: 45 }} dpr={[1, 2]}>
-        <ambientLight intensity={0.7} />
+      <Canvas camera={{ position: [1.6, 2.2, 2.0], fov: 40 }} dpr={[1, 2]}>
+        <ambientLight intensity={1.0} />
         <directionalLight position={[2, 4, 3]} intensity={0.9} />
         {/* base platform */}
-        <mesh position={[0, 0.38, 0]} rotation={[0, 0, 0]}>
-          <boxGeometry args={[0.8, 0.06, 0.4]} />
-          <meshStandardMaterial color="#1e293b" />
+        <mesh position={[0, 0.4, -0.05]} rotation={[0, 0, 0]}>
+          <boxGeometry args={[0.4, 0.18, 0.5]} />
+          <meshStandardMaterial color="#acb9cb" />
+        </mesh>
+        <mesh position={[0.23, 0.35, 0.1]} rotation={[0, 0, 1.55]}>
+          <cylinderGeometry args={[0.15, 0.15, 0.05]} />
+          <meshStandardMaterial color="#acb9cb" />
+        </mesh>
+        <mesh position={[-0.23, 0.35, 0.1]} rotation={[0, 0, 1.55]}>
+          <cylinderGeometry args={[0.15, 0.15, 0.05]} />
+          <meshStandardMaterial color="#acb9cb" />
+        </mesh>
+        {/*body*/}
+        <mesh position={[0, 1.0, 0]} rotation={[0, 0, 0]}>
+          <boxGeometry args={[0.25, 1.0, 0.10]} />
+          <meshStandardMaterial color="#5e6268" />
+        </mesh>
+        <mesh position={[0, 0.6, -0.10]} rotation={[0, 0, 0]}>
+          <boxGeometry args={[0.19, 0.22, 0.19]} />
+          <meshStandardMaterial color="#7a7e84" />
+        </mesh>
+        <mesh position={[0, 1.45, 0]} rotation={[0, 0, 0]}>
+          <boxGeometry args={[0.33, 0.12, 0.15]} />
+          <meshStandardMaterial color="#acb9cb" />
+        </mesh>
+        <mesh position={[0, 1.55, 0]} rotation={[0, 0, 0]}>
+          <boxGeometry args={[0.15, 0.13, 0.115]} />
+          <meshStandardMaterial color="#acb9cb" />
+        </mesh>
+        <mesh position={[0, 1.68, 0]} rotation={[0, 0, 0]}>
+          <boxGeometry args={[0.25, 0.18, 0.13]} />
+          <meshStandardMaterial color="#5e6268" />
+        </mesh>
+        <mesh position={[0, 1.75, 0.05]} rotation={[125, 0, 0]}>
+          <boxGeometry args={[0.25, 0.02, 0.2]} />
+          <meshStandardMaterial color="#5e6268" />
         </mesh>
         <Arm state={state} side="left" active={activeArm === "left"} />
         <Arm state={state} side="right" active={activeArm === "right"} />
-        <gridHelper args={[3, 12, "#1f2937", "#1f2937"]} position={[0, 0.34, 0]} />
-        <OrbitControls enablePan={false} minDistance={0.9} maxDistance={4} target={[0, 0.9, 0]} />
+        <gridHelper args={[3, 12, "#636d7c", "#5b636e"]} position={[0, 0.34, 0]} />
+        <OrbitControls enablePan={true} minDistance={0.9} maxDistance={4} target={[0, 0.9, 0]} />
       </Canvas>
       <p className="pointer-events-none absolute bottom-1 left-2 text-[9px] text-muted-foreground/70">
         schematic — normalized joint angles, not calibrated FK (C6 basic)

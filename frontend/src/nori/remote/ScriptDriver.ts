@@ -156,6 +156,11 @@ export class ScriptDriver {
         return Promise.resolve(this.lastTelemetry);
       case "playAudio":
         return this.playAudio(args); // bypasses the motion queue on purpose
+      case "reset":
+        // Re-sync the daemon's task-space (IK) cursor to the current joint positions. Enqueued
+        // so it runs AFTER any prior joint holds settle — the point is to reset before a reach()
+        // that follows joint() moves (which leave the x/y cursor stale). Also clears a latch.
+        return this.enqueue(() => { this.teleop.command("reset"); return Promise.resolve(undefined); });
       case "estop":
         this.teleop.command("estop");
         return Promise.resolve(undefined);

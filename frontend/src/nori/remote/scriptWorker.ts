@@ -70,6 +70,7 @@ const robot = {
   wait: (ms: number) => callOp("wait", [ms]),
   telemetry: () => callOp("telemetry", []),
   playAudio: (url: string) => callOp("playAudio", [url]),
+  reset: () => callOp("reset", []), // re-sync the IK cursor (call before reach() after joint())
   estop: () => callOp("estop", []),
   log: (...parts: unknown[]) => {
     self.postMessage({ kind: "log", line: parts.map(String).join(" ") });

@@ -19,7 +19,7 @@ import { ThemeProviderContext } from "@/contexts/ThemeContext";
 import { Play, Square, OctagonX } from "lucide-react";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { ScriptSession } from "@/nori/remote/ScriptSession";
-import { isScriptConsoleEnabled } from "@/nori/remote/flags";
+import { useApi } from "@/contexts/ApiContext";
 
 const CODE_EXTENSIONS = [javascript({ typescript: true })];
 
@@ -37,11 +37,12 @@ const Coding = () => {
   const {
     teleop, connState, connecting, connect, tel, scriptSource, setScriptSource,
   } = useTeleopSession();
-  const scriptEnabled = isScriptConsoleEnabled();
+  const { baseUrl, fetchWithHeaders } = useApi();
 
   const [prompt, setPrompt] = useState("");
   const [output, setOutput] = useState<string[]>([]);
   const [scriptRunning, setScriptRunning] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const sessionRef = useRef<ScriptSession | null>(null);
   const outRef = useRef<HTMLDivElement>(null);
 
@@ -74,6 +75,32 @@ const Coding = () => {
       : theme;
 
   const append = (line: string) => setOutput((prev) => [...prev.slice(-300), line]);
+
+  // LLM codegen: ask the server-side Claude proxy (/nori/llm/generate) for a routine and drop it
+  // into the editor. The generated code is fully editable — the operator reviews, then Runs. The
+  // API key stays on the server (see docs/llm_codegen_design.md); the browser never sees it.
+  const generate = async () => {
+    if (!prompt.trim() || generating) return;
+    setGenerating(true);
+    try {
+      const res = await fetchWithHeaders(`${baseUrl}/nori/llm/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, current_code: code }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail?.detail || res.statusText);
+      }
+      const { code: generated } = (await res.json()) as { code: string };
+      setScriptSource(generated);
+      append(`✎ generated ${generated.split("\n").length} lines — review, then Run`);
+    } catch (e) {
+      append("⚠ generate failed: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const run = () => {
     if (sessionRef.current) return;
@@ -127,13 +154,6 @@ const Coding = () => {
         )}
       </div>
 
-      {!scriptEnabled && (
-        <p className="rounded-md border border-[#b06a1c]/30 bg-[#b06a1c]/10 px-3 py-2 text-sm text-[#8a5416]">
-          Script execution is off. Enable it in the browser console, then reload:{" "}
-          <code className="font-mono">localStorage.setItem("nori_script_console","1")</code>
-        </p>
-      )}
-
       <div className="grid h-[calc(100vh-15rem)] grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Left: LLM prompt (codegen — D3, not wired yet) + run output log */}
         <div className="flex h-full min-h-0 flex-col gap-4">
@@ -146,10 +166,11 @@ const Coding = () => {
               className="flex-1 resize-none border-[#14131a]/12 bg-[#fffdf7]"
             />
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground">LLM codegen writes into the editor → you review → Run</span>
-              <Button size="sm" disabled title="LLM codegen — coming (plan D3)"
+              <span className="text-[11px] text-muted-foreground">Claude writes into the editor → you review → Run</span>
+              <Button size="sm" onClick={generate} disabled={generating || !prompt.trim()}
+                title="Generate a routine with Claude and drop it into the editor"
                 className="rounded-md bg-[#d98b3d] text-foreground hover:bg-[#c97929]">
-                Generate
+                {generating ? "Generating…" : "Generate"}
               </Button>
             </div>
           </div>
@@ -181,7 +202,7 @@ const Coding = () => {
             <span className="text-[11px] text-muted-foreground">open-loop timed · half-speed cap · supervisor required</span>
             <div className="flex items-center gap-2">
               {!scriptRunning ? (
-                <Button size="sm" onClick={run} disabled={!scriptEnabled || !connected}
+                <Button size="sm" onClick={run} disabled={!connected}
                   className="rounded-md bg-[#8ab135] text-foreground hover:bg-[#4d8754]">
                   <Play className="mr-2 h-4 w-4" /> Run
                 </Button>

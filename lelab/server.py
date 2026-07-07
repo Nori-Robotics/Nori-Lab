@@ -382,6 +382,110 @@ def nori_config():
     return config.nori_public_config()
 
 
+# ---- LLM codegen for the Coding page ("Generate") ----------------------------
+# Server-side proxy to Anthropic so the API key never reaches the browser (docs/
+# llm_codegen_design.md). Key + model come from the laptop .env (ANTHROPIC_API_KEY /
+# NORI_LLM_MODEL, loaded by utils.config's load_dotenv). Keep NORI_CODEGEN_SYSTEM in sync with
+# frontend/src/nori/remote/ScriptDriver.ts — that file is the ground-truth robot API.
+NORI_CODEGEN_SYSTEM = """You generate short JavaScript routines that drive a Nori robot through an injected async `robot` API. Your ENTIRE output is the BODY of an async function: no imports, no function wrapper, no markdown fences, no prose. Only statements, using `await robot.*`.
+
+THE ROBOT API — every motion is OPEN-LOOP TIMED. You give a duration in ms; the move runs for that long then stops. There is NO arrival/success feedback (a "done" only means the time elapsed).
+
+  robot.reach(side, dofs, ms)   Task-space (cylindrical) jog via IK.
+                                 side: "left" | "right".
+                                 dofs: subset of { x, y, pitch, shoulder_pan, wrist_roll, gripper },
+                                 each a rate in [-1,1]. x/y translate the end-effector in the arm
+                                 plane; +x forward, +y left. Held ms, then zeroed.
+  robot.joint(side, dofs, ms)   Per-motor jog (no IK).
+                                 dofs: subset of { shoulder_pan, shoulder_lift, elbow_flex,
+                                 wrist_flex, wrist_roll, gripper }, each a rate in [-1,1].
+  robot.grip(side, "open"|"close")   Convenience gripper open/close.
+  robot.base(vec, ms)           Mobile base. vec: { linear, angular } in [-1,1].
+                                 +linear = forward, +angular = turn left.
+  robot.lift(side, dir, ms)     Raise/lower that arm's vertical rail. dir in [-1,1], + = up.
+  robot.wait(ms)                 Hold position (the 50 Hz keep-alive continues).
+  robot.reset()                  Re-sync the IK task cursor to current joint positions. Call this
+                                 before a robot.reach(...) that follows any robot.joint(...) move.
+  robot.telemetry()             -> { loopHz, safety, tempC, state:{...}, currents:{...} } or null.
+                                 PROPRIOCEPTIVE ONLY — joint positions + currents. NO camera/vision.
+  robot.playAudio(url)          Stream an audio clip (blob/data/https) to the robot speaker;
+                                 resolves when playback ends.
+  robot.log(...args)            Print to the operator's run-output panel.
+  robot.estop()                 Emergency latch (the on-screen button is the primary path).
+
+UNITS: every rate is normalized to [-1,1]; the robot scales it to a safe per-tick step. ~0.3-0.5 is a gentle, visible move; 1.0 is the max the robot allows (and a half-speed session cap clamps it further). Durations are milliseconds; a single hold is capped at 60000 ms.
+
+HARD RULES you MUST follow:
+1. `await` every robot.* call so moves run in sequence.
+2. NEVER mix task DOFs (x, y, pitch) and joint DOFs (shoulder_lift, elbow_flex, wrist_flex) in the same call — the presence of a joint DOF switches that whole call to per-motor mode.
+3. After ANY robot.joint(...) move, call robot.reset() before a robot.reach(...) (the IK cursor goes stale and reach() would otherwise jump). Prefer staying in one family per routine.
+4. You are BLIND: no vision, no world model. Never assume where objects are. Prefer small, reversible moves and short durations. Do not drive the base more than briefly.
+5. No imports, no fetch, no DOM — only the robot API and plain JS (loops, math, variables).
+6. Output ONLY the function body. No ``` fences, no commentary.
+
+SAFETY CONTEXT (for your judgement, not things you can bypass): a human supervises with live video and an E-STOP; the daemon clamps joint ranges, latches on stall/over-temp, and safe-stops if the control stream dies. You cannot make the robot unsafe through this API — but you SHOULD still be conservative: gentle rates, short holds, log what you're doing.
+
+EXAMPLE — "wave the right arm":
+for (let i = 0; i < 3; i++) {
+  await robot.joint("right", { wrist_flex: 0.4 }, 500);
+  await robot.joint("right", { wrist_flex: -0.4 }, 500);
+}
+robot.log("waved");
+
+EXAMPLE — "nudge forward a little, then open the left gripper":
+await robot.base({ linear: 0.4 }, 700);
+await robot.grip("left", "open");
+robot.log("done");
+
+If a request needs vision, is unsafe, or is unclear, generate the safest partial routine you can and robot.log(...) a short note on what you could not do."""
+
+
+class NoriLlmGenerateBody(BaseModel):
+    prompt: str
+    current_code: str | None = None  # lets the user say "make it slower" about existing code
+
+
+def _strip_code_fences(s: str) -> str:
+    """Models sometimes wrap output in ```js … ``` despite instructions; unwrap it."""
+    s = s.strip()
+    if s.startswith("```"):
+        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
+        if s.endswith("```"):
+            s = s[: s.rfind("```")]
+    return s.strip()
+
+
+@app.post("/nori/llm/generate")
+def nori_llm_generate(body: NoriLlmGenerateBody):
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set on the server")
+    try:
+        import anthropic
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=503, detail="anthropic package not installed (pip install anthropic)"
+        ) from exc
+
+    model = os.environ.get("NORI_LLM_MODEL", "claude-sonnet-5")
+    client = anthropic.Anthropic(api_key=key)
+    user = body.prompt if not body.current_code else (
+        f"Current code:\n```js\n{body.current_code}\n```\n\nRequest: {body.prompt}"
+    )
+    try:
+        msg = client.messages.create(
+            model=model,
+            max_tokens=1500,
+            system=NORI_CODEGEN_SYSTEM,
+            messages=[{"role": "user", "content": user}],
+        )
+    except anthropic.APIError as exc:
+        raise HTTPException(status_code=502, detail=f"Anthropic error: {exc}") from exc
+
+    text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+    return {"code": _strip_code_fences(text)}
+
+
 def nori_jwt(request: Request) -> str | None:
     """Extract the forwarded Supabase JWT from the inbound LeLab request.
 

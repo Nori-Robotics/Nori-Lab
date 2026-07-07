@@ -126,6 +126,20 @@ call before the channel is open — the desired state is applied on open (so "pa
 only while a viewer is mounted" works). Control + telemetry are a separate transport, so pausing
 video never affects jog/telemetry. A fresh session starts flowing at the defaults.
 
+**Grab a still frame** (e.g. to feed a vision model) without a `<video>` element — reads the live
+track directly:
+
+```ts
+const blob = await teleop.captureFrame();   // JPEG Blob, or null if no video is arriving
+// If the encoder may be paused, use snapshot(): it resumes, waits for a frame, grabs, re-pauses:
+const still = await teleop.snapshot();       // JPEG Blob, or null
+```
+
+> **Verification status (v0):** `setVideoEl`/`setAudioEl`, `pauseVideo`/`resumeVideo`, and
+> `captureFrame`/`snapshot` are implemented and typecheck/build-clean, but **pending on-robot
+> verification** (encoder power drop + clean keyframe resume + frame grab). The inbound video feed
+> itself is hardware-verified and stable.
+
 ## Streaming audio to the robot speaker
 
 `sendClipAudio` streams an arbitrary audio **track** to the robot's speaker over the same

@@ -326,182 +326,182 @@ const Remote = () => {
           {/* Robot inbound audio — unmuted sink, no video element can play it (video is muted). */}
           <audio ref={audioRef} autoPlay className="hidden" />
 
-          {/* Control-mode picker: which method drives the arms. All options are always shown
-              (even when a headset / the leader arms aren't present); keyboard is the default. */}
-          <div className="flex flex-wrap items-center gap-3 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 py-2 text-[#14131a] shadow-sm">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// controls</p>
-            <div className="ml-auto flex flex-wrap items-center gap-3">
-              <Button
-                size="sm"
-                variant={controlMode === "keyboard" ? "default" : "secondary"}
-                className={controlMode === "keyboard" ? "" : "border border-[#14131a]/20"}
-                onClick={selectKeyboard}
-                title="Drive with the keyboard (default)"
-              >
-                Keyboard
-              </Button>
-              <Button
-                size="sm"
-                variant={controlMode === "leader" ? "default" : "secondary"}
-                className={controlMode === "leader" ? "" : "border border-[#14131a]/20"}
-                onClick={selectLeader}
-                title="Drive the robot's arms from the physical dual leader arms (base + lift stay on the keyboard). Selectable offline for hardware setup."
-              >
-                {leaderActive ? `Leader arm · ${leaderCount}/12` : "Leader arm"}
-              </Button>
-              <Button
-                size="sm"
-                variant={controlMode === "vr" ? "default" : "secondary"}
-                className={controlMode === "vr" ? "" : "border border-[#14131a]/20"}
-                onClick={selectVr}
-                title="Drive with a VR headset (AR passthrough) on this same session"
-              >
-                {inVr ? "In VR" : "VR"}
-              </Button>
-              <label className="flex items-center gap-2 text-sm">
-                Arm
-                <select
-                  className="rounded-md border bg-background px-2 py-1 text-sm"
-                  value={settings.arm}
-                  onChange={(e) => set("arm", e.target.value as ArmSide)}
+          {/* Audio: two-way call plus clip-to-robot-speaker (reuses the M3b downlink; needs the
+              robot's voice downlink on — --voice / NORI_SPEAKER). Always shown; disabled offline. */}
+          <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 py-3 text-[#14131a] shadow-sm">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// audio</p>
+            <div className="mt-2 space-y-2">
+              <CallBar
+                call={call}
+                running={running}
+                connected={connState === "connected"}
+                m6={m6}
+                onJoin={joinCall}
+                onLeave={leaveCall}
+                onToggleMute={toggleMute}
+                onToggleCamera={toggleCamera}
+                volume={volume}
+                onVolumeChange={setVolume}
+              />
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="text-xs text-[#857b6b]">Play to robot speaker</span>
+                <label
+                  className={
+                    "rounded border border-[#14131a]/20 px-2 py-1 " +
+                    (connected ? "cursor-pointer hover:bg-[#14131a]/5" : "pointer-events-none opacity-50")
+                  }
                 >
-                  <option value="right">right</option>
-                  <option value="left">left</option>
-                </select>
-              </label>
+                  Choose audio file…
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    className="hidden"
+                    disabled={!connected}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = ""; // allow re-picking the same file
+                      if (f) void playClipFile(f);
+                    }}
+                  />
+                </label>
+                {clipPlaying && (
+                  <Button size="sm" variant="secondary" onClick={stopClip}>
+                    Stop clip
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* VR mode card: the headset entry point on supported devices, a plain hint otherwise. */}
-          {controlMode === "vr" && (
-            <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pb-4 pt-3 text-[#14131a] shadow-sm">
-              <div className="flex min-h-9 items-center">
-                <h3 className="text-base font-semibold leading-none tracking-tight">VR control</h3>
-              </div>
-              {xrSupported ? (
-                <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <Button
-                    onClick={enterVr}
-                    disabled={!connected || inVr}
-                    title="Open the headset (AR passthrough) on this same session"
-                  >
-                    {inVr ? "In VR" : "Enter VR"}
-                  </Button>
-                  {!connected && (
-                    <span className="text-sm text-[#6f6858]">connect to the robot first</span>
-                  )}
-                </div>
-              ) : (
-                <p className="mt-3 text-sm text-[#6f6858]">Connect using a VR device</p>
-              )}
+          {/* Single combined telemetry card: link/loop chips, then rail height, then grip force. */}
+          <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// telemetry</p>
+            <div className="mt-3">
+              <TelemetryPanel
+                connState={running ? connState : "idle"}
+                tel={tel}
+                controlActive={controlActive}
+                stale={stale}
+                inVr={inVr}
+              />
             </div>
-          )}
-
-          {/* Leader-arm hardware setup — the full leader-setup surface, embedded. Shown while
-              leader mode is selected; usable offline (calibration doesn't need the session). */}
-          {controlMode === "leader" && (
-            <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pb-4 pt-3 shadow-sm">
-              <LeaderSetup embedded />
+            <h2 className="mt-4 flex items-center gap-1.5 text-sm font-semibold">
+              Rail height <RailHeightHelp />
+            </h2>
+            <div className="mt-2">
+              <RailHeight state={tel.state} />
             </div>
-          )}
-
-          {/* Keyboard legend only shows for its own mode, like the VR and leader cards. */}
-          {controlMode === "keyboard" && (
-          <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
-            <CardHeader className="flex min-h-9 flex-row items-center justify-between space-y-0 px-4 pb-0 pt-3">
-              <CardTitle className="text-base">Keyboard controls</CardTitle>
-              {/* Cylindrical vs per-motor only affects keyboard driving, so it lives here. */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => teleop?.toggleMode()}
-                disabled={!running}
-                title="Switch between cylindrical (rpi4 feel) and per-motor control"
-              >
-                Mode: {mode === "joint" ? "per-motor" : "cylindrical"}
-              </Button>
-            </CardHeader>
-            <CardContent className="p-4 pt-3">
-              <ControlLegend mode={mode} />
-            </CardContent>
-          </Card>
-          )}
+            <h2 className="mt-4 text-sm font-semibold">Grip force / motor current</h2>
+            <div className="mt-2">
+              <GripForce currents={tel.currents} />
+            </div>
+          </div>
 
           {/* The script console now lives on the Coding page (/nori/coding), driving the same
               persistent session. */}
         </div>
 
         <div className="h-fit space-y-4">
-        {/* Audio: two-way call plus clip-to-robot-speaker (reuses the M3b downlink; needs the
-            robot's voice downlink on — --voice / NORI_SPEAKER). Always shown; disabled offline. */}
-        <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 py-3 text-[#14131a] shadow-sm">
-          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// audio</p>
-          <div className="mt-2 space-y-2">
-            <CallBar
-              call={call}
-              running={running}
-              connected={connState === "connected"}
-              m6={m6}
-              onJoin={joinCall}
-              onLeave={leaveCall}
-              onToggleMute={toggleMute}
-              onToggleCamera={toggleCamera}
-              volume={volume}
-              onVolumeChange={setVolume}
-            />
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-xs text-[#857b6b]">Play to robot speaker</span>
-              <label
-                className={
-                  "rounded border border-[#14131a]/20 px-2 py-1 " +
-                  (connected ? "cursor-pointer hover:bg-[#14131a]/5" : "pointer-events-none opacity-50")
-                }
+        {/* Control-mode picker: which method drives the arms. All options are always shown
+            (even when a headset / the leader arms aren't present); keyboard is the default. */}
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 py-2 text-[#14131a] shadow-sm">
+          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// controls</p>
+          <div className="ml-auto flex flex-wrap items-center gap-3">
+            <Button
+              size="sm"
+              variant={controlMode === "keyboard" ? "default" : "secondary"}
+              className={controlMode === "keyboard" ? "" : "border border-[#14131a]/20"}
+              onClick={selectKeyboard}
+              title="Drive with the keyboard (default)"
+            >
+              Keyboard
+            </Button>
+            <Button
+              size="sm"
+              variant={controlMode === "leader" ? "default" : "secondary"}
+              className={controlMode === "leader" ? "" : "border border-[#14131a]/20"}
+              onClick={selectLeader}
+              title="Drive the robot's arms from the physical dual leader arms (base + lift stay on the keyboard). Selectable offline for hardware setup."
+            >
+              {leaderActive ? `Leader arm · ${leaderCount}/12` : "Leader arm"}
+            </Button>
+            <Button
+              size="sm"
+              variant={controlMode === "vr" ? "default" : "secondary"}
+              className={controlMode === "vr" ? "" : "border border-[#14131a]/20"}
+              onClick={selectVr}
+              title="Drive with a VR headset (AR passthrough) on this same session"
+            >
+              {inVr ? "In VR" : "VR"}
+            </Button>
+            <label className="flex items-center gap-2 text-sm">
+              Arm
+              <select
+                className="rounded-md border bg-background px-2 py-1 text-sm"
+                value={settings.arm}
+                onChange={(e) => set("arm", e.target.value as ArmSide)}
               >
-                Choose audio file…
-                <input
-                  type="file"
-                  accept="audio/*"
-                  className="hidden"
-                  disabled={!connected}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    e.target.value = ""; // allow re-picking the same file
-                    if (f) void playClipFile(f);
-                  }}
-                />
-              </label>
-              {clipPlaying && (
-                <Button size="sm" variant="secondary" onClick={stopClip}>
-                  Stop clip
-                </Button>
-              )}
-            </div>
+                <option value="right">right</option>
+                <option value="left">left</option>
+              </select>
+            </label>
           </div>
         </div>
 
-        {/* Single combined telemetry card: link/loop chips, then rail height, then grip force. */}
-        <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
-          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// telemetry</p>
-          <div className="mt-3">
-            <TelemetryPanel
-              connState={running ? connState : "idle"}
-              tel={tel}
-              controlActive={controlActive}
-              stale={stale}
-              inVr={inVr}
-            />
+        {/* VR mode card: the headset entry point on supported devices, a plain hint otherwise. */}
+        {controlMode === "vr" && (
+          <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pb-4 pt-3 text-[#14131a] shadow-sm">
+            <div className="flex min-h-9 items-center">
+              <h3 className="text-base font-semibold leading-none tracking-tight">VR control</h3>
+            </div>
+            {xrSupported ? (
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <Button
+                  onClick={enterVr}
+                  disabled={!connected || inVr}
+                  title="Open the headset (AR passthrough) on this same session"
+                >
+                  {inVr ? "In VR" : "Enter VR"}
+                </Button>
+                {!connected && (
+                  <span className="text-sm text-[#6f6858]">connect to the robot first</span>
+                )}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-[#6f6858]">Connect using a VR device</p>
+            )}
           </div>
-          <h2 className="mt-4 flex items-center gap-1.5 text-sm font-semibold">
-            Rail height <RailHeightHelp />
-          </h2>
-          <div className="mt-2">
-            <RailHeight state={tel.state} />
+        )}
+
+        {/* Leader-arm hardware setup — the full leader-setup surface, embedded. Shown while
+            leader mode is selected; usable offline (calibration doesn't need the session). */}
+        {controlMode === "leader" && (
+          <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pb-4 pt-3 shadow-sm">
+            <LeaderSetup embedded />
           </div>
-          <h2 className="mt-4 text-sm font-semibold">Grip force / motor current</h2>
-          <div className="mt-2">
-            <GripForce currents={tel.currents} />
-          </div>
-        </div>
+        )}
+
+        {/* Keyboard legend only shows for its own mode, like the VR and leader cards. */}
+        {controlMode === "keyboard" && (
+        <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
+          <CardHeader className="flex min-h-9 flex-row items-center justify-between space-y-0 px-4 pb-0 pt-3">
+            <CardTitle className="text-base">Keyboard controls</CardTitle>
+            {/* Cylindrical vs per-motor only affects keyboard driving, so it lives here. */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => teleop?.toggleMode()}
+              disabled={!running}
+              title="Switch between cylindrical (rpi4 feel) and per-motor control"
+            >
+              Mode: {mode === "joint" ? "per-motor" : "cylindrical"}
+            </Button>
+          </CardHeader>
+          <CardContent className="p-4 pt-3">
+            <ControlLegend mode={mode} />
+          </CardContent>
+        </Card>
+        )}
 
         <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
           <div className="flex items-baseline justify-between gap-3">

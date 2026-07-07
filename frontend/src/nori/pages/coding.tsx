@@ -23,6 +23,16 @@ import { useApi } from "@/contexts/ApiContext";
 
 const CODE_EXTENSIONS = [javascript({ typescript: true })];
 
+// Blob -> bare base64 (no "data:image/jpeg;base64," prefix) for the LLM image block.
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve((r.result as string).split(",", 2)[1] ?? "");
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
 // Shown when the editor is empty, so a first-time user has something runnable.
 const STARTER = `// Drive the robot with the injected \`robot\` API. Motions are open-loop timed.
 // The robot moves only while a script runs; you are the supervisor (E-STOP below).
@@ -43,6 +53,7 @@ const Coding = () => {
   const [output, setOutput] = useState<string[]>([]);
   const [scriptRunning, setScriptRunning] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [attachVision, setAttachVision] = useState(false); // Part 3: send a camera still to the model
   const sessionRef = useRef<ScriptSession | null>(null);
   const outRef = useRef<HTMLDivElement>(null);
 
@@ -83,10 +94,24 @@ const Coding = () => {
     if (!prompt.trim() || generating) return;
     setGenerating(true);
     try {
+      // 9a — proprioceptive grounding: hand the model the CURRENT pose so it can plan relative to
+      // where the arm actually is ("pan is at +20 → jog negative to center") instead of guessing.
+      // tel.state is the daemon's normalized <motor>.pos + lift mm + base vels; round to cut noise.
+      const robotState = Object.fromEntries(
+        Object.entries(tel.state ?? {}).map(([k, v]) => [k, Math.round(v * 10) / 10]),
+      );
+      // Part 3: optionally attach a camera still so the model can see the scene ("go to the cup").
+      // snapshot() resumes the encoder if paused, grabs one frame, then re-pauses.
+      let imageB64: string | undefined;
+      if (attachVision && teleop) {
+        const blob = await teleop.snapshot();
+        if (blob) { imageB64 = await blobToBase64(blob); append("📷 attached a camera frame"); }
+        else append("⚠ no camera frame (video not arriving) — sending without vision");
+      }
       const res = await fetchWithHeaders(`${baseUrl}/nori/llm/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, current_code: code }),
+        body: JSON.stringify({ prompt, current_code: code, robot_state: robotState, image_b64: imageB64 }),
       });
       if (!res.ok) {
         const detail = await res.json().catch(() => ({}));
@@ -165,8 +190,13 @@ const Coding = () => {
               placeholder="Describe what the robot should do…"
               className="flex-1 resize-none border-[#14131a]/12 bg-[#fffdf7]"
             />
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground">Claude writes into the editor → you review → Run</span>
+            <div className="flex items-center justify-between gap-2">
+              <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                title="Attach a still from the robot camera so Claude can see the scene">
+                <input type="checkbox" checked={attachVision}
+                  onChange={(e) => setAttachVision(e.target.checked)} />
+                attach camera view
+              </label>
               <Button size="sm" onClick={generate} disabled={generating || !prompt.trim()}
                 title="Generate a routine with Claude and drop it into the editor"
                 className="rounded-md bg-[#d98b3d] text-foreground hover:bg-[#c97929]">

@@ -423,6 +423,14 @@ HARD RULES you MUST follow:
 5. No imports, no fetch, no DOM — only the robot API and plain JS (loops, math, variables).
 6. Output ONLY the function body. No ``` fences, no commentary.
 
+GROUNDING: you may be given the current robot state (joint positions, lift heights, base) as the
+STARTING pose. Use it to plan relative moves and to judge direction + magnitude (e.g. "shoulder_pan
+is at +30, so jog it negative to center"). It is proprioceptive only.
+
+VISION: you may also be given a single still photo from the robot's camera. Use it to locate things
+and choose directions ("the cup is on the left, so jog base/arm that way"). It is ONE frame, not a
+live view and not depth — estimate coarsely, move in small steps, and never assume exact distances.
+
 SAFETY CONTEXT (for your judgement, not things you can bypass): a human supervises with live video and an E-STOP; the daemon clamps joint ranges, latches on stall/over-temp, and safe-stops if the control stream dies. You cannot make the robot unsafe through this API — but you SHOULD still be conservative: gentle rates, short holds, log what you're doing.
 
 EXAMPLE — "wave the right arm":
@@ -443,6 +451,8 @@ If a request needs vision, is unsafe, or is unclear, generate the safest partial
 class NoriLlmGenerateBody(BaseModel):
     prompt: str
     current_code: str | None = None  # lets the user say "make it slower" about existing code
+    robot_state: dict | None = None  # 9a: current proprioceptive pose (<motor>.pos, lift mm, base)
+    image_b64: str | None = None  # Part 3: JPEG (base64, no data: prefix) from the robot camera
 
 
 def _strip_code_fences(s: str) -> str:
@@ -469,15 +479,32 @@ def nori_llm_generate(body: NoriLlmGenerateBody):
 
     model = os.environ.get("NORI_LLM_MODEL", "claude-sonnet-5")
     client = anthropic.Anthropic(api_key=key)
-    user = body.prompt if not body.current_code else (
-        f"Current code:\n```js\n{body.current_code}\n```\n\nRequest: {body.prompt}"
-    )
+    parts = []
+    if body.current_code:
+        parts.append(f"Current code:\n```js\n{body.current_code}\n```")
+    if body.robot_state:
+        # 9a: ground the model in the current pose so "go to / raise / center" plan from reality.
+        parts.append(
+            "Current robot state (proprioceptive, normalized: arm joints ~[-100,100], "
+            "grippers [0,100], lifts in mm, base as velocities). Treat it as the STARTING pose "
+            f"and plan moves relative to it:\n{json.dumps(body.robot_state)}"
+        )
+    parts.append(f"Request: {body.prompt}")
+    user = "\n\n".join(parts)
+    # Part 3: an optional camera still gives the model spatial context ("go to the cup"). Send it as
+    # an image block ahead of the text; without it the request is plain text as before.
+    content: list = [{"type": "text", "text": user}]
+    if body.image_b64:
+        content.insert(0, {
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/jpeg", "data": body.image_b64},
+        })
     try:
         msg = client.messages.create(
             model=model,
             max_tokens=1500,
             system=NORI_CODEGEN_SYSTEM,
-            messages=[{"role": "user", "content": user}],
+            messages=[{"role": "user", "content": content}],
         )
     except anthropic.APIError as exc:
         raise HTTPException(status_code=502, detail=f"Anthropic error: {exc}") from exc

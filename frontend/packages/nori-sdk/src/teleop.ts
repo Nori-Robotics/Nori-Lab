@@ -321,6 +321,44 @@ export class RemoteTeleop {
     this.dcSend({ type: "video", state: paused ? "pause" : "resume" });
   }
 
+  // Grab a still frame from the robot's inbound video WITHOUT needing a <video> on screen — reads
+  // the live track directly. Returns null if no video is arriving (not connected, or paused with no
+  // frames). Prefer snapshot() if the encoder may be paused; this one assumes frames are flowing.
+  async captureFrame(mime = "image/jpeg", quality = 0.7): Promise<Blob | null> {
+    const track = this.inboundVideo?.getVideoTracks?.()[0];
+    if (!track || track.readyState !== "live") return null;
+    try {
+      // ImageCapture.grabFrame is experimental and missing from some TS lib.dom versions; add it
+      // locally rather than depend on the ambient type.
+      const capture = new ImageCapture(track) as ImageCapture & { grabFrame(): Promise<ImageBitmap> };
+      const bmp = await capture.grabFrame();
+      const canvas = document.createElement("canvas");
+      canvas.width = bmp.width;
+      canvas.height = bmp.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(bmp, 0, 0);
+      bmp.close?.();
+      return await new Promise((res) => canvas.toBlob((b) => res(b), mime, quality));
+    } catch {
+      return null; // ImageCapture unsupported or grab failed
+    }
+  }
+
+  // Snapshot that handles a paused encoder: if video is paused, resume (which forces a keyframe on
+  // the robot), wait briefly for a frame to arrive, grab it, then re-pause — so a still can be taken
+  // for LLM vision etc. without leaving the encoder running. settleMs is the resume→frame wait.
+  async snapshot(settleMs = 500): Promise<Blob | null> {
+    const wasPaused = this.videoPaused;
+    if (wasPaused) {
+      this.resumeVideo();
+      await new Promise((res) => setTimeout(res, settleMs));
+    }
+    const blob = await this.captureFrame();
+    if (wasPaused) this.pauseVideo();
+    return blob;
+  }
+
   // Flip cylindrical <-> per-motor from the UI (same effect as the 'm' key). onMode fires.
   toggleMode() {
     this.setMode(this.mode === "joint" ? "cylindrical" : "joint");

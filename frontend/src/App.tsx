@@ -19,6 +19,7 @@ import TeleopStopNotice from "@/components/TeleopStopNotice";
 import UpdateNotice from "@/components/UpdateNotice";
 // NORI: additive Nori laptop-app surface (all under /nori/*; no upstream routes touched).
 import { NoriProvider } from "@/nori/NoriContext";
+import { TeleopSessionProvider } from "@/nori/TeleopSessionContext";
 import NoriLayout from "@/nori/components/NoriLayout";
 import SignIn from "@/nori/pages/sign-in";
 import Account from "@/nori/pages/account";
@@ -67,7 +68,9 @@ function App() {
                           path="/nori"
                           element={
                             <NoriProvider>
-                              <NoriLayout />
+                              <TeleopSessionProvider>
+                                <NoriLayout />
+                              </TeleopSessionProvider>
                             </NoriProvider>
                           }
                         >

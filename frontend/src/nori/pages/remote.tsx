@@ -15,82 +15,37 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
-import { getSupabase } from "@/nori/auth/supabase";
-import {
-  RemoteTeleop,
-  type ArmSide,
-  type CallState,
-  type ControlMode,
-  type TelemetryView,
-} from "@nori/sdk";
-import { SupabaseSignaling } from "@nori/sdk/supabase";
+import { type ArmSide } from "@nori/sdk";
 import { VrSession } from "@nori/sdk/vr";
 import { TelemetryPanel, GripForce, ControlLegend, CallBar, RailHeight } from "@/nori/remote/TeleopStatus";
 import { Robot3D } from "@/nori/remote/Robot3D";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import { playAudioFile, type ClipHandle } from "@/nori/remote/audioClip";
-import { ScriptPanel } from "@/nori/remote/ScriptPanel";
-import { isM6VideoEnabled, isScriptConsoleEnabled } from "@/nori/remote/flags";
-
-const DEFAULT_STUN = "stun:stun.l.google.com:19302";
-
-// Remote-session settings persist in localStorage (must match the Pi's .env).
-type Settings = {
-  room: string;
-  token: string;
-  stun: string;
-  turn: string;
-  turnUser: string;
-  turnCred: string;
-  forceRelay: boolean;
-  arm: ArmSide;
-};
-
-const DEFAULTS: Settings = {
-  // Empty = "not chosen yet" → auto-filled with the paired robot's serial once the
-  // customer profile loads (see the effect below). A typed value always wins.
-  room: "",
-  token: "",
-  stun: DEFAULT_STUN,
-  turn: "",
-  turnUser: "",
-  turnCred: "",
-  forceRelay: false,
-  arm: "right",
-};
-
-const LS_KEY = "nori_remote_settings";
-
-function loadSettings(): Settings {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
-  } catch { /* ignore */ }
-  return { ...DEFAULTS };
-}
+import { isM6VideoEnabled } from "@/nori/remote/flags";
+import { useTeleopSession } from "@/nori/TeleopSessionContext";
 
 const Remote = () => {
   const { ready, customer, activeRobotSerial } = useNori();
   const { baseUrl, fetchWithHeaders } = useApi();
+  // The session now lives in TeleopSessionProvider so it survives navigation (Remote <-> Coding).
+  // This page is a consumer: it renders video/telemetry/settings and drives VR/leader/clip, but
+  // it no longer owns the RemoteTeleop instance and must NOT stop it on unmount.
+  const {
+    teleop, running, connecting, connState, tel, stale, controlActive, mode, call,
+    logLines, appendLog, settings, setSetting: set, connect, disconnect: sessionDisconnect,
+    setCurrentsListener,
+  } = useTeleopSession();
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const selfViewRef = useRef<HTMLVideoElement>(null);
-  const teleopRef = useRef<RemoteTeleop | null>(null);
   const vrRef = useRef<VrSession | null>(null);
   const leaderRef = useRef<LeaderDriver | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const m6 = isM6VideoEnabled();
-  const scriptConsole = isScriptConsoleEnabled();
-  // One-writer arbitration: true while a pasted/LLM script is driving via ScriptDriver. Disables
-  // VR / leader / keyboard-jog so there is never a second writer to setExternalJog (the SPACE
-  // E-STOP key stays live).
-  const [scriptActive, setScriptActive] = useState(false);
 
-  const [settings, setSettings] = useState<Settings>(loadSettings);
   const [showSettings, setShowSettings] = useState(false);
   const [showLog, setShowLog] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [running, setRunning] = useState(false);
   const [inVr, setInVr] = useState(false);
   const [xrSupported, setXrSupported] = useState<boolean | null>(null);
   // Leader-arm control: when active the physical dual leaders drive the robot's arms
@@ -98,65 +53,31 @@ const Remote = () => {
   // motors fed the last frame (0 = arms unplugged / bus paused).
   const [leaderActive, setLeaderActive] = useState(false);
   const [leaderCount, setLeaderCount] = useState(0);
-  const [connState, setConnState] = useState("idle");
-  const [controlActive, setControlActive] = useState(false);
-  const [mode, setMode] = useState<ControlMode>("cylindrical");
-  const [tel, setTel] = useState<TelemetryView>({
-    loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {}, state: {},
-  });
-  const [stale, setStale] = useState(false);
-  const lastTelRef = useRef(0);
-  const [call, setCall] = useState<CallState>({
-    active: false, micMuted: true, micSending: false,
-    robotAudio: false, robotMicLive: false, cameraOn: false,
-  });
-  const [logLines, setLogLines] = useState<string[]>([]);
-
-  // Telemetry rides the control channel ~periodically; if it dries up while we still think
-  // control is active, the readouts are no longer live. Flag it so the panel says "stale".
-  const onTelemetry = useCallback((t: TelemetryView) => {
-    lastTelRef.current = Date.now();
-    setStale(false);
-    setTel(t);
-    vrRef.current?.setTelemetry(t); // mirror the same stats into the in-VR HUD
-  }, []);
-  useEffect(() => {
-    if (!running) { setStale(false); return; }
-    const id = setInterval(() => {
-      if (lastTelRef.current && Date.now() - lastTelRef.current > 1500) setStale(true);
-    }, 500);
-    return () => clearInterval(id);
-  }, [running]);
-
-  const set = <K extends keyof Settings>(k: K, v: Settings[K]) =>
-    setSettings((s) => {
-      const next = { ...s, [k]: v };
-      localStorage.setItem(LS_KEY, JSON.stringify(next));
-      return next;
-    });
-
-  const appendLog = useCallback((msg: string) => {
-    setLogLines((prev) => [...prev.slice(-200), msg]);
-  }, []);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [logLines]);
 
-  // Live-update the active session's arm without reconnecting.
+  // Attach THIS page's media elements to the persistent session, and detach (not stop) on leave.
+  // The SDK remembers the inbound stream and re-points these elements, so video survives a
+  // round-trip to another page.
   useEffect(() => {
-    teleopRef.current?.setArm(settings.arm);
-  }, [settings.arm]);
+    if (!teleop) return;
+    teleop.setVideoEl(videoRef.current);
+    teleop.setAudioEl(audioRef.current);
+    return () => { teleop.setVideoEl(null); teleop.setAudioEl(null); };
+  }, [teleop]);
 
-  // Default the room to the active robot's serial: the Supabase channel is keyed by
-  // NORI_ROOM, and a paired robot's room == its serial, so a paired operator never has
-  // to type it. With multi-robot pairing this follows the Pairing page's active-robot
-  // selection; it falls back to the profile serial. Only fills when the room is still
-  // unset (a manual value always wins).
-  const serial = activeRobotSerial ?? customer?.robot_serial_number ?? "";
+  // Feed gripper currents (haptics) + telemetry into the in-VR HUD while VR is active. Currents
+  // arrive via a session-level listener (only one page registers at a time); telemetry mirrors
+  // the value we already read from the context.
   useEffect(() => {
-    if (!settings.room && serial) set("room", serial);
-  }, [serial, settings.room]);
+    setCurrentsListener((c) => vrRef.current?.setCurrents(c));
+    return () => setCurrentsListener(null);
+  }, [setCurrentsListener]);
+  useEffect(() => { vrRef.current?.setTelemetry(tel); }, [tel]);
+
+  const serial = activeRobotSerial ?? customer?.robot_serial_number ?? "";
 
   // VR is an optional mode on top of the same session: detect headset support, and on any
   // link drop require a fresh squeeze before VR drive resumes (re-clutch-on-resume).
@@ -165,44 +86,8 @@ const Remote = () => {
     if (connState === "failed" || connState === "disconnected") vrRef.current?.reclutch();
   }, [connState]);
 
-  const connect = async () => {
-    if (!videoRef.current) return;
-    setConnecting(true);
-    setLogLines([]);
-    const turnUrls = settings.turn.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
-    const room = settings.room.trim() || serial || "nori-dev";
-    const teleop = new RemoteTeleop({
-      // The fork's transport is Supabase Realtime; the room lives on the transport now.
-      signaling: new SupabaseSignaling(getSupabase(), room, appendLog),
-      videoEl: videoRef.current,
-      audioEl: audioRef.current ?? undefined,
-      token: settings.token.trim(),
-      stun: settings.stun.trim() || DEFAULT_STUN,
-      turnUrls,
-      turnUser: settings.turnUser.trim(),
-      turnCred: settings.turnCred.trim(),
-      forceRelay: settings.forceRelay,
-      arm: settings.arm,
-      onLog: appendLog,
-      onConnState: setConnState,
-      onTelemetry,
-      onMode: setMode,
-      onControlActive: setControlActive,
-      onCurrents: (c) => vrRef.current?.setCurrents(c), // gripper current -> VR haptics
-      onCall: setCall,
-    });
-    teleopRef.current = teleop;
-    try {
-      await teleop.start();
-      setRunning(true);
-    } catch (e) {
-      appendLog("start failed: " + (e instanceof Error ? e.message : String(e)));
-      teleopRef.current = null;
-    } finally {
-      setConnecting(false);
-    }
-  };
-
+  // Connect/disconnect the session itself live in the provider. This page's disconnect also
+  // stops the page-local drivers (leader / VR / clip) first, then tears the session down.
   const disconnect = useCallback(async () => {
     leaderRef.current?.stop();
     leaderRef.current = null;
@@ -210,20 +95,13 @@ const Remote = () => {
     setLeaderCount(0);
     await vrRef.current?.stop();
     vrRef.current = null;
-    const t = teleopRef.current;
-    teleopRef.current = null;
-    if (t) await t.stop();
-    setRunning(false);
-    setScriptActive(false);
     setInVr(false);
-    setControlActive(false);
-    setConnState("idle");
-  }, []);
+    await sessionDisconnect();
+  }, [sessionDisconnect]);
 
   // Enter the immersive (AR-passthrough) headset session on top of the live link. Reuses
   // the same RemoteTeleop + video element; VR feeds `jog` exactly like the keyboard.
   const enterVr = async () => {
-    const teleop = teleopRef.current;
     if (!teleop || !videoRef.current) return;
     const session = new VrSession({
       teleop,
@@ -253,7 +131,6 @@ const Remote = () => {
   }, []);
 
   const enterLeader = useCallback(() => {
-    const teleop = teleopRef.current;
     if (!teleop) return;
     const driver = new LeaderDriver({
       teleop,
@@ -265,7 +142,7 @@ const Remote = () => {
     leaderRef.current = driver;
     driver.start();
     setLeaderActive(true);
-  }, [baseUrl, fetchWithHeaders, appendLog]);
+  }, [teleop, baseUrl, fetchWithHeaders, appendLog]);
 
   const toggleLeader = useCallback(() => {
     if (leaderActive) stopLeader();
@@ -275,13 +152,13 @@ const Remote = () => {
   // ---- two-way audio call (Phase 7 §B) ------------------------------------
   const joinCall = async () => {
     try {
-      await teleopRef.current?.joinCall();
+      await teleop?.joinCall();
     } catch (e) {
       appendLog("join call failed: " + (e instanceof Error ? e.message : String(e)));
     }
   };
-  const leaveCall = () => teleopRef.current?.leaveCall();
-  const toggleMute = () => teleopRef.current?.setMicMuted(!call.micMuted);
+  const leaveCall = () => teleop?.leaveCall();
+  const toggleMute = () => teleop?.setMicMuted(!call.micMuted);
 
   // ---- clip audio (laptop file -> robot speaker; reuses the M3b downlink) ----
   const clipRef = useRef<ClipHandle | null>(null);
@@ -290,10 +167,10 @@ const Remote = () => {
     clipRef.current?.stop();
     clipRef.current = null;
     setClipPlaying(false);
-    teleopRef.current?.setVideoQuality("normal"); // restore camera bitrate
-  }, []);
+    teleop?.setVideoQuality("normal"); // restore camera bitrate
+  }, [teleop]);
   const playClipFile = async (file: File) => {
-    const t = teleopRef.current;
+    const t = teleop;
     if (!t) return;
     stopClip(); // one clip at a time (single audio uplink)
     try {
@@ -306,7 +183,7 @@ const Remote = () => {
         if (clipRef.current === handle) {
           clipRef.current = null;
           setClipPlaying(false);
-          teleopRef.current?.setVideoQuality("normal"); // covers natural end (stopClip not called)
+          teleop?.setVideoQuality("normal"); // covers natural end (stopClip not called)
         }
       });
     } catch (e) {
@@ -320,7 +197,7 @@ const Remote = () => {
     if (clipPlaying && connState !== "connected") stopClip();
   }, [clipPlaying, connState, stopClip]);
   const toggleCamera = async () => {
-    const t = teleopRef.current;
+    const t = teleop;
     if (!t) return;
     try {
       if (call.cameraOn) {
@@ -339,25 +216,20 @@ const Remote = () => {
   // form fields and only emits jog when the control channel is open.
   useEffect(() => {
     if (!running) return;
-    const down = (e: KeyboardEvent) => {
-      // While a script drives, suppress keyboard-jog (one writer) but keep the SPACE E-STOP live.
-      if (scriptActive && e.key !== " ") return;
-      if (teleopRef.current?.onKeyDown(e)) e.preventDefault();
-    };
-    const up = (e: KeyboardEvent) => {
-      if (scriptActive && e.key !== " ") return;
-      teleopRef.current?.onKeyUp(e);
-    };
+    const down = (e: KeyboardEvent) => { if (teleop?.onKeyDown(e)) e.preventDefault(); };
+    const up = (e: KeyboardEvent) => teleop?.onKeyUp(e);
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, [running, scriptActive]);
+  }, [running, teleop]);
 
-  // Tear down on unmount / navigate away (also fires the robot 'bye' for a clean restart).
-  useEffect(() => () => { clipRef.current?.stop(); leaderRef.current?.stop(); vrRef.current?.stop(); teleopRef.current?.stop(); }, []);
+  // On unmount / navigate away, stop only the PAGE-LOCAL drivers (leader / VR / clip) and detach
+  // media. The session itself lives in TeleopSessionProvider and stays connected across pages —
+  // do NOT stop it here (that was the old bug that killed the link on every navigation).
+  useEffect(() => () => { clipRef.current?.stop(); leaderRef.current?.stop(); vrRef.current?.stop(); }, []);
 
   return (
     <section className="space-y-4">
@@ -416,7 +288,7 @@ const Remote = () => {
               <Button
                 variant="secondary"
                 onClick={enterVr}
-                disabled={!running || inVr || scriptActive || connState !== "connected"}
+                disabled={!running || inVr || connState !== "connected"}
                 title="Open the headset (AR passthrough) on this same session"
               >
                 {inVr ? "In VR" : "Enter VR"}
@@ -425,7 +297,7 @@ const Remote = () => {
             <Button
               variant={leaderActive ? "default" : "secondary"}
               onClick={toggleLeader}
-              disabled={!running || scriptActive || connState !== "connected"}
+              disabled={!running || connState !== "connected"}
               title="Drive the robot's arms from the physical dual leader arms (base + lift stay on the keyboard)"
             >
               {leaderActive ? `Leader on · ${leaderCount}/12` : "Leader control"}
@@ -444,7 +316,7 @@ const Remote = () => {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => teleopRef.current?.toggleMode()}
+              onClick={() => teleop?.toggleMode()}
               disabled={!running}
               title="Switch between cylindrical (rpi4 feel) and per-motor control"
             >
@@ -491,16 +363,8 @@ const Remote = () => {
             </div>
           )}
 
-          {/* Tier-1 script console (docs/llm_integration_plan.md). Shipped dark behind
-              nori_script_console; only live on a connected session. */}
-          {scriptConsole && running && connState === "connected" && teleopRef.current && (
-            <ScriptPanel
-              teleop={teleopRef.current}
-              telemetry={tel}
-              onLog={appendLog}
-              onActiveChange={setScriptActive}
-            />
-          )}
+          {/* The script console now lives on the Coding page (/nori/coding), driving the same
+              persistent session. */}
 
           <TelemetryPanel
             connState={running ? connState : "idle"}

@@ -24,6 +24,60 @@ Grab the one-liner from the [LeLab Space](https://huggingface.co/spaces/lerobot/
 
 A page will automatically open in your browser and you are ready to go.
 
+## Dev Quickstart (run from source)
+
+For developers who want to run the current `main` against real arms. This installs LeLab +
+its pinned LeRobot build and drops you at the `lelab` command.
+
+> **Not on PyPI.** LeLab pins `lerobot` to a specific git commit, which PyPI forbids, so
+> `pip install lelab` will never work — install from git (below).
+
+**Prerequisites**
+
+- **Python ≥ 3.12** (hard requirement — 3.11 and older will fail to install).
+- **Node ≥ 22** — only if you plan to rebuild the UI or run `--dev`. The built frontend is
+  committed, so a plain run needs no Node.
+- A machine physically connected to the SO-101 arm(s) over USB. Serial + camera access are
+  local; there is no cloud fallback for the control loop.
+
+**Install**
+
+Using [`uv`](https://docs.astral.sh/uv/) (recommended — fetches the right Python for you):
+
+```bash
+uv tool install "git+https://github.com/Nori-Robotics/Nori-Lab.git"
+```
+
+Or with `pipx` (uses your system Python, so 3.12+ must already be on PATH):
+
+```bash
+pipx install "git+https://github.com/Nori-Robotics/Nori-Lab.git"
+```
+
+If you're going to **edit the code**, clone and install editable instead:
+
+```bash
+git clone https://github.com/Nori-Robotics/Nori-Lab.git
+cd Nori-Lab
+pip install -e .          # add ".[dev]" or ".[test]" for lint / tests
+```
+
+**Configure (only needed for Nori cloud features)**
+
+Calibrate and teleoperate work with no config. Dataset upload, training dispatch, and policy
+download go through Nori-Backend and need a `.env` in the repo root:
+
+```bash
+cp .env.example .env      # then fill in NORI_BACKEND_URL, SUPABASE_URL, SUPABASE_ANON_KEY
+```
+
+**Run**
+
+```bash
+lelab                     # API + UI on :8000, opens your browser
+lelab --dev               # Vite HMR on :8080 + uvicorn --reload on :8000 (needs Node)
+```
+
 ## What you can do
 
 <div align="center">

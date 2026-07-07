@@ -87,7 +87,9 @@ export interface RemoteTeleopOptions {
   // Out-of-band signaling transport (SDP/ICE + room handshake). The fork injects a
   // SupabaseSignaling; an external SDK consumer supplies their own. See signaling.ts.
   signaling: SignalingTransport;
-  videoEl: HTMLVideoElement;
+  // Sink for the robot's inbound video. Optional so a persistent session can be constructed
+  // before any page mounts; a page attaches its <video> via setVideoEl() and detaches with null.
+  videoEl?: HTMLVideoElement;
   // Sink for the robot's inbound audio track. A separate element from videoEl because the
   // video element is muted for autoplay; audio must play from its own unmuted element.
   audioEl?: HTMLAudioElement;
@@ -211,6 +213,11 @@ export class RemoteTeleop {
   // frame (arms follow the physical leader arms); base + lift still come from the keyboard.
   // Set by the leader driver each poll; null = no leader source (arms owned by keyboard/VR).
   private externalLeader: LeaderActionDeg | null = null;
+  // Last inbound robot media streams, remembered so setVideoEl/setAudioEl can re-point a fresh
+  // DOM element at the live stream after a page swap (the session can outlive the page that
+  // rendered the original <video>/<audio>). See setVideoEl below.
+  private inboundVideo: MediaStream | null = null;
+  private inboundAudio: MediaStream | null = null;
   private seq = 0; // monotonic control-frame counter (nori-protocol control.seq)
   private readonly pressed = new Set<string>();
   private readonly cmdDown = new Set<string>();
@@ -244,6 +251,26 @@ export class RemoteTeleop {
 
   setArm(arm: ArmSide) {
     this.o.arm = arm;
+  }
+
+  // Re-point the robot's inbound VIDEO at a (new) element, or detach with null. This lets one
+  // persistent session render on whichever page is currently mounted: a page sets its <video> on
+  // mount and passes null on unmount, without tearing down the peer connection. Immediately
+  // attaches the live stream if one has already arrived.
+  setVideoEl(el: HTMLVideoElement | null) {
+    this.o.videoEl = el ?? undefined; // usages are null-guarded (ontrack + here)
+    if (el && this.inboundVideo && el.srcObject !== this.inboundVideo) {
+      el.srcObject = this.inboundVideo;
+    }
+  }
+
+  // Re-point the robot's inbound AUDIO sink (mirrors setVideoEl). Preserves the call-mute policy.
+  setAudioEl(el: HTMLAudioElement | null) {
+    this.o.audioEl = el ?? undefined;
+    if (el) {
+      if (this.inboundAudio && el.srcObject !== this.inboundAudio) el.srcObject = this.inboundAudio;
+      el.muted = !this.call.active;
+    }
   }
 
   // The follower arm the keyboard / selected-arm inputs currently target (the
@@ -621,6 +648,7 @@ export class RemoteTeleop {
       // Robot inbound audio -> dedicated sink. Kept MUTED until the operator joins the call,
       // so connecting the session doesn't leak room audio before you're "in the call".
       if (ev.track.kind === "audio") {
+        this.inboundAudio = ev.streams[0]; // remembered so setAudioEl() can re-attach after a page swap
         if (this.o.audioEl && this.o.audioEl.srcObject !== ev.streams[0]) {
           this.o.audioEl.srcObject = ev.streams[0];
           this.log("robot audio track attached" + (this.call.active ? "" : " (muted until Join call)"));
@@ -633,7 +661,8 @@ export class RemoteTeleop {
         this.emitCall();
         return;
       }
-      if (this.o.videoEl.srcObject !== ev.streams[0]) {
+      this.inboundVideo = ev.streams[0]; // remembered for re-attach (setVideoEl) when a page remounts
+      if (this.o.videoEl && this.o.videoEl.srcObject !== ev.streams[0]) {
         this.o.videoEl.srcObject = ev.streams[0];
         this.log("video track attached");
       }

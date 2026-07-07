@@ -169,10 +169,7 @@ function LeaderPane({
   return (
     <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// {side}</p>
-          <h2 className="mt-1 text-lg font-semibold tracking-normal">{side} leader</h2>
-        </div>
+        <h2 className="text-sm font-semibold tracking-normal">{side} leader</h2>
         <StatusPill tone={visible === 6 ? "green" : visible > 0 ? "amber" : "red"}>
           <span className={`h-2 w-2 rounded-full ${visible === 6 ? "bg-[#3f9a4c]" : visible > 0 ? "bg-[#db9346]" : "bg-[#d24a3d]"}`} />
           {visible}/6
@@ -188,20 +185,16 @@ function LeaderPane({
             ? manualJointReady(manualStatus, side, joint)
             : completedManualSide === side || autoJointComplete(autoStatus, side);
           return (
-            <div key={joint} className="grid min-h-11 grid-cols-[minmax(7rem,1fr)_4.5rem_4.5rem] items-center gap-3 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-3 py-2">
+            <div key={joint} className="grid min-h-11 grid-cols-[minmax(0,1fr)_2.75rem_2.75rem] items-center gap-1.5 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-2 py-2">
               <div className="min-w-0">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span
-                      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
-                        calibrationComplete
-                          ? "border-[#4e9d55]/50 bg-[#e4f3e2] text-[#2a6b33]"
-                          : "border-transparent text-transparent"
-                      }`}
-                    >
-                      {calibrationComplete ? <Check className="h-3 w-3" /> : null}
-                    </span>
+                  <div className="flex min-w-0 items-center gap-1.5">
                     <span className="truncate font-mono text-xs text-[#14131a]">{joint}</span>
+                    {calibrationComplete && (
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[#4e9d55]/50 bg-[#e4f3e2] text-[#2a6b33]">
+                        <Check className="h-3 w-3" />
+                      </span>
+                    )}
                   </div>
                   <span className={`h-2 w-2 rounded-full ${motor?.ok ? "bg-[#43a04e]" : "bg-[#d24a3d]"}`} />
                 </div>
@@ -225,7 +218,9 @@ function LeaderPane({
   );
 }
 
-const LeaderSetup = () => {
+// `embedded` renders the same setup surface as a compact block (no full-page chrome,
+// smaller header) for inlining inside another page — e.g. the Remote page's leader card.
+const LeaderSetup = ({ embedded = false }: { embedded?: boolean }) => {
   const { baseUrl, fetchWithHeaders } = useApi();
   const { toast } = useToast();
 
@@ -389,7 +384,20 @@ const LeaderSetup = () => {
     const right = liveFrame?.leaders?.right?.visible ?? 0;
     return left === 6 && right === 6;
   }, [liveFrame]);
-  const liveTone = liveError ? "red" : bothVisible ? "green" : liveFrame ? "amber" : "neutral";
+  // Honest link pill: reflects the actual /nori/leader/live polling state instead of a
+  // hardcoded "live". No port -> not polling; port but no frame yet -> connecting; frames
+  // flowing -> live (green once both arms show all 6 motors); read error -> paused.
+  const liveStatus: { tone: "green" | "amber" | "red" | "neutral"; dot: string; label: string } = liveError
+    ? { tone: "red", dot: "bg-[#d24a3d]", label: "paused" }
+    : !portReady
+      ? { tone: "neutral", dot: "bg-[#a39887]", label: "no leader bus" }
+      : liveFrame
+        ? {
+            tone: bothVisible ? "green" : "amber",
+            dot: bothVisible ? "bg-[#3f9a4c]" : "bg-[#db9346]",
+            label: `live · ${formatAge(lastLiveAt)}`,
+          }
+        : { tone: "amber", dot: "bg-[#db9346]", label: "connecting…" };
   const calibrationBusy = Boolean(manualStatus?.active || autoStatus?.active);
   const manualActiveSide = manualStatus?.session?.side ?? calibrationSide;
   const manualReady = manualSideReady(manualStatus, manualActiveSide);
@@ -402,17 +410,39 @@ const LeaderSetup = () => {
         : "ready");
 
   return (
-    <section className="min-h-[calc(100vh-2rem)] space-y-5 rounded-md bg-[#fbfaf5] px-4 py-5 text-[#14131a] sm:px-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="space-y-2">
-          <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#7a7060]">// Teleoperation</p>
-          <h1 className="text-4xl font-semibold tracking-normal sm:text-5xl">Leader setup</h1>
-          <p className="max-w-2xl text-sm text-[#6f6858]">nori l2 dual leader calibration</p>
+    <section
+      className={
+        embedded
+          ? "space-y-4 text-[#14131a]"
+          : "min-h-[calc(100vh-2rem)] space-y-5 rounded-md bg-[#fbfaf5] px-4 py-5 text-[#14131a] sm:px-5"
+      }
+    >
+      <div
+        className={
+          embedded
+            ? "flex min-h-9 flex-wrap items-center justify-between gap-3"
+            : "flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"
+        }
+      >
+        <div className={embedded ? "" : "space-y-2"}>
+          {!embedded && (
+            <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#7a7060]">// Teleoperation</p>
+          )}
+          {/* The global h1 rule applies the display font — embedded must render the same
+              element as CardTitle (h3, font-sans) to match the Keyboard controls title. */}
+          {embedded ? (
+            <h3 className="text-base font-semibold leading-none tracking-tight">Leader setup</h3>
+          ) : (
+            <h1 className="text-4xl font-semibold tracking-normal sm:text-5xl">Leader setup</h1>
+          )}
+          {!embedded && (
+            <p className="max-w-2xl text-sm text-[#6f6858]">nori l2 dual leader calibration</p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <StatusPill tone={liveTone}>
-            <span className={`h-2 w-2 rounded-full ${liveError ? "bg-[#d24a3d]" : "bg-[#3f9a4c]"}`} />
-            live · {formatAge(lastLiveAt)}
+          <StatusPill tone={liveStatus.tone}>
+            <span className={`h-2 w-2 rounded-full ${liveStatus.dot}`} />
+            {liveStatus.label}
           </StatusPill>
           {busy && (
             <StatusPill tone="neutral">
@@ -480,7 +510,7 @@ const LeaderSetup = () => {
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className={embedded ? "grid gap-4 md:grid-cols-2" : "grid gap-4 xl:grid-cols-2"}>
         <LeaderPane
           side="left"
           frame={liveFrame}
@@ -500,10 +530,7 @@ const LeaderSetup = () => {
       <Card className="rounded-md border-[#14131a]/10 bg-[#f6f4eb] text-[#14131a] shadow-sm">
         <CardContent className="space-y-4 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#7a7060]">// calibration</p>
-              <h2 className="mt-1 text-xl font-semibold">calibrate leader</h2>
-            </div>
+            <h2 className="text-sm font-semibold">calibrate leader</h2>
             <StatusPill tone={manualStatus?.active || autoStatus?.active ? "amber" : "neutral"}>
               {calibrationMessage}
             </StatusPill>

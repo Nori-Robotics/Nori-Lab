@@ -4,9 +4,12 @@
 //   * GripForce      — per-motor Present_Current bars (the "virtual tactile" signal), grippers first.
 //   * ControlLegend  — mode-aware keybind legend, derived from teleop.ts's exported maps.
 
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { HelpCircle, Mic, MicOff, Phone, PhoneOff, Video, VideoOff, Volume2, VolumeX } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   keybindLegend,
   type CallState,
@@ -65,10 +68,9 @@ export function TelemetryPanel({
   // loop_hz should sit near 50; flag a sag so a struggling control loop is visible.
   const hzTone = !controlActive || stale ? "default" : tel.loopHz >= 45 ? "good" : tel.loopHz >= 30 ? "warn" : "bad";
 
+  // Bare chip row — the page composes this into its combined // telemetry card.
   return (
-    <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
-      <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// telemetry</p>
-      <div className="mt-3 flex flex-wrap gap-2">
+    <div className="flex flex-wrap gap-2">
       <Stat
         label="link"
         value={connected ? connState : connState}
@@ -87,7 +89,6 @@ export function TelemetryPanel({
       <Stat label="temp" value={tel.tempC > 0 ? `${tel.tempC.toFixed(0)}°C` : "—"}
         tone={tel.tempC >= 80 ? "bad" : tel.tempC >= 70 ? "warn" : "default"} />
       {inVr && <Stat label="mode" value="VR" tone="good" />}
-      </div>
     </div>
   );
 }
@@ -198,11 +199,25 @@ export function RailHeight({ state }: { state: Record<string, number> }) {
           </div>
         );
       })}
-      <p className="font-mono text-[10px] text-[#857b6b]">
+    </div>
+  );
+}
+
+// Hover question mark carrying the rail-gauge explainer — rendered next to the card
+// heading (pages/remote.tsx) so the card itself stays compact.
+export function RailHeightHelp() {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button type="button" className="text-[#857b6b] hover:text-[#14131a]" aria-label="How to read the rail gauge">
+          <HelpCircle className="h-3.5 w-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64 text-xs">
         0 = top of rail (start pose); bar fills as the carriage descends. Full scale ={" "}
         {RAIL_TRAVEL_MM} mm travel. “unknown” = tracker not valid.
-      </p>
-    </div>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -231,6 +246,8 @@ export function CallBar({
   running,
   connected,
   m6,
+  volume,
+  onVolumeChange,
   onJoin,
   onLeave,
   onToggleMute,
@@ -240,36 +257,75 @@ export function CallBar({
   running: boolean;
   connected: boolean;
   m6: boolean;
+  volume: number; // robot inbound audio playback gain, 0..1
+  onVolumeChange: (v: number) => void;
   onJoin: () => void;
   onLeave: () => void;
   onToggleMute: () => void;
   onToggleCamera: () => void;
 }) {
+  // Speaker icon toggles a compact inline slider; opening it widens the group so the
+  // you/nori indicators shift slightly left.
+  const [volumeOpen, setVolumeOpen] = useState(false);
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-3 py-2 text-[#14131a]">
+    <div className="flex flex-wrap items-center gap-3 text-[#14131a]">
       {!call.active ? (
         <Button size="sm" onClick={onJoin} disabled={!running || !connected}
-          className="bg-[#8ab135] text-foreground hover:bg-[#7a9d2f]"
           title="Capture your mic and join the two-way audio call">
-          Join call
+          <Phone className="mr-2 h-4 w-4" /> Join call
         </Button>
       ) : (
         <>
-          <Button size="sm" variant="destructive" onClick={onLeave}>Leave call</Button>
+          <Button size="sm" variant="destructive" onClick={onLeave}>
+            <PhoneOff className="mr-2 h-4 w-4" /> Leave call
+          </Button>
           <Button size="sm" variant={call.micMuted ? "secondary" : "default"} onClick={onToggleMute}>
-            {call.micMuted ? "Unmute mic" : "Mute mic"}
+            {call.micMuted
+              ? <><MicOff className="mr-2 h-4 w-4" /> Unmute mic</>
+              : <><Mic className="mr-2 h-4 w-4" /> Mute mic</>}
           </Button>
           {m6 && (
             <Button size="sm" variant={call.cameraOn ? "default" : "secondary"} onClick={onToggleCamera}>
-              {call.cameraOn ? "Camera off" : "Camera on"}
+              {call.cameraOn
+                ? <><VideoOff className="mr-2 h-4 w-4" /> Camera off</>
+                : <><Video className="mr-2 h-4 w-4" /> Camera on</>}
             </Button>
           )}
         </>
       )}
       <div className="ml-auto flex items-center gap-4">
-        {/* "you" = your mic is hot (unmuted); the badge below says whether it reaches the robot. */}
-        <OnAir live={call.active && !call.micMuted} label="you" />
-        <OnAir live={call.robotMicLive || call.robotAudio} label="robot" />
+        {/* "you" = your mic is hot (unmuted); the badge below says whether it reaches the robot.
+            The mic glyph mirrors the outbound mic state at a glance. */}
+        <span className="flex items-center gap-1.5">
+          <OnAir live={call.active && !call.micMuted} label="you" />
+          {call.active && !call.micMuted
+            ? <Mic className="h-3.5 w-3.5 text-[#14131a]" />
+            : <MicOff className="h-3.5 w-3.5 text-muted-foreground/60" />}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <OnAir live={call.robotMicLive || call.robotAudio} label="nori" />
+          {/* Same two tones as the mic glyph beside "you": ink when audible, dim when muted. */}
+          <button
+            type="button"
+            className={volume === 0 ? "text-muted-foreground/60 hover:text-[#14131a]" : "text-[#14131a]"}
+            title="Robot audio volume"
+            onClick={() => setVolumeOpen((v) => !v)}
+          >
+            {volume === 0 ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+          </button>
+          {volumeOpen && (
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={volume}
+              onChange={(e) => onVolumeChange(Number(e.target.value))}
+              className="h-1 w-20 cursor-pointer accent-[#14131a]"
+              title="Robot audio volume"
+            />
+          )}
+        </span>
         {call.active && !call.micMuted && !call.micSending && (
           <Badge variant="outline" className="text-[10px]">mic local-only (Pi M3 pending)</Badge>
         )}
@@ -281,7 +337,7 @@ export function CallBar({
 // A single key cap.
 function Key({ children }: { children: React.ReactNode }) {
   return (
-    <kbd className="rounded border border-b-2 bg-muted px-1.5 py-0.5 font-mono text-[10px] leading-none">
+    <kbd className="rounded border border-b-2 bg-muted px-1.5 py-0.5 font-mono text-xs leading-none">
       {children}
     </kbd>
   );
@@ -290,17 +346,24 @@ function Key({ children }: { children: React.ReactNode }) {
 export function ControlLegend({ mode }: { mode: ControlMode }) {
   const legend = keybindLegend(mode);
   return (
-    <div className="space-y-3 text-xs">
+    <div className="space-y-3 text-sm">
       <div className="flex items-center gap-2">
         <span className="font-medium">Arm</span>
-        <Badge variant="secondary" className="text-[10px]">
-          {mode === "joint" ? "per-motor" : "cylindrical"}
-        </Badge>
-        <span className="text-muted-foreground">press <Key>M</Key> to toggle</span>
+        <span className="whitespace-nowrap text-muted-foreground">press <Key>M</Key> to toggle mode</span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button type="button" className="text-[#857b6b] hover:text-[#14131a]" aria-label="What the two modes mean">
+              <HelpCircle className="h-3.5 w-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-64 text-xs">
+            Cylindrical maps to x/y/z; Motor allows per-motion control
+          </TooltipContent>
+        </Tooltip>
       </div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3">
         {legend.arm.map((r) => (
-          <div key={r.dof} className="flex items-center gap-1.5">
+          <div key={r.dof} className="flex items-center gap-1.5 whitespace-nowrap">
             <Key>{r.posKey.toUpperCase()}</Key><Key>{r.negKey.toUpperCase()}</Key>
             <span className="text-muted-foreground">{r.dof}</span>
           </div>
@@ -309,12 +372,12 @@ export function ControlLegend({ mode }: { mode: ControlMode }) {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
         <span className="w-full font-medium">Base</span>
         {legend.base.map((r) => (
-          <div key={r.dof} className="flex items-center gap-1.5">
+          <div key={r.dof} className="flex items-center gap-1.5 whitespace-nowrap">
             <Key>{r.posKey.toUpperCase()}</Key><Key>{r.negKey.toUpperCase()}</Key>
             <span className="text-muted-foreground">{r.dof}</span>
           </div>
         ))}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 whitespace-nowrap">
           <Key>{legend.lift.posKey.toUpperCase()}</Key><Key>{legend.lift.negKey.toUpperCase()}</Key>
           <span className="text-muted-foreground">{legend.lift.dof}</span>
         </div>
@@ -322,7 +385,7 @@ export function ControlLegend({ mode }: { mode: ControlMode }) {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
         <span className="font-medium">Commands</span>
         {legend.commands.map((c) => (
-          <div key={c.key} className="flex items-center gap-1.5">
+          <div key={c.key} className="flex items-center gap-1.5 whitespace-nowrap">
             <Key>{c.key}</Key><span className="text-muted-foreground">{c.label}</span>
           </div>
         ))}

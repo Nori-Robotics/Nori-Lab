@@ -8,7 +8,6 @@ import { useNori } from "@/nori/NoriContext";
 
 const NAV: { to: string; label: string }[] = [
   { to: "/nori/remote", label: "Remote" },
-  { to: "/nori/leader-setup", label: "Leader Setup" },
   { to: "/nori/coding", label: "Coding" },
   { to: "/nori/training", label: "Training" },
   { to: "/nori/marketplace", label: "Marketplace" },

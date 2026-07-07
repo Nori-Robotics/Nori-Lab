@@ -14,7 +14,6 @@
 // Stack: @react-three/fiber + drei (already project deps). No external assets (CSP-safe).
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import { useMemo } from "react";
 import { railReading } from "./TeleopStatus";
 import type { ArmSide } from "@nori/sdk";
 
@@ -23,7 +22,7 @@ function jointRad(state: Record<string, number>, key: string, spanDeg: number): 
   const n = state[key];
   const v = typeof n === "number" ? Math.max(-100, Math.min(100, n)) : 0;
   return (v / 100) * (spanDeg * Math.PI) / 180;
-}
+} 
 
 // Scene geometry (arbitrary units; ~1 unit ≈ the rail travel). Tuned for legibility, not scale.
 const RAIL_TOP_Y = 1.20;
@@ -70,7 +69,7 @@ function Arm({ state, side, active }: { state: Record<string, number>; side: "le
   const jaw = 0.006 + (grip / 100) * 0.1; // half-gap between the two jaw cubes
 
   // Both arms white; the arm being teleoperated right now is highlighted green.
-  const color = active ? "#a1d873" : "#f1f5f9";
+  const color = active ? "#a1d873" : "#dee0e3";
 
   return (
     <group position={[sign * 0.15, 0, 0]}>
@@ -79,8 +78,8 @@ function Arm({ state, side, active }: { state: Record<string, number>; side: "le
         <boxGeometry args={[0.04, RAIL_LEN , 0.04]} />
         <meshStandardMaterial color="#757c86" />
       </mesh>
-      <mesh position={[0, carriageY, 0]}>
-        <boxGeometry args={[0.12, 0.08, 0.12]} />
+      <mesh position={[sign*0.015, carriageY, 0]}>
+        <boxGeometry args={[0.09, 0.08, 0.09]} />
         <meshStandardMaterial color="#acb9cb" />
       </mesh>
 
@@ -121,58 +120,86 @@ function Arm({ state, side, active }: { state: Record<string, number>; side: "le
   );
 }
 
-export function Robot3D({ state, activeArm }: { state: Record<string, number>; activeArm: ArmSide }) {
-  // Only render arms whose lift/joint keys are actually present in telemetry.
-  const hasAny = useMemo(
-    () => Object.keys(state).some((k) => k.endsWith("_arm_shoulder_pan.pos") || k.endsWith("_lift.pos")),
-    [state]
-  );
+// True when any arm/lift joint keys are present in telemetry — the page uses this to show
+// a "waiting" hint next to the card heading while the scene has nothing live to pose.
+export function hasJointTelemetry(state: Record<string, number>): boolean {
+  return Object.keys(state).some((k) => k.endsWith("_arm_shoulder_pan.pos") || k.endsWith("_lift.pos"));
+}
 
+export function Robot3D({ state, activeArm }: { state: Record<string, number>; activeArm: ArmSide }) {
   return (
     <div className="relative h-72 w-full overflow-hidden rounded-md border bg-[#f6f4eb]">
-      {!hasAny && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center text-[11px] text-muted-foreground">
-          waiting for joint telemetry…
-        </div>
-      )}
-      <Canvas camera={{ position: [1.6, 2.2, 2.0], fov: 40 }} dpr={[1, 2]}>
-        <ambientLight intensity={1.0} />
-        <directionalLight position={[2, 4, 3]} intensity={0.9} />
+      {/* Longer lens: lower fov + camera pulled back proportionally (~1.5x) for a flatter,
+          less distorted view. maxDistance on the OrbitControls below must stay >= the start
+          distance or the controls clamp the camera back in on first interaction. */}
+      {/* Camera sits slightly BELOW the orbit target (y 0.7 vs 1.1) for a gentle low-angle
+          look up at the robot; distance kept ~6.3 units so the framing matches the old view. */}
+      <Canvas camera={{ position: [3.9, 2.8, 4.9], fov: 16 }} dpr={[1, 2]}>
+        <ambientLight intensity={0.9} />
+        <directionalLight position={[2, 4, 3]} intensity={1.2} />
         {/* base platform */}
-        <mesh position={[0, 0.5, -0.05]} rotation={[0, 0, 0]}>
-          <boxGeometry args={[0.39, 0.22, 0.45]} />
-          <meshStandardMaterial color="#c3c9d2" />
+        <mesh position={[0, 0.51, -0.05]} rotation={[0, 0, 0]}>
+          <boxGeometry args={[0.39, 0.2, 0.45]} />
+          <meshStandardMaterial color="#dee0e3" />
+        </mesh>
+        <mesh position={[0, 0.51, -0.05]} rotation={[0, 0, 0]}>
+          <boxGeometry args={[0.35, 0.22, 0.42]} />
+          <meshStandardMaterial color="#444649" />
         </mesh>
         {/* wheels */}
         <mesh position={[0.23, 0.46, 0.1]} rotation={[0, 0, 1.55]}>
           <cylinderGeometry args={[0.12, 0.12, 0.05]} />
-          <meshStandardMaterial color="#c3c9d2" />
+          <meshStandardMaterial color="#dee0e3" />
         </mesh>
         <mesh position={[-0.23, 0.46, 0.1]} rotation={[0, 0, 1.55]}>
           <cylinderGeometry args={[0.12, 0.12, 0.05]} />
-          <meshStandardMaterial color="#c3c9d2" />
+          <meshStandardMaterial color="#dee0e3" />
+        </mesh>
+        <mesh position={[0.215, 0.46, 0.1]} rotation={[0, 0, 1.55]}>
+          <cylinderGeometry args={[0.13, 0.13, 0.04]} />
+          <meshStandardMaterial color="#2e2f30" />
+        </mesh>
+        <mesh position={[-0.215, 0.46, 0.1]} rotation={[0, 0, 1.55]}>
+          <cylinderGeometry args={[0.13, 0.13, 0.04]} />
+          <meshStandardMaterial color="#202121" />
+        </mesh>
+        <mesh position={[0.16, 0.379, -0.22]} rotation={[0, 0, 1.55]}>
+          <cylinderGeometry args={[0.05, 0.05, 0.04]} />
+          <meshStandardMaterial color="#2e2f30" />
+        </mesh>
+        <mesh position={[-0.16, 0.379, -0.22]} rotation={[0, 0, 1.55]}>
+          <cylinderGeometry args={[0.05, 0.05, 0.04]} />
+          <meshStandardMaterial color="#202121" />
         </mesh>
         {/*body*/}
         <mesh position={[0, 1.0, 0]} rotation={[0, 0, 0]}>
           <boxGeometry args={[0.25, 1.0, 0.10]} />
           <meshStandardMaterial color="#5e6268" />
         </mesh>
-        <mesh position={[0, 0.7, -0.10]} rotation={[0, 0, 0]}>
+        <mesh position={[0, 0.7, -0.12]} rotation={[0, 0, 0]}>
           <boxGeometry args={[0.19, 0.22, 0.19]} />
           <meshStandardMaterial color="#7a7e84" />
         </mesh>
         <mesh position={[0, 1.45, 0]} rotation={[0, 0, 0]}>
           <boxGeometry args={[0.33, 0.12, 0.15]} />
-          <meshStandardMaterial color="#c3c9d2" />
+          <meshStandardMaterial color="#dee0e3" />
         </mesh>
         <mesh position={[0, 1.55, 0]} rotation={[0, 0, 0]}>
-          <boxGeometry args={[0.15, 0.13, 0.115]} />
-          <meshStandardMaterial color="#c3c9d2" />
+          <boxGeometry args={[0.15, 0.1, 0.10]} />
+          <meshStandardMaterial color="#dee0e3" />
         </mesh>
         {/*head*/}
         <mesh position={[0, 1.68, 0]} rotation={[0, 0, 0]}>
           <boxGeometry args={[0.25, 0.16, 0.13]} />
           <meshStandardMaterial color="#5e6268" />
+        </mesh>
+        <mesh position={[-0.05, 1.68, 0.065]} rotation={[0, 0, 0]}>
+          <boxGeometry args={[0.04, 0.08, 0.01]} />
+          <meshStandardMaterial color="#fcfcfc" />
+        </mesh>
+        <mesh position={[0.05, 1.68, 0.065]} rotation={[0, 0, 0]}>
+          <boxGeometry args={[0.04, 0.08, 0.01]} />
+          <meshStandardMaterial color="#fcfcfc" />
         </mesh>
         <mesh position={[0, 1.75, 0.05]} rotation={[125, 0, 0]}>
           <boxGeometry args={[0.25, 0.02, 0.2]} />
@@ -181,11 +208,10 @@ export function Robot3D({ state, activeArm }: { state: Record<string, number>; a
         <Arm state={state} side="left" active={activeArm === "left"} />
         <Arm state={state} side="right" active={activeArm === "right"} />
         <gridHelper args={[3, 12, "#cdc1a8", "#ccc4b6"]} position={[0, 0.34, 0]} />
-        <OrbitControls enablePan={true} minDistance={0.9} maxDistance={4} target={[0, 0.9, 0]} />
+        {/* target height centers the frame on the robot's midline — raise it to show less
+            empty floor, lower it to show more. */}
+        <OrbitControls enablePan={true} minDistance={0.9} maxDistance={9} target={[0, 1.1, 0]} />
       </Canvas>
-      <p className="pointer-events-none absolute bottom-1 left-2 text-[9px] text-muted-foreground/70">
-        schematic — normalized joint angles, not calibrated FK (C6 basic)
-      </p>
     </div>
   );
 }

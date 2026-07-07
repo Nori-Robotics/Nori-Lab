@@ -17,9 +17,10 @@ import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
 import { type ArmSide } from "@nori/sdk";
 import { VrSession } from "@nori/sdk/vr";
-import { TelemetryPanel, GripForce, ControlLegend, CallBar, RailHeight } from "@/nori/remote/TeleopStatus";
-import { Robot3D } from "@/nori/remote/Robot3D";
+import { TelemetryPanel, GripForce, ControlLegend, CallBar, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
+import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
+import LeaderSetup from "@/nori/pages/leader-setup";
 import { playAudioFile, type ClipHandle } from "@/nori/remote/audioClip";
 import { isM6VideoEnabled } from "@/nori/remote/flags";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
@@ -46,6 +47,8 @@ const Remote = () => {
 
   const [showSettings, setShowSettings] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  // Playback volume of the robot's inbound audio (the hidden <audio> sink), 0..1.
+  const [volume, setVolume] = useState(1);
   const [inVr, setInVr] = useState(false);
   const [xrSupported, setXrSupported] = useState<boolean | null>(null);
   // Leader-arm control: when active the physical dual leaders drive the robot's arms
@@ -53,6 +56,10 @@ const Remote = () => {
   // motors fed the last frame (0 = arms unplugged / bus paused).
   const [leaderActive, setLeaderActive] = useState(false);
   const [leaderCount, setLeaderCount] = useState(0);
+  // Control mode SELECTION is independent of the session: leader doubles as the hardware
+  // setup surface and VR as the headset entry point, so both are selectable while
+  // disconnected. The actual drivers (leaderActive / inVr) only run on a live session.
+  const [selectedMode, setSelectedMode] = useState<"keyboard" | "vr" | "leader">("keyboard");
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -70,6 +77,11 @@ const Remote = () => {
     teleop.resumeVideo();
     return () => { teleop.setVideoEl(null); teleop.setAudioEl(null); teleop.pauseVideo(); };
   }, [teleop]);
+
+  // Keep the robot-audio sink at the chosen volume (also re-applies after re-attach above).
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = volume;
+  }, [volume, teleop]);
 
   // Feed gripper currents (haptics) + telemetry into the in-VR HUD while VR is active. Currents
   // arrive via a session-level listener (only one page registers at a time); telemetry mirrors
@@ -146,11 +158,6 @@ const Remote = () => {
     driver.start();
     setLeaderActive(true);
   }, [teleop, baseUrl, fetchWithHeaders, appendLog]);
-
-  const toggleLeader = useCallback(() => {
-    if (leaderActive) stopLeader();
-    else enterLeader();
-  }, [leaderActive, enterLeader, stopLeader]);
 
   // ---- two-way audio call (Phase 7 §B) ------------------------------------
   const joinCall = async () => {
@@ -234,25 +241,65 @@ const Remote = () => {
   // do NOT stop it here (that was the old bug that killed the link on every navigation).
   useEffect(() => () => { clipRef.current?.stop(); leaderRef.current?.stop(); vrRef.current?.stop(); }, []);
 
+  const connected = running && connState === "connected";
+  const status = connected
+    ? `connected · ${Math.round(tel.loopHz)} Hz`
+    : connecting ? "connecting…" : running ? `conn: ${connState}` : "not connected";
+  // Which control method is selected (keyboard is the passive default — base + lift always
+  // stay on the keyboard regardless). Each mode shows its own card below // controls.
+  const controlMode = selectedMode;
+  const selectKeyboard = useCallback(async () => {
+    setSelectedMode("keyboard");
+    stopLeader();
+    await vrRef.current?.stop(); // onEnd clears inVr
+  }, [stopLeader]);
+  const selectVr = useCallback(async () => {
+    setSelectedMode("vr");
+    stopLeader();
+    // Entering the headset itself is the card's "Enter VR" button — not automatic.
+  }, [stopLeader]);
+  const selectLeader = useCallback(async () => {
+    setSelectedMode("leader");
+    await vrRef.current?.stop();
+    // Only start the arm driver on a live session; offline the card is setup-only.
+    if (connState === "connected" && !leaderRef.current) enterLeader();
+  }, [connState, enterLeader]);
+
   return (
     <section className="space-y-4">
-      <div className="flex items-center gap-3">
-        <h1 className="text-3xl font-bold">Remote teleop</h1>
-        <span className="mt-1 self-end font-mono text-sm text-[#b06a1c]">
-          {running ? `conn: ${connState}` : "not connected"}
-          {inVr ? "  · in VR" : ""}
-          {controlActive ? "  · control active" : ""}
-        </span>
-      </div>
-
       {!ready && (
         <p className="text-sm text-destructive">
           Nori auth/config not ready — sign in first (Supabase config comes from the laptop server).
         </p>
       )}
 
+      {/* One grid holds header + video (left) and the side panels (right), so the right
+          column starts at the very top, level with the page title. */}
       <div className="grid gap-4 lg:grid-cols-[1fr_400px]">
         <div className="space-y-3">
+          {/* Header: connection status + connect/disconnect, matching the Coding page. */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h1 className="text-3xl font-bold">Remote Operation</h1>
+            <div className="flex items-center gap-3">
+              <span
+                className={
+                  "rounded-full px-3 py-1 font-mono text-xs " +
+                  (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]")
+                }
+              >
+                ● {status}
+                {inVr ? " · in VR" : ""}
+                {controlActive ? " · control active" : ""}
+              </span>
+              {!running ? (
+                <Button size="sm" variant="secondary" onClick={connect} disabled={connecting || !ready}>
+                  {connecting ? "Connecting…" : "Connect"}
+                </Button>
+              ) : (
+                <Button size="sm" variant="destructive" onClick={disconnect}>Disconnect</Button>
+              )}
+            </div>
+          </div>
           <div className="relative">
             <video
               ref={videoRef}
@@ -279,78 +326,143 @@ const Remote = () => {
           {/* Robot inbound audio — unmuted sink, no video element can play it (video is muted). */}
           <audio ref={audioRef} autoPlay className="hidden" />
 
-          <div className="flex flex-wrap items-center gap-3">
-            {!running ? (
-              <Button onClick={connect} disabled={connecting || !ready}>
-                {connecting ? "Connecting…" : "Connect"}
-              </Button>
-            ) : (
-              <Button variant="destructive" onClick={disconnect}>Disconnect</Button>
-            )}
-            {xrSupported && (
+          {/* Control-mode picker: which method drives the arms. All options are always shown
+              (even when a headset / the leader arms aren't present); keyboard is the default. */}
+          <div className="flex flex-wrap items-center gap-3 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 py-2 text-[#14131a] shadow-sm">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// controls</p>
+            <div className="ml-auto flex flex-wrap items-center gap-3">
               <Button
-                variant="secondary"
-                onClick={enterVr}
-                disabled={!running || inVr || connState !== "connected"}
-                title="Open the headset (AR passthrough) on this same session"
+                size="sm"
+                variant={controlMode === "keyboard" ? "default" : "secondary"}
+                className={controlMode === "keyboard" ? "" : "border border-[#14131a]/20"}
+                onClick={selectKeyboard}
+                title="Drive with the keyboard (default)"
               >
-                {inVr ? "In VR" : "Enter VR"}
+                Keyboard
               </Button>
-            )}
-            <Button
-              variant={leaderActive ? "default" : "secondary"}
-              onClick={toggleLeader}
-              disabled={!running || connState !== "connected"}
-              title="Drive the robot's arms from the physical dual leader arms (base + lift stay on the keyboard)"
-            >
-              {leaderActive ? `Leader on · ${leaderCount}/12` : "Leader control"}
-            </Button>
-            <label className="flex items-center gap-2 text-sm">
-              Arm
-              <select
-                className="rounded-md border bg-background px-2 py-1 text-sm"
-                value={settings.arm}
-                onChange={(e) => set("arm", e.target.value as ArmSide)}
+              <Button
+                size="sm"
+                variant={controlMode === "leader" ? "default" : "secondary"}
+                className={controlMode === "leader" ? "" : "border border-[#14131a]/20"}
+                onClick={selectLeader}
+                title="Drive the robot's arms from the physical dual leader arms (base + lift stay on the keyboard). Selectable offline for hardware setup."
               >
-                <option value="right">right</option>
-                <option value="left">left</option>
-              </select>
-            </label>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => teleop?.toggleMode()}
-              disabled={!running}
-              title="Switch between cylindrical (rpi4 feel) and per-motor control"
-            >
-              Mode: {mode === "joint" ? "per-motor" : "cylindrical"}
-            </Button>
+                {leaderActive ? `Leader arm · ${leaderCount}/12` : "Leader arm"}
+              </Button>
+              <Button
+                size="sm"
+                variant={controlMode === "vr" ? "default" : "secondary"}
+                className={controlMode === "vr" ? "" : "border border-[#14131a]/20"}
+                onClick={selectVr}
+                title="Drive with a VR headset (AR passthrough) on this same session"
+              >
+                {inVr ? "In VR" : "VR"}
+              </Button>
+              <label className="flex items-center gap-2 text-sm">
+                Arm
+                <select
+                  className="rounded-md border bg-background px-2 py-1 text-sm"
+                  value={settings.arm}
+                  onChange={(e) => set("arm", e.target.value as ArmSide)}
+                >
+                  <option value="right">right</option>
+                  <option value="left">left</option>
+                </select>
+              </label>
+            </div>
           </div>
 
-          <CallBar
-            call={call}
-            running={running}
-            connected={connState === "connected"}
-            m6={m6}
-            onJoin={joinCall}
-            onLeave={leaveCall}
-            onToggleMute={toggleMute}
-            onToggleCamera={toggleCamera}
-          />
+          {/* VR mode card: the headset entry point on supported devices, a plain hint otherwise. */}
+          {controlMode === "vr" && (
+            <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pb-4 pt-3 text-[#14131a] shadow-sm">
+              <div className="flex min-h-9 items-center">
+                <h3 className="text-base font-semibold leading-none tracking-tight">VR control</h3>
+              </div>
+              {xrSupported ? (
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <Button
+                    onClick={enterVr}
+                    disabled={!connected || inVr}
+                    title="Open the headset (AR passthrough) on this same session"
+                  >
+                    {inVr ? "In VR" : "Enter VR"}
+                  </Button>
+                  {!connected && (
+                    <span className="text-sm text-[#6f6858]">connect to the robot first</span>
+                  )}
+                </div>
+              ) : (
+                <p className="mt-3 text-sm text-[#6f6858]">Connect using a VR device</p>
+              )}
+            </div>
+          )}
 
-          {/* Clip audio: stream a local audio file to the robot speaker (reuses the M3b
-              downlink). Needs the robot's voice downlink on (--voice / NORI_SPEAKER). */}
-          {running && connState === "connected" && (
+          {/* Leader-arm hardware setup — the full leader-setup surface, embedded. Shown while
+              leader mode is selected; usable offline (calibration doesn't need the session). */}
+          {controlMode === "leader" && (
+            <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pb-4 pt-3 shadow-sm">
+              <LeaderSetup embedded />
+            </div>
+          )}
+
+          {/* Keyboard legend only shows for its own mode, like the VR and leader cards. */}
+          {controlMode === "keyboard" && (
+          <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
+            <CardHeader className="flex min-h-9 flex-row items-center justify-between space-y-0 px-4 pb-0 pt-3">
+              <CardTitle className="text-base">Keyboard controls</CardTitle>
+              {/* Cylindrical vs per-motor only affects keyboard driving, so it lives here. */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => teleop?.toggleMode()}
+                disabled={!running}
+                title="Switch between cylindrical (rpi4 feel) and per-motor control"
+              >
+                Mode: {mode === "joint" ? "per-motor" : "cylindrical"}
+              </Button>
+            </CardHeader>
+            <CardContent className="p-4 pt-3">
+              <ControlLegend mode={mode} />
+            </CardContent>
+          </Card>
+          )}
+
+          {/* The script console now lives on the Coding page (/nori/coding), driving the same
+              persistent session. */}
+        </div>
+
+        <div className="h-fit space-y-4">
+        {/* Audio: two-way call plus clip-to-robot-speaker (reuses the M3b downlink; needs the
+            robot's voice downlink on — --voice / NORI_SPEAKER). Always shown; disabled offline. */}
+        <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 py-3 text-[#14131a] shadow-sm">
+          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// audio</p>
+          <div className="mt-2 space-y-2">
+            <CallBar
+              call={call}
+              running={running}
+              connected={connState === "connected"}
+              m6={m6}
+              onJoin={joinCall}
+              onLeave={leaveCall}
+              onToggleMute={toggleMute}
+              onToggleCamera={toggleCamera}
+              volume={volume}
+              onVolumeChange={setVolume}
+            />
             <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">
-                // play to robot speaker
-              </span>
-              <label className="cursor-pointer rounded border border-[#14131a]/20 px-2 py-1 hover:bg-[#14131a]/5">
+              <span className="text-xs text-[#857b6b]">Play to robot speaker</span>
+              <label
+                className={
+                  "rounded border border-[#14131a]/20 px-2 py-1 " +
+                  (connected ? "cursor-pointer hover:bg-[#14131a]/5" : "pointer-events-none opacity-50")
+                }
+              >
                 Choose audio file…
                 <input
                   type="file"
                   accept="audio/*"
                   className="hidden"
+                  disabled={!connected}
                   onChange={(e) => {
                     const f = e.target.files?.[0];
                     e.target.value = ""; // allow re-picking the same file
@@ -364,54 +476,44 @@ const Remote = () => {
                 </Button>
               )}
             </div>
-          )}
-
-          {/* The script console now lives on the Coding page (/nori/coding), driving the same
-              persistent session. */}
-
-          <TelemetryPanel
-            connState={running ? connState : "idle"}
-            tel={tel}
-            controlActive={controlActive}
-            stale={stale}
-            inVr={inVr}
-          />
-
-          <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// telemetry</p>
-            <h2 className="mt-1 text-lg font-semibold">Rail height</h2>
-            <div className="mt-3">
-              <RailHeight state={tel.state} />
-            </div>
-          </div>
-
-          <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// telemetry</p>
-            <h2 className="mt-1 text-lg font-semibold">Grip force / motor current</h2>
-            <div className="mt-3">
-              <GripForce currents={tel.currents} />
-            </div>
           </div>
         </div>
 
-        <div className="h-fit space-y-4">
-        <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
-          <CardHeader className="py-3">
-            <CardTitle className="text-sm">Robot 3D (schematic)</CardTitle>
-          </CardHeader>
-          <CardContent className="pb-3">
-            <Robot3D state={tel.state} activeArm={settings.arm} />
-          </CardContent>
-        </Card>
+        {/* Single combined telemetry card: link/loop chips, then rail height, then grip force. */}
+        <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
+          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// telemetry</p>
+          <div className="mt-3">
+            <TelemetryPanel
+              connState={running ? connState : "idle"}
+              tel={tel}
+              controlActive={controlActive}
+              stale={stale}
+              inVr={inVr}
+            />
+          </div>
+          <h2 className="mt-4 flex items-center gap-1.5 text-sm font-semibold">
+            Rail height <RailHeightHelp />
+          </h2>
+          <div className="mt-2">
+            <RailHeight state={tel.state} />
+          </div>
+          <h2 className="mt-4 text-sm font-semibold">Grip force / motor current</h2>
+          <div className="mt-2">
+            <GripForce currents={tel.currents} />
+          </div>
+        </div>
 
-        <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
-          <CardHeader className="py-3">
-            <CardTitle className="text-sm">Keyboard controls</CardTitle>
-          </CardHeader>
-          <CardContent className="pb-3">
-            <ControlLegend mode={mode} />
-          </CardContent>
-        </Card>
+        <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// 3d schematic</p>
+            {!hasJointTelemetry(tel.state) && (
+              <span className="text-[11px] text-muted-foreground">waiting for joint telemetry…</span>
+            )}
+          </div>
+          <div className="mt-3">
+            <Robot3D state={tel.state} activeArm={settings.arm} />
+          </div>
+        </div>
 
         <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
           <CardHeader className="cursor-pointer" onClick={() => setShowLog((v) => !v)}>

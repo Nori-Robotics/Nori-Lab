@@ -101,6 +101,31 @@ teleop.toggleMode();            // cylindrical <-> per-joint
 await teleop.stop();            // tells the robot to restart cleanly, tears down the peer
 ```
 
+## Video: attach a sink, and pause to save power
+
+The robot's inbound video is one media track on the peer connection. You can attach it to a
+`<video>` element at construction (`videoEl`) **or** re-point it at any time — useful when one
+long-lived session renders on different pages:
+
+```ts
+teleop.setVideoEl(myVideoEl);   // point the live stream at this element (null to detach)
+teleop.setAudioEl(myAudioEl);   // same for the robot's inbound audio sink
+```
+
+Detaching with `null` stops *rendering* but the robot keeps encoding + sending. On a Pi 5 (no
+hardware H.264 encoder — video is software x264, often the biggest power draw) that's wasteful when
+nothing is watching. Pause the **encoder itself**, not just the sink:
+
+```ts
+teleop.pauseVideo();            // robot drops frames BEFORE the encoder -> it goes idle (power saved)
+teleop.resumeVideo();           // re-enable; the robot forces a keyframe so video reappears at once
+```
+
+Notes: pause/resume ride the control data channel (no renegotiation, fast resume) and are safe to
+call before the channel is open — the desired state is applied on open (so "pause on connect, resume
+only while a viewer is mounted" works). Control + telemetry are a separate transport, so pausing
+video never affects jog/telemetry. A fresh session starts flowing at the defaults.
+
 ## Streaming audio to the robot speaker
 
 `sendClipAudio` streams an arbitrary audio **track** to the robot's speaker over the same

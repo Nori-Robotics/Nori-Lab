@@ -223,7 +223,9 @@ export function getJobLogs(
 
 // -- pairing / consents / deletion (Phase 6) -----------------------------------
 
-/** POST /nori/customers/me/pair — 409 if re-pairing to a different serial. */
+/** POST /nori/customers/me/pair — pair a robot (multi-robot). First robot becomes
+ * active; later ones are added inactive. Idempotent on a serial you already own;
+ * 409 only if the serial is owned by another customer. Returns the updated profile. */
 export function pairRobot(
   baseUrl: string,
   fetcher: Fetcher,
@@ -237,10 +239,9 @@ export function pairRobot(
 }
 
 /**
- * One robot paired to the customer. Multi-robot pairing is not in the backend yet
- * (tracked in Nori-Backend/todos.md) — until it ships, the Pairing page derives a
- * single-element list from the customer profile. Shape is forward-looking so the UI
- * doesn't change when `GET /customers/me/robots` lands.
+ * One robot paired to the customer, as returned by `GET /customers/me/robots`
+ * (multi-robot; live in Nori-Backend as of 2026-07-06). The Pairing page still
+ * keeps a profile-derived single-robot fallback for resilience if that call fails.
  */
 export interface PairedRobot {
   robot_serial_number: string;

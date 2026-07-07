@@ -218,6 +218,9 @@ export class RemoteTeleop {
   // rendered the original <video>/<audio>). See setVideoEl below.
   private inboundVideo: MediaStream | null = null;
   private inboundAudio: MediaStream | null = null;
+  // Desired robot-video state. Remembered so a pause/resume issued before the control channel is
+  // open (e.g. pause-on-connect for power saving) is applied the moment it opens, not lost.
+  private videoPaused = false;
   private seq = 0; // monotonic control-frame counter (nori-protocol control.seq)
   private readonly pressed = new Set<string>();
   private readonly cmdDown = new Set<string>();
@@ -305,6 +308,17 @@ export class RemoteTeleop {
   // the daemon), exactly like {type:"call"} — no nori-protocol change, no version bump.
   setVideoQuality(quality: "low" | "normal") {
     this.dcSend({ type: "video", quality });
+  }
+
+  // Pause/resume the robot's video ENCODER (not just the DOM sink). "pause" gates frames before
+  // the software x264 encoder so it goes idle — the real Pi CPU/power saving; "resume" re-opens it
+  // and the robot forces a fresh keyframe. Use this to keep video off unless a page is showing it.
+  // Safe to call before the control channel is open — the desired state is flushed on open.
+  pauseVideo() { this.setVideoPaused(true); }
+  resumeVideo() { this.setVideoPaused(false); }
+  private setVideoPaused(paused: boolean) {
+    this.videoPaused = paused;
+    this.dcSend({ type: "video", state: paused ? "pause" : "resume" });
   }
 
   // Flip cylindrical <-> per-motor from the UI (same effect as the 'm' key). onMode fires.
@@ -752,6 +766,9 @@ export class RemoteTeleop {
       this.tel.active = true;
       this.o.onControlActive(true);
       this.sendLink(); // path may have resolved before the channel opened
+      // Apply a pause requested before the channel opened (pause-on-connect for power saving).
+      // Only send when paused: the robot defaults to flowing, so no message = video on.
+      if (this.videoPaused) this.dcSend({ type: "video", state: "pause" });
     };
     ch.onclose = () => {
       if (this.controlCh === ch) this.controlCh = null;

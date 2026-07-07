@@ -131,7 +131,8 @@ class NoriClient:
     # -- pairing (Phase 6) ---------------------------------------------------------
 
     def pair_robot(self, robot_serial_number: str) -> dict[str, Any]:
-        """POST /customers/me/pair — 409 if re-pairing to a different serial."""
+        """POST /customers/me/pair — pair a robot (multi-robot). First robot becomes
+        active; idempotent on an owned serial; 409 only if another customer owns it."""
         return self._request(
             "POST", f"{API}/customers/me/pair", json={"robot_serial_number": robot_serial_number}
         )

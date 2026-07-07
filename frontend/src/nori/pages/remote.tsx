@@ -60,12 +60,15 @@ const Remote = () => {
 
   // Attach THIS page's media elements to the persistent session, and detach (not stop) on leave.
   // The SDK remembers the inbound stream and re-points these elements, so video survives a
-  // round-trip to another page.
+  // round-trip to another page. Also RESUME the robot video encoder while Remote is showing video,
+  // and PAUSE it on leave — the encoder is idle (and the Pi draws less power) whenever no page is
+  // watching. The session default is paused (set in the provider), so other pages get no video.
   useEffect(() => {
     if (!teleop) return;
     teleop.setVideoEl(videoRef.current);
     teleop.setAudioEl(audioRef.current);
-    return () => { teleop.setVideoEl(null); teleop.setAudioEl(null); };
+    teleop.resumeVideo();
+    return () => { teleop.setVideoEl(null); teleop.setAudioEl(null); teleop.pauseVideo(); };
   }, [teleop]);
 
   // Feed gripper currents (haptics) + telemetry into the in-VR HUD while VR is active. Currents

@@ -4,9 +4,9 @@
 //
 // Multi-robot: the customer can pair several robots and choose which one teleop/remote
 // connects to (the "active" robot — see NoriContext.activeRobotSerial). The backend
-// multi-robot endpoints (list / per-robot unpair / server-side active selection) aren't
-// built yet (tracked in Nori-Backend/todos.md); until they land this page derives a
-// single-robot list from the customer profile and persists the active choice locally.
+// multi-robot endpoints (list / per-robot unpair / server-side active selection) are
+// live (Nori-Backend, 2026-07-06); this page calls them directly. A profile-derived
+// single-robot fallback remains only for resilience if listRobots fails.
 
 import { useCallback, useEffect, useState } from "react";
 import { useApi } from "@/contexts/ApiContext";
@@ -24,8 +24,8 @@ import {
   type PairedRobot,
 } from "@/nori/api/client";
 
-/** Single-robot list derived from the profile — the fallback until the backend's
- * multi-robot GET /customers/me/robots ships. See Nori-Backend/todos.md. */
+/** Single-robot list derived from the profile — resilience fallback if the backend's
+ * multi-robot GET /customers/me/robots call fails (the endpoint is live). */
 function robotsFromCustomer(customer: CustomerProfile | null): PairedRobot[] {
   if (!customer?.is_paired || !customer.robot_serial_number) return [];
   return [{ robot_serial_number: customer.robot_serial_number, is_active: true }];
@@ -46,7 +46,7 @@ const Pairing = () => {
     try {
       setRobots(await listRobots(baseUrl, fetchWithHeaders));
     } catch {
-      // Multi-robot endpoint not available yet — derive the list from the profile.
+      // listRobots failed (network/backend) — fall back to the profile-derived list.
       setRobots(robotsFromCustomer(customer));
     }
   }, [baseUrl, fetchWithHeaders, customer]);
@@ -83,15 +83,15 @@ const Pairing = () => {
     }
   };
 
-  // Selection is a local concept today (feeds remote.tsx's session room). We apply it
-  // immediately, then best-effort sync to the backend so the choice can move server-side
-  // once that endpoint exists — a not-yet-built endpoint failing is expected, not an error.
+  // Selection feeds remote.tsx's session room. We apply it locally immediately for
+  // snappy UX, then persist server-side (selectRobot). If the sync fails the local
+  // choice still stands, so a transient backend error doesn't block connecting.
   const onSelect = async (s: string) => {
     setActiveRobotSerial(s);
     try {
       setCustomer(await selectRobot(baseUrl, fetchWithHeaders, s));
     } catch {
-      // Server-side active-robot selection not available yet; local choice stands.
+      // Persisting the active robot failed; the local choice stands for this session.
     }
   };
 

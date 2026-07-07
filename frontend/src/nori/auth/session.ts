@@ -31,6 +31,23 @@ export async function signInWithPassword(email: string, password: string): Promi
   return data.session;
 }
 
+export interface SignUpResult {
+  /** Present only when the Supabase project has email confirmation disabled; when
+   * present, NoriProvider observes it and provisions the customer automatically. */
+  session: Session | null;
+  /** True when a confirmation email was sent and the user must confirm before a
+   * session exists (Supabase's default for new projects). */
+  needsEmailConfirmation: boolean;
+}
+
+/** Register a new user via Supabase Auth. Whether a session is returned immediately
+ * depends on the project's email-confirmation setting; the caller handles both. */
+export async function signUp(email: string, password: string): Promise<SignUpResult> {
+  const { data, error } = await getSupabase().auth.signUp({ email, password });
+  if (error) throw error;
+  return { session: data.session, needsEmailConfirmation: !data.session };
+}
+
 export async function signOut(): Promise<void> {
   if (!isSupabaseReady()) return;
   await getSupabase().auth.signOut();

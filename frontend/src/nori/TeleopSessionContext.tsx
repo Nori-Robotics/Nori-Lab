@@ -178,6 +178,10 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     });
     teleopRef.current = t;
     setTeleop(t);
+    // Default video OFF for power: the robot's software x264 encoder is idle until a page that
+    // shows video resumes it (the Remote page does, on mount). Applied when the control channel
+    // opens even though it's set here pre-connect.
+    t.pauseVideo();
     try {
       await t.start();
       setRunning(true);

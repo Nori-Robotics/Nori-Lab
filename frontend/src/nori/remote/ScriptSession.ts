@@ -1,6 +1,6 @@
 // NORI: Additive file. Main-side bridge for the script sandbox (docs/llm_integration_plan.md,
 // Phase B3/B4). Owns the Worker + a ScriptDriver and translates worker ops into driver calls.
-// ScriptPanel talks to this, not to the worker or driver directly.
+// The Coding page (pages/coding.tsx) talks to this, not to the worker or driver directly.
 //
 // It is the trust boundary: the worker is untrusted (it runs pasted / LLM code), so the *main*
 // side enforces the whole-script wall-clock cap and is the only place that can preempt

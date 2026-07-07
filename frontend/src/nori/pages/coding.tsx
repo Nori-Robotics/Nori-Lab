@@ -5,10 +5,10 @@
 // the code in a sandboxed Web Worker → ScriptDriver → the live RemoteTeleop (identical wire to
 // keyboard/VR teleop). The code text and the session both persist across page changes.
 //
-// Safety: this can move the robot, so execution stays behind the nori_script_console flag. The
-// operator is the supervisor — live video is on the Remote page, E-STOP is here and on Remote,
-// and the daemon watchdog safe-stops if the tab dies. Motions are open-loop timed (no arrival
-// feedback until protocol G1).
+// Safety: this can move the robot. The operator is the supervisor — live video is on the Remote
+// page, E-STOP is here and on Remote, and the daemon watchdog safe-stops if the tab dies. Motions
+// are open-loop timed (no arrival feedback until protocol G1). The robot's own clamps/watchdog are
+// the real boundary (the daemon defends itself), which is why this ships without a client-side gate.
 
 import { useContext, useEffect, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";

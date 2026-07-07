@@ -10,7 +10,7 @@ The frontend (React + Vite) lives in [`frontend/`](frontend/). The built bundle 
 
 ## Common commands
 
-Install (editable, requires Python ≥3.10):
+Install (editable, requires Python ≥3.12):
 
 ```bash
 pip install -e .
@@ -70,4 +70,8 @@ Hardcoded for **SO-101 leader/follower arms** (`so101_leader`, `so101_follower`)
 
 ## Phone camera / HTTPS
 
-Phone-as-camera streaming requires HTTPS. See [PHONE_CAMERA_SETUP.md](PHONE_CAMERA_SETUP.md) and [HTTPS_SETUP.md](HTTPS_SETUP.md). Self-signed certs go in `certs/`. The default `lelab-fullstack` does **not** start with HTTPS — for phone cameras run uvicorn manually with `--ssl-keyfile certs/key.pem --ssl-certfile certs/cert.pem`.
+Phone-as-camera streaming requires HTTPS. See [frontend/HTTPS_SETUP.md](frontend/HTTPS_SETUP.md). Self-signed certs go in `certs/`. The default `lelab` run does **not** start with HTTPS — for phone cameras run uvicorn manually with `--ssl-keyfile certs/key.pem --ssl-certfile certs/cert.pem`.
+
+## Desktop packaging (in progress)
+
+[desktop/](desktop/) packages LeLab as a native Tauri app (macOS/Windows/Linux) that spawns a frozen PyInstaller backend — no Python install for end users. Training stays cloud-dispatched; inference (torch) ships in the bundle so the control loop never depends on the network. **This is an in-progress handoff — start at [desktop/HANDOFF.md](desktop/HANDOFF.md)** for scope, current state, and remaining todos. The subprocess-spawn shim it depends on lives in [lelab/utils/child_process.py](lelab/utils/child_process.py).

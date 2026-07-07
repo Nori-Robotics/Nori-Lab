@@ -25,7 +25,7 @@ audio call) **without robot hardware**, using the mock robot in the `NoriTeleop`
 
 ## Prerequisites
 
-- **Node** ≥ 22 and **Python** ≥ 3.10, `pip install -e .` done in this repo.
+- **Node** ≥ 22 and **Python** ≥ 3.12, `pip install -e .` done in this repo.
 - A **Supabase project** (URL + anon key) — the same project is used for WebRTC signaling
   by both the laptop app and the mock robot.
 - Laptop `.env` (repo root) already has `SUPABASE_URL` + `SUPABASE_ANON_KEY` (Phase 1/2).

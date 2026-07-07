@@ -4,6 +4,10 @@ Packages LeLab as a native, double-click desktop app for macOS / Windows / Linux
 No Python install, no terminal. The React UI + FastAPI backend run exactly as they
 do today; only the delivery vehicle changes.
 
+> **Picking this up? Start with [HANDOFF.md](HANDOFF.md)** — scope, current state,
+> decision log, and the ordered TODO list. This README is the mechanics; HANDOFF is
+> the map.
+
 ## How it works
 
 ```

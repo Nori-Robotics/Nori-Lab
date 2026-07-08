@@ -160,7 +160,21 @@ const Coding = () => {
   };
 
   return (
-    <section className="space-y-4">
+    // Marketplace-hero wash over the whole page: dot grid + blurred leaf/custard blobs
+    // behind the cards. The 50vw-50% negative margins bleed the wash past the centered
+    // content column to the viewport edges (padding restores the column); the content
+    // wrapper is positioned so it paints above the absolute layers.
+    <section className="relative -my-6 -mx-[calc(50vw-50%)] min-h-[calc(100vh-3.5rem)] overflow-hidden px-[calc(50vw-50%)] py-6">
+      <div className="dot-grid pointer-events-none absolute inset-0 opacity-60" aria-hidden />
+      <div
+        className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-leaf opacity-70 blur-3xl"
+        aria-hidden
+      />
+      <div
+        className="pointer-events-none absolute -right-20 top-32 h-64 w-64 rounded-full bg-sticker opacity-60 blur-3xl"
+        aria-hidden
+      />
+      <div className="relative space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-3xl font-bold">Run Nori with code</h1>
         {/* Connection status — the session is shared with the Remote page and persists. */}
@@ -225,7 +239,7 @@ const Coding = () => {
               height="100%"
               style={{ height: "100%" }}
               editable={!scriptRunning}
-              className="h-full text-sm [&_.cm-editor]:h-full"
+              className="h-full text-xs [&_.cm-editor]:h-full"
             />
           </div>
           <div className="flex items-center justify-between gap-2">
@@ -248,6 +262,7 @@ const Coding = () => {
             </div>
           </div>
         </div>
+      </div>
       </div>
     </section>
   );

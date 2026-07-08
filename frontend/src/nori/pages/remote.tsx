@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Pill } from "@/components/ui/pill";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -24,6 +25,28 @@ import LeaderSetup from "@/nori/pages/leader-setup";
 import { playAudioFile, type ClipHandle } from "@/nori/remote/audioClip";
 import { isM6VideoEnabled } from "@/nori/remote/flags";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
+
+// Small left/right arm toggle rendered in the header of whichever control card is
+// active (keyboard legend, leader setup) — the arm choice belongs to the control
+// method, not the // controls mode strip.
+const ArmPills = ({
+  value,
+  onChange,
+}: {
+  value: ArmSide;
+  onChange: (arm: ArmSide) => void;
+}) => (
+  <div className="flex items-center gap-1.5">
+    <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+      arm
+    </span>
+    {(["left", "right"] as ArmSide[]).map((arm) => (
+      <Pill key={arm} size="sm" active={value === arm} onClick={() => onChange(arm)}>
+        {arm}
+      </Pill>
+    ))}
+  </div>
+);
 
 const Remote = () => {
   const { ready, customer, activeRobotSerial } = useNori();
@@ -47,15 +70,23 @@ const Remote = () => {
 
   const [showSettings, setShowSettings] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  // Each control-mode card (keyboard / leader / VR) collapses like Robot logs and
+  // Session settings; expanded by default, remembered per mode while on the page.
+  const [showKeyboardCard, setShowKeyboardCard] = useState(true);
+  const [showLeaderCard, setShowLeaderCard] = useState(true);
+  const [showVrCard, setShowVrCard] = useState(true);
   // Playback volume of the robot's inbound audio (the hidden <audio> sink), 0..1.
   const [volume, setVolume] = useState(1);
   const [inVr, setInVr] = useState(false);
   const [xrSupported, setXrSupported] = useState<boolean | null>(null);
   // Leader-arm control: when active the physical dual leaders drive the robot's arms
   // (absolute leader_action_deg); base + lift stay on the keyboard. leaderCount is how many
-  // motors fed the last frame (0 = arms unplugged / bus paused).
+  // motors fed the last frame (0 = arms unplugged / bus paused). leaderSides is which
+  // leader arms produced usable targets — with exactly one, the driver solo-routes it to
+  // the SELECTED follower arm (the arm pills), so the UI must say where it's going.
   const [leaderActive, setLeaderActive] = useState(false);
   const [leaderCount, setLeaderCount] = useState(0);
+  const [leaderSides, setLeaderSides] = useState<ArmSide[]>([]);
   // Control mode SELECTION is independent of the session: leader doubles as the hardware
   // setup surface and VR as the headset entry point, so both are selectable while
   // disconnected. The actual drivers (leaderActive / inVr) only run on a live session.
@@ -143,6 +174,7 @@ const Remote = () => {
     leaderRef.current = null;
     setLeaderActive(false);
     setLeaderCount(0);
+    setLeaderSides([]);
   }, []);
 
   const enterLeader = useCallback(() => {
@@ -151,13 +183,38 @@ const Remote = () => {
       teleop,
       baseUrl,
       fetcher: fetchWithHeaders,
-      onFrame: (count) => setLeaderCount(count),
+      onFrame: (count, frame) => {
+        setLeaderCount(count);
+        // Which leader arms produced usable targets this frame — drives the solo-routing
+        // hint ("left leader -> right arm") and the no-targets warning below.
+        setLeaderSides(
+          (["left", "right"] as ArmSide[]).filter((s) =>
+            Object.values(frame.leaders?.[s]?.motors ?? {}).some(
+              (m) => m.ok && m.target !== null && m.target !== undefined,
+            ),
+          ),
+        );
+      },
       onError: (msg) => appendLog("leader read paused: " + msg),
     });
     leaderRef.current = driver;
     driver.start();
     setLeaderActive(true);
   }, [teleop, baseUrl, fetchWithHeaders, appendLog]);
+
+  // Keep the leader driver's lifecycle tied to (mode, session) instead of the click that
+  // selected the mode. Previously the driver only started if you clicked "Leader arm"
+  // while ALREADY connected — pick Leader first, then Connect (the natural order), and
+  // nothing ever drove the arms. This effect starts it whenever leader mode is selected
+  // on a live session, and stops it when the session drops (a reconnect re-enters here
+  // with a driver bound to the CURRENT teleop instance, not a stale one).
+  useEffect(() => {
+    if (selectedMode === "leader" && connState === "connected" && teleop && !leaderRef.current) {
+      enterLeader();
+    } else if (connState !== "connected" && leaderRef.current) {
+      stopLeader();
+    }
+  }, [selectedMode, connState, teleop, enterLeader, stopLeader]);
 
   // ---- two-way audio call (Phase 7 §B) ------------------------------------
   const joinCall = async () => {
@@ -261,9 +318,9 @@ const Remote = () => {
   const selectLeader = useCallback(async () => {
     setSelectedMode("leader");
     await vrRef.current?.stop();
-    // Only start the arm driver on a live session; offline the card is setup-only.
-    if (connState === "connected" && !leaderRef.current) enterLeader();
-  }, [connState, enterLeader]);
+    // The lifecycle effect above starts the arm driver once (mode=leader, connected) holds —
+    // whether the session is live now or connects later. Offline the card is setup-only.
+  }, []);
 
   return (
     <section className="space-y-4">
@@ -328,9 +385,9 @@ const Remote = () => {
 
           {/* Audio: two-way call plus clip-to-robot-speaker (reuses the M3b downlink; needs the
               robot's voice downlink on — --voice / NORI_SPEAKER). Always shown; disabled offline. */}
-          <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 py-3 text-[#14131a] shadow-sm">
+          <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
             <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// audio</p>
-            <div className="mt-2 space-y-2">
+            <div className="mt-3 space-y-2">
               <CallBar
                 call={call}
                 running={running}
@@ -404,71 +461,65 @@ const Remote = () => {
         <div className="h-fit space-y-4">
         {/* Control-mode picker: which method drives the arms. All options are always shown
             (even when a headset / the leader arms aren't present); keyboard is the default. */}
-        <div className="flex flex-wrap items-center gap-3 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 py-2 text-[#14131a] shadow-sm">
+        {/* min-h-16 = the collapsed control cards' 64px, so this strip lines up with them. */}
+        <div className="flex min-h-16 flex-wrap items-center gap-3 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 py-2 text-[#14131a] shadow-sm">
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// controls</p>
-          <div className="ml-auto flex flex-wrap items-center gap-3">
-            <Button
-              size="sm"
-              variant={controlMode === "keyboard" ? "default" : "secondary"}
-              className={controlMode === "keyboard" ? "" : "border border-[#14131a]/20"}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Pill
+              active={controlMode === "keyboard"}
               onClick={selectKeyboard}
               title="Drive with the keyboard (default)"
             >
               Keyboard
-            </Button>
-            <Button
-              size="sm"
-              variant={controlMode === "leader" ? "default" : "secondary"}
-              className={controlMode === "leader" ? "" : "border border-[#14131a]/20"}
+            </Pill>
+            <Pill
+              active={controlMode === "leader"}
               onClick={selectLeader}
               title="Drive the robot's arms from the physical dual leader arms (base + lift stay on the keyboard). Selectable offline for hardware setup."
             >
-              {leaderActive ? `Leader arm · ${leaderCount}/12` : "Leader arm"}
-            </Button>
-            <Button
-              size="sm"
-              variant={controlMode === "vr" ? "default" : "secondary"}
-              className={controlMode === "vr" ? "" : "border border-[#14131a]/20"}
+              {leaderActive
+                ? leaderSides.length === 1
+                  ? `Leader arm · ${leaderCount}/6 → ${settings.arm}`
+                  : `Leader arm · ${leaderCount}/12`
+                : "Leader arm"}
+            </Pill>
+            <Pill
+              active={controlMode === "vr"}
               onClick={selectVr}
               title="Drive with a VR headset (AR passthrough) on this same session"
             >
               {inVr ? "In VR" : "VR"}
-            </Button>
-            <label className="flex items-center gap-2 text-sm">
-              Arm
-              <select
-                className="rounded-md border bg-background px-2 py-1 text-sm"
-                value={settings.arm}
-                onChange={(e) => set("arm", e.target.value as ArmSide)}
-              >
-                <option value="right">right</option>
-                <option value="left">left</option>
-              </select>
-            </label>
+            </Pill>
           </div>
         </div>
 
         {/* VR mode card: the headset entry point on supported devices, a plain hint otherwise. */}
         {controlMode === "vr" && (
           <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pb-4 pt-3 text-[#14131a] shadow-sm">
-            <div className="flex min-h-9 items-center">
+            <div
+              className="flex min-h-9 cursor-pointer items-center justify-between"
+              onClick={() => setShowVrCard((v) => !v)}
+            >
               <h3 className="text-base font-semibold leading-none tracking-tight">VR control</h3>
+              <span className="text-sm text-muted-foreground">{showVrCard ? "▲ hide" : "▼ show"}</span>
             </div>
-            {xrSupported ? (
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                <Button
-                  onClick={enterVr}
-                  disabled={!connected || inVr}
-                  title="Open the headset (AR passthrough) on this same session"
-                >
-                  {inVr ? "In VR" : "Enter VR"}
-                </Button>
-                {!connected && (
-                  <span className="text-sm text-[#6f6858]">connect to the robot first</span>
-                )}
-              </div>
-            ) : (
-              <p className="mt-3 text-sm text-[#6f6858]">Connect using a VR device</p>
+            {showVrCard && (
+              xrSupported ? (
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <Button
+                    onClick={enterVr}
+                    disabled={!connected || inVr}
+                    title="Open the headset (AR passthrough) on this same session"
+                  >
+                    {inVr ? "In VR" : "Enter VR"}
+                  </Button>
+                  {!connected && (
+                    <span className="text-sm text-[#6f6858]">connect to the robot first</span>
+                  )}
+                </div>
+              ) : (
+                <p className="mt-3 text-sm text-[#6f6858]">Connect using a VR device</p>
+              )
             )}
           </div>
         )}
@@ -477,29 +528,68 @@ const Remote = () => {
             leader mode is selected; usable offline (calibration doesn't need the session). */}
         {controlMode === "leader" && (
           <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pb-4 pt-3 shadow-sm">
-            <LeaderSetup embedded />
+            {/* Routing status: with ONE leader arm connected the driver solo-routes it to the
+                selected follower arm (the pills in the header) — say so, since otherwise a
+                left leader silently driving the right arm reads as a wiring bug. Also flag
+                the silent-failure state: driver running but no usable targets (arms unplugged
+                or calibration missing/stale), where nothing is sent to the robot at all. */}
+            {leaderActive && leaderSides.length === 1 && (
+              <p className="mb-2 rounded bg-[#8ab135]/15 px-2 py-1 text-xs text-[#4d6a1e]">
+                One leader arm connected ({leaderSides[0]}) — driving the{" "}
+                <strong>{settings.arm}</strong> follower arm. Use the arm pills to switch sides.
+              </p>
+            )}
+            {leaderActive && leaderSides.length === 0 && (
+              <p className="mb-2 rounded bg-[#b06a1c]/15 px-2 py-1 text-xs text-[#7a4a13]">
+                Leader mode is on but no leader joints are readable — nothing is being sent to
+                the robot. Check the USB connection and that this machine has a leader
+                calibration for the configured ID.
+              </p>
+            )}
+            <LeaderSetup
+              embedded
+              collapsed={!showLeaderCard}
+              onToggleCollapse={() => setShowLeaderCard((v) => !v)}
+              headerExtra={<ArmPills value={settings.arm} onChange={(arm) => set("arm", arm)} />}
+            />
           </div>
         )}
 
         {/* Keyboard legend only shows for its own mode, like the VR and leader cards. */}
         {controlMode === "keyboard" && (
         <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
-          <CardHeader className="flex min-h-9 flex-row items-center justify-between space-y-0 px-4 pb-0 pt-3">
-            <CardTitle className="text-base">Keyboard controls</CardTitle>
-            {/* Cylindrical vs per-motor only affects keyboard driving, so it lives here. */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => teleop?.toggleMode()}
-              disabled={!running}
-              title="Switch between cylindrical (rpi4 feel) and per-motor control"
-            >
-              Mode: {mode === "joint" ? "per-motor" : "cylindrical"}
-            </Button>
+          <CardHeader
+            className={`cursor-pointer px-4 pt-3 ${showKeyboardCard ? "pb-0" : "pb-4"}`}
+            onClick={() => setShowKeyboardCard((v) => !v)}
+          >
+            {/* min-h-9 lives on the unpadded title row (not the padded header) so the
+                collapsed height matches the VR / leader / logs / settings cards exactly. */}
+            <CardTitle className="flex min-h-9 items-center justify-between text-base font-semibold">
+              Keyboard controls
+              <span className="text-sm font-normal text-muted-foreground">
+                {showKeyboardCard ? "▲ hide" : "▼ show"}
+              </span>
+            </CardTitle>
           </CardHeader>
+          {showKeyboardCard && (
           <CardContent className="p-4 pt-3">
+            {/* Arm + drive mode live on their own row between the title and the legend. */}
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <ArmPills value={settings.arm} onChange={(arm) => set("arm", arm)} />
+              {/* Cylindrical vs per-motor only affects keyboard driving, so it lives here. */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => teleop?.toggleMode()}
+                disabled={!running}
+                title="Switch between cylindrical (rpi4 feel) and per-motor control"
+              >
+                Mode: {mode === "joint" ? "per-motor" : "cylindrical"}
+              </Button>
+            </div>
             <ControlLegend mode={mode} />
           </CardContent>
+          )}
         </Card>
         )}
 
@@ -516,14 +606,17 @@ const Remote = () => {
         </div>
 
         <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
-          <CardHeader className="cursor-pointer" onClick={() => setShowLog((v) => !v)}>
-            <CardTitle className="flex items-center justify-between text-base">
+          <CardHeader
+            className={`cursor-pointer px-4 pt-3 ${showLog ? "pb-0" : "pb-4"}`}
+            onClick={() => setShowLog((v) => !v)}
+          >
+            <CardTitle className="flex min-h-9 items-center justify-between text-base font-semibold">
               Robot logs
-              <span className="text-sm text-muted-foreground">{showLog ? "▲ hide" : "▼ show"}</span>
+              <span className="text-sm font-normal text-muted-foreground">{showLog ? "▲ hide" : "▼ show"}</span>
             </CardTitle>
           </CardHeader>
           {showLog && (
-          <CardContent className="pb-3">
+          <CardContent className="p-4 pt-3">
             <div
               ref={logRef}
               className="max-h-44 overflow-auto whitespace-pre-wrap rounded border border-[#14131a]/10 bg-[#f3f1e8] p-2 font-mono text-xs"
@@ -539,14 +632,17 @@ const Remote = () => {
         </Card>
 
         <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
-          <CardHeader className="cursor-pointer" onClick={() => setShowSettings((v) => !v)}>
-            <CardTitle className="flex items-center justify-between text-base">
+          <CardHeader
+            className={`cursor-pointer px-4 pt-3 ${showSettings ? "pb-0" : "pb-4"}`}
+            onClick={() => setShowSettings((v) => !v)}
+          >
+            <CardTitle className="flex min-h-9 items-center justify-between text-base font-semibold">
               Session settings
-              <span className="text-sm text-muted-foreground">{showSettings ? "▲ hide" : "▼ show"}</span>
+              <span className="text-sm font-normal text-muted-foreground">{showSettings ? "▲ hide" : "▼ show"}</span>
             </CardTitle>
           </CardHeader>
           {showSettings && (
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-3 p-4 pt-3">
             <div className="space-y-1.5">
               <Label htmlFor="room">Room (NORI_ROOM — must match the Pi)</Label>
               <Input id="room" value={settings.room} onChange={(e) => set("room", e.target.value)}

@@ -219,8 +219,23 @@ function LeaderPane({
 }
 
 // `embedded` renders the same setup surface as a compact block (no full-page chrome,
-// smaller header) for inlining inside another page — e.g. the Remote page's leader card.
-const LeaderSetup = ({ embedded = false }: { embedded?: boolean }) => {
+// smaller header, single-column stacking so it fits a narrow sidebar) for inlining
+// inside another page — e.g. the Remote page's leader card. `headerExtra` slots extra
+// controls (like the arm selector) into the header row next to the status pills.
+// `collapsed`/`onToggleCollapse` make the embedded header a show/hide toggle (the
+// component stays mounted while collapsed so live polling and the status pill keep
+// running).
+const LeaderSetup = ({
+  embedded = false,
+  headerExtra,
+  collapsed = false,
+  onToggleCollapse,
+}: {
+  embedded?: boolean;
+  headerExtra?: React.ReactNode;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+}) => {
   const { baseUrl, fetchWithHeaders } = useApi();
   const { toast } = useToast();
 
@@ -417,41 +432,65 @@ const LeaderSetup = ({ embedded = false }: { embedded?: boolean }) => {
           : "min-h-[calc(100vh-2rem)] space-y-5 rounded-md bg-[#fbfaf5] px-4 py-5 text-[#14131a] sm:px-5"
       }
     >
-      <div
-        className={
-          embedded
-            ? "flex min-h-9 flex-wrap items-center justify-between gap-3"
-            : "flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"
-        }
-      >
-        <div className={embedded ? "" : "space-y-2"}>
-          {!embedded && (
-            <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#7a7060]">// Teleoperation</p>
-          )}
-          {/* The global h1 rule applies the display font — embedded must render the same
-              element as CardTitle (h3, font-sans) to match the Keyboard controls title. */}
-          {embedded ? (
+      {embedded ? (
+        <>
+          {/* Header row: just the title + toggle (matches the other control cards).
+              The arm pills + live status get their own row below, revealed on expand. */}
+          <div
+            className={`flex min-h-9 items-center justify-between gap-3 ${onToggleCollapse ? "cursor-pointer" : ""}`}
+            onClick={onToggleCollapse}
+          >
+            {/* The global h1 rule applies the display font — embedded must render the same
+                element as CardTitle (h3, font-sans) to match the Keyboard controls title. */}
             <h3 className="text-base font-semibold leading-none tracking-tight">Leader setup</h3>
-          ) : (
+            {onToggleCollapse && (
+              <span className="text-sm text-muted-foreground">
+                {collapsed ? "▼ show" : "▲ hide"}
+              </span>
+            )}
+          </div>
+          {!collapsed && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              {headerExtra ?? <span />}
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusPill tone={liveStatus.tone}>
+                  <span className={`h-2 w-2 rounded-full ${liveStatus.dot}`} />
+                  {liveStatus.label}
+                </StatusPill>
+                {busy && (
+                  <StatusPill tone="neutral">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    {busy}
+                  </StatusPill>
+                )}
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="space-y-2">
+            <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#7a7060]">// Teleoperation</p>
             <h1 className="text-4xl font-semibold tracking-normal sm:text-5xl">Leader setup</h1>
-          )}
-          {!embedded && (
             <p className="max-w-2xl text-sm text-[#6f6858]">nori l2 dual leader calibration</p>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <StatusPill tone={liveStatus.tone}>
-            <span className={`h-2 w-2 rounded-full ${liveStatus.dot}`} />
-            {liveStatus.label}
-          </StatusPill>
-          {busy && (
-            <StatusPill tone="neutral">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {busy}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill tone={liveStatus.tone}>
+              <span className={`h-2 w-2 rounded-full ${liveStatus.dot}`} />
+              {liveStatus.label}
             </StatusPill>
-          )}
+            {busy && (
+              <StatusPill tone="neutral">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {busy}
+              </StatusPill>
+            )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {embedded && collapsed ? null : (
+      <>
 
       {(error || liveError) && (
         <Alert className="border-[#d24a3d]/35 bg-[#fde7e4] text-[#8f2318]">
@@ -461,7 +500,13 @@ const LeaderSetup = ({ embedded = false }: { embedded?: boolean }) => {
       )}
 
       <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-3 shadow-sm">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_14rem_auto] lg:items-end">
+        <div
+          className={
+            embedded
+              ? "grid gap-3"
+              : "grid gap-3 lg:grid-cols-[minmax(0,1fr)_14rem_auto] lg:items-end"
+          }
+        >
           <div className="space-y-1.5">
             <Label htmlFor="leader-port" className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#7a7060]">
               shared usb
@@ -510,7 +555,10 @@ const LeaderSetup = ({ embedded = false }: { embedded?: boolean }) => {
         </div>
       </div>
 
-      <div className={embedded ? "grid gap-4 md:grid-cols-2" : "grid gap-4 xl:grid-cols-2"}>
+      {/* Embedded lives in a ~400px sidebar: stack the panes (right below left) instead
+          of squeezing two columns — the viewport-based md: breakpoint lies about the
+          actual card width. */}
+      <div className={embedded ? "grid gap-4" : "grid gap-4 xl:grid-cols-2"}>
         <LeaderPane
           side="left"
           frame={liveFrame}
@@ -536,7 +584,13 @@ const LeaderSetup = ({ embedded = false }: { embedded?: boolean }) => {
             </StatusPill>
           </div>
 
-          <div className="grid gap-3 lg:grid-cols-[9rem_13rem_minmax(0,1fr)] lg:items-end">
+          <div
+            className={
+              embedded
+                ? "grid gap-3"
+                : "grid gap-3 lg:grid-cols-[9rem_13rem_minmax(0,1fr)] lg:items-end"
+            }
+          >
             <div className="space-y-1.5">
               <Label className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#7a7060]">side</Label>
               <Select value={calibrationSide} onValueChange={(value) => setCalibrationSide(value as LeaderSide)} disabled={calibrationBusy}>
@@ -653,6 +707,8 @@ const LeaderSetup = ({ embedded = false }: { embedded?: boolean }) => {
           )}
         </CardContent>
       </Card>
+      </>
+      )}
     </section>
   );
 };

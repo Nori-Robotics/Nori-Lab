@@ -109,6 +109,9 @@
 
   body {
     @apply bg-background text-foreground font-sans;
+    /* Full-bleed sections (50vw-50% negative margins, e.g. the Coding page wash)
+       overshoot by the scrollbar width — clip instead of growing a sideways scroll. */
+    overflow-x: clip;
   }
 
   /* Only the page-level heading uses the stylized display font (it's hard

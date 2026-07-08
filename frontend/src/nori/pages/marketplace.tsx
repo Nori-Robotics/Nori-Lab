@@ -2,12 +2,12 @@
 // Lists policies (GET /nori/marketplace/policies), filters by source client-side, and
 // installs = acquire (first-party) + download bytes to the local Nori cache. Running a
 // downloaded policy against the robot (rollout) is blocked on the Pi.
+// Visual language ported from NoriSkillHub: paper/ink outlines, sticker tints,
+// display headlines, pill chips, bounce-hover cards.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApi } from "@/contexts/ApiContext";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Pill } from "@/components/ui/pill";
 import {
   acquirePolicy,
   downloadPolicy,
@@ -23,16 +23,31 @@ const SOURCES: { key: SourceFilter; label: string }[] = [
   { key: "community", label: "Community" },
 ];
 
+// Tint map mirrors the Skill Hub's CATEGORY_TINT — light sticker tokens with
+// ink text/borders so the chips read the same in both app themes.
+const SOURCE_TINT: Record<string, string> = {
+  own: "bg-sticker",
+  first_party: "bg-leaf",
+  community: "bg-sticker-2",
+};
+const SOURCE_LABEL: Record<string, string> = {
+  own: "own",
+  first_party: "first-party",
+  community: "community",
+};
+
 type InstallState = { status: "idle" | "working" | "done" | "error"; message?: string };
 
-const sourceBadge = (source: string) => {
-  const map: Record<string, string> = {
-    own: "bg-blue-500/15 text-blue-700",
-    first_party: "bg-green-500/15 text-green-700",
-    community: "bg-purple-500/15 text-purple-700",
-  };
-  return map[source] ?? "bg-muted/15 text-muted-foreground";
-};
+const SourceChip = ({ source }: { source: string }) => (
+  <span
+    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink ${
+      SOURCE_TINT[source] ?? "bg-paper-3"
+    }`}
+  >
+    <span className="h-1.5 w-1.5 rounded-full bg-ink" aria-hidden />
+    {SOURCE_LABEL[source] ?? source}
+  </span>
+);
 
 const PolicyCard = ({
   policy,
@@ -43,41 +58,54 @@ const PolicyCard = ({
   state: InstallState;
   onInstall: () => void;
 }) => (
-  <Card>
-    <CardHeader>
-      <div className="flex items-start justify-between gap-2">
-        <CardTitle className="text-base">{policy.title}</CardTitle>
-        <span className={`rounded px-2 py-0.5 text-xs ${sourceBadge(policy.source)}`}>
-          {policy.source}
-        </span>
-      </div>
-    </CardHeader>
-    <CardContent className="space-y-3">
-      {policy.description && (
-        <p className="text-sm text-muted-foreground line-clamp-3">{policy.description}</p>
-      )}
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        {policy.policy_class && <span>{policy.policy_class}</span>}
-        {policy.price_usd != null && <span>· ${policy.price_usd}</span>}
-      </div>
-      <div className="flex items-center justify-between gap-2">
-        <Button size="sm" onClick={onInstall} disabled={state.status === "working"}>
-          {state.status === "working"
-            ? "Installing…"
-            : state.status === "done"
-              ? "Reinstall"
-              : "Install"}
-        </Button>
-        {state.message && (
-          <span
-            className={`text-xs ${state.status === "error" ? "text-destructive" : "text-muted-foreground"}`}
-          >
-            {state.message}
-          </span>
-        )}
-      </div>
-    </CardContent>
-  </Card>
+  <div className="group flex h-full flex-col rounded-[24px] border border-border bg-background p-5 shadow-soft transition-[transform,box-shadow] duration-200 ease-bounce hover:-translate-y-1 hover:shadow-pop md:p-6">
+    <div className="flex items-center justify-between gap-2">
+      <SourceChip source={policy.source} />
+      {policy.policy_class && <span className="eyebrow">{policy.policy_class}</span>}
+    </div>
+
+    <h3 className="mt-4 font-display text-[1.6rem] font-normal leading-[1] tracking-tight">
+      {policy.title}
+    </h3>
+
+    {policy.description && (
+      <p className="mt-2 text-[14px] leading-relaxed text-muted-foreground line-clamp-3">
+        {policy.description}
+      </p>
+    )}
+
+    <div className="mt-auto flex items-center justify-between gap-3 pt-5">
+      <span className="font-mono text-[12px] text-muted-foreground">
+        {new Date(policy.created_at).toLocaleDateString()}
+      </span>
+      <span className="font-mono text-[12px]">
+        {policy.price_usd != null ? `$${policy.price_usd}` : "free"}
+      </span>
+    </div>
+
+    <button
+      type="button"
+      onClick={onInstall}
+      disabled={state.status === "working"}
+      className="mt-4 flex w-full items-center justify-between gap-3 rounded-xl border border-border bg-secondary px-3 py-2 text-left transition-colors hover:bg-accent disabled:cursor-wait disabled:opacity-70"
+    >
+      <code
+        className={`truncate font-mono text-[12px] ${
+          state.status === "error" ? "text-destructive" : "text-foreground"
+        }`}
+      >
+        {state.message ??
+          (state.status === "working" ? "installing…" : `nori install ${policy.title}`)}
+      </code>
+      <span className="eyebrow shrink-0 text-foreground">
+        {state.status === "working"
+          ? "…"
+          : state.status === "done"
+            ? "reinstall →"
+            : "install →"}
+      </span>
+    </button>
+  </div>
 );
 
 const Marketplace = () => {
@@ -115,7 +143,7 @@ const Marketplace = () => {
         const kb = Math.max(1, Math.round(res.size_bytes / 1024));
         setInstalls((s) => ({
           ...s,
-          [policy.ref]: { status: "done", message: `Cached ${kb} KB locally` },
+          [policy.ref]: { status: "done", message: `cached ${kb} KB locally` },
         }));
       } catch (e) {
         setInstalls((s) => ({
@@ -144,52 +172,115 @@ const Marketplace = () => {
   }, [policies, source, query]);
 
   return (
-    <section className="space-y-4">
-      <h1 className="text-3xl font-bold">Marketplace</h1>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex gap-1">
-          {SOURCES.map((s) => (
-            <Button
-              key={s.key}
-              size="sm"
-              variant={source === s.key ? "default" : "outline"}
-              onClick={() => setSource(s.key)}
-            >
-              {s.label}
-            </Button>
-          ))}
-        </div>
-        <Input
-          placeholder="Search policies…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="max-w-xs"
+    <section>
+      {/* HERO — dot-grid wash, blob tints, display headline, sticker badge */}
+      <div className="relative overflow-hidden rounded-[24px] border border-border bg-background px-5 py-6 md:px-7 md:py-7">
+        <div className="dot-grid pointer-events-none absolute inset-0 opacity-60" aria-hidden />
+        <div
+          className="pointer-events-none absolute -left-16 -top-16 h-40 w-40 rounded-full bg-leaf opacity-70 blur-3xl"
+          aria-hidden
         />
+        <div
+          className="pointer-events-none absolute -right-12 top-8 h-32 w-32 rounded-full bg-sticker opacity-60 blur-3xl"
+          aria-hidden
+        />
+
+        <div className="relative">
+          <div className="flex items-center justify-between">
+            <span className="eyebrow">{"// skills community"}</span>
+            <span className="inline-flex -rotate-3 animate-floaty items-center rounded-full bg-sticker px-3 py-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink shadow-soft">
+              {"// beta"}
+            </span>
+          </div>
+          <h1 className="mt-3 font-display text-balance text-[clamp(1.6rem,3vw,2.2rem)] leading-[0.98] tracking-tight">
+            Teach once. Share forever.
+          </h1>
+          <p className="mt-2 max-w-2xl text-pretty text-[14px] leading-relaxed text-muted-foreground">
+            Every policy you train, you can publish. Every policy someone else trains, you
+            can install and run on your own robot.
+          </p>
+        </div>
       </div>
 
+      {/* SEARCH — pill input with custard focus ring */}
+      <div className="relative mt-8">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="search policies — pick, pour, fold…"
+          aria-label="Search policies"
+          className="block w-full rounded-full border border-input bg-background px-6 py-3 pl-12 font-mono text-[14px] text-foreground placeholder:text-muted-foreground transition-shadow focus:outline-none focus:shadow-[0_0_0_3px_#ffe9a8]"
+        />
+        <svg
+          aria-hidden
+          className="pointer-events-none absolute left-5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+        >
+          <circle cx={7} cy={7} r={4.5} />
+          <path d="M10.5 10.5 L14 14" />
+        </svg>
+      </div>
+
+      {/* SOURCE STRIP — pill filters, active = ink-filled */}
+      <div className="mt-5 flex flex-wrap items-center gap-2">
+        {SOURCES.map((s) => (
+          <Pill key={s.key} active={source === s.key} onClick={() => setSource(s.key)}>
+            {s.label}
+          </Pill>
+        ))}
+      </div>
+
+      {/* GRID / STATES */}
       {error ? (
-        <p className="text-sm text-destructive">{error}</p>
+        <div className="mt-10 rounded-[24px] border border-dashed border-border bg-secondary p-10 text-center">
+          <div className="eyebrow">{"// error"}</div>
+          <p className="mt-2 font-display text-[1.8rem] font-normal leading-tight">
+            Couldn't reach the marketplace.
+          </p>
+          <p className="mt-2 text-[14px] text-destructive">{error}</p>
+        </div>
       ) : policies === null ? (
-        <p className="text-sm text-muted-foreground">Loading marketplace…</p>
+        <div className="mt-10 rounded-[24px] border border-dashed border-border bg-secondary p-10 text-center">
+          <div className="eyebrow">{"// loading"}</div>
+          <p className="mt-2 font-display text-[1.8rem] font-normal leading-tight">
+            Fetching skills…
+          </p>
+        </div>
       ) : filtered.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No policies match.</p>
+        <div className="mt-10 rounded-[24px] border border-dashed border-border bg-secondary p-10 text-center">
+          <div className="eyebrow">{"// no match"}</div>
+          <p className="mt-2 font-display text-[1.8rem] font-normal leading-tight">
+            No policies matched. Teach us one?
+          </p>
+          <p className="mt-2 text-[14px] text-muted-foreground">
+            Try a different word, or train and publish one yourself.
+          </p>
+        </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((p) => (
-            <PolicyCard
+        <div key={`${source}-${query}`} className="mt-10 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+          {filtered.map((p, i) => (
+            <div
               key={p.ref}
-              policy={p}
-              state={installs[p.ref] ?? { status: "idle" }}
-              onInstall={() => install(p)}
-            />
+              className="h-full animate-fade-in-up"
+              style={{ animationDelay: `${Math.min(i * 60, 300)}ms` }}
+            >
+              <PolicyCard
+                policy={p}
+                state={installs[p.ref] ?? { status: "idle" }}
+                onInstall={() => install(p)}
+              />
+            </div>
           ))}
         </div>
       )}
 
-      <p className="text-xs text-muted-foreground">
-        Installed policies are cached locally. Running one on the robot is available once
-        robot connectivity ships.
+      <p className="eyebrow mt-10">
+        {"// installed policies are cached locally — running one on the robot ships with robot connectivity"}
       </p>
     </section>
   );

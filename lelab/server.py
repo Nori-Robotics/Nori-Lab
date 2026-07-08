@@ -410,6 +410,9 @@ THE ROBOT API — every motion is OPEN-LOOP TIMED. You give a duration in ms; th
                                  through an obstruction — the push is bounded and it stops + reports
                                  blocked, so do NOT blindly retry a blocked move into the same spot.
                                  (Ramped safely; no timing guess.) Base can't be positioned this way.
+                                 NOTE: shoulder_pan/wrist_roll/gripper hold reliably; shoulder_lift/
+                                 elbow_flex/wrist_flex are IK-coupled and may snap back after the move
+                                 — to orient the wrist/height prefer reach(x/y/pitch).
   robot.grip(side, "open"|"close")   Convenience gripper open/close.
   robot.base(vec, ms)           Mobile base. vec: { linear, angular } in [-1,1].
                                  +linear = forward, +angular = turn left.
@@ -447,9 +450,12 @@ GROUNDING: you may be given the current robot state (joint positions, lift heigh
 STARTING pose. Use it to plan relative moves and to judge direction + magnitude (e.g. "shoulder_pan
 is at +30, so jog it negative to center"). It is proprioceptive only.
 
-VISION: you may also be given a single still photo from the robot's camera. Use it to locate things
-and choose directions ("the cup is on the left, so jog base/arm that way"). It is ONE frame, not a
-live view and not depth — estimate coarsely, move in small steps, and never assume exact distances.
+VISION: you may be given a single still photo from the robot's camera — often a COMPOSITE of several
+camera tiles. Use it to locate things and choose directions. If a "Camera layout" is given, use it to
+know which tile is which view/arm and move the CORRECT arm/side. If NO layout is given, do NOT assume
+which arm or side a tile belongs to — state your assumption in a // comment and prefer small,
+reversible moves. It is one frame, not a live view and not depth — estimate coarsely, never assume
+exact distances.
 
 SAFETY CONTEXT (for your judgement, not things you can bypass): a human supervises with live video and an E-STOP; the daemon clamps joint ranges, latches on stall/over-temp, and safe-stops if the control stream dies. You cannot make the robot unsafe through this API — but you SHOULD still be conservative: gentle rates, short holds, log what you're doing.
 
@@ -473,6 +479,8 @@ class NoriLlmGenerateBody(BaseModel):
     current_code: str | None = None  # lets the user say "make it slower" about existing code
     robot_state: dict | None = None  # 9a: current proprioceptive pose (<motor>.pos, lift mm, base)
     image_b64: str | None = None  # Part 3: JPEG (base64, no data: prefix) from the robot camera
+    camera_layout: str | None = None  # operator's description of which tile = which view/arm
+    retry_note: str | None = None  # appended on a client-side auto-retry (e.g. after a syntax error)
 
 
 def _strip_code_fences(s: str) -> str:
@@ -511,7 +519,14 @@ def _llm_prepare(body: NoriLlmGenerateBody):
             "grippers [0,100], lifts in mm, base as velocities). Treat it as the STARTING pose "
             f"and plan moves relative to it:\n{json.dumps(body.robot_state)}"
         )
+    if body.image_b64:
+        # Tell the model a photo is attached, and (if the operator set it) which tile is which
+        # view/arm — otherwise vision moves the wrong thing on a composite feed.
+        layout = f"\nCamera layout (which tile is which): {body.camera_layout}" if body.camera_layout else ""
+        parts.append("A still photo from the robot's camera is attached (one frame, not depth)." + layout)
     parts.append(f"Request: {body.prompt}")
+    if body.retry_note:
+        parts.append(f"IMPORTANT: {body.retry_note}")
     user = "\n\n".join(parts)
     # Part 3: an optional camera still gives the model spatial context ("go to the cup"). Send it as
     # an image block ahead of the text; without it the request is plain text as before.

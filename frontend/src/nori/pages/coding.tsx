@@ -37,6 +37,13 @@ function stripFences(s: string): string {
   return out;
 }
 
+// Does `src` parse as the body of an async function (how the worker runs it)? Compiling via the
+// AsyncFunction constructor throws SyntaxError on bad code WITHOUT executing it — a pure parse check.
+const AsyncFunctionCtor = Object.getPrototypeOf(async () => {}).constructor as new (...a: string[]) => unknown;
+function isValidScript(src: string): boolean {
+  try { new AsyncFunctionCtor("robot", src); return true; } catch { return false; }
+}
+
 // Blob -> bare base64 (no "data:image/jpeg;base64," prefix) for the LLM image block.
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -69,6 +76,10 @@ const Coding = () => {
   const [generating, setGenerating] = useState(false);
   const [streamBuffer, setStreamBuffer] = useState(""); // live LLM tokens while generating
   const [attachVision, setAttachVision] = useState(false); // Part 3: send a camera still to the model
+  const [cameraLayout, setCameraLayout] = useState(() => {
+    try { return localStorage.getItem("nori_camera_layout") ?? ""; } catch { return ""; }
+  });
+  const [lastFrame, setLastFrame] = useState<string | null>(null); // data URL of the last attached frame
   const sessionRef = useRef<ScriptSession | null>(null);
   const outRef = useRef<HTMLDivElement>(null);
 
@@ -105,48 +116,70 @@ const Coding = () => {
   // LLM codegen: ask the server-side Claude proxy (/nori/llm/generate) for a routine and drop it
   // into the editor. The generated code is fully editable — the operator reviews, then Runs. The
   // API key stays on the server (see docs/llm_codegen_design.md); the browser never sees it.
+  // One streamed request → the finished (fence-stripped) code, live-updating the editor buffer.
+  const runGeneration = async (
+    robotState: Record<string, number>, imageB64: string | undefined, retryNote?: string,
+  ): Promise<string> => {
+    const res = await fetchWithHeaders(`${baseUrl}/nori/llm/generate/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt, current_code: code, robot_state: robotState, image_b64: imageB64,
+        camera_layout: imageB64 ? (cameraLayout.trim() || undefined) : undefined, retry_note: retryNote,
+      }),
+    });
+    if (!res.ok || !res.body) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail?.detail || res.statusText);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let acc = "";
+    setStreamBuffer("");
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      acc += decoder.decode(value, { stream: true });
+      setStreamBuffer(stripFences(acc));
+    }
+    return stripFences(acc);
+  };
+
   const generate = async () => {
     if (!prompt.trim() || generating) return;
     setGenerating(true);
     try {
       // 9a — proprioceptive grounding: hand the model the CURRENT pose so it can plan relative to
       // where the arm actually is ("pan is at +20 → jog negative to center") instead of guessing.
-      // tel.state is the daemon's normalized <motor>.pos + lift mm + base vels; round to cut noise.
       const robotState = Object.fromEntries(
         Object.entries(tel.state ?? {}).map(([k, v]) => [k, Math.round(v * 10) / 10]),
       );
-      // Part 3: optionally attach a camera still so the model can see the scene ("go to the cup").
-      // snapshot() resumes the encoder if paused, grabs one frame, then re-pauses.
+      // Part 3: optionally attach a camera still (snapshot() resumes the encoder if paused, grabs one
+      // frame, re-pauses) + show the operator a thumbnail of what the model actually saw.
       let imageB64: string | undefined;
       if (attachVision && teleop) {
         const blob = await teleop.snapshot();
-        if (blob) { imageB64 = await blobToBase64(blob); append("📷 attached a camera frame"); }
-        else append("⚠ no camera frame (video not arriving) — sending without vision");
+        if (blob) {
+          imageB64 = await blobToBase64(blob);
+          setLastFrame("data:image/jpeg;base64," + imageB64);
+          append("📷 attached a camera frame");
+        } else {
+          setLastFrame(null);
+          append("⚠ no camera frame (video not arriving) — sending without vision");
+        }
       }
-      const res = await fetchWithHeaders(`${baseUrl}/nori/llm/generate/stream`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, current_code: code, robot_state: robotState, image_b64: imageB64 }),
-      });
-      if (!res.ok || !res.body) {
-        const detail = await res.json().catch(() => ({}));
-        throw new Error(detail?.detail || res.statusText);
+      // #3 — validate the result parses as JS; auto-retry ONCE with a firmer hint if the model
+      // slipped in uncommented prose. (Parse-check is client-side — the browser is the JS engine.)
+      let generated = await runGeneration(robotState, imageB64);
+      if (!isValidScript(generated)) {
+        append("⚠ generated code had a syntax error — regenerating once…");
+        generated = await runGeneration(robotState, imageB64,
+          "Your previous output had a JavaScript syntax error (often uncommented prose). Output ONLY valid JS; put any explanation in // comments.");
       }
-      // Stream tokens into a live buffer (the editor shows it while generating), then commit the
-      // finished code to the persisted source. Keeps localStorage out of the per-chunk hot path.
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let acc = "";
-      setStreamBuffer("");
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        acc += decoder.decode(value, { stream: true });
-        setStreamBuffer(stripFences(acc));
-      }
-      const generated = stripFences(acc);
       setScriptSource(generated);
-      append(`✎ generated ${generated.split("\n").length} lines — review, then Run`);
+      append(isValidScript(generated)
+        ? `✎ generated ${generated.split("\n").length} lines — review, then Run`
+        : `⚠ generated ${generated.split("\n").length} lines but it still won't parse — review before Run`);
     } catch (e) {
       append("⚠ generate failed: " + (e instanceof Error ? e.message : String(e)));
     } finally {
@@ -231,18 +264,39 @@ const Coding = () => {
               placeholder="Describe what the robot should do…"
               className="flex-1 resize-none border-[#14131a]/12 bg-[#fffdf7]"
             />
-            <div className="flex items-center justify-between gap-2">
-              <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
-                title="Attach a still from the robot camera so Claude can see the scene">
-                <input type="checkbox" checked={attachVision}
-                  onChange={(e) => setAttachVision(e.target.checked)} />
-                attach camera view
-              </label>
-              <Button size="sm" onClick={generate} disabled={generating || !prompt.trim()}
-                title="Generate a routine with Claude and drop it into the editor"
-                className="rounded-md bg-[#d98b3d] text-foreground hover:bg-[#c97929]">
-                {generating ? "Generating…" : "Generate"}
-              </Button>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                  title="Attach a still from the robot camera so Claude can see the scene">
+                  <input type="checkbox" checked={attachVision}
+                    onChange={(e) => setAttachVision(e.target.checked)} />
+                  attach camera view
+                </label>
+                <Button size="sm" onClick={generate} disabled={generating || !prompt.trim()}
+                  title="Generate a routine with Claude and drop it into the editor"
+                  className="rounded-md bg-[#d98b3d] text-foreground hover:bg-[#c97929]">
+                  {generating ? "Generating…" : "Generate"}
+                </Button>
+              </div>
+              {attachVision && (
+                <div className="flex items-start gap-2">
+                  <input
+                    type="text"
+                    value={cameraLayout}
+                    onChange={(e) => {
+                      setCameraLayout(e.target.value);
+                      try { localStorage.setItem("nori_camera_layout", e.target.value); } catch { /* ignore */ }
+                    }}
+                    placeholder="camera layout — e.g. 'left tile = front scene cam; right tile = right-arm wrist cam looking down'"
+                    title="Tell Claude which camera tile is which view/arm, so vision moves the right thing"
+                    className="flex-1 rounded border border-[#14131a]/20 bg-[#fffdf7] px-2 py-1 text-[11px]"
+                  />
+                  {lastFrame && (
+                    <img src={lastFrame} alt="last frame sent to Claude" title="what Claude saw"
+                      className="h-12 w-auto rounded border border-[#14131a]/20" />
+                  )}
+                </div>
+              )}
             </div>
           </div>
           <div className="flex flex-1 min-h-0 flex-col gap-2 rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">

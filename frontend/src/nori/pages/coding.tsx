@@ -349,7 +349,7 @@ const Coding = () => {
             <div className="flex items-center gap-2">
               {!scriptRunning ? (
                 <Button size="sm" onClick={run} disabled={!connected}
-                  className="rounded-md bg-[#8ab135] text-foreground hover:bg-[#4d8754]">
+                  className="rounded-md bg-[#8ab135] text-foreground hover:bg-[#799c2a]">
                   <Play className="mr-2 h-4 w-4" /> Run
                 </Button>
               ) : (

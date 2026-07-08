@@ -24,15 +24,18 @@ function jointRad(state: Record<string, number>, key: string, spanDeg: number): 
   return (v / 100) * (spanDeg * Math.PI) / 180;
 } 
 
-// Scene geometry (arbitrary units; ~1 unit ≈ the rail travel). Tuned for legibility, not scale.
-const RAIL_TOP_Y = 1.20;
-const RAIL_LEN = 1.0; // vertical distance the carriage sweeps across full travel
+// Scene geometry (arbitrary units). Tuned for legibility, not scale. The travel band is
+// chosen so the carriage starts just under the shoulder plate (y 1.45) and at FULL descent
+// its bottom edge (carriage is 0.08 tall) lands exactly on the base platform top (y ~0.62)
+// instead of sinking into it.
+const RAIL_TOP_Y = 1.34;
+const RAIL_LEN = 0.68; // vertical distance the carriage sweeps across full travel
 // Visual gain on the rail depth fraction. Was 4 to compensate for the Pi UNDER-reporting
 // height ~4x (mm_per_rev mis-scale). Fixed at the source 2026-07-03 (NORI_LIFT_MM_PER_REV
 // 28.455 -> 115.6), so the Pi now reports true mm across the full 0..650 mm travel — the full
 // range already maps to the full sweep. Keep at 1 (true tracking); a gain >1 now just clips
 // the lower travel. Raise only if you deliberately want an exaggerated view.
-const RAIL_VIS_GAIN = 2;
+const RAIL_VIS_GAIN = 1;
 const UPPER_LEN = 0.20;
 const FORE_LEN = 0.14;
 const WRIST_LEN = 0.12;
@@ -73,9 +76,11 @@ function Arm({ state, side, active }: { state: Record<string, number>; side: "le
 
   return (
     <group position={[sign * 0.15, 0, 0]}>
-      {/* Vertical rail (static) + carriage block that slides down it */}
-      <mesh position={[0, RAIL_TOP_Y - RAIL_LEN / 2 + 0.2, 0]}>
-        <boxGeometry args={[0.04, RAIL_LEN , 0.04]} />
+      {/* Vertical rail (static, purely visual) + carriage block that slides down it. The
+          rail keeps its original span (y 0.40..1.40) independent of the carriage travel
+          band above — only the carriage/arm motion range was raised. */}
+      <mesh position={[0, 0.9, 0]}>
+        <boxGeometry args={[0.04, 1.0, 0.04]} />
         <meshStandardMaterial color="#757c86" />
       </mesh>
       <mesh position={[sign*0.015, carriageY, 0]}>

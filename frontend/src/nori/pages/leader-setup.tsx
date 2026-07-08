@@ -236,12 +236,21 @@ function LeaderPane({
 // running).
 const LeaderSetup = ({
   embedded = false,
+  titleExtra,
   headerExtra,
+  headerBelow,
   collapsed = false,
   onToggleCollapse,
 }: {
   embedded?: boolean;
+  // Rendered inline next to the "Leader setup" title (embedded only) — the Remote page
+  // puts the Engage button here. Clicks inside it don't toggle the collapse.
+  titleExtra?: React.ReactNode;
   headerExtra?: React.ReactNode;
+  // Rendered directly under the header row (embedded, expanded only) — the Remote page
+  // slots the base/commands keyboard legend here since base + lift stay on the keyboard
+  // while the leaders drive the arms.
+  headerBelow?: React.ReactNode;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
 }) => {
@@ -461,9 +470,12 @@ const LeaderSetup = ({
             className={`flex min-h-9 items-center justify-between gap-3 ${onToggleCollapse ? "cursor-pointer" : ""}`}
             onClick={onToggleCollapse}
           >
-            {/* The global h1 rule applies the display font — embedded must render the same
-                element as CardTitle (h3, font-sans) to match the Keyboard controls title. */}
-            <h3 className="text-base font-semibold leading-none tracking-tight">Leader setup</h3>
+            <div className="flex items-center gap-3">
+              {/* The global h1 rule applies the display font — embedded must render the same
+                  element as CardTitle (h3, font-sans) to match the Keyboard controls title. */}
+              <h3 className="text-base font-semibold leading-none tracking-tight">Leader setup</h3>
+              {titleExtra && <span onClick={(e) => e.stopPropagation()}>{titleExtra}</span>}
+            </div>
             {onToggleCollapse && (
               <span className="text-sm text-muted-foreground">
                 {collapsed ? "▼ show" : "▲ hide"}
@@ -487,6 +499,7 @@ const LeaderSetup = ({
               </div>
             </div>
           )}
+          {!collapsed && headerBelow}
         </>
       ) : (
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -532,13 +545,7 @@ const LeaderSetup = ({
       )}
 
       <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-3 shadow-sm">
-        <div
-          className={
-            embedded
-              ? "grid gap-3"
-              : "grid gap-3 lg:grid-cols-[minmax(0,1fr)_14rem_auto] lg:items-end"
-          }
-        >
+        <div className={embedded ? "grid gap-3" : "grid gap-3 lg:grid-cols-2 lg:items-end"}>
           <div className="space-y-1.5">
             <Label htmlFor="leader-port" className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#7a7060]">
               shared usb
@@ -562,49 +569,31 @@ const LeaderSetup = ({
               </Button>
             </div>
           </div>
+          {/* Calibration id + save share a line, mirroring the usb + auto pattern above. */}
           <div className="space-y-1.5">
             <Label htmlFor="calibration-id" className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#7a7060]">
               calibration
             </Label>
-            <Input
-              id="calibration-id"
-              value={calibrationId}
-              onChange={(event) => setCalibrationId(event.target.value)}
-              className={FIELD_CLASS}
-            />
-          </div>
-          <div className="flex">
-            <Button
-              variant="outline"
-              onClick={() => run("Save USB port", () => saveSharedPort(sharedPort))}
-              disabled={busy != null || !portReady}
-              className={`h-10 w-full ${OUTLINE_BUTTON_CLASS}`}
-            >
-              <Save className="mr-2 h-4 w-4" />
-              save
-            </Button>
+            <div className="flex gap-2">
+              <Input
+                id="calibration-id"
+                value={calibrationId}
+                onChange={(event) => setCalibrationId(event.target.value)}
+                className={FIELD_CLASS}
+              />
+              <Button
+                variant="outline"
+                onClick={() => run("Save USB port", () => saveSharedPort(sharedPort))}
+                disabled={busy != null || !portReady}
+                className={`h-10 shrink-0 ${OUTLINE_BUTTON_CLASS}`}
+                title="Save the shared USB port for both leader arms"
+              >
+                <Save className="mr-2 h-4 w-4" />
+                save
+              </Button>
+            </div>
           </div>
         </div>
-      </div>
-
-      {/* Embedded lives in a ~400px sidebar: stack the panes (right below left) instead
-          of squeezing two columns — the viewport-based md: breakpoint lies about the
-          actual card width. */}
-      <div className={embedded ? "grid gap-4" : "grid gap-4 xl:grid-cols-2"}>
-        <LeaderPane
-          side="left"
-          frame={liveFrame}
-          manualStatus={manualStatus}
-          autoStatus={autoStatus}
-          completedManualSide={completedManualSide}
-        />
-        <LeaderPane
-          side="right"
-          frame={liveFrame}
-          manualStatus={manualStatus}
-          autoStatus={autoStatus}
-          completedManualSide={completedManualSide}
-        />
       </div>
 
       <Card className="rounded-md border-[#14131a]/10 bg-[#f6f4eb] text-[#14131a] shadow-sm">
@@ -634,13 +623,8 @@ const LeaderSetup = ({
             </p>
           )}
 
-          <div
-            className={
-              embedded
-                ? "grid gap-3"
-                : "grid gap-3 lg:grid-cols-[9rem_13rem_minmax(0,1fr)] lg:items-end"
-            }
-          >
+          {/* Row 1: side + mode side by side. Row 2: all the actions on one line. */}
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#7a7060]">side</Label>
               <Select value={calibrationSide} onValueChange={(value) => setCalibrationSide(value as LeaderSide)} disabled={calibrationBusy}>
@@ -674,33 +658,74 @@ const LeaderSetup = ({
                 ))}
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                onClick={() => {
-                  setCompletedManualSide(null);
-                  if (calibrationMode === "manual") {
-                    void run(
-                      "Start manual calibration",
-                      () => manualStart(baseUrl, fetchWithHeaders, calibrationSide, calibrationId.trim(), sharedPort.trim() || undefined),
-                      () => void refreshManualStatus(),
-                      "Session started — center captured. Sweep every joint through its full range, then press finish."
-                    );
-                    return;
-                  }
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              onClick={() => {
+                setCompletedManualSide(null);
+                if (calibrationMode === "manual") {
                   void run(
-                    "Start auto calibration",
-                    () => autoStart(baseUrl, fetchWithHeaders, calibrationSide, calibrationId.trim(), autoConfirmed, sharedPort.trim() || undefined),
-                    () => void refreshAutoStatus(),
-                    "Auto calibration running — keep clear of the arm."
+                    "Start manual calibration",
+                    () => manualStart(baseUrl, fetchWithHeaders, calibrationSide, calibrationId.trim(), sharedPort.trim() || undefined),
+                    () => void refreshManualStatus(),
+                    "Session started — center captured. Sweep every joint through its full range, then press finish."
                   );
-                }}
-                disabled={busy != null || calibrationBusy || !portReady || (calibrationMode === "auto" && !autoConfirmed)}
-                className="rounded-md bg-[#d98b3d] text-foreground hover:bg-[#c97929]"
-              >
-                {calibrationMode === "manual" ? <Crosshair className="mr-2 h-4 w-4" /> : <Gauge className="mr-2 h-4 w-4" />}
-                start
-              </Button>
-              {calibrationMode === "auto" && (
+                  return;
+                }
+                void run(
+                  "Start auto calibration",
+                  () => autoStart(baseUrl, fetchWithHeaders, calibrationSide, calibrationId.trim(), autoConfirmed, sharedPort.trim() || undefined),
+                  () => void refreshAutoStatus(),
+                  "Auto calibration running — keep clear of the arm."
+                );
+              }}
+              disabled={busy != null || calibrationBusy || !portReady || (calibrationMode === "auto" && !autoConfirmed)}
+              className="rounded-md bg-[#d98b3d] text-foreground hover:bg-[#c97929]"
+            >
+              {calibrationMode === "manual" ? <Crosshair className="mr-2 h-4 w-4" /> : <Gauge className="mr-2 h-4 w-4" />}
+              start
+            </Button>
+            {calibrationMode === "manual" ? (
+              <>
+                <Button
+                  onClick={() =>
+                    run("Finish manual calibration", () => manualFinish(baseUrl, fetchWithHeaders), () => {
+                      setCompletedManualSide(manualActiveSide);
+                      void refreshManualStatus();
+                      void readLiveOnce();
+                    })
+                  }
+                  disabled={busy != null || !manualStatus?.active || !manualReady}
+                  className="rounded-md bg-[#8ab135] text-foreground hover:bg-[#799c2a]"
+                >
+                  <Save className="mr-2 h-4 w-4" />
+                  finish
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    run("Cancel manual calibration", () => manualCancel(baseUrl, fetchWithHeaders), () => {
+                      void refreshManualStatus();
+                    })
+                  }
+                  disabled={busy != null || !manualStatus?.active}
+                  className={OUTLINE_BUTTON_CLASS}
+                >
+                  cancel
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => run("Stop auto calibration", () => autoStop(baseUrl, fetchWithHeaders), () => void refreshAutoStatus())}
+                  disabled={busy != null || !autoStatus?.active}
+                  className={OUTLINE_BUTTON_CLASS}
+                >
+                  <StopCircle className="mr-2 h-4 w-4" />
+                  stop
+                </Button>
                 <label className="flex min-h-10 items-center gap-2 rounded-md border border-[#14131a]/10 bg-[#f6f4eb] px-3 text-sm text-[#5c564b]">
                   <Checkbox
                     checked={autoConfirmed}
@@ -709,56 +734,31 @@ const LeaderSetup = ({
                   />
                   <span>arms clear</span>
                 </label>
-              )}
-            </div>
+              </>
+            )}
           </div>
-
-          {calibrationMode === "manual" && (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                onClick={() =>
-                  run("Finish manual calibration", () => manualFinish(baseUrl, fetchWithHeaders), () => {
-                    setCompletedManualSide(manualActiveSide);
-                    void refreshManualStatus();
-                    void readLiveOnce();
-                  })
-                }
-                disabled={busy != null || !manualStatus?.active || !manualReady}
-                className="rounded-md bg-[#5f9f66] text-foreground hover:bg-[#4d8754]"
-              >
-                <Save className="mr-2 h-4 w-4" />
-                finish
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() =>
-                  run("Cancel manual calibration", () => manualCancel(baseUrl, fetchWithHeaders), () => {
-                    void refreshManualStatus();
-                  })
-                }
-                disabled={busy != null || !manualStatus?.active}
-                className={OUTLINE_BUTTON_CLASS}
-              >
-                cancel
-              </Button>
-            </div>
-          )}
-
-          {calibrationMode === "auto" && (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                onClick={() => run("Stop auto calibration", () => autoStop(baseUrl, fetchWithHeaders), () => void refreshAutoStatus())}
-                disabled={busy != null || !autoStatus?.active}
-                className={OUTLINE_BUTTON_CLASS}
-              >
-                <StopCircle className="mr-2 h-4 w-4" />
-                stop
-              </Button>
-            </div>
-          )}
         </CardContent>
       </Card>
+
+      {/* Embedded lives in a ~400px sidebar: stack the panes (right below left) instead
+          of squeezing two columns — the viewport-based md: breakpoint lies about the
+          actual card width. */}
+      <div className={embedded ? "grid gap-4" : "grid gap-4 xl:grid-cols-2"}>
+        <LeaderPane
+          side="left"
+          frame={liveFrame}
+          manualStatus={manualStatus}
+          autoStatus={autoStatus}
+          completedManualSide={completedManualSide}
+        />
+        <LeaderPane
+          side="right"
+          frame={liveFrame}
+          manualStatus={manualStatus}
+          autoStatus={autoStatus}
+          completedManualSide={completedManualSide}
+        />
+      </div>
       </>
       )}
     </section>

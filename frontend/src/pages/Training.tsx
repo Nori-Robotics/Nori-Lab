@@ -277,7 +277,7 @@ const ConfigurationMode: React.FC = () => {
                 onClick={handleStart}
                 disabled={startDisabled}
                 size="lg"
-                className="bg-green-500 hover:bg-green-600 text-white font-semibold px-6"
+                className="bg-[#8ab135] hover:bg-[#799c2a] text-white font-semibold px-6"
               >
                 {isStarting ? (
                   <>
@@ -575,7 +575,7 @@ const MonitoringMode: React.FC<{ jobId: string }> = ({ jobId }) => {
               <Button
                 onClick={() => setInferenceModalOpen(true)}
                 disabled={selectedStep == null}
-                className="bg-green-500 hover:bg-green-600 text-white"
+                className="bg-[#8ab135] hover:bg-[#799c2a] text-white"
               >
                 <Play className="w-4 h-4 mr-2" />
                 Run on robot

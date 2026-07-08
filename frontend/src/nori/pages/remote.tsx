@@ -18,7 +18,7 @@ import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
 import { type ArmSide } from "@nori/sdk";
 import { VrSession } from "@nori/sdk/vr";
-import { TelemetryPanel, GripForce, ControlLegend, CallBar, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
+import { TelemetryPanel, GripForce, ControlLegend, BaseCommandLegend, CallBar, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import LeaderSetup from "@/nori/pages/leader-setup";
@@ -579,36 +579,42 @@ const Remote = () => {
               embedded
               collapsed={!showLeaderCard}
               onToggleCollapse={() => setShowLeaderCard((v) => !v)}
-              headerExtra={
-                <div className="flex flex-wrap items-center gap-2">
-                  {/* ENGAGE gate: the driver auto-starts in standby (monitor-only); the robot
-                      only follows the leaders after this explicit engage. Always visible in
-                      leader mode (disabled with a reason) so it never seems to vanish —
-                      locked while disconnected, no joints readable, or calibration is running. */}
-                  <Button
-                    size="sm"
-                    onClick={() => leaderRef.current?.setEngaged(!leaderEngaged)}
-                    disabled={!leaderActive || (!leaderEngaged && (leaderCount === 0 || leaderCalibrating))}
-                    className={
-                      leaderEngaged
-                        ? "rounded-md bg-[#d24a3d] text-foreground hover:bg-[#b93a2e]"
-                        : "rounded-md bg-[#5f9f66] text-foreground hover:bg-[#4d8754]"
-                    }
-                    title={
-                      !leaderActive
-                        ? "Connect to the robot first — engage sends leader poses to the arms"
-                        : leaderEngaged
-                          ? "Robot arms are following the leaders — disengage before letting go of them"
-                          : leaderCalibrating
-                            ? "Calibration in progress — engagement is locked until it finishes"
-                            : leaderCount === 0
-                              ? "Waiting for readable leader joints"
-                              : "Hold the leaders near the robot's current pose, then engage; the arms will move to match"
-                    }
-                  >
-                    {leaderEngaged ? "Disengage" : "Engage"}
-                  </Button>
-                  <ArmPills value={settings.arm} onChange={(arm) => set("arm", arm)} />
+              titleExtra={
+                /* ENGAGE gate lives next to the title: the driver auto-starts in standby
+                   (monitor-only); the robot only follows the leaders after this explicit
+                   engage. Always visible in leader mode (disabled with a reason) so it never
+                   seems to vanish — locked while disconnected, no joints readable, or
+                   calibration is running. */
+                <Button
+                  size="sm"
+                  onClick={() => leaderRef.current?.setEngaged(!leaderEngaged)}
+                  disabled={!leaderActive || (!leaderEngaged && (leaderCount === 0 || leaderCalibrating))}
+                  className={
+                    leaderEngaged
+                      ? "rounded-md bg-[#d24a3d] text-foreground hover:bg-[#b93a2e]"
+                      : "rounded-md bg-[#8ab135] text-foreground hover:bg-[#799c2a]"
+                  }
+                  title={
+                    !leaderActive
+                      ? "Connect to the robot first — engage sends leader poses to the arms"
+                      : leaderEngaged
+                        ? "Robot arms are following the leaders — disengage before letting go of them"
+                        : leaderCalibrating
+                          ? "Calibration in progress — engagement is locked until it finishes"
+                          : leaderCount === 0
+                            ? "Waiting for readable leader joints"
+                            : "Hold the leaders near the robot's current pose, then engage; the arms will move to match"
+                  }
+                >
+                  {leaderEngaged ? "Disengage" : "Engage"}
+                </Button>
+              }
+              headerExtra={<ArmPills value={settings.arm} onChange={(arm) => set("arm", arm)} />}
+              headerBelow={
+                /* Base + lift + commands stay on the keyboard while the leaders drive the
+                   arms — keep those bindings visible right where leader driving happens. */
+                <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-3">
+                  <BaseCommandLegend hint="Base + lift stay on the keyboard while the leaders drive the arms. Click the video first so keys register." />
                 </div>
               }
             />

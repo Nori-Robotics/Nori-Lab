@@ -154,9 +154,12 @@ export function GripForce({ currents }: { currents: Record<string, number> }) {
 //
 // RAIL_TRAVEL_MM = full downward travel = the gauge's full scale. Per robot variant:
 // 950 mm (tall) / 650 mm (short) — the Pi's NORI_LIFT_TRAVEL_MM. Not carried in telemetry
-// yet, so it's a tunable constant here; default to the short variant. Bump to 950 for a tall
-// unit. (When the Pi starts publishing travel_mm, consume that instead of this constant.)
-const RAIL_TRAVEL_MM = 650;
+// yet, so it's a tunable constant here; default to the TALL variant since most of the fleet
+// is 950. On a short 650 unit the gauge/3D just tops out at ~68% of the bar (mm text stays
+// exact) — the safe direction, unlike 650-on-a-950 which pins the visual at "bottom" with
+// 300 mm of real travel left and makes motion read ~1.5x too fast. (When the Pi starts
+// publishing travel_mm, consume that instead of this constant.)
+const RAIL_TRAVEL_MM = 950;
 
 // Shared reading so the C6 3D scene and this gauge agree. `depthMm` = distance below the top
 // (>=0), `frac` = fraction of full travel descended (0 = at top/home, 1 = at bottom).
@@ -369,6 +372,21 @@ export function ControlLegend({ mode }: { mode: ControlMode }) {
           </div>
         ))}
       </div>
+      <BaseCommandLegend />
+      <p className="text-muted-foreground">
+        Click the video first so the page has keyboard focus. Keys are ignored while typing in a field.
+      </p>
+    </div>
+  );
+}
+
+// Base + lift + command keybinds only — shared between the keyboard legend above and the
+// Leader card (where the arms follow the leader hardware but base/lift/commands stay on
+// the keyboard). These bindings don't vary with the arm control mode.
+export function BaseCommandLegend({ hint }: { hint?: string }) {
+  const legend = keybindLegend("cylindrical");
+  return (
+    <div className="space-y-3 text-sm">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
         <span className="w-full font-medium">Base</span>
         {legend.base.map((r) => (
@@ -390,9 +408,7 @@ export function ControlLegend({ mode }: { mode: ControlMode }) {
           </div>
         ))}
       </div>
-      <p className="text-muted-foreground">
-        Click the video first so the page has keyboard focus. Keys are ignored while typing in a field.
-      </p>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }

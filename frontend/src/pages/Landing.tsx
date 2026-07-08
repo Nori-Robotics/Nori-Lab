@@ -272,7 +272,7 @@ const Landing = () => {
               </h3>
               <Button
                 onClick={handleTrainingClick}
-                className="w-full bg-green-500 hover:bg-green-600 text-white"
+                className="w-full bg-[#8ab135] hover:bg-[#799c2a] text-white"
               >
                 Training
               </Button>

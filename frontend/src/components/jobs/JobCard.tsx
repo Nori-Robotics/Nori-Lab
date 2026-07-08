@@ -206,7 +206,7 @@ const JobCard: React.FC<Props> = ({ job, onStop, onDelete, onPlay }) => {
             <Button
               size="icon"
               onClick={handlePlay}
-              className="h-8 w-8 bg-green-500 hover:bg-green-600 text-white"
+              className="h-8 w-8 bg-[#8ab135] hover:bg-[#799c2a] text-white"
               aria-label="Run inference with this checkpoint"
             >
               <Play className="w-4 h-4" />

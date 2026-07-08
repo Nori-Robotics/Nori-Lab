@@ -437,7 +437,7 @@ const InferenceModal: React.FC<Props> = ({
             <Button
               onClick={handleStart}
               disabled={!canStart}
-              className="w-full sm:w-auto bg-green-500 hover:bg-green-600 text-white px-10 py-6 text-lg disabled:opacity-40 disabled:cursor-not-allowed"
+              className="w-full sm:w-auto bg-[#8ab135] hover:bg-[#799c2a] text-white px-10 py-6 text-lg disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Play className="w-5 h-5 mr-2" />
               {submitting ? "Starting…" : "Start Inference"}

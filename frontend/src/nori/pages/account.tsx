@@ -2,12 +2,15 @@
 // Renders the provisioned customer profile from NoriContext (provisioned on sign-in via
 // POST /customers/me/provision). Shows billing tier, compute allowance, and pairing state.
 
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import Panel from "@/nori/components/Panel";
 import { useNori } from "@/nori/NoriContext";
+import { useApi } from "@/contexts/ApiContext";
 import { signOut } from "@/nori/auth/session";
 import ConsentsSection from "@/nori/components/ConsentsSection";
+import { listRobots, type PairedRobot } from "@/nori/api/client";
 
 function fmtSeconds(s: number): string {
   if (s <= 0) return "0m";
@@ -24,8 +27,28 @@ const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
 );
 
 const Account = () => {
-  const { session, provisioning, customer, customerError } = useNori();
+  const { session, provisioning, customer, customerError, activeRobotSerial } = useNori();
+  const { baseUrl, fetchWithHeaders } = useApi();
   const navigate = useNavigate();
+
+  // Multi-robot: the profile's robot_serial_number only carries the ACTIVE robot, so ask
+  // GET /customers/me/robots for the full list (same source as the Pairing page). Falls
+  // back to the profile-derived single robot if the call fails.
+  const [robots, setRobots] = useState<PairedRobot[] | null>(null);
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    listRobots(baseUrl, fetchWithHeaders)
+      .then((list) => {
+        if (!cancelled) setRobots(list);
+      })
+      .catch(() => {
+        if (!cancelled) setRobots(null); // profile fallback below
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session, baseUrl, fetchWithHeaders]);
 
   if (!session) {
     return (
@@ -45,6 +68,14 @@ const Account = () => {
   }
 
   if (!customer) return null;
+
+  // Robots to render: the multi-robot list when it loaded, else the single active robot
+  // from the profile (old behavior) so the panel still works if the list call fails.
+  const paired: PairedRobot[] =
+    robots ??
+    (customer.is_paired && customer.robot_serial_number
+      ? [{ robot_serial_number: customer.robot_serial_number, is_active: true }]
+      : []);
 
   const handleSignOut = async () => {
     await signOut();
@@ -72,9 +103,34 @@ const Account = () => {
         <Row label="Remaining" value={fmtSeconds(customer.remaining_seconds)} />
       </Panel>
 
-      <Panel eyebrow="account" title="Robot">
-        {customer.is_paired ? (
-          <Row label="Paired serial" value={customer.robot_serial_number} />
+      <Panel eyebrow="account" title={paired.length > 1 ? "Robots" : "Robot"}>
+        {paired.length > 0 ? (
+          <div className="divide-y divide-[#14131a]/10">
+            {paired.map((r) => {
+              const s = r.robot_serial_number;
+              const active = activeRobotSerial ? s === activeRobotSerial : r.is_active;
+              return (
+                <div key={s} className="flex items-center justify-between gap-4 py-1.5 text-sm">
+                  <span className="min-w-0 truncate font-mono text-[#14131a]">
+                    {s}
+                    {r.nickname ? (
+                      <span className="ml-2 font-sans text-xs text-[#5c564b]">{r.nickname}</span>
+                    ) : null}
+                  </span>
+                  {active && (
+                    <span className="shrink-0 rounded bg-[#8ab135]/25 px-2 py-0.5 text-xs font-medium text-[#4d6a1e]">
+                      Connected
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+            <div className="flex justify-end pt-2">
+              <Button size="sm" variant="outline" onClick={() => navigate("/nori/pairing")}>
+                Manage robots
+              </Button>
+            </div>
+          </div>
         ) : (
           <div className="flex items-center justify-between gap-4">
             <span className="text-sm text-[#5c564b]">No robot paired yet</span>

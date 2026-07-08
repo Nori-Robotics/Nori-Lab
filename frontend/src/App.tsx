@@ -23,6 +23,7 @@ import { TeleopSessionProvider } from "@/nori/TeleopSessionContext";
 import NoriLayout from "@/nori/components/NoriLayout";
 import SignIn from "@/nori/pages/sign-in";
 import Account from "@/nori/pages/account";
+import NoriHome from "@/nori/pages/home";
 import Pairing from "@/nori/pages/pairing";
 import Marketplace from "@/nori/pages/marketplace";
 import TrainingHistory from "@/nori/pages/training-history";
@@ -74,7 +75,7 @@ function App() {
                             </NoriProvider>
                           }
                         >
-                          <Route index element={<Account />} />
+                          <Route index element={<NoriHome />} />
                           <Route path="account" element={<Account />} />
                           <Route path="coding" element={<NoriCoding />} />
                           <Route path="training" element={<NoriTraining />} />

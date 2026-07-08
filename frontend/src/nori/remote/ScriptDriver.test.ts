@@ -196,51 +196,74 @@ describe("stop()", () => {
   });
 });
 
-describe("moveTo (absolute, client-side slew + arrival)", () => {
-  it("ramps toward the target, then reports 'done' when telemetry shows arrival", async () => {
+// Advance `ms` in 100ms steps while simulating a perfectly-following arm: each step, set telemetry
+// to the last commanded action (actual = commanded). Lets moveTo's closed-loop ramp + follow-clamp
+// progress to the goal.
+async function advanceFollowing(driver: ScriptDriver, actions: Record<string, number>[], ms: number) {
+  for (let t = 0; t < ms; t += 100) {
+    await vi.advanceTimersByTimeAsync(100);
+    const last = actions.at(-1);
+    if (last) driver.setTelemetry(telWithState(last));
+  }
+}
+
+describe("moveTo (absolute, follow-error clamp + arrival)", () => {
+  it("ramps to the goal and reports 'done' as the arm follows", async () => {
     const { driver, actions } = setup();
     driver.setTelemetry(telWithState({ "right_arm_shoulder_pan.pos": 0 }));
     const p = driver.exec("moveTo", ["right", { shoulder_pan: 30 }, { slew: 60 }]);
     await vi.advanceTimersByTimeAsync(1);
-    // First frame STEPS toward the goal (slew 60 u/s * 40ms = 2.4), not a snap to 30.
-    expect(actions.at(-1)!["right_arm_shoulder_pan.pos"]).toBeCloseTo(2.4, 1);
-    await vi.advanceTimersByTimeAsync(2000); // finish the ramp
-    expect(actions.at(-1)!["right_arm_shoulder_pan.pos"]).toBe(30); // ramp reached goal
-    // simulate the arm physically arriving; confirm phase then resolves "done"
-    driver.setTelemetry(telWithState({ "right_arm_shoulder_pan.pos": 30 }));
-    await vi.advanceTimersByTimeAsync(100);
+    expect(actions.at(-1)!["right_arm_shoulder_pan.pos"]).toBeCloseTo(2.4, 1); // steps, not a snap
+    await advanceFollowing(driver, actions, 2000);
     await expect(p).resolves.toBe("done");
+    expect(actions.at(-1)!["right_arm_shoulder_pan.pos"]).toBe(30);
   });
 
-  it("reports 'timeout' if the arm never arrives", async () => {
-    const { driver } = setup();
-    driver.setTelemetry(telWithState({ "right_arm_shoulder_pan.pos": 0 })); // stays at 0
-    const p = driver.exec("moveTo", ["right", { shoulder_pan: 30 }, {}]);
-    await vi.advanceTimersByTimeAsync(6000); // ramp + full arrival timeout, no arrival
-    await expect(p).resolves.toBe("timeout");
+  it("BOUNDS the push and freezes at the obstruction (follow-error clamp + freeze-on-blocked)", async () => {
+    const { driver, actions } = setup();
+    // Arm stuck at 5 (never moves) AND drawing stall current -> obstruction.
+    driver.setTelemetry({
+      state: { "right_arm_shoulder_pan.pos": 5 },
+      currents: { right_arm_shoulder_pan: 120 },
+    } as unknown as TelemetryView);
+    const p = driver.exec("moveTo", ["right", { shoulder_pan: 90 }, { slew: 120 }]);
+    await vi.advanceTimersByTimeAsync(1000);
+    const result = await p;
+    // The commanded target NEVER led the stuck actual (5) by more than FOLLOW_MARGIN (10).
+    const maxCmd = Math.max(...actions.map((a) => a["right_arm_shoulder_pan.pos"] ?? -Infinity));
+    expect(maxCmd).toBeLessThanOrEqual(5 + 10 + 0.01);
+    expect(result).toBe("blocked");
+    expect(actions.at(-1)!["right_arm_shoulder_pan.pos"]).toBe(5); // froze at the actual position
   });
 
-  it("reports 'blocked' when the daemon latches (safety)", async () => {
-    const { driver } = setup();
+  it("reports 'blocked' + freezes on a safety latch", async () => {
+    const { driver, actions } = setup();
     driver.setTelemetry(telWithState({ "right_arm_shoulder_pan.pos": 0 }));
     const p = driver.exec("moveTo", ["right", { shoulder_pan: 30 }, {}]);
     await vi.advanceTimersByTimeAsync(200);
     driver.setTelemetry({ state: { "right_arm_shoulder_pan.pos": 5 }, safety: "latched" } as unknown as TelemetryView);
     await vi.advanceTimersByTimeAsync(100);
     await expect(p).resolves.toBe("blocked");
+    expect(actions.at(-1)!["right_arm_shoulder_pan.pos"]).toBe(5); // frozen at actual
   });
 
-  it("clamps targets to the joint range", async () => {
+  it("reports 'timeout' + freezes if the arm never arrives (no stall current)", async () => {
+    const { driver, actions } = setup();
+    driver.setTelemetry(telWithState({ "right_arm_shoulder_pan.pos": 0 })); // frozen, no currents
+    const p = driver.exec("moveTo", ["right", { shoulder_pan: 30 }, {}]);
+    await vi.advanceTimersByTimeAsync(8000);
+    await expect(p).resolves.toBe("timeout");
+    expect(actions.at(-1)!["right_arm_shoulder_pan.pos"]).toBe(0); // frozen at actual
+  });
+
+  it("clamps the goal to the joint range", async () => {
     const { driver, actions } = setup();
     driver.setTelemetry(telWithState({ "right_arm_shoulder_pan.pos": 0, "right_arm_gripper.pos": 50 }));
-    const p = driver.exec("moveTo", ["right", { shoulder_pan: 999, gripper: -20 }, { slew: 999 }]);
-    // slew is capped to MAX_MOVE_SLEW (120) -> 4.8/tick; 0->100 takes ~840ms. Advance past it.
-    await vi.advanceTimersByTimeAsync(1200);
+    const p = driver.exec("moveTo", ["right", { shoulder_pan: 999, gripper: -20 }, { slew: 120 }]);
+    await advanceFollowing(driver, actions, 2500);
+    await p;
     expect(actions.at(-1)!["right_arm_shoulder_pan.pos"]).toBe(100); // clamped to [-100,100]
     expect(actions.at(-1)!["right_arm_gripper.pos"]).toBe(0); // gripper clamped to [0,100]
-    driver.setTelemetry(telWithState({ "right_arm_shoulder_pan.pos": 100, "right_arm_gripper.pos": 0 }));
-    await vi.advanceTimersByTimeAsync(100);
-    await expect(p).resolves.toBe("done");
   });
 
   it("rejects an unknown joint", async () => {

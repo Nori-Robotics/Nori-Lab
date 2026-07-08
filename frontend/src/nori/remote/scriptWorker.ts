@@ -16,34 +16,15 @@
 //   main -> worker : { kind:"result", id, result } | { kind:"error", id, message }
 
 /// <reference lib="webworker" />
+import { installPrimitives } from "./primitives";
+import { neuterGlobals } from "./sandbox";
+
 declare const self: DedicatedWorkerGlobalScope;
 
 // ---- containment: neuter network/module escape hatches before any user code runs ------------
 // The real guarantee is (1) above; this just removes the obvious footguns so a script can't even
-// try to fetch/open a socket. Best-effort — redefine to a thrower, fall back to delete.
-function block(name: string): void {
-  const thrower = () => {
-    throw new Error(`${name} is disabled in the script sandbox`);
-  };
-  try {
-    Object.defineProperty(self, name, { value: thrower, configurable: true, writable: false });
-  } catch {
-    try {
-      delete (self as unknown as Record<string, unknown>)[name];
-    } catch {
-      /* non-configurable; the no-datachannel property still holds */
-    }
-  }
-}
-for (const name of ["fetch", "XMLHttpRequest", "WebSocket", "importScripts", "EventSource"]) {
-  block(name);
-}
-// WebAssembly is an object, not callable; drop the reference so `WebAssembly.instantiate` throws.
-try {
-  Object.defineProperty(self, "WebAssembly", { value: undefined, configurable: true });
-} catch {
-  /* ignore */
-}
+// try to fetch/open a socket. The logic lives in sandbox.ts so it can be unit-tested (sandbox.test.ts).
+neuterGlobals(self as unknown as Record<string, unknown>);
 
 // ---- the op bridge: each robot.* call round-trips to the main thread --------------------------
 let nextId = 1;
@@ -81,6 +62,9 @@ const robot = {
     self.postMessage({ kind: "log", line: parts.map(String).join(" ") });
   },
 };
+
+// D2: add the composed primitive library (robot.home / stow / gripSequence / wave) onto `robot`.
+installPrimitives(robot);
 
 // Capture the AsyncFunction constructor BEFORE user code so we can build the runner even if the
 // script tampers with globals. `robot` is the only injected name; everything else is whatever the

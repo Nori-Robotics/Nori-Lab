@@ -50,8 +50,17 @@ const MOVE_TICK_MS = 40; // action-frame cadence (the daemon P-controls between 
 // (daemon-emitted action_status) is Phase E proper; see docs/phase_e_action_completion.md.
 const POS_TOL = 2.0; // normalized units
 const ARRIVAL_TIMEOUT_MS = 3000;
-const STALL_CURRENT = 90; // matches the daemon's NORI_STALL_CURRENT default (raw Present_Current)
-const STALL_FRAMES = 8; // consecutive high-current, not-arrived polls before calling it blocked
+// Client-side, moveTo-ONLY (independent of the daemon's NORI_STALL_CURRENT). Set a touch below the
+// daemon's 90 so moveTo reports "blocked" a bit before the daemon latches — hardware-tuned 2026-07-07
+// (a gentle hand-block reads ~80, and 5 frames @40ms ≈ 200ms is responsive without false trips).
+const STALL_CURRENT = 80; // raw Present_Current
+const STALL_FRAMES = 5; // consecutive high-current, not-arrived polls before calling it blocked
+// Follow-error clamp (safety): the commanded target may never lead the ACTUAL telemetry position by
+// more than this. On a free move the arm keeps up (no effect); on an obstruction the target can't
+// outrun the arm, so the daemon's P-control error — and thus the push force — is BOUNDED to this
+// margin instead of escalating toward a far goal. ~10 units is comfortably above the natural
+// following lag at these slews, so it doesn't throttle legitimate moves.
+const FOLLOW_MARGIN = 10;
 
 export interface ScriptDriverOptions {
   teleop: RemoteTeleop;
@@ -260,20 +269,25 @@ export class ScriptDriver {
     return this.sleep(ms); // heartbeat already holds zero; just idle
   }
 
-  // Move arm joints to ABSOLUTE normalized targets, hold them, and REPORT ARRIVAL. Because the
-  // daemon's `action` path has no slew guard, we ramp the target from the current telemetry pose
-  // toward the goal at `slew` units/s (one action frame per MOVE_TICK_MS); the jog heartbeat keeps
-  // running ({}) — a zero-jog doesn't cancel a held target. On stop() the arm holds where the ramp
-  // reached (no lurch). Then we watch telemetry until the ACTUAL pose arrives (done), a latch/stall
-  // shows (blocked), or ARRIVAL_TIMEOUT_MS elapses (timeout). Returns that terminal state so scripts
-  // can branch. This is 9c-lite (client-side); the authoritative version is Phase E (action_status).
+  // Move arm joints to ABSOLUTE normalized targets, hold them, and REPORT ARRIVAL — while never
+  // pushing harder than the FOLLOW_MARGIN. The daemon's `action` path has no slew or force guard:
+  // it P-controls toward whatever target it holds, so a target that outruns an obstructed joint
+  // makes the push escalate. To bound that, each tick we (1) advance the commanded target toward the
+  // goal at `slew` u/s, then (2) CLAMP it to within FOLLOW_MARGIN of the ACTUAL telemetry position —
+  // so on an obstruction the target can't lead the arm, and the push force stays bounded. The jog
+  // heartbeat keeps running ({}); a zero-jog doesn't cancel the held target. Terminal states:
+  //   done    — every joint's ACTUAL pos reached its goal (closed-loop).
+  //   blocked — daemon latch (estop/thermal) or a target motor draws stall current not arriving.
+  //   timeout — didn't arrive within the ramp budget + slack.
+  // On ANY non-done exit (blocked/timeout/stop) we FREEZE: re-seat the target at the current actual
+  // position, so the arm STOPS leaning on an obstruction instead of holding the unreachable goal.
+  // (9c-lite, client-side; the authoritative version is Phase E / action_status.)
   private async moveTo(args: unknown[]): Promise<string> {
     const [side, targets, opts] =
       args as [ArmSide, Record<string, number>, { slew?: number; timeoutMs?: number } | undefined];
     if (!this.lastTelemetry) throw new Error("moveTo: no telemetry yet (is the session connected?)");
     const slew = Math.min(MAX_MOVE_SLEW, Math.max(1, opts?.slew ?? DEFAULT_MOVE_SLEW));
-    const timeoutMs = opts?.timeoutMs ?? ARRIVAL_TIMEOUT_MS;
-    const state = this.lastTelemetry.state ?? {};
+    const state0 = this.lastTelemetry.state ?? {};
     const plan = Object.entries(targets).map(([joint, to]) => {
       if (!JOINT_DOFS.has(joint)) {
         throw new Error(`moveTo: unknown joint "${joint}" (allowed: ${[...JOINT_DOFS].join(", ")})`);
@@ -281,58 +295,62 @@ export class ScriptDriver {
       const [lo, hi] = joint === "gripper" ? [0, 100] : [-100, 100];
       const posKey = `${side}_arm_${joint}.pos`;
       const curKey = `${side}_arm_${joint}`; // currents are keyed by bare motor name
-      // Start the ramp from the ACTUAL current position so the first frame doesn't jump.
-      const cur = Number.isFinite(state[posKey]) ? state[posKey] : (Number.isFinite(to) ? to : 0);
-      const goal = Number.isFinite(to) ? Math.max(lo, Math.min(hi, to)) : cur;
-      return { posKey, curKey, goal, cur };
+      const start = Number.isFinite(state0[posKey]) ? state0[posKey] : (Number.isFinite(to) ? to : 0);
+      const goal = Number.isFinite(to) ? Math.max(lo, Math.min(hi, to)) : start;
+      return { posKey, curKey, goal, cmd: start }; // cmd = the commanded (ramping) target
     });
 
-    // Phase 1 — ramp the target to the goal.
+    // Deadline = expected ramp time (farthest joint) + arrival slack, so a legit long move isn't cut
+    // short but an obstructed one (which never arrives) still terminates.
+    const maxDist = Math.max(...plan.map((p) => Math.abs(p.goal - p.cmd)), 0);
+    const deadline = (maxDist / slew) * 1000 + (opts?.timeoutMs ?? ARRIVAL_TIMEOUT_MS);
     const maxStep = slew * (MOVE_TICK_MS / 1000);
-    for (;;) {
-      if (this.stopped) return "stopped";
-      if (this.motionLatched()) return "blocked";
-      let ramped = true;
-      const action: Record<string, number> = {};
-      for (const p of plan) {
-        const remaining = p.goal - p.cur;
-        if (Math.abs(remaining) > 0.5) {
-          p.cur += Math.sign(remaining) * Math.min(maxStep, Math.abs(remaining));
-          ramped = false;
-        } else {
-          p.cur = p.goal;
-        }
-        action[p.posKey] = Math.round(p.cur * 100) / 100;
-      }
-      this.teleop.sendAction(action);
-      if (ramped) break;
-      try { await this.sleep(MOVE_TICK_MS); } catch { return "stopped"; }
-    }
 
-    // Phase 2 — confirm arrival from telemetry (9c-lite).
     let waited = 0;
     let stall = 0;
     for (;;) {
-      if (this.stopped) return "stopped";
-      if (this.motionLatched()) return "blocked";
-      if (this.arrived(plan)) return "done";
+      if (this.stopped) { this.freezeAt(plan); return "stopped"; }
+      if (this.motionLatched()) { this.freezeAt(plan); return "blocked"; }
+      const state = this.lastTelemetry?.state ?? {};
+      let arrived = true;
+      const action: Record<string, number> = {};
+      for (const p of plan) {
+        const actual = Number.isFinite(state[p.posKey]) ? state[p.posKey] : p.cmd;
+        // (1) advance the commanded target toward the goal…
+        const remaining = p.goal - p.cmd;
+        if (Math.abs(remaining) > 0.5) p.cmd += Math.sign(remaining) * Math.min(maxStep, Math.abs(remaining));
+        else p.cmd = p.goal;
+        // (2) …then clamp it to stay within FOLLOW_MARGIN of the ACTUAL position (bounded push).
+        p.cmd = Math.max(actual - FOLLOW_MARGIN, Math.min(actual + FOLLOW_MARGIN, p.cmd));
+        action[p.posKey] = Math.round(p.cmd * 100) / 100;
+        if (!(Number.isFinite(actual) && Math.abs(actual - p.goal) <= POS_TOL)) arrived = false;
+      }
+      this.teleop.sendAction(action);
+      if (arrived) return "done";
       stall = this.drawingStallCurrent(plan) ? stall + 1 : 0;
-      if (stall >= STALL_FRAMES) return "blocked";
-      if (waited >= timeoutMs) return "timeout";
-      try { await this.sleep(MOVE_TICK_MS); } catch { return "stopped"; }
+      if (stall >= STALL_FRAMES) { this.freezeAt(plan); return "blocked"; }
+      if (waited >= deadline) { this.freezeAt(plan); return "timeout"; }
+      try { await this.sleep(MOVE_TICK_MS); } catch { this.freezeAt(plan); return "stopped"; }
       waited += MOVE_TICK_MS;
     }
+  }
+
+  // Re-seat each joint's target at its CURRENT actual position, so the daemon's P-control error goes
+  // to ~0 and the arm stops pushing — instead of holding an unreachable goal and leaning on an
+  // obstruction indefinitely. Called on every non-done moveTo exit.
+  private freezeAt(plan: { posKey: string; cmd: number }[]): void {
+    const state = this.lastTelemetry?.state ?? {};
+    const action: Record<string, number> = {};
+    for (const p of plan) {
+      const actual = Number.isFinite(state[p.posKey]) ? state[p.posKey] : p.cmd;
+      action[p.posKey] = Math.round(actual * 100) / 100;
+    }
+    this.teleop.sendAction(action);
   }
 
   // A hard motion latch (E-STOP or thermal hold) — the daemon reports it in telemetry `safety`.
   private motionLatched(): boolean {
     return this.lastTelemetry?.safety === "latched";
-  }
-
-  // Every planned joint's ACTUAL position is within tolerance of its goal.
-  private arrived(plan: { posKey: string; goal: number }[]): boolean {
-    const state = this.lastTelemetry?.state ?? {};
-    return plan.every((p) => Number.isFinite(state[p.posKey]) && Math.abs(state[p.posKey] - p.goal) <= POS_TOL);
   }
 
   // A planned joint is drawing stall-level current (proxy for "obstructed"). Absent currents (mock /

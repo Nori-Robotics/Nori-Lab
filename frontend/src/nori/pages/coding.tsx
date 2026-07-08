@@ -13,6 +13,7 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { javascript } from "@codemirror/lang-javascript";
+import { EditorView } from "@codemirror/view";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ThemeProviderContext } from "@/contexts/ThemeContext";
@@ -21,7 +22,20 @@ import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { ScriptSession } from "@/nori/remote/ScriptSession";
 import { useApi } from "@/contexts/ApiContext";
 
-const CODE_EXTENSIONS = [javascript({ typescript: true })];
+const CODE_EXTENSIONS = [javascript({ typescript: true }), EditorView.lineWrapping];
+
+// Lenient client-side fence strip for the STREAMED output (the model is told not to fence, but
+// unwrap gracefully if it does — incrementally: drop a leading ```lang line, and a trailing ```).
+function stripFences(s: string): string {
+  let out = s;
+  if (out.startsWith("```")) {
+    const nl = out.indexOf("\n");
+    out = nl >= 0 ? out.slice(nl + 1) : "";
+  }
+  const close = out.lastIndexOf("```");
+  if (close >= 0 && out.slice(close).trim() === "```") out = out.slice(0, close);
+  return out;
+}
 
 // Blob -> bare base64 (no "data:image/jpeg;base64," prefix) for the LLM image block.
 function blobToBase64(blob: Blob): Promise<string> {
@@ -53,6 +67,7 @@ const Coding = () => {
   const [output, setOutput] = useState<string[]>([]);
   const [scriptRunning, setScriptRunning] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [streamBuffer, setStreamBuffer] = useState(""); // live LLM tokens while generating
   const [attachVision, setAttachVision] = useState(false); // Part 3: send a camera still to the model
   const sessionRef = useRef<ScriptSession | null>(null);
   const outRef = useRef<HTMLDivElement>(null);
@@ -108,16 +123,28 @@ const Coding = () => {
         if (blob) { imageB64 = await blobToBase64(blob); append("📷 attached a camera frame"); }
         else append("⚠ no camera frame (video not arriving) — sending without vision");
       }
-      const res = await fetchWithHeaders(`${baseUrl}/nori/llm/generate`, {
+      const res = await fetchWithHeaders(`${baseUrl}/nori/llm/generate/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt, current_code: code, robot_state: robotState, image_b64: imageB64 }),
       });
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
         const detail = await res.json().catch(() => ({}));
         throw new Error(detail?.detail || res.statusText);
       }
-      const { code: generated } = (await res.json()) as { code: string };
+      // Stream tokens into a live buffer (the editor shows it while generating), then commit the
+      // finished code to the persisted source. Keeps localStorage out of the per-chunk hot path.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let acc = "";
+      setStreamBuffer("");
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        acc += decoder.decode(value, { stream: true });
+        setStreamBuffer(stripFences(acc));
+      }
+      const generated = stripFences(acc);
       setScriptSource(generated);
       append(`✎ generated ${generated.split("\n").length} lines — review, then Run`);
     } catch (e) {
@@ -193,7 +220,7 @@ const Coding = () => {
         )}
       </div>
 
-      <div className="grid h-[calc(100vh-15rem)] grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid h-[calc(100vh-12rem)] grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Left: LLM prompt (codegen — D3, not wired yet) + run output log */}
         <div className="flex h-full min-h-0 flex-col gap-4">
           <div className="flex flex-1 min-h-0 flex-col gap-2 rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
@@ -231,15 +258,15 @@ const Coding = () => {
           <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// code</span>
           <div className="flex-1 min-h-0 overflow-hidden rounded-md border border-[#14131a]/12">
             <CodeMirror
-              value={code}
+              value={generating ? streamBuffer : code}
               onChange={setScriptSource}
               extensions={CODE_EXTENSIONS}
               theme={editorTheme}
               placeholder="// Write code here"
               height="100%"
               style={{ height: "100%" }}
-              editable={!scriptRunning}
-              className="h-full text-xs [&_.cm-editor]:h-full"
+              editable={!scriptRunning && !generating}
+              className="h-full text-[11px] [&_.cm-editor]:h-full"
             />
           </div>
           <div className="flex items-center justify-between gap-2">

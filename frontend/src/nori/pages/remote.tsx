@@ -299,8 +299,10 @@ const Remote = () => {
   useEffect(() => () => { clipRef.current?.stop(); leaderRef.current?.stop(); vrRef.current?.stop(); }, []);
 
   const connected = running && connState === "connected";
+  // Keep the pill terse — just the connection state. Loop rate / VR / control-active
+  // detail lives in the telemetry card, not up here.
   const status = connected
-    ? `connected · ${Math.round(tel.loopHz)} Hz`
+    ? "connected"
     : connecting ? "connecting…" : running ? `conn: ${connState}` : "not connected";
   // Which control method is selected (keyboard is the passive default — base + lift always
   // stay on the keyboard regardless). Each mode shows its own card below // controls.
@@ -345,8 +347,6 @@ const Remote = () => {
                 }
               >
                 ● {status}
-                {inVr ? " · in VR" : ""}
-                {controlActive ? " · control active" : ""}
               </span>
               {!running ? (
                 <Button size="sm" variant="secondary" onClick={connect} disabled={connecting || !ready}>

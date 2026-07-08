@@ -174,7 +174,7 @@ const Marketplace = () => {
   return (
     <section>
       {/* HERO — dot-grid wash, blob tints, display headline, sticker badge */}
-      <div className="relative overflow-hidden rounded-[24px] border border-border bg-background px-5 py-6 md:px-7 md:py-7">
+      <div className="relative overflow-hidden rounded-[24px] border border-border bg-background px-5 py-8 md:px-8 md:py-10">
         <div className="dot-grid pointer-events-none absolute inset-0 opacity-60" aria-hidden />
         <div
           className="pointer-events-none absolute -left-16 -top-16 h-40 w-40 rounded-full bg-leaf opacity-70 blur-3xl"
@@ -192,10 +192,10 @@ const Marketplace = () => {
               {"// beta"}
             </span>
           </div>
-          <h1 className="mt-3 font-display text-balance text-[clamp(1.6rem,3vw,2.2rem)] leading-[0.98] tracking-tight">
+          <h1 className="mt-4 font-display text-balance text-[clamp(2rem,4.5vw,3rem)] leading-[0.95] tracking-tight">
             Teach once. Share forever.
           </h1>
-          <p className="mt-2 max-w-2xl text-pretty text-[14px] leading-relaxed text-muted-foreground">
+          <p className="mt-3 max-w-2xl text-pretty text-[15px] leading-relaxed text-muted-foreground">
             Every policy you train, you can publish. Every policy someone else trains, you
             can install and run on your own robot.
           </p>

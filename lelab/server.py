@@ -28,7 +28,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.datastructures import Headers
@@ -406,7 +406,9 @@ THE ROBOT API — every motion is OPEN-LOOP TIMED. You give a duration in ms; th
                                  opts.slew = units/sec (default 60). This is how you do "go to X":
                                  read the target/current from the state and command it directly.
                                  RETURNS a status string: "done" (arrived), "blocked" (stalled/
-                                 latched), or "timeout". You can branch on it (e.g. retry or stop).
+                                 latched), or "timeout". You can branch on it. It will NOT force
+                                 through an obstruction — the push is bounded and it stops + reports
+                                 blocked, so do NOT blindly retry a blocked move into the same spot.
                                  (Ramped safely; no timing guess.) Base can't be positioned this way.
   robot.grip(side, "open"|"close")   Convenience gripper open/close.
   robot.base(vec, ms)           Mobile base. vec: { linear, angular } in [-1,1].
@@ -422,6 +424,12 @@ THE ROBOT API — every motion is OPEN-LOOP TIMED. You give a duration in ms; th
   robot.log(...args)            Print to the operator's run-output panel.
   robot.estop()                 Emergency latch (the on-screen button is the primary path).
 
+PRIMITIVES (prebuilt, composed from the above — PREFER these when one fits):
+  robot.home(side)              Move the arm to a neutral straight pose and hold.
+  robot.stow(side)              Move the arm to a compact parked pose and hold.
+  robot.gripSequence(side)      Open, pause, then close the gripper (a simple pick).
+  robot.wave(side, times=3)     Wave the wrist.
+
 UNITS: every rate is normalized to [-1,1]; the robot scales it to a safe per-tick step. ~0.3-0.5 is a gentle, visible move; 1.0 is the max the robot allows (and a half-speed session cap clamps it further). Durations are milliseconds; a single hold is capped at 60000 ms.
 
 HARD RULES you MUST follow:
@@ -430,7 +438,10 @@ HARD RULES you MUST follow:
 3. After any robot.joint(...) or robot.moveTo(...) move, call robot.reset() before a robot.reach(...) (the IK cursor goes stale and reach() would otherwise jump). Prefer one family per routine. For "go to a specific pose/config", PREFER robot.moveTo — absolute and holding, no timing guess.
 4. You are BLIND: no vision, no world model. Never assume where objects are. Prefer small, reversible moves and short durations. Do not drive the base more than briefly.
 5. No imports, no fetch, no DOM — only the robot API and plain JS (loops, math, variables).
-6. Output ONLY the function body. No ``` fences, no commentary.
+6. Output ONLY the function body — valid JavaScript that runs as-is. No ``` fences. If you explain
+   ANYTHING (an assumption, what you see in a photo, a limitation), it MUST be inside a // comment.
+   NEVER emit a bare sentence/prose line outside a comment — it is a syntax error that breaks the
+   whole script. When unsure, write a `// note:` comment and still produce runnable code.
 
 GROUNDING: you may be given the current robot state (joint positions, lift heights, base) as the
 STARTING pose. Use it to plan relative moves and to judge direction + magnitude (e.g. "shoulder_pan
@@ -474,8 +485,10 @@ def _strip_code_fences(s: str) -> str:
     return s.strip()
 
 
-@app.post("/nori/llm/generate")
-def nori_llm_generate(body: NoriLlmGenerateBody):
+def _llm_prepare(body: NoriLlmGenerateBody):
+    """Shared setup for both the one-shot and streaming endpoints: validate the key/dep (pre-flight
+    HTTPExceptions), build the client + the user message (code + 9a pose + Part-3 image). Returns
+    (anthropic_module, client, model, content)."""
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set on the server")
@@ -508,6 +521,12 @@ def nori_llm_generate(body: NoriLlmGenerateBody):
             "type": "image",
             "source": {"type": "base64", "media_type": "image/jpeg", "data": body.image_b64},
         })
+    return anthropic, client, model, content
+
+
+@app.post("/nori/llm/generate")
+def nori_llm_generate(body: NoriLlmGenerateBody):
+    anthropic, client, model, content = _llm_prepare(body)
     try:
         msg = client.messages.create(
             model=model,
@@ -520,6 +539,29 @@ def nori_llm_generate(body: NoriLlmGenerateBody):
 
     text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
     return {"code": _strip_code_fences(text)}
+
+
+@app.post("/nori/llm/generate/stream")
+def nori_llm_generate_stream(body: NoriLlmGenerateBody):
+    """Same as /generate but streams the model's text as it's produced (text/plain chunks) so the
+    editor fills live. Pre-flight errors (no key / dep) still raise before the stream opens; an
+    Anthropic error mid-stream is emitted as a trailing JS comment (headers are already sent)."""
+    anthropic, client, model, content = _llm_prepare(body)
+
+    def gen():
+        try:
+            with client.messages.stream(
+                model=model,
+                max_tokens=1500,
+                system=NORI_CODEGEN_SYSTEM,
+                messages=[{"role": "user", "content": content}],
+            ) as stream:
+                for chunk in stream.text_stream:
+                    yield chunk
+        except anthropic.APIError as exc:
+            yield f"\n/* Anthropic error: {exc} */"
+
+    return StreamingResponse(gen(), media_type="text/plain; charset=utf-8")
 
 
 def nori_jwt(request: Request) -> str | None:

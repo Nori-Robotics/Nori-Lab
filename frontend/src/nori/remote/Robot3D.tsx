@@ -1,13 +1,21 @@
-// NORI: Additive file. C6 (basic) — a lightweight 3D "cube" visual of the robot for
-// fully-remote teleop, driven live off the telemetry `state` dict (the same keys the
-// TelemetryPanel / RailHeight consume). Deliberately SCHEMATIC, not a calibrated model:
+// NORI: Additive file. C6 — a lightweight 3D visual of the robot for fully-remote teleop,
+// driven live off the telemetry `state` dict (the same keys the TelemetryPanel / RailHeight
+// consume). The arm pose is TRUE forward kinematics in the daemon's own convention
+// (NoriTeleop rpi5/nori_core_agent kinematics.cpp / control.cpp):
 //
-//   * Joint values in `state` are lerobot-NORMALIZED ([-100,100]; grippers [0,100]), NOT
-//     degrees, and the true link geometry + kinematic convention live on the Pi (per-unit
-//     calibration). Real forward kinematics is the follow-up C6 sub-item ("run FK off the
-//     joint angles / Pi publishes degrees"). Until then we map each normalized joint linearly
-//     to a plausible angle so the operator gets a live, directionally-correct pose picture —
-//     enough to see "left arm reaching, right gripper closed, both rails near the top."
+//   * Joint values in `state` are lerobot-normalized ([-100,100]; grippers [0,100]). The
+//     daemon's IK conflates normalized units ≈ degrees (inherited from lerobot), so we do
+//     the same conversion here — the scene then shows exactly the pose the daemon believes
+//     the arm is in, which is what the operator is steering. (Accuracy caveat: as good as
+//     the per-unit calibration ranges being roughly symmetric ±100°, the daemon's own
+//     assumption.)
+//   * Each joint is a plain revolute rotation with the SO101 zero-offsets baked into the
+//     daemon's angle convention: shoulder world pitch th1 = rad(90 − sl) − T1O, elbow bend
+//     th2 = rad(ef + 90) − T2O (0 = straight), wrist relative = rad(wf) + (T2O − T1O).
+//     With those, the daemon's wrist coupling identity (wf = −sl − ef + pitch) makes the
+//     gripper's WORLD pitch = −rad(sl + ef + wf) automatically — a level gripper renders
+//     level regardless of arm pose. At normalized zero the pose is the real SO101 rest:
+//     upper arm pitched up ~76°, forearm horizontal (NOT a straight horizontal arm).
 //   * Rail Z uses railReading() from TeleopStatus so this scene and the Rail-height gauge
 //     always agree: boot pose = TOP, carriage descends by |mm|.
 //
@@ -17,29 +25,41 @@ import { OrbitControls } from "@react-three/drei";
 import { railReading } from "./TeleopStatus";
 import type { ArmSide } from "@nori/sdk";
 
-// Normalized [-100,100] -> radians, clamped, scaled to `spanDeg` of half-travel each way.
-function jointRad(state: Record<string, number>, key: string, spanDeg: number): number {
+// Clamped normalized joint value (≈ degrees, see header). Missing key -> 0 (rest pose).
+function jointDeg(state: Record<string, number>, key: string): number {
   const n = state[key];
-  const v = typeof n === "number" ? Math.max(-100, Math.min(100, n)) : 0;
-  return (v / 100) * (spanDeg * Math.PI) / 180;
-} 
+  return typeof n === "number" ? Math.max(-100, Math.min(100, n)) : 0;
+}
+const DEG = Math.PI / 180;
 
-// Scene geometry (arbitrary units). Tuned for legibility, not scale. The travel band is
-// chosen so the carriage starts just under the shoulder plate (y 1.45) and at FULL descent
-// its bottom edge (carriage is 0.08 tall) lands exactly on the base platform top (y ~0.62)
-// instead of sinking into it.
+// SO101 planar geometry, verbatim from the daemon's kinematics.cpp: link lengths and the
+// two link-bend offsets its angle convention bakes in.
+const L1_M = 0.1159; // shoulder_lift axis -> elbow axis (m)
+const L2_M = 0.135;  // elbow axis -> wrist_flex axis (m)
+const T1O = Math.atan2(0.028, 0.11257);
+const T2O = Math.atan2(0.0052, 0.1349) + T1O;
+
+// Scene geometry. The travel band is chosen so the carriage starts just under the shoulder
+// plate (y 1.45) and at FULL descent its bottom edge (carriage is 0.08 tall) lands exactly
+// on the base platform top (y ~0.62) instead of sinking into it.
 const RAIL_TOP_Y = 1.34;
 const RAIL_LEN = 0.68; // vertical distance the carriage sweeps across full travel
 // Visual gain on the rail depth fraction. Was 4 to compensate for the Pi UNDER-reporting
 // height ~4x (mm_per_rev mis-scale). Fixed at the source 2026-07-03 (NORI_LIFT_MM_PER_REV
-// 28.455 -> 115.6), so the Pi now reports true mm across the full 0..650 mm travel — the full
+// 28.455 -> 115.6), so the Pi now reports true mm across the full travel — the full
 // range already maps to the full sweep. Keep at 1 (true tracking); a gain >1 now just clips
 // the lower travel. Raise only if you deliberately want an exaggerated view.
 const RAIL_VIS_GAIN = 1;
-const UPPER_LEN = 0.20;
-const FORE_LEN = 0.14;
-const WRIST_LEN = 0.12;
-const GRIP_LEN = 0.15;
+// Arm link lengths at REAL proportions (L1:L2 from the daemon, wrist/gripper measured
+// ~60/~90 mm), scaled by ARM_SCALE scene-units/m. That's ~2x the rail's scale
+// (RAIL_LEN / 0.95 m travel ≈ 0.72 u/m): fully proportional arms read too small on
+// screen next to 950 mm of rail travel, so the arm keeps a legibility boost while its
+// segments stay true to each other.
+const ARM_SCALE = 1.45;
+const UPPER_LEN = L1_M * ARM_SCALE;  // ≈0.168
+const FORE_LEN = L2_M * ARM_SCALE;   // ≈0.196
+const WRIST_LEN = 0.06 * ARM_SCALE;  // wrist_flex axis -> roll/jaw root ≈0.087
+const GRIP_LEN = 0.09 * ARM_SCALE;   // jaws ≈0.13
 
 // One schematic arm: a chain of boxes nested through the joint rotations. `side` selects the
 // state keys and the base X offset / handedness.
@@ -57,14 +77,19 @@ function Arm({ state, side, active }: { state: Record<string, number>; side: "le
   const visFrac = Math.min(1, frac * RAIL_VIS_GAIN);
   const carriageY = RAIL_TOP_Y - visFrac * RAIL_LEN;
 
-  // Joint angles (schematic mapping; see file header).
-  // `-sign`: pan yaw was inverted vs. the real joint; the -1 flips the direction while keeping
-  // the left/right mirror (the arms are mirror-mounted, so +joint yaws them opposite ways).
-  const pan = jointRad(state, `${p}shoulder_pan.pos`, 90) * -sign;
-  const lift = jointRad(state, `${p}shoulder_lift.pos`, 90);
-  const elbow = jointRad(state, `${p}elbow_flex.pos`, 90);
-  const wristFlex = jointRad(state, `${p}wrist_flex.pos`, 90);
-  const wristRoll = jointRad(state, `${p}wrist_roll.pos`, 180);
+  // Joint angles — true FK in the daemon's convention (see file header). Segments extend
+  // +Z; a POSITIVE group rotation.x tips the child chain DOWN, so world pitch-up = −rot.x.
+  // `-sign` on pan: yaw was inverted vs. the real joint; the -1 flips the direction while
+  // keeping the left/right mirror (the arms are mirror-mounted, so +joint yaws them
+  // opposite ways — hardware-verified).
+  const sl = jointDeg(state, `${p}shoulder_lift.pos`);
+  const ef = jointDeg(state, `${p}elbow_flex.pos`);
+  const wf = jointDeg(state, `${p}wrist_flex.pos`);
+  const pan = jointDeg(state, `${p}shoulder_pan.pos`) * DEG * -sign;
+  const lift = -((90 - sl) * DEG - T1O); // −th1: shoulder pitched UP th1 from horizontal
+  const elbow = (ef + 90) * DEG - T2O;   // th2: elbow bend, 0 = straight
+  const wristFlex = wf * DEG + (T2O - T1O); // revolute wrist; world gripper pitch = −(sl+ef+wf)°
+  const wristRoll = jointDeg(state, `${p}wrist_roll.pos`) * DEG;
   const gripN = state[`${p}gripper.pos`];
   const grip = typeof gripN === "number" ? Math.max(0, Math.min(100, gripN)) : 0;
   // Default CLOSED (jaws touching at grip=0), swinging wide as grip opens. Exaggerated range

@@ -138,7 +138,10 @@ const Coding = () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         prompt, current_code: code, robot_state: robotState, image_b64: imageB64,
-        camera_layout: imageB64 ? (cameraLayout.trim() || undefined) : undefined, retry_note: retryNote,
+        // Operator text overrides; else the bridge-derived layout (which tile is which camera); else
+        // nothing (the model is told not to assume). So vision knows which feed is which arm by default.
+        camera_layout: imageB64 ? (cameraLayout.trim() || teleop?.cameraLayout() || undefined) : undefined,
+        retry_note: retryNote,
       }),
     });
     if (!res.ok || !res.body) {
@@ -300,21 +303,32 @@ const Coding = () => {
                 </Button>
               </div>
               {attachVision && (
-                <div className="flex items-start gap-2">
-                  <input
-                    type="text"
-                    value={cameraLayout}
-                    onChange={(e) => {
-                      setCameraLayout(e.target.value);
-                      try { localStorage.setItem("nori_camera_layout", e.target.value); } catch { /* ignore */ }
-                    }}
-                    placeholder="camera layout — e.g. 'left tile = front scene cam; right tile = right-arm wrist cam looking down'"
-                    title="Tell Claude which camera tile is which view/arm, so vision moves the right thing"
-                    className="flex-1 rounded border border-[#14131a]/20 bg-[#fffdf7] px-2 py-1 text-[11px]"
-                  />
-                  {lastFrame && (
-                    <img src={lastFrame} alt="last frame sent to Claude" title="what Claude saw"
-                      className="h-12 w-auto rounded border border-[#14131a]/20" />
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-start gap-2">
+                    <input
+                      type="text"
+                      value={cameraLayout}
+                      onChange={(e) => {
+                        setCameraLayout(e.target.value);
+                        try { localStorage.setItem("nori_camera_layout", e.target.value); } catch { /* ignore */ }
+                      }}
+                      placeholder={
+                        teleop?.cameraLayout()
+                          ? "camera layout — auto-detected from the robot; type only to override"
+                          : "camera layout — e.g. 'left tile = front cam; right tile = right-arm wrist cam'"
+                      }
+                      title="Which camera tile is which view/arm. Auto-detected from the robot in composite mode; type to override."
+                      className="flex-1 rounded border border-[#14131a]/20 bg-[#fffdf7] px-2 py-1 text-[11px]"
+                    />
+                    {lastFrame && (
+                      <img src={lastFrame} alt="last frame sent to Claude" title="what Claude saw"
+                        className="h-12 w-auto rounded border border-[#14131a]/20" />
+                    )}
+                  </div>
+                  {teleop?.cameraLayout() && !cameraLayout.trim() && (
+                    <span className="text-[10px] text-muted-foreground" title="Sent to Claude with the frame">
+                      auto: {teleop.cameraLayoutInfo()?.tiles.join(", ")}
+                    </span>
                   )}
                 </div>
               )}

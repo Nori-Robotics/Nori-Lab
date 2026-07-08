@@ -4,22 +4,29 @@
 // No hardware, no DOM, no real Worker (worker isolation is B5, a manual browser check).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ExternalJog, PerceptionView, RemoteTeleop, TelemetryView } from "@nori/sdk";
+import type { ActionStatus, ExternalJog, PerceptionView, RemoteTeleop, TelemetryView } from "@nori/sdk";
 import { ScriptDriver, type ScriptDriverOptions } from "./ScriptDriver";
 
 // Minimal stand-in for RemoteTeleop: only the methods ScriptDriver calls, recording every call.
+// Action API (Phase E) defaults to a SILENT daemon — actionStatus() null, awaitAction() never
+// resolves — so moveTo exercises its client-side fallback (the pre-Phase-E behavior) unless a test
+// flips `action.speaking` and calls `action.resolve` to simulate the daemon's authoritative verdict.
 function makeFakeTeleop() {
   const jogs: (ExternalJog | null)[] = [];
   const commands: string[] = [];
   const actions: Record<string, number>[] = [];
   const perception = { current: null as PerceptionView | null };
+  const action = { speaking: false, resolve: null as null | ((s: ActionStatus) => void) };
   const teleop = {
     setExternalJog: (j: ExternalJog | null) => { jogs.push(j); },
     command: (c: string) => { commands.push(c); },
     sendAction: (a: Record<string, number>) => { actions.push(a); },
     perceive: () => perception.current,
+    nextActionId: () => "act-1",
+    actionStatus: () => (action.speaking ? { action_id: "act-1", state: "active" } as ActionStatus : null),
+    awaitAction: () => new Promise<ActionStatus>((res) => { action.resolve = res; }),
   } as unknown as RemoteTeleop;
-  return { teleop, jogs, commands, actions, perception };
+  return { teleop, jogs, commands, actions, perception, action };
 }
 
 // Minimal telemetry frame carrying just a `state` dict for moveTo.
@@ -288,6 +295,35 @@ describe("moveTo (absolute, follow-error clamp + arrival)", () => {
   it("rejects when there is no telemetry yet", async () => {
     const { driver } = setup(); // setTelemetry never called
     await expect(driver.exec("moveTo", ["right", { shoulder_pan: 10 }, undefined])).rejects.toThrow(/no telemetry/);
+  });
+
+  it("returns the daemon's authoritative status when the daemon reports one (Phase E)", async () => {
+    const { driver, action } = setup();
+    action.speaking = true; // daemon is Phase-E-capable -> client-side detection is suppressed
+    driver.setTelemetry(telWithState({ "right_arm_shoulder_pan.pos": 0 }));
+    const p = driver.exec("moveTo", ["right", { shoulder_pan: 30 }, { slew: 60 }]);
+    await vi.advanceTimersByTimeAsync(200);
+    // Daemon reports `clamped` — a state the client can't infer from telemetry.
+    action.resolve!({ action_id: "act-1", state: "clamped" });
+    await vi.advanceTimersByTimeAsync(60);
+    await expect(p).resolves.toBe("clamped");
+  });
+
+  it("does NOT short-circuit to client 'done' while the daemon is speaking (Phase E)", async () => {
+    const { driver, actions, action } = setup();
+    action.speaking = true;
+    driver.setTelemetry(telWithState({ "right_arm_shoulder_pan.pos": 30 })); // already at goal
+    const p = driver.exec("moveTo", ["right", { shoulder_pan: 30 }, { slew: 60 }]);
+    // Arm is at the goal, but the daemon owns the verdict — moveTo must WAIT for it, not return early.
+    await vi.advanceTimersByTimeAsync(500);
+    let settled = false;
+    void p.then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false); // still pending: waiting on the daemon
+    action.resolve!({ action_id: "act-1", state: "done" });
+    await vi.advanceTimersByTimeAsync(60);
+    await expect(p).resolves.toBe("done");
+    expect(actions.length).toBeGreaterThan(0); // it did stream tagged frames meanwhile
   });
 });
 

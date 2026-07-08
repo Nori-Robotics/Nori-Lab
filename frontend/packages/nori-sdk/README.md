@@ -164,6 +164,29 @@ nori-protocol `perception.json`).
 > yet** — `perceive()` returns `null` on real hardware today. `injectPerception()` feeds synthetic
 > frames through the same path for development. See `docs/phase_f_perception.md`.
 
+## Action completion (Phase E)
+
+Tag an absolute move with an `action_id` and the daemon reports its lifecycle back
+(`accepted → active → done | clamped | blocked | timeout`), so a script can await what *actually*
+happened instead of guessing from telemetry:
+
+```ts
+const id = teleop.nextActionId();
+teleop.sendAction({ "right_arm_shoulder_pan.pos": 30 }, id);   // tag the frame(s)
+const status = await teleop.awaitAction(id, { timeoutMs: 5000 });
+// status.state: "done" | "clamped" | "blocked" | "timeout" (+ status.reason for blocked/timeout)
+```
+
+`actionStatus(id)` returns the latest status seen (any state) — the executor uses it to detect whether
+the daemon is participating. `awaitAction` self-resolves to a synthetic `timeout` if the daemon
+predates Phase E, so it never hangs; `onActionStatus` streams every transition for logging. The
+executor's `robot.moveTo(...)` uses all of this internally and returns the daemon's verdict.
+
+> **Verification status (v0):** SDK + executor implemented and unit-tested. The daemon that emits
+> `action_status` is built + selftest-covered but **must be deployed to the robot**, and the tolerances
+> tuned on hardware; until then `moveTo` transparently falls back to its client-side heuristic. See
+> `docs/phase_e_action_completion.md`.
+
 ## Streaming audio to the robot speaker
 
 `sendClipAudio` streams an arbitrary audio **track** to the robot's speaker over the same

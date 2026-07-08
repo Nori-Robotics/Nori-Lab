@@ -17,7 +17,7 @@
 // a jog is held for `ms` then zeroed; the driver cannot yet tell arrived / stalled / clamped
 // apart. Say so in the UI.
 
-import type { RemoteTeleop, ExternalJog, ArmSide, TelemetryView } from "@nori/sdk";
+import type { RemoteTeleop, ExternalJog, ArmSide, TelemetryView, ActionStatus } from "@nori/sdk";
 import { TASK_KEYS, JOINT_KEYS, BASE_KEYS } from "@nori/sdk";
 import { playAudioUrl, type ClipHandle } from "./audioClip";
 
@@ -286,7 +286,12 @@ export class ScriptDriver {
   //   timeout — didn't arrive within the ramp budget + slack.
   // On ANY non-done exit (blocked/timeout/stop) we FREEZE: re-seat the target at the current actual
   // position, so the arm STOPS leaning on an obstruction instead of holding the unreachable goal.
-  // (9c-lite, client-side; the authoritative version is Phase E / action_status.)
+  //
+  // Phase E (E4): the move is tagged with an action_id and the DAEMON's action_status is authoritative
+  // when present — it returns the exact daemon verdict (incl. `clamped`, which the client can't see).
+  // The client-side telemetry detection below is the FALLBACK, used only while the daemon stays silent
+  // (Phase-E-incapable daemon or a transport drop). The follow-margin force bound stays on regardless,
+  // so the push is bounded whether or not the daemon participates.
   private async moveTo(args: unknown[]): Promise<string> {
     const [side, targets, opts] =
       args as [ArmSide, Record<string, number>, { slew?: number; timeoutMs?: number } | undefined];
@@ -311,11 +316,27 @@ export class ScriptDriver {
     const deadline = (maxDist / slew) * 1000 + (opts?.timeoutMs ?? ARRIVAL_TIMEOUT_MS);
     const maxStep = slew * (MOVE_TICK_MS / 1000);
 
+    // Phase E: tag every frame with one action_id and await the daemon's terminal status. awaitAction
+    // self-resolves to a synthetic timeout (deadline + slack) if the daemon predates Phase E, so we
+    // never hang. The daemon gets a bit longer than the client deadline so its verdict wins the race.
+    const actionId = this.teleop.nextActionId();
+    // Holder (not a bare `let`) so the closure assignment is visible to control-flow narrowing.
+    const daemon: { status: ActionStatus | null } = { status: null };
+    void this.teleop
+      .awaitAction(actionId, { timeoutMs: deadline + 2000 })
+      .then((s) => { daemon.status = s; });
+
     let waited = 0;
     let stall = 0;
     for (;;) {
       if (this.stopped) { this.freezeAt(plan); return "stopped"; }
-      if (this.motionLatched()) { this.freezeAt(plan); return "blocked"; }
+      // Daemon delivered a terminal verdict — authoritative (this is where `clamped` comes from, and
+      // the exact done/blocked the client can only approximate).
+      if (daemon.status) {
+        if (daemon.status.state !== "done" && daemon.status.state !== "clamped") this.freezeAt(plan);
+        return daemon.status.state;
+      }
+      if (this.motionLatched()) { this.freezeAt(plan); return "blocked"; } // hard latch: stop now
       const state = this.lastTelemetry?.state ?? {};
       let arrived = true;
       const action: Record<string, number> = {};
@@ -330,11 +351,17 @@ export class ScriptDriver {
         action[p.posKey] = Math.round(p.cmd * 100) / 100;
         if (!(Number.isFinite(actual) && Math.abs(actual - p.goal) <= POS_TOL)) arrived = false;
       }
-      this.teleop.sendAction(action);
-      if (arrived) return "done";
-      stall = this.drawingStallCurrent(plan) ? stall + 1 : 0;
-      if (stall >= STALL_FRAMES) { this.freezeAt(plan); return "blocked"; }
-      if (waited >= deadline) { this.freezeAt(plan); return "timeout"; }
+      this.teleop.sendAction(action, actionId);
+      // Any status (even accepted/active) means the daemon is Phase-E-capable → let IT own the
+      // terminal (done/clamped/blocked/timeout); the follow-clamp above still bounds the push and the
+      // daemon's stall latch handles obstructions. Only when the daemon stays SILENT do we fall back
+      // to client-side telemetry detection (the pre-Phase-E behavior).
+      if (this.teleop.actionStatus(actionId) === null) {
+        if (arrived) return "done";
+        stall = this.drawingStallCurrent(plan) ? stall + 1 : 0;
+        if (stall >= STALL_FRAMES) { this.freezeAt(plan); return "blocked"; }
+        if (waited >= deadline) { this.freezeAt(plan); return "timeout"; }
+      }
       try { await this.sleep(MOVE_TICK_MS); } catch { this.freezeAt(plan); return "stopped"; }
       waited += MOVE_TICK_MS;
     }

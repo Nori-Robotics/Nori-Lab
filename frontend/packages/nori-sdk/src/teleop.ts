@@ -92,6 +92,48 @@ export interface PerceptionView {
   receivedAt: number;        // client performance.now() when this frame arrived (staleness check)
 }
 
+// Action-completion lifecycle from the daemon (Phase E / G1, nori-protocol action_status.json).
+// A motion-bearing control frame tagged with an `action_id` gets these transitions back, so a script
+// can await "did it actually arrive / stall / get clamped?" instead of inferring from telemetry.
+export type ActionState = "accepted" | "active" | "done" | "clamped" | "blocked" | "timeout";
+export interface ActionStatus {
+  action_id: string;
+  state: ActionState;
+  reason?: string; // set for blocked/timeout, e.g. "stall:right_arm_elbow_flex", "estop:button"
+  ts_ns?: number;
+}
+// The states that end an action's lifecycle (awaitAction resolves on these).
+const TERMINAL_ACTION_STATES = new Set<ActionState>(["done", "clamped", "blocked", "timeout"]);
+
+// Which camera is in which composite tile (bridge-derived, from cameras.json order). Sent by the Pi
+// media bridge on control-channel open in composite mode; lets the LLM-vision path know which feed is
+// which arm WITHOUT the operator hand-typing it and WITHOUT labels burned into the pixels. `tiles` is
+// row-major (left-to-right, top-to-bottom) over a `cols`x`rows` grid.
+export interface CameraLayout {
+  cols: number;
+  rows: number;
+  tiles: string[];
+}
+
+// Render a CameraLayout as a one-line description for the LLM vision prompt (e.g. "top-left =
+// left_wrist; …"). Pure + exported so it can be unit-tested without a live peer.
+export function formatCameraLayout(layout: CameraLayout): string {
+  const { cols, rows, tiles } = layout;
+  const posLabel = (i: number): string => {
+    const r = Math.floor(i / cols);
+    const c = i % cols;
+    const v = rows === 1 ? "" : rows === 2 ? (r === 0 ? "top" : "bottom") : `row ${r + 1}`;
+    const h = cols === 1 ? "" : cols === 2 ? (c === 0 ? "left" : "right") : `col ${c + 1}`;
+    if (!v) return h || "single";
+    if (!h) return v;
+    return v.includes(" ") || h.includes(" ") ? `${v} ${h}` : `${v}-${h}`;
+  };
+  const parts = tiles.map((name, i) => `${posLabel(i)} = ${name}`).join("; ");
+  return `Composite is a ${cols}x${rows} grid, tiles left-to-right then top-to-bottom: ${parts}. ` +
+    `(A '<side>_wrist' camera is mounted on that arm and moves with it; 'overhead' looks down at the ` +
+    `workspace; 'front' faces forward.)`;
+}
+
 // Two-way call state (Phase 7 §B). Reported to the page via onCall so it can render the
 // call bar + on-air indicators. Everything here is renegotiation-free: mic/camera attach to
 // transceivers the robot already offered (R-X.1). Fields degrade gracefully when the robot
@@ -142,6 +184,12 @@ export interface RemoteTeleopOptions {
   // Optional: structured world-state from the daemon's perception process (Phase F / G3). Fires on
   // each `perception` frame; a script consumer usually polls perceive() instead of subscribing.
   onPerception?: (p: PerceptionView) => void;
+  // Optional: every action_status transition (Phase E / G1). For logging/telemetry; the executor
+  // uses awaitAction() instead of subscribing.
+  onActionStatus?: (s: ActionStatus) => void;
+  // Optional: the composite camera layout (bridge-derived), when it arrives. A consumer usually
+  // reads cameraLayout() at use-time instead of subscribing.
+  onCameraLayout?: (layout: CameraLayout) => void;
 }
 
 // Two schemes; 'm' toggles. Default = CYLINDRICAL (the rpi4 feel).
@@ -264,6 +312,18 @@ export class RemoteTeleop {
   // fall back to blind/telemetry-only behavior). Fed on the control channel like telemetry.
   private perception: PerceptionView | null = null;
 
+  // ---- action completion (Phase E / G1) ------------------------------------
+  private actionSeq = 0; // mints unique action_ids
+  // Pending awaitAction() promises, keyed by action_id; resolved on the terminal action_status.
+  private actionWaiters = new Map<string, { resolve: (s: ActionStatus) => void; timer: ReturnType<typeof setTimeout> }>();
+  // Latest status seen per action_id (any state), so the executor can tell whether the daemon is
+  // participating (Phase-E-capable) vs. silent (fall back to client-side detection). Pruned on
+  // terminal + size-capped so it can't grow unbounded.
+  private latestActionStatus = new Map<string, ActionStatus>();
+
+  // Composite camera layout from the bridge (Phase F vision), null until it arrives / single-cam.
+  private cameraLayoutRaw: CameraLayout | null = null;
+
   // ---- two-way call (Phase 7 §B) -------------------------------------------
   private micStream: MediaStream | null = null;
   private micTrack: MediaStreamTrack | null = null;
@@ -337,8 +397,38 @@ export class RemoteTeleop {
   // cancel it, so this coexists with the jog heartbeat. WARNING: the daemon applies `action` with
   // NO server-side slew — a far-from-current target lurches. Callers must ramp large moves
   // themselves (see ScriptDriver.moveTo). Base is not positionable this way (jog/velocity only).
-  sendAction(action: Record<string, number>) {
-    this.dcSend({ type: "control", seq: this.seq++, action });
+  // Optional `actionId` (Phase E): the daemon echoes it in action_status transitions for this move,
+  // so awaitAction(id) can resolve on the authoritative done/clamped/blocked/timeout. Untagged
+  // frames (no id) are unchanged — the daemon just doesn't track them.
+  sendAction(action: Record<string, number>, actionId?: string) {
+    const frame: Record<string, unknown> = { type: "control", seq: this.seq++, action };
+    if (actionId) frame.action_id = actionId;
+    this.dcSend(frame);
+  }
+
+  // Mint a fresh, unique action_id for a move (Phase E). Human-readable for logs.
+  nextActionId(): string {
+    return `a${++this.actionSeq}`;
+  }
+
+  // Latest action_status seen for `id` (any state), or null. The executor uses this to detect
+  // whether the daemon is Phase-E-capable (any status seen) vs. silent (old daemon → fall back to
+  // client-side arrival detection).
+  actionStatus(id: string): ActionStatus | null {
+    return this.latestActionStatus.get(id) ?? null;
+  }
+
+  // Resolve when the daemon reports a TERMINAL action_status for `id` (done/clamped/blocked/timeout).
+  // Falls back to a synthetic { state:"timeout", reason:"client-fallback" } after timeoutMs so a
+  // caller never hangs if the daemon predates Phase E or the transport drops. Never rejects.
+  awaitAction(id: string, opts?: { timeoutMs?: number }): Promise<ActionStatus> {
+    return new Promise<ActionStatus>((resolve) => {
+      const timer = setTimeout(() => {
+        this.actionWaiters.delete(id);
+        resolve({ action_id: id, state: "timeout", reason: "client-fallback" });
+      }, opts?.timeoutMs ?? 10_000);
+      this.actionWaiters.set(id, { resolve, timer });
+    });
   }
 
   // Public command surface for non-keyboard inputs (VR E-STOP / reset). Mirrors sendCmd.
@@ -890,6 +980,10 @@ export class RemoteTeleop {
       this.o.onTelemetry({ ...this.tel });
     } else if (m.type === "perception") {
       this.ingestPerception(m);
+    } else if (m.type === "action_status") {
+      this.ingestActionStatus(m);
+    } else if (m.type === "camera_layout") {
+      this.ingestCameraLayout(m);
     } else if (m.type === "ack") {
       this.log("daemon ack (watchdog=" + JSON.stringify(m.watchdog_profile || m.watchdog || "?") + ")");
     } else if (m.type === "error") {
@@ -916,6 +1010,53 @@ export class RemoteTeleop {
     };
     this.perception = view;
     this.o.onPerception?.(view);
+  }
+
+  // Coerce a wire `action_status` frame, cache it as the latest for its id, notify, and resolve a
+  // pending awaitAction() on a terminal state (Phase E / G1).
+  private ingestActionStatus(m: Record<string, unknown>) {
+    const st: ActionStatus = {
+      action_id: typeof m.action_id === "string" ? m.action_id : "",
+      state: m.state as ActionState,
+      reason: typeof m.reason === "string" ? m.reason : undefined,
+      ts_ns: typeof m.ts_ns === "number" ? m.ts_ns : undefined,
+    };
+    if (!st.action_id) return;
+    this.latestActionStatus.set(st.action_id, st);
+    this.o.onActionStatus?.(st);
+    if (TERMINAL_ACTION_STATES.has(st.state)) {
+      const w = this.actionWaiters.get(st.action_id);
+      if (w) { clearTimeout(w.timer); this.actionWaiters.delete(st.action_id); w.resolve(st); }
+      this.latestActionStatus.delete(st.action_id); // done with this id; keep the map from growing
+    } else if (this.latestActionStatus.size > 16) {
+      // Defensive cap: drop the oldest non-terminal entry (moves are serial, so this rarely trips).
+      const oldest = this.latestActionStatus.keys().next().value;
+      if (oldest !== undefined) this.latestActionStatus.delete(oldest);
+    }
+  }
+
+  // Cache the composite camera layout the bridge sends on connect (Phase F vision). Ignores a
+  // malformed frame (keeps any prior layout).
+  private ingestCameraLayout(m: Record<string, unknown>) {
+    const cols = typeof m.cols === "number" ? m.cols : 0;
+    const rows = typeof m.rows === "number" ? m.rows : 0;
+    const tiles = Array.isArray(m.tiles) ? m.tiles.map(String) : [];
+    if (cols > 0 && rows > 0 && tiles.length > 0) {
+      this.cameraLayoutRaw = { cols, rows, tiles };
+      this.o.onCameraLayout?.(this.cameraLayoutRaw);
+    }
+  }
+
+  // The raw composite layout, or null if unknown (single-camera, or not yet received).
+  cameraLayoutInfo(): CameraLayout | null {
+    return this.cameraLayoutRaw;
+  }
+
+  // A one-line description of the composite layout for the LLM vision prompt, or null if unknown.
+  // The coding page uses this as the default `camera_layout` so vision knows which tile is which arm
+  // without the operator typing it (an explicit operator description still overrides).
+  cameraLayout(): string | null {
+    return this.cameraLayoutRaw ? formatCameraLayout(this.cameraLayoutRaw) : null;
   }
 
   // ---- perception (Phase F / G3) -------------------------------------------

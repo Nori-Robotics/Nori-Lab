@@ -399,6 +399,13 @@ THE ROBOT API — every motion is OPEN-LOOP TIMED. You give a duration in ms; th
   robot.joint(side, dofs, ms)   Per-motor jog (no IK).
                                  dofs: subset of { shoulder_pan, shoulder_lift, elbow_flex,
                                  wrist_flex, wrist_roll, gripper }, each a rate in [-1,1].
+  robot.moveTo(side, targets, opts?)  ABSOLUTE joint move: go to a pose and HOLD it (not timed).
+                                 targets: subset of { shoulder_pan, shoulder_lift, elbow_flex,
+                                 wrist_flex, wrist_roll, gripper } -> target value, SAME normalized
+                                 scale as the robot state you're given ([-100,100]; gripper [0,100]).
+                                 opts.slew = units/sec (default 60). This is how you do "go to X":
+                                 read the target/current from the state and command it directly.
+                                 (Ramped safely; no timing guess.) Base can't be positioned this way.
   robot.grip(side, "open"|"close")   Convenience gripper open/close.
   robot.base(vec, ms)           Mobile base. vec: { linear, angular } in [-1,1].
                                  +linear = forward, +angular = turn left.
@@ -418,7 +425,7 @@ UNITS: every rate is normalized to [-1,1]; the robot scales it to a safe per-tic
 HARD RULES you MUST follow:
 1. `await` every robot.* call so moves run in sequence.
 2. NEVER mix task DOFs (x, y, pitch) and joint DOFs (shoulder_lift, elbow_flex, wrist_flex) in the same call — the presence of a joint DOF switches that whole call to per-motor mode.
-3. After ANY robot.joint(...) move, call robot.reset() before a robot.reach(...) (the IK cursor goes stale and reach() would otherwise jump). Prefer staying in one family per routine.
+3. After any robot.joint(...) or robot.moveTo(...) move, call robot.reset() before a robot.reach(...) (the IK cursor goes stale and reach() would otherwise jump). Prefer one family per routine. For "go to a specific pose/config", PREFER robot.moveTo — absolute and holding, no timing guess.
 4. You are BLIND: no vision, no world model. Never assume where objects are. Prefer small, reversible moves and short durations. Do not drive the base more than briefly.
 5. No imports, no fetch, no DOM — only the robot API and plain JS (loops, math, variables).
 6. Output ONLY the function body. No ``` fences, no commentary.

@@ -297,6 +297,16 @@ export class RemoteTeleop {
     this.externalLeader = leader;
   }
 
+  // Send ONE absolute-target control frame: {type:"control", action:{"<motor>.pos": value}}. Keys
+  // are normalized "<side>_arm_<joint>.pos" ([-100,100]; grippers [0,100]) — identical to the
+  // telemetry `state` namespace. The daemon LATCHES and holds the target, and a zero-jog does NOT
+  // cancel it, so this coexists with the jog heartbeat. WARNING: the daemon applies `action` with
+  // NO server-side slew — a far-from-current target lurches. Callers must ramp large moves
+  // themselves (see ScriptDriver.moveTo). Base is not positionable this way (jog/velocity only).
+  sendAction(action: Record<string, number>) {
+    this.dcSend({ type: "control", seq: this.seq++, action });
+  }
+
   // Public command surface for non-keyboard inputs (VR E-STOP / reset). Mirrors sendCmd.
   command(cmd: "estop" | "reset_latch" | "reset") {
     this.sendCmd(cmd);

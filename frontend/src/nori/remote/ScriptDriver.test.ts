@@ -11,12 +11,17 @@ import { ScriptDriver, type ScriptDriverOptions } from "./ScriptDriver";
 function makeFakeTeleop() {
   const jogs: (ExternalJog | null)[] = [];
   const commands: string[] = [];
+  const actions: Record<string, number>[] = [];
   const teleop = {
     setExternalJog: (j: ExternalJog | null) => { jogs.push(j); },
     command: (c: string) => { commands.push(c); },
+    sendAction: (a: Record<string, number>) => { actions.push(a); },
   } as unknown as RemoteTeleop;
-  return { teleop, jogs, commands };
+  return { teleop, jogs, commands, actions };
 }
+
+// Minimal telemetry frame carrying just a `state` dict for moveTo.
+const telWithState = (state: Record<string, number>) => ({ state } as unknown as TelemetryView);
 
 function setup(opts: Partial<ScriptDriverOptions> = {}) {
   const fake = makeFakeTeleop();
@@ -188,6 +193,41 @@ describe("stop()", () => {
     const { driver } = setup();
     driver.stop();
     await expect(driver.exec("reach", ["right", { x: 0.5 }, 100])).rejects.toThrow(/stopped/);
+  });
+});
+
+describe("moveTo (absolute, client-side slew)", () => {
+  it("ramps from the current pose to the target and holds", async () => {
+    const { driver, actions } = setup();
+    driver.setTelemetry(telWithState({ "right_arm_shoulder_pan.pos": 0 }));
+    const p = driver.exec("moveTo", ["right", { shoulder_pan: 30 }, { slew: 60 }]);
+    await vi.advanceTimersByTimeAsync(1);
+    // First frame STEPS toward the goal (slew 60 u/s * 40ms = 2.4), not a snap to 30.
+    expect(actions.at(-1)!["right_arm_shoulder_pan.pos"]).toBeCloseTo(2.4, 1);
+    await vi.advanceTimersByTimeAsync(2000);
+    await p;
+    expect(actions.at(-1)!["right_arm_shoulder_pan.pos"]).toBe(30); // reached + held
+  });
+
+  it("clamps targets to the joint range", async () => {
+    const { driver, actions } = setup();
+    driver.setTelemetry(telWithState({ "right_arm_shoulder_pan.pos": 0, "right_arm_gripper.pos": 50 }));
+    const p = driver.exec("moveTo", ["right", { shoulder_pan: 999, gripper: -20 }, { slew: 999 }]);
+    await vi.advanceTimersByTimeAsync(3000);
+    await p;
+    expect(actions.at(-1)!["right_arm_shoulder_pan.pos"]).toBe(100); // clamped to [-100,100]
+    expect(actions.at(-1)!["right_arm_gripper.pos"]).toBe(0); // gripper clamped to [0,100]
+  });
+
+  it("rejects an unknown joint", async () => {
+    const { driver } = setup();
+    driver.setTelemetry(telWithState({}));
+    await expect(driver.exec("moveTo", ["right", { x: 10 }, undefined])).rejects.toThrow(/unknown joint/);
+  });
+
+  it("rejects when there is no telemetry yet", async () => {
+    const { driver } = setup(); // setTelemetry never called
+    await expect(driver.exec("moveTo", ["right", { shoulder_pan: 10 }, undefined])).rejects.toThrow(/no telemetry/);
   });
 });
 

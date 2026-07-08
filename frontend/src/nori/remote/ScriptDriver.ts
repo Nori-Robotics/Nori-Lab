@@ -35,6 +35,14 @@ const GRIP_RATE = 1;
 // whole-script wall-clock cap on top of this. 60 s is well past any sane single motion span.
 const MAX_HOLD_MS = 60_000;
 
+// moveTo (absolute joint targets). The daemon applies `action` with NO server-side slew — a
+// far-from-current target would lurch — so moveTo ramps the target here, from the current
+// telemetry pose toward the goal at a bounded rate. ~60 u/s traverses the full [-100,100] range in
+// ~3.3 s; opts.slew tunes it, clamped to MAX_MOVE_SLEW so a bad value can't cause a lurch.
+const DEFAULT_MOVE_SLEW = 60; // normalized units / second
+const MAX_MOVE_SLEW = 120;
+const MOVE_TICK_MS = 40; // action-frame cadence (the daemon P-controls between updates)
+
 export interface ScriptDriverOptions {
   teleop: RemoteTeleop;
   // Half-speed session cap (plan §Containment): every op's rate magnitude is clamped to this
@@ -152,6 +160,8 @@ export class ScriptDriver {
         return this.enqueue(() => this.lift(args));
       case "wait":
         return this.enqueue(() => this.wait(args));
+      case "moveTo":
+        return this.enqueue(() => this.moveTo(args));
       case "telemetry":
         return Promise.resolve(this.lastTelemetry);
       case "playAudio":
@@ -238,6 +248,48 @@ export class ScriptDriver {
   private wait(args: unknown[]): Promise<void> {
     const [ms] = args as [number];
     return this.sleep(ms); // heartbeat already holds zero; just idle
+  }
+
+  // Move arm joints to ABSOLUTE normalized targets and hold them there. Because the daemon's
+  // `action` path has no slew guard, we ramp the target from the current telemetry pose toward the
+  // goal at `slew` units/s, streaming one action frame per MOVE_TICK_MS. The jog heartbeat keeps
+  // running ({}) — a zero-jog doesn't cancel a held action target. On stop() the arm holds wherever
+  // the ramp reached (no lurch). Completion is when every joint is within tolerance of its goal.
+  private async moveTo(args: unknown[]): Promise<void> {
+    const [side, targets, opts] = args as [ArmSide, Record<string, number>, { slew?: number } | undefined];
+    if (!this.lastTelemetry) throw new Error("moveTo: no telemetry yet (is the session connected?)");
+    const slew = Math.min(MAX_MOVE_SLEW, Math.max(1, opts?.slew ?? DEFAULT_MOVE_SLEW));
+    const state = this.lastTelemetry.state ?? {};
+    const plan = Object.entries(targets).map(([joint, to]) => {
+      if (!JOINT_DOFS.has(joint)) {
+        throw new Error(`moveTo: unknown joint "${joint}" (allowed: ${[...JOINT_DOFS].join(", ")})`);
+      }
+      const key = `${side}_arm_${joint}.pos`;
+      const [lo, hi] = joint === "gripper" ? [0, 100] : [-100, 100];
+      // Start the ramp from the ACTUAL current position so the first frame doesn't jump.
+      const cur = Number.isFinite(state[key]) ? state[key] : (Number.isFinite(to) ? to : 0);
+      const goal = Number.isFinite(to) ? Math.max(lo, Math.min(hi, to)) : cur;
+      return { key, goal, cur };
+    });
+    const maxStep = slew * (MOVE_TICK_MS / 1000);
+    for (;;) {
+      if (this.stopped) return;
+      let done = true;
+      const action: Record<string, number> = {};
+      for (const p of plan) {
+        const remaining = p.goal - p.cur;
+        if (Math.abs(remaining) > 0.5) {
+          p.cur += Math.sign(remaining) * Math.min(maxStep, Math.abs(remaining));
+          done = false;
+        } else {
+          p.cur = p.goal;
+        }
+        action[p.key] = Math.round(p.cur * 100) / 100;
+      }
+      this.teleop.sendAction(action);
+      if (done) return;
+      try { await this.sleep(MOVE_TICK_MS); } catch { return; } // stop() cancels -> hold in place
+    }
   }
 
   // Fetch/decode/stream a clip to the robot speaker via the main-thread helper. Runs OUTSIDE the

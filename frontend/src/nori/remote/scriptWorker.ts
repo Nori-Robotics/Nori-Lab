@@ -67,6 +67,11 @@ const robot = {
   grip: (side: "left" | "right", action: "open" | "close") => callOp("grip", [side, action]),
   base: (vec: { linear?: number; angular?: number }, ms: number) => callOp("base", [vec, ms]),
   lift: (side: "left" | "right", dir: number, ms: number) => callOp("lift", [side, dir, ms]),
+  moveTo: (
+    side: "left" | "right",
+    targets: Record<string, number>,
+    opts?: { slew?: number },
+  ) => callOp("moveTo", [side, targets, opts]),
   wait: (ms: number) => callOp("wait", [ms]),
   telemetry: () => callOp("telemetry", []),
   playAudio: (url: string) => callOp("playAudio", [url]),

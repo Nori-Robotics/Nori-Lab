@@ -405,6 +405,8 @@ THE ROBOT API — every motion is OPEN-LOOP TIMED. You give a duration in ms; th
                                  scale as the robot state you're given ([-100,100]; gripper [0,100]).
                                  opts.slew = units/sec (default 60). This is how you do "go to X":
                                  read the target/current from the state and command it directly.
+                                 RETURNS a status string: "done" (arrived), "blocked" (stalled/
+                                 latched), or "timeout". You can branch on it (e.g. retry or stop).
                                  (Ramped safely; no timing guess.) Base can't be positioned this way.
   robot.grip(side, "open"|"close")   Convenience gripper open/close.
   robot.base(vec, ms)           Mobile base. vec: { linear, angular } in [-1,1].

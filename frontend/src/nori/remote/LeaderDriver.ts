@@ -39,6 +39,9 @@ export interface LeaderDriverOptions {
   // live status pill (how many motors are feeding the robot, connected/paused, etc.).
   onFrame?: (targetCount: number, frame: LeaderLiveResponse) => void;
   onError?: (message: string) => void;
+  // Fired whenever the engaged state changes (including forced disengage, e.g. a
+  // calibration session starting), so the page's Engage button stays truthful.
+  onEngagedChange?: (engaged: boolean, reason?: string) => void;
 }
 
 // Pull each leader side's readable joint targets out of a live frame. Only motors the bus
@@ -87,6 +90,12 @@ export class LeaderDriver {
   private readonly pollMs: number;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  // SAFETY: the driver starts DISENGAGED — it polls and reports leader positions (so the
+  // UI can show what the arms would do) but sends nothing to the robot until the operator
+  // explicitly engages. Auto-starting the driver on connect must never move the robot:
+  // with an uncalibrated or mid-calibration leader, instant engagement slams the follower
+  // arms to garbage targets.
+  private engaged = false;
 
   constructor(opts: LeaderDriverOptions) {
     this.o = opts;
@@ -99,9 +108,23 @@ export class LeaderDriver {
     void this.tick();
   }
 
+  isEngaged(): boolean {
+    return this.engaged;
+  }
+
+  // Arm / disarm sending targets to the robot. Disengaging releases the arms back to
+  // the daemon (setLeaderAction(null)) so keyboard/VR jog can take over.
+  setEngaged(on: boolean, reason?: string) {
+    if (this.stopped || this.engaged === on) return;
+    this.engaged = on;
+    if (!on) this.o.teleop.setLeaderAction(null);
+    this.o.onEngagedChange?.(on, reason);
+  }
+
   // Stop polling and release the arms back to the keyboard/VR. Idempotent.
   stop() {
     this.stopped = true;
+    this.engaged = false;
     if (this.timer !== null) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -114,13 +137,18 @@ export class LeaderDriver {
     try {
       const frame = await readLeaderLive(this.o.baseUrl, this.o.fetcher, this.calibrationId);
       if (this.stopped) return;
+      // A calibration session owns the leader bus/values — never drive from it, and
+      // drop engagement so finishing calibration doesn't instantly move the robot.
+      if (frame.calibrating && this.engaged) {
+        this.setEngaged(false, "calibration started");
+      }
       // Route a solo leader to the currently-selected follower arm, read live so flipping the
       // on-screen arm switch re-targets the single leader mid-session (the "switch arm" flow).
       const targets = frameToLeaderAction(frame, this.o.teleop.getArm());
-      // Only push when we actually read something. If the whole frame is empty (arms
-      // unplugged / bus dropped), leave the last targets in place so the daemon's slew
+      // Only push when engaged AND we actually read something. If the whole frame is empty
+      // (arms unplugged / bus dropped), leave the last targets in place so the daemon's slew
       // guard holds the pose instead of us clearing to null and handing control back.
-      if (Object.keys(targets).length > 0) {
+      if (this.engaged && !frame.calibrating && Object.keys(targets).length > 0) {
         this.o.teleop.setLeaderAction(targets);
       }
       this.o.onFrame?.(Object.keys(targets).length, frame);

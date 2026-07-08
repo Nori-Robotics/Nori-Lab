@@ -55,6 +55,9 @@ const robot = {
   ) => callOp("moveTo", [side, targets, opts]),
   wait: (ms: number) => callOp("wait", [ms]),
   telemetry: () => callOp("telemetry", []),
+  // Phase F: latest world-state from the on-Pi detector (or null if none). Lets a script REACT to
+  // what the robot sees: `const w = await robot.perceive(); if (w?.objects.find(o=>o.label==="cup"))…`
+  perceive: () => callOp("perceive", []),
   playAudio: (url: string) => callOp("playAudio", [url]),
   reset: () => callOp("reset", []), // re-sync the IK cursor (call before reach() after joint())
   estop: () => callOp("estop", []),

@@ -30,6 +30,11 @@ export interface ManualStatus {
     center: Record<string, number>;
     mins: Record<string, number>;
     maxes: Record<string, number>;
+    // Wrap-aware swept range: unwrapped ticks relative to center. Span checks must
+    // use these — raw min/max lie for joints that cross the 0/4096 encoder boundary.
+    min_deltas?: Record<string, number>;
+    max_deltas?: Record<string, number>;
+    wraps?: Record<string, boolean>;
     active: boolean;
   } | null;
 }
@@ -64,6 +69,12 @@ export interface LeaderLiveResponse {
   reason?: string | null;
   port: string;
   leaders: Record<LeaderSide, LeaderLiveSide>;
+  // Calibration health messages (stale wrap schema, corrupted spans, tiny ranges) —
+  // shown to the operator; drivers should treat a non-empty list as "recalibrate first".
+  warnings?: string[];
+  // True while a manual/auto calibration session owns the leader bus; drivers must
+  // pause sending targets to the robot while this is set.
+  calibrating?: boolean;
   updated_at: number;
 }
 

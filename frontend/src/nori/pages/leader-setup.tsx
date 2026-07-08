@@ -51,13 +51,17 @@ const CALIBRATION_MODES = ["manual", "auto"] as const;
 type CalibrationMode = (typeof CALIBRATION_MODES)[number];
 const DEFAULT_CALIBRATION_ID = "nori_l2_dual_leader_dev";
 const LIVE_POLL_MS = 50;
+// Minimum swept range (unwrapped ticks) before a joint counts as calibrated. These are
+// deliberately forgiving — an under-swept joint just clamps at its recorded bounds, so
+// demanding near-full sweeps (the old 2200-3800 values) made Finish practically
+// unreachable. ~800 ticks ≈ 70° of real motion; gripper full stroke is ~1000 ticks.
 const MANUAL_READY_SPAN_TICKS: Record<string, number> = {
-  shoulder_pan: 2400,
-  shoulder_lift: 2200,
-  elbow_flex: 2100,
-  wrist_flex: 2200,
-  wrist_roll: 3800,
-  gripper: 1050,
+  shoulder_pan: 800,
+  shoulder_lift: 800,
+  elbow_flex: 800,
+  wrist_flex: 800,
+  wrist_roll: 800,
+  gripper: 300,
 };
 const FIELD_CLASS =
   "h-10 rounded-md border-[#14131a]/12 bg-[#fffdf7] text-[#14131a] placeholder:text-[#a39887] focus-visible:ring-[#d98b3d]";
@@ -110,10 +114,15 @@ function manualJointReady(status: ManualStatus | null, side: LeaderSide, joint: 
   const id = jointId(side, joint);
   const center = recordValue(session.center, id);
   if (center == null) return false;
+  // Prefer the unwrapped delta span: raw min/max explode to ~4096 the moment a joint
+  // crosses the 0/4096 encoder boundary, which would mark it "ready" after barely moving.
+  const minDelta = recordValue(session.min_deltas ?? {}, id);
+  const maxDelta = recordValue(session.max_deltas ?? {}, id);
+  const threshold = MANUAL_READY_SPAN_TICKS[joint] ?? 2400;
+  if (minDelta != null && maxDelta != null) return maxDelta - minDelta >= threshold;
   const min = recordValue(session.mins, id);
   const max = recordValue(session.maxes, id);
   if (min == null || max == null) return false;
-  const threshold = MANUAL_READY_SPAN_TICKS[joint] ?? 2400;
   return max - min >= threshold;
 }
 
@@ -256,13 +265,25 @@ const LeaderSetup = ({
   const [autoConfirmed, setAutoConfirmed] = useState(false);
   const [autoStatus, setAutoStatus] = useState<AutoStatus | null>(null);
 
-  const run = async <T,>(label: string, task: () => Promise<T>, onSuccess?: (value: T) => void) => {
+  const run = async <T,>(
+    label: string,
+    task: () => Promise<T>,
+    onSuccess?: (value: T) => void,
+    successDescription = "Done",
+  ) => {
     setBusy(label);
     setError(null);
     try {
       const value = await task();
+      // The leader endpoints report soft failures as HTTP 200 + {success:false, message}
+      // (e.g. "left leader missing IDs", "calibration already active"). Treat those as
+      // errors — otherwise a failed "start calibration" instantly toasts success.
+      const record = asRecord(value);
+      if (record && record.success === false) {
+        throw new Error(String(record.message || `${label} failed`));
+      }
       onSuccess?.(value);
-      toast({ title: label, description: "Done" });
+      toast({ title: label, description: successDescription });
       return value;
     } catch (err) {
       const message = errorMessage(err);
@@ -499,6 +520,17 @@ const LeaderSetup = ({
         </Alert>
       )}
 
+      {(liveFrame?.warnings?.length ?? 0) > 0 && (
+        <Alert className="border-[#db9346]/35 bg-[#fdf1de] text-[#8a5a12]">
+          <AlertTitle>calibration needs attention</AlertTitle>
+          <AlertDescription>
+            <ul className="list-disc space-y-0.5 pl-4">
+              {liveFrame?.warnings?.map((warning) => <li key={warning}>{warning}</li>)}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
+
       <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-3 shadow-sm">
         <div
           className={
@@ -584,6 +616,24 @@ const LeaderSetup = ({
             </StatusPill>
           </div>
 
+          {/* Only one calibration session can exist server-side, and it survives page
+              reloads — say so explicitly, since a running session is why the start
+              button is disabled ("why won't it let me start?"). */}
+          {manualStatus?.active && (
+            <p className="rounded bg-[#db9346]/15 px-2 py-1 text-xs text-[#8a5a12]">
+              A manual calibration session for the <strong>{manualActiveSide}</strong> leader is
+              already running (it persists across page reloads). Sweep each joint until every
+              row shows a checkmark, then press <strong>finish</strong> — or{" "}
+              <strong>cancel</strong> to start over.
+            </p>
+          )}
+          {autoStatus?.active && (
+            <p className="rounded bg-[#db9346]/15 px-2 py-1 text-xs text-[#8a5a12]">
+              Auto calibration is running — wait for it to complete or press stop before
+              starting a new session.
+            </p>
+          )}
+
           <div
             className={
               embedded
@@ -632,14 +682,16 @@ const LeaderSetup = ({
                     void run(
                       "Start manual calibration",
                       () => manualStart(baseUrl, fetchWithHeaders, calibrationSide, calibrationId.trim(), sharedPort.trim() || undefined),
-                      () => void refreshManualStatus()
+                      () => void refreshManualStatus(),
+                      "Session started — center captured. Sweep every joint through its full range, then press finish."
                     );
                     return;
                   }
                   void run(
                     "Start auto calibration",
                     () => autoStart(baseUrl, fetchWithHeaders, calibrationSide, calibrationId.trim(), autoConfirmed, sharedPort.trim() || undefined),
-                    () => void refreshAutoStatus()
+                    () => void refreshAutoStatus(),
+                    "Auto calibration running — keep clear of the arm."
                   );
                 }}
                 disabled={busy != null || calibrationBusy || !portReady || (calibrationMode === "auto" && !autoConfirmed)}

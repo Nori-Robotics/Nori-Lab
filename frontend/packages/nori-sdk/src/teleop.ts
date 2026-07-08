@@ -70,6 +70,28 @@ export interface TelemetryView {
   state: Record<string, number>;
 }
 
+// A single object the on-Pi detector reports (nori-protocol perception.json $items). Fields
+// degrade gracefully: a monocular 2D detector fills `bbox` only; one with depth/registration
+// adds `xyz` (robot-base meters); a tracker adds a stable `id`.
+export interface PerceivedObject {
+  label: string;                      // detector class name, e.g. "cup"
+  confidence: number;                 // [0,1]
+  bbox?: [number, number, number, number]; // normalized [x,y,w,h] in the source frame
+  xyz?: [number, number, number];     // robot-base frame, meters (only with depth)
+  id?: number;                        // stable track id across frames (only with a tracker)
+}
+
+// A structured world-state snapshot from the daemon's perception process (Phase F / G3).
+// DISTINCT from telemetry (proprioception — the robot's own joints) and the video track (human
+// eyes): this is what a *running script* reacts to via robot.perceive(). Low-rate (~2-10 Hz),
+// decoupled from the 50 Hz control loop. `objects: []` is a real "nothing seen", not "no data".
+export interface PerceptionView {
+  ts_ns: number;             // Pi capture time (same clock as telemetry.ts_ns)
+  source?: string;           // which camera / composite tile
+  objects: PerceivedObject[];
+  receivedAt: number;        // client performance.now() when this frame arrived (staleness check)
+}
+
 // Two-way call state (Phase 7 §B). Reported to the page via onCall so it can render the
 // call bar + on-air indicators. Everything here is renegotiation-free: mic/camera attach to
 // transceivers the robot already offered (R-X.1). Fields degrade gracefully when the robot
@@ -103,6 +125,10 @@ export interface RemoteTeleopOptions {
   turnCred: string;
   forceRelay: boolean;
   arm: ArmSide;
+  // Initial keyboard control mode. Defaults to "cylindrical". The page passes its current
+  // UI selection so a session connected AFTER the user picked per-motor starts in per-motor
+  // (previously every new session silently reset to cylindrical).
+  mode?: ControlMode;
   onLog: (msg: string) => void;
   onConnState: (state: string) => void;
   onTelemetry: (t: TelemetryView) => void;
@@ -113,6 +139,9 @@ export interface RemoteTeleopOptions {
   onCurrents?: (currents: Record<string, number>) => void;
   // Optional: two-way call state changes (mic/camera/robot-audio). Phase 7 §B.
   onCall?: (state: CallState) => void;
+  // Optional: structured world-state from the daemon's perception process (Phase F / G3). Fires on
+  // each `perception` frame; a script consumer usually polls perceive() instead of subscribing.
+  onPerception?: (p: PerceptionView) => void;
 }
 
 // Two schemes; 'm' toggles. Default = CYLINDRICAL (the rpi4 feel).
@@ -230,6 +259,10 @@ export class RemoteTeleop {
     loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {}, state: {},
   };
   private stopped = false;
+  // Latest world-state from the daemon perception process (Phase F). null until a frame arrives
+  // (or forever, if the on-Pi detector isn't running — perceive() then returns null and scripts
+  // fall back to blind/telemetry-only behavior). Fed on the control channel like telemetry.
+  private perception: PerceptionView | null = null;
 
   // ---- two-way call (Phase 7 §B) -------------------------------------------
   private micStream: MediaStream | null = null;
@@ -248,6 +281,7 @@ export class RemoteTeleop {
 
   constructor(opts: RemoteTeleopOptions) {
     this.o = opts;
+    if (opts.mode) this.mode = opts.mode;
   }
 
   private log = (...a: unknown[]) => this.o.onLog(a.join(" "));
@@ -854,11 +888,58 @@ export class RemoteTeleop {
         this.emitCall();
       }
       this.o.onTelemetry({ ...this.tel });
+    } else if (m.type === "perception") {
+      this.ingestPerception(m);
     } else if (m.type === "ack") {
       this.log("daemon ack (watchdog=" + JSON.stringify(m.watchdog_profile || m.watchdog || "?") + ")");
     } else if (m.type === "error") {
       this.log("daemon error: " + JSON.stringify(m));
     }
+  }
+
+  // Coerce a wire `perception` frame into a PerceptionView, stamp arrival time, cache it, notify.
+  // Tolerant of a partial frame (a detector still coming up): missing/!array objects -> [].
+  private ingestPerception(m: Record<string, unknown>) {
+    const rawObjects = Array.isArray(m.objects) ? (m.objects as Record<string, unknown>[]) : [];
+    const objects: PerceivedObject[] = rawObjects.map((o) => ({
+      label: String(o.label ?? ""),
+      confidence: typeof o.confidence === "number" ? o.confidence : 0,
+      bbox: Array.isArray(o.bbox) && o.bbox.length === 4 ? (o.bbox as [number, number, number, number]) : undefined,
+      xyz: Array.isArray(o.xyz) && o.xyz.length === 3 ? (o.xyz as [number, number, number]) : undefined,
+      id: typeof o.id === "number" ? o.id : undefined,
+    }));
+    const view: PerceptionView = {
+      ts_ns: typeof m.ts_ns === "number" ? m.ts_ns : 0,
+      source: typeof m.source === "string" ? m.source : undefined,
+      objects,
+      receivedAt: performance.now(),
+    };
+    this.perception = view;
+    this.o.onPerception?.(view);
+  }
+
+  // ---- perception (Phase F / G3) -------------------------------------------
+  // Latest world-state from the daemon perception process, or null if none has arrived (detector
+  // not running / not connected). A running script polls this to close a loop:
+  //   const world = teleop.perceive();
+  //   const cup = world?.objects.find((o) => o.label === "cup");
+  // Staleness is the CALLER's call — check perceptionAgeMs() before trusting an old frame; a
+  // detector that has stopped will leave the last frame here indefinitely.
+  perceive(): PerceptionView | null {
+    return this.perception;
+  }
+
+  // Age of the cached perception frame in ms (client clock), or null if none. Use this to reject
+  // stale detections: `if ((teleop.perceptionAgeMs() ?? Infinity) > 500) { /* don't trust it */ }`.
+  perceptionAgeMs(): number | null {
+    return this.perception ? performance.now() - this.perception.receivedAt : null;
+  }
+
+  // Feed a perception frame as if it arrived on the wire. NORMALLY the daemon supplies these; this
+  // is exposed for (a) unit tests and (b) the app-side dev mock (mockPerception.ts), so reactive
+  // scripts can be developed before the on-Pi detector lands. Same code path as a real frame.
+  injectPerception(frame: { ts_ns?: number; source?: string; objects: PerceivedObject[] }) {
+    this.ingestPerception({ type: "perception", ...frame } as unknown as Record<string, unknown>);
   }
 
   private dcSend(obj: unknown) {

@@ -140,6 +140,30 @@ const still = await teleop.snapshot();       // JPEG Blob, or null
 > verification** (encoder power drop + clean keyframe resume + frame grab). The inbound video feed
 > itself is hardware-verified and stable.
 
+## Perception — structured world-state (Phase F)
+
+Separate from the video track (human eyes) and the one-shot LLM-vision still: `perceive()` returns
+the latest **structured** detections from the daemon's on-Pi perception process, so a *running*
+program can react to what the robot sees.
+
+```ts
+const world = teleop.perceive();               // PerceptionView | null (null = no frame yet)
+const cup = world?.objects.find((o) => o.label === "cup");
+if (cup?.xyz && (teleop.perceptionAgeMs() ?? Infinity) < 500) {
+  // cup.xyz is [x,y,z] in robot-base meters; cup.bbox is normalized [x,y,w,h]. Both optional —
+  // present depends on the detector (2D vs depth). Check age: a dead detector leaves a stale frame.
+}
+```
+
+Subscribe instead of polling with the `onPerception` option. `objects: []` is an explicit "nothing
+seen" — distinct from `null` ("no frame"). Frames ride the control channel (`type:"perception"`,
+nori-protocol `perception.json`).
+
+> **Verification status (v0):** the SDK parse/cache/`perceive()`/`injectPerception()` surface is
+> implemented and unit-tested, but the **on-Pi detector that emits `perception` frames does not exist
+> yet** — `perceive()` returns `null` on real hardware today. `injectPerception()` feeds synthetic
+> frames through the same path for development. See `docs/phase_f_perception.md`.
+
 ## Streaming audio to the robot speaker
 
 `sendClipAudio` streams an arbitrary audio **track** to the robot's speaker over the same

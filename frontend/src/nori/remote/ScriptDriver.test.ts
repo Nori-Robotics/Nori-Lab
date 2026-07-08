@@ -4,20 +4,22 @@
 // No hardware, no DOM, no real Worker (worker isolation is B5, a manual browser check).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ExternalJog, RemoteTeleop, TelemetryView } from "@nori/sdk";
+import type { ExternalJog, PerceptionView, RemoteTeleop, TelemetryView } from "@nori/sdk";
 import { ScriptDriver, type ScriptDriverOptions } from "./ScriptDriver";
 
-// Minimal stand-in for RemoteTeleop: only the two methods ScriptDriver calls, recording every call.
+// Minimal stand-in for RemoteTeleop: only the methods ScriptDriver calls, recording every call.
 function makeFakeTeleop() {
   const jogs: (ExternalJog | null)[] = [];
   const commands: string[] = [];
   const actions: Record<string, number>[] = [];
+  const perception = { current: null as PerceptionView | null };
   const teleop = {
     setExternalJog: (j: ExternalJog | null) => { jogs.push(j); },
     command: (c: string) => { commands.push(c); },
     sendAction: (a: Record<string, number>) => { actions.push(a); },
+    perceive: () => perception.current,
   } as unknown as RemoteTeleop;
-  return { teleop, jogs, commands, actions };
+  return { teleop, jogs, commands, actions, perception };
 }
 
 // Minimal telemetry frame carrying just a `state` dict for moveTo.
@@ -176,6 +178,17 @@ describe("wait / commands / telemetry", () => {
     const frame = { loopHz: 50, safety: "ok" } as unknown as TelemetryView;
     driver.setTelemetry(frame);
     await expect(driver.exec("telemetry", [])).resolves.toBe(frame);
+  });
+
+  it("perceive() returns the teleop's latest perception (null when none)", async () => {
+    const { driver, perception } = setup();
+    await expect(driver.exec("perceive", [])).resolves.toBeNull(); // no detector frame yet
+    const view = {
+      ts_ns: 1, source: "front", receivedAt: 0,
+      objects: [{ label: "cup", confidence: 0.9 }],
+    } as unknown as PerceptionView;
+    perception.current = view;
+    await expect(driver.exec("perceive", [])).resolves.toBe(view);
   });
 });
 

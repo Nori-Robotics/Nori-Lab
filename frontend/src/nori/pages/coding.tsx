@@ -20,6 +20,7 @@ import { ThemeProviderContext } from "@/contexts/ThemeContext";
 import { Play, Square, OctagonX } from "lucide-react";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { ScriptSession } from "@/nori/remote/ScriptSession";
+import { startMockPerception, type MockPerceptionHandle } from "@/nori/remote/mockPerception";
 import { useApi } from "@/contexts/ApiContext";
 
 const CODE_EXTENSIONS = [javascript({ typescript: true }), EditorView.lineWrapping];
@@ -80,7 +81,9 @@ const Coding = () => {
     try { return localStorage.getItem("nori_camera_layout") ?? ""; } catch { return ""; }
   });
   const [lastFrame, setLastFrame] = useState<string | null>(null); // data URL of the last attached frame
+  const [mockPerception, setMockPerception] = useState(false); // dev: feed synthetic robot.perceive() frames
   const sessionRef = useRef<ScriptSession | null>(null);
+  const mockPerceptionRef = useRef<MockPerceptionHandle | null>(null);
   const outRef = useRef<HTMLDivElement>(null);
 
   const code = scriptSource;
@@ -104,6 +107,16 @@ const Coding = () => {
 
   // Stop a running script if we navigate away (the SESSION persists; only the script stops).
   useEffect(() => () => sessionRef.current?.stop(), []);
+
+  // Dev: start/stop the synthetic perception feed so robot.perceive() returns data before the on-Pi
+  // detector exists (Phase F). Off by default; injects through the same path a real frame takes.
+  useEffect(() => {
+    if (mockPerception && teleop) {
+      mockPerceptionRef.current = startMockPerception(teleop);
+      append("🫧 mock perception ON (dev) — robot.perceive() now returns synthetic objects");
+    }
+    return () => { mockPerceptionRef.current?.stop(); mockPerceptionRef.current = null; };
+  }, [mockPerception, teleop]);
 
   const { theme } = useContext(ThemeProviderContext);
   const editorTheme =
@@ -266,12 +279,20 @@ const Coding = () => {
             />
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between gap-2">
-                <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
-                  title="Attach a still from the robot camera so Claude can see the scene">
-                  <input type="checkbox" checked={attachVision}
-                    onChange={(e) => setAttachVision(e.target.checked)} />
-                  attach camera view
-                </label>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                    title="Attach a still from the robot camera so Claude can see the scene">
+                    <input type="checkbox" checked={attachVision}
+                      onChange={(e) => setAttachVision(e.target.checked)} />
+                    attach camera view
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                    title="Dev: feed synthetic robot.perceive() frames so reactive scripts run before the on-Pi detector exists (Phase F)">
+                    <input type="checkbox" checked={mockPerception}
+                      onChange={(e) => setMockPerception(e.target.checked)} />
+                    mock perception (dev)
+                  </label>
+                </div>
                 <Button size="sm" onClick={generate} disabled={generating || !prompt.trim()}
                   title="Generate a routine with Claude and drop it into the editor"
                   className="rounded-md bg-[#d98b3d] text-foreground hover:bg-[#c97929]">

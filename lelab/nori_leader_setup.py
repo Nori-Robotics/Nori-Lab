@@ -72,6 +72,15 @@ LIVE_READ_TIMEOUT = 0.012
 LIVE_MISSING_RETRY_BASE_SEC = 0.25
 LIVE_MISSING_RETRY_MAX_SEC = 1.0
 
+# All leader arms share ONE serial bus, and macOS happily opens the same /dev/cu.*
+# twice — two concurrent readers then split the reply bytes between their file
+# descriptors and both fail checksums. Every short-lived bus operation (live read,
+# manual calibration start/sample, set-id, identify, probe) must hold this lock so
+# wire traffic never interleaves. The long-running powered auto-calibration cannot
+# hold it; instead the live path is fenced off while auto calibration is active
+# (see AutoCalibrationManager.live_frame / read_shared_live_positions).
+_BUS_LOCK = threading.RLock()
+
 
 def _require_serial():
     try:
@@ -314,14 +323,73 @@ def scan_ids(bus: SCSBus, start: int = 1, stop: int = 253) -> list[int]:
     return [motor_id for motor_id in range(start, stop + 1) if bus.ping(motor_id)]
 
 
-def probe_port(identity: PortIdentity, *, include_all: bool = False) -> PortProbe:
-    try:
-        with SCSBus(identity.open_path) as bus:
-            expected_hits = [motor_id for motor_id in ALL_LEADER_IDS if bus.ping(motor_id)]
-            all_hits = scan_ids(bus) if include_all else []
-    except Exception:
-        expected_hits = []
-        all_hits = []
+# Ports that are serial devices but can never be a leader bus — and whose open()
+# can BLOCK indefinitely (macOS Bluetooth serial is the classic offender). Probing
+# one of these while holding the bus lock freezes every leader endpoint.
+_PORT_SKIP_TOKENS = ("bluetooth", "debug-console", "wlan", "airpod")
+
+# Hard cap per probed port. A silent-but-real USB serial port answers all 12 pings
+# well inside this; anything slower is not our bus and gets abandoned.
+PROBE_TIMEOUT_SEC = 3.0
+
+
+def _is_probeable_port(identity: PortIdentity) -> bool:
+    name = f"{identity.device} {identity.stable_path or ''}".lower()
+    return not any(token in name for token in _PORT_SKIP_TOKENS)
+
+
+def probe_port(
+    identity: PortIdentity,
+    *,
+    include_all: bool = False,
+    timeout_sec: float = PROBE_TIMEOUT_SEC,
+) -> PortProbe:
+    expected_hits: list[int] = []
+    all_hits: list[int] = []
+    if _is_probeable_port(identity):
+        # Probe in a worker thread with a hard deadline: serial open() has no timeout
+        # of its own and can hang forever on misbehaving devices. On deadline we set
+        # `cancelled` (so the zombie thread stops touching the wire the moment it
+        # unblocks and closes its handle) and move on instead of freezing the server.
+        cancelled = threading.Event()
+        result: dict[str, list[int]] = {}
+
+        def _probe_worker() -> None:
+            try:
+                with SCSBus(identity.open_path) as bus:
+                    if cancelled.is_set():
+                        return
+                    hits: list[int] = []
+                    for motor_id in ALL_LEADER_IDS:
+                        if cancelled.is_set():
+                            return
+                        if bus.ping(motor_id):
+                            hits.append(motor_id)
+                    result["expected"] = hits
+                    if include_all and not cancelled.is_set():
+                        result["all"] = scan_ids(bus)
+            except Exception:
+                logger.debug("probe failed for %s", identity.open_path, exc_info=True)
+
+        # Bounded lock acquire: if the bus is busy past the deadline, report the port
+        # as no-hits rather than queueing behind it forever.
+        locked = _BUS_LOCK.acquire(timeout=timeout_sec)
+        try:
+            if locked:
+                worker = threading.Thread(
+                    target=_probe_worker, name=f"nori-port-probe-{identity.device}", daemon=True
+                )
+                worker.start()
+                # A full 1..253 scan (--all diagnostics) legitimately needs far longer
+                # than the 12-ping probe; don't cut it off at the normal deadline.
+                worker.join(timeout_sec + (20.0 if include_all else 0.0))
+                if worker.is_alive():
+                    cancelled.set()
+                expected_hits = list(result.get("expected", []))
+                all_hits = list(result.get("all", []))
+        finally:
+            if locked:
+                _BUS_LOCK.release()
     left_hits = [motor_id for motor_id in expected_hits if motor_id in LEFT_LEADER_IDS]
     right_hits = [motor_id for motor_id in expected_hits if motor_id in RIGHT_LEADER_IDS]
     return PortProbe(
@@ -394,7 +462,7 @@ def set_connected_servo_id(
 ) -> dict[str, Any]:
     if not 1 <= int(target_id) <= 253:
         raise ValueError("target_id must be in 1..253")
-    with SCSBus(port) as bus:
+    with _BUS_LOCK, SCSBus(port) as bus:
         before = scan_ids(bus, 1, scan_max)
         if before == [target_id]:
             return {
@@ -434,7 +502,7 @@ def identify_leader_motors(
     resolved = port or _port_for_side("left")
     ids = range(1, 254) if all_ids else ALL_LEADER_IDS
     snapshots: list[dict[int, bool]] = []
-    with SCSBus(resolved) as bus:
+    with _BUS_LOCK, SCSBus(resolved) as bus:
         for _ in range(max(1, cycles)):
             snapshots.append({motor_id: bus.ping(motor_id) for motor_id in ids})
     latest = snapshots[-1]
@@ -491,6 +559,10 @@ def _merge_side_calibration(
     payload.setdefault("leaders", {})
     payload["leaders"][side] = side_payload
     write_leader_calibration(payload, calibration_id)
+    # NOTE: callers must invoke shared_live_manager.invalidate_calibration() after
+    # releasing their own locks (never from inside ManualCalibrationManager._lock —
+    # live reads hold the shared lock and then take the manual lock via
+    # observe_positions, so the reverse order would deadlock).
     return payload
 
 
@@ -510,15 +582,57 @@ def _wrap_delta(raw: int, center: int) -> int:
     return delta
 
 
+def _uses_wrap_delta(cal: dict[str, Any]) -> bool:
+    return bool(cal.get("circular") or cal.get("wrap_around"))
+
+
+def _has_delta_bounds(cal: dict[str, Any]) -> bool:
+    return "range_min_delta" in cal and "range_max_delta" in cal
+
+
+def _bounded_unwrapped_delta(raw: int, center: int, min_delta: int, max_delta: int) -> int:
+    """Map a raw encoder tick into the calibrated unwrapped interval around center."""
+    if max_delta <= min_delta:
+        return 0
+
+    base = int(raw) - int(center)
+    candidates = [base + STS3215_RESOLUTION * k for k in range(-2, 3)]
+
+    def clamp_distance(delta: int) -> tuple[int, int]:
+        if delta < min_delta:
+            return min_delta - delta, abs(delta)
+        if delta > max_delta:
+            return delta - max_delta, abs(delta)
+        return 0, abs(delta)
+
+    best = min(candidates, key=clamp_distance)
+    return min(max_delta, max(min_delta, best))
+
+
 def _direction(cal: dict[str, Any]) -> int:
     return -1 if int(cal.get("direction", 1)) < 0 else 1
 
 
 def leader_raw_to_degrees(raw: int, cal: dict[str, Any]) -> float:
-    """Map leader body joints to degree-style targets."""
+    """Map leader body joints to degree-style targets.
+
+    Wrap-aware port of clients/leader/l2_leader_common.py (NoriTeleop): joints whose
+    usable arc crosses the 0/4096 encoder boundary are normalized on the unwrapped
+    delta interval around center, not the (meaningless) absolute raw min/max.
+    """
     center = int(cal["center_raw"])
-    if cal.get("circular"):
-        return _direction(cal) * (_wrap_delta(raw, center) * 360.0) / STS3215_MAX_POSITION
+    if cal.get("wrap_around") and not cal.get("circular") and _has_delta_bounds(cal):
+        delta = _bounded_unwrapped_delta(
+            raw,
+            center,
+            int(cal["range_min_delta"]),
+            int(cal["range_max_delta"]),
+        )
+        return _direction(cal) * (delta * 360.0) / STS3215_MAX_POSITION
+
+    if _uses_wrap_delta(cal):
+        delta = _wrap_delta(raw, center)
+        return _direction(cal) * (delta * 360.0) / STS3215_MAX_POSITION
 
     range_min = int(cal["range_min"])
     range_max = int(cal["range_max"])
@@ -531,6 +645,18 @@ def leader_raw_to_degrees(raw: int, cal: dict[str, Any]) -> float:
 def normalize_leader_raw(raw: int, cal: dict[str, Any]) -> float:
     if cal.get("norm_mode") != "0_100":
         return leader_raw_to_degrees(raw, cal)
+
+    # Gripper (0_100) whose raw arc crosses the 0/4096 encoder boundary: the raw
+    # min/max span the whole turn, so normalize on the unwrapped delta instead.
+    if cal.get("wrap_around") and _has_delta_bounds(cal):
+        min_delta = int(cal["range_min_delta"])
+        max_delta = int(cal["range_max_delta"])
+        if max_delta <= min_delta:
+            return 0.0
+        delta = _bounded_unwrapped_delta(int(raw), int(cal["center_raw"]), min_delta, max_delta)
+        norm = ((delta - min_delta) / (max_delta - min_delta)) * 100.0
+        return 100.0 - norm if _direction(cal) < 0 else norm
+
     range_min = int(cal["range_min"])
     range_max = int(cal["range_max"])
     if range_max <= range_min:
@@ -551,7 +677,30 @@ def leader_calibration_warnings(
         for joint, cal in side_cal.get("motors", {}).items():
             if cal.get("circular"):
                 continue
-            span = int(cal.get("range_max", 0)) - int(cal.get("range_min", 0))
+            if cal.get("wrap_around") and not _has_delta_bounds(cal):
+                warnings.append(
+                    f"{side} {joint} has old wrap calibration without unwrapped delta bounds; recalibrate leaders"
+                )
+                continue
+            if cal.get("wrap_around"):
+                # Raw min/max straddle the encoder boundary and span the whole
+                # turn; the unwrapped delta interval is the real usable span.
+                span = int(cal["range_max_delta"]) - int(cal["range_min_delta"])
+            else:
+                range_min = int(cal.get("range_min", 0))
+                range_max = int(cal.get("range_max", 0))
+                span = range_max - range_min
+                # Legacy calibrations recorded raw min/max with no wrap handling. A
+                # joint that crossed the 0/4096 boundary during calibration shows a
+                # near-full-turn span and/or a center outside its own range — both
+                # mean the file is wrap-corrupted and live targets will snap.
+                center = int(cal.get("center_raw", 0))
+                if span > (STS3215_RESOLUTION * 7) // 8 or not range_min <= center <= range_max:
+                    warnings.append(
+                        f"{side} {joint} calibration looks wrap-corrupted "
+                        f"(range {range_min}..{range_max}, center {center}); recalibrate this leader"
+                    )
+                    continue
             threshold = min_gripper_span if joint == "gripper" else min_body_span
             if span < threshold:
                 warnings.append(f"{side} {joint} calibration span is only {span} ticks")
@@ -564,20 +713,38 @@ def build_side_calibration(
     center: dict[int, int],
     mins: dict[int, int],
     maxes: dict[int, int],
+    min_deltas: dict[int, int] | None = None,
+    max_deltas: dict[int, int] | None = None,
+    wraps: dict[int, bool] | None = None,
 ) -> dict[str, Any]:
+    # Wrap-aware schema (matches NoriTeleop clients/leader): alongside the raw
+    # min/max we persist the unwrapped delta interval around center plus a
+    # wrap_around flag, so joints whose arc crosses the 0/4096 encoder boundary
+    # normalize on real swept range instead of a garbage full-turn raw span.
+    min_deltas = min_deltas or {}
+    max_deltas = max_deltas or {}
+    wraps = wraps or {}
     motors: dict[str, dict[str, Any]] = {}
     for joint, motor_id, norm_mode, circular in leader_joint_specs(side):
+        center_raw = int(center[motor_id])
         if circular:
             range_min = 0
             range_max = STS3215_MAX_POSITION
+            range_min_delta = -(STS3215_RESOLUTION // 2)
+            range_max_delta = STS3215_RESOLUTION // 2
         else:
             range_min = int(mins[motor_id])
             range_max = int(maxes[motor_id])
+            range_min_delta = int(min_deltas.get(motor_id, range_min - center_raw))
+            range_max_delta = int(max_deltas.get(motor_id, range_max - center_raw))
         motors[joint] = {
             "id": motor_id,
-            "center_raw": int(center[motor_id]),
+            "center_raw": center_raw,
             "range_min": range_min,
             "range_max": range_max,
+            "range_min_delta": range_min_delta,
+            "range_max_delta": range_max_delta,
+            "wrap_around": bool(circular or wraps.get(motor_id, False)),
             "norm_mode": norm_mode,
             "circular": bool(circular),
             "direction": 1,
@@ -596,8 +763,26 @@ class ManualSession:
     center: dict[int, int] = field(default_factory=dict)
     mins: dict[int, int] = field(default_factory=dict)
     maxes: dict[int, int] = field(default_factory=dict)
+    # Wrap-aware range tracking: cumulative unwrapped position (ticks relative to
+    # center, integrated across samples so crossing 0/4096 doesn't reset it), its
+    # observed min/max, and whether the joint ever crossed the encoder boundary.
+    last_positions: dict[int, int] = field(default_factory=dict)
+    unwrapped: dict[int, int] = field(default_factory=dict)
+    min_deltas: dict[int, int] = field(default_factory=dict)
+    max_deltas: dict[int, int] = field(default_factory=dict)
+    wraps: dict[int, bool] = field(default_factory=dict)
     active: bool = True
     created_at: float = field(default_factory=time.time)
+
+    def reset_ranges(self) -> None:
+        range_ids = list(self.mins.keys())
+        self.mins = {motor_id: self.center[motor_id] for motor_id in range_ids}
+        self.maxes = {motor_id: self.center[motor_id] for motor_id in range_ids}
+        self.last_positions = {motor_id: self.center[motor_id] for motor_id in range_ids}
+        self.unwrapped = {motor_id: 0 for motor_id in range_ids}
+        self.min_deltas = {motor_id: 0 for motor_id in range_ids}
+        self.max_deltas = {motor_id: 0 for motor_id in range_ids}
+        self.wraps = {motor_id: False for motor_id in range_ids}
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -608,6 +793,9 @@ class ManualSession:
             "center": self.center,
             "mins": self.mins,
             "maxes": self.maxes,
+            "min_deltas": self.min_deltas,
+            "max_deltas": self.max_deltas,
+            "wraps": self.wraps,
             "active": self.active,
             "created_at": self.created_at,
         }
@@ -624,7 +812,7 @@ class ManualCalibrationManager:
                 return {"success": False, "message": "Manual calibration already active", "session": self._session.to_json()}
             port_identity = load_leader_ports()[side] if port is None else PortIdentity(device=port, stable_path=_by_id_for_device(port))
             ids = leader_ids(side)
-            with SCSBus(port_identity.open_path) as bus:
+            with _BUS_LOCK, SCSBus(port_identity.open_path) as bus:
                 hits = [motor_id for motor_id in ids if bus.ping(motor_id)]
                 if len(hits) != len(ids):
                     return {"success": False, "message": f"{side} leader missing IDs", "hits": hits}
@@ -634,7 +822,7 @@ class ManualCalibrationManager:
                     return {"success": False, "message": f"failed to read IDs {missing}"}
                 bus.disable_torque(ids)
             range_ids = [motor_id for _joint, motor_id, _norm, _circular in leader_joint_specs(side)]
-            self._session = ManualSession(
+            session = ManualSession(
                 id=str(uuid.uuid4()),
                 side=side,
                 calibration_id=calibration_id,
@@ -644,20 +832,20 @@ class ManualCalibrationManager:
                 mins={motor_id: center[motor_id] for motor_id in range_ids},
                 maxes={motor_id: center[motor_id] for motor_id in range_ids},
             )
+            session.reset_ranges()
+            self._session = session
             return {"success": True, "session": self._session.to_json()}
 
     def capture_center(self) -> dict[str, Any]:
         with self._lock:
             session = self._require_session()
-            with SCSBus(session.port_identity.open_path) as bus:
+            with _BUS_LOCK, SCSBus(session.port_identity.open_path) as bus:
                 center = bus.read_positions(session.ids)
             missing = [motor_id for motor_id in session.ids if motor_id not in center]
             if missing:
                 return {"success": False, "message": f"failed to read IDs {missing}"}
             session.center = center
-            range_ids = [motor_id for _joint, motor_id, _norm, _circular in leader_joint_specs(session.side)]
-            session.mins = {motor_id: center[motor_id] for motor_id in range_ids}
-            session.maxes = {motor_id: center[motor_id] for motor_id in range_ids}
+            session.reset_ranges()
             return {"success": True, "session": session.to_json()}
 
     def sample(self) -> dict[str, Any]:
@@ -665,7 +853,7 @@ class ManualCalibrationManager:
             session = self._require_session()
             if not session.center:
                 return {"success": False, "message": "capture center before sampling ranges"}
-            with SCSBus(session.port_identity.open_path) as bus:
+            with _BUS_LOCK, SCSBus(session.port_identity.open_path) as bus:
                 positions = bus.read_positions(session.mins.keys())
             self._observe_positions_unlocked(positions)
             return {"success": True, "positions": positions, "session": session.to_json()}
@@ -683,6 +871,16 @@ class ManualCalibrationManager:
                 continue
             session.mins[motor_id] = min(session.mins[motor_id], pos)
             session.maxes[motor_id] = max(session.maxes[motor_id], pos)
+            # Unwrapped tracking: integrate the shortest wrapped step from the last
+            # sample, so a joint moving across the 0/4096 boundary keeps a continuous
+            # delta instead of its raw min/max exploding to the whole turn.
+            last = session.last_positions.get(motor_id, session.center.get(motor_id, pos))
+            if abs(int(pos) - int(last)) > STS3215_RESOLUTION // 2:
+                session.wraps[motor_id] = True
+            session.unwrapped[motor_id] = session.unwrapped.get(motor_id, 0) + _wrap_delta(pos, last)
+            session.min_deltas[motor_id] = min(session.min_deltas.get(motor_id, 0), session.unwrapped[motor_id])
+            session.max_deltas[motor_id] = max(session.max_deltas.get(motor_id, 0), session.unwrapped[motor_id])
+            session.last_positions[motor_id] = int(pos)
 
     def finish(self) -> dict[str, Any]:
         with self._lock:
@@ -695,15 +893,22 @@ class ManualCalibrationManager:
                 session.center,
                 session.mins,
                 session.maxes,
+                min_deltas=session.min_deltas,
+                max_deltas=session.max_deltas,
+                wraps=session.wraps,
             )
             payload = _merge_side_calibration(session.calibration_id, session.side, side_payload)
             session.active = False
             self._session = None
-            return {
+            result = {
                 "success": True,
                 "path": str(calibration_path(session.calibration_id)),
                 "calibration": payload,
             }
+        # Outside self._lock: the shared reader's lock ordering is shared->manual
+        # (via observe_positions), so taking it while holding the manual lock deadlocks.
+        shared_live_manager.invalidate_calibration()
+        return result
 
     def cancel(self) -> dict[str, Any]:
         with self._lock:
@@ -795,6 +1000,7 @@ def run_powered_auto_calibration(
             logger.debug("Failed to disconnect leader auto-calibration bus", exc_info=True)
     side_payload = _auto_result_to_side_payload(side, port_identity, result)
     payload = _merge_side_calibration(calibration_id, side, side_payload)
+    shared_live_manager.invalidate_calibration()
     return {"success": True, "path": str(calibration_path(calibration_id)), "calibration": payload}
 
 
@@ -923,13 +1129,25 @@ class AutoCalibrationManager:
                 motor_id = joint_ids.get(joint)
                 if motor_id is not None:
                     raw_positions[motor_id] = int(position)
-        if not raw_positions:
-            return None
         try:
             calibration = load_leader_calibration(calibration_id)
         except RuntimeError:
             calibration = {}
-        return _format_shared_live_positions(raw_positions, port=port or "", calibration=calibration)
+        # While the auto worker is active it OWNS the serial bus; even with no
+        # positions yet we must return a frame (never None) so the caller doesn't
+        # fall through to a real bus read that would interleave with — and corrupt —
+        # the calibration traffic.
+        frame = _format_shared_live_positions(
+            raw_positions,
+            port=port or "",
+            calibration=calibration,
+            warnings=leader_calibration_warnings(calibration) if calibration else [],
+        )
+        frame["calibrating"] = True
+        if not raw_positions:
+            frame["connected"] = False
+            frame["reason"] = "auto calibration in progress"
+        return frame
 
 
 auto_manager = AutoCalibrationManager()
@@ -996,11 +1214,12 @@ def read_live_targets(calibration_id: str = DEFAULT_CALIBRATION_ID) -> dict[str,
     calibration = load_leader_calibration(calibration_id)
     warnings = leader_calibration_warnings(calibration)
     reader = DualLeaderReader(calibration)
-    reader.open()
-    try:
-        return {"success": True, "targets": reader.read_targets(), "warnings": warnings}
-    finally:
-        reader.close()
+    with _BUS_LOCK:
+        reader.open()
+        try:
+            return {"success": True, "targets": reader.read_targets(), "warnings": warnings}
+        finally:
+            reader.close()
 
 
 class SharedLivePositionManager:
@@ -1012,12 +1231,32 @@ class SharedLivePositionManager:
         self._port: str | None = None
         self._calibration_id: str | None = None
         self._calibration: dict[str, Any] = {}
+        self._warnings: list[str] = []
         self._missing_until: dict[int, float] = {}
         self._miss_counts: dict[int, int] = {}
 
     def close(self) -> None:
         with self._lock:
             self._close_unlocked()
+
+    def invalidate_calibration(self) -> None:
+        """Reload the calibration file on the next/live path.
+
+        The reader caches calibration for the lifetime of the open bus; without this,
+        finishing a recalibration keeps serving targets normalized with the OLD file
+        until the server restarts.
+        """
+        with self._lock:
+            if self._calibration_id is None:
+                return
+            self._load_calibration_unlocked(self._calibration_id)
+
+    def _load_calibration_unlocked(self, calibration_id: str) -> None:
+        try:
+            self._calibration = load_leader_calibration(calibration_id)
+        except RuntimeError:
+            self._calibration = {}
+        self._warnings = leader_calibration_warnings(self._calibration) if self._calibration else []
 
     def _close_unlocked(self) -> None:
         if self._bus is not None:
@@ -1028,6 +1267,7 @@ class SharedLivePositionManager:
         self._port = None
         self._calibration_id = None
         self._calibration = {}
+        self._warnings = []
         self._missing_until = {}
         self._miss_counts = {}
 
@@ -1035,10 +1275,7 @@ class SharedLivePositionManager:
         if self._bus is not None and self._port == port and self._calibration_id == calibration_id:
             return
         self._close_unlocked()
-        try:
-            self._calibration = load_leader_calibration(calibration_id)
-        except RuntimeError:
-            self._calibration = {}
+        self._load_calibration_unlocked(calibration_id)
         self._bus = SCSBus(port, timeout=LIVE_READ_TIMEOUT)
         self._bus.open()
         self._port = port
@@ -1073,18 +1310,23 @@ class SharedLivePositionManager:
         resolved = port or _port_for_side("left")
         with self._lock:
             try:
-                self._ensure_open(resolved, calibration_id)
-                if self._bus is None:
-                    raise RuntimeError("leader live reader failed to open")
-                now = time.monotonic()
-                read_ids = self._ids_for_live_read(now)
-                raw_positions = self._bus.read_positions(read_ids) if read_ids else {}
+                # _BUS_LOCK covers only the wire traffic and is released before
+                # observe_positions: manual sample() takes manual-lock -> _BUS_LOCK,
+                # so holding _BUS_LOCK while taking the manual lock would deadlock.
+                with _BUS_LOCK:
+                    self._ensure_open(resolved, calibration_id)
+                    if self._bus is None:
+                        raise RuntimeError("leader live reader failed to open")
+                    now = time.monotonic()
+                    read_ids = self._ids_for_live_read(now)
+                    raw_positions = self._bus.read_positions(read_ids) if read_ids else {}
                 self._update_missing_backoff(read_ids, raw_positions, now)
                 manual_manager.observe_positions(raw_positions)
                 return _format_shared_live_positions(
                     raw_positions,
                     port=resolved,
                     calibration=self._calibration,
+                    warnings=self._warnings,
                 )
             except Exception:
                 self._close_unlocked()
@@ -1096,6 +1338,7 @@ def _format_shared_live_positions(
     *,
     port: str,
     calibration: dict[str, Any],
+    warnings: list[str] | None = None,
 ) -> dict[str, Any]:
     leaders: dict[str, Any] = {}
     for side in ("left", "right"):
@@ -1122,6 +1365,11 @@ def _format_shared_live_positions(
         "reason": None,
         "port": port,
         "leaders": leaders,
+        # Calibration health for the UI: stale/corrupt/missing spans the operator
+        # should fix before letting the leaders drive the robot.
+        "warnings": list(warnings or []),
+        # Set by read_shared_live_positions when a calibration session owns the bus.
+        "calibrating": False,
         "updated_at": time.time(),
     }
 
@@ -1156,10 +1404,16 @@ def read_shared_live_positions(
         # Ports not configured yet — expected before hardware setup.
         return _disconnected_live_frame(port="", reason=str(exc))
     try:
-        return shared_live_manager.read(port=resolved, calibration_id=calibration_id)
+        frame = shared_live_manager.read(port=resolved, calibration_id=calibration_id)
     except (OSError, RuntimeError) as exc:
         # Serial port present but unreadable (arm unplugged / busy / missing driver).
-        return _disconnected_live_frame(port=resolved, reason=str(exc))
+        frame = _disconnected_live_frame(port=resolved, reason=str(exc))
+    # Manual calibration in progress: live reads keep flowing (they feed the range
+    # observation), but flag the frame so the remote page's leader driver pauses
+    # instead of driving the robot from a half-calibrated arm.
+    if manual_manager.status()["active"]:
+        frame["calibrating"] = True
+    return frame
 
 
 def close_shared_live_reader() -> dict[str, Any]:
@@ -1193,6 +1447,7 @@ def set_direction(
     next_mode = mode or ("normal" if previous == "inverted" else "inverted")
     motors[joint]["direction"] = -1 if next_mode == "inverted" else 1
     write_leader_calibration(payload, calibration_id)
+    shared_live_manager.invalidate_calibration()
     return {"success": True, "side": side, "joint": joint, "previous": previous, "direction": next_mode}
 
 

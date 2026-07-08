@@ -157,8 +157,9 @@ export class ScriptDriver {
     this.onLog?.("[script] driver stopped");
   }
 
-  // The page pushes every telemetry frame here (from its existing onTelemetry). Proprioceptive
-  // only until protocol G3 (perception).
+  // The page pushes every telemetry frame here (from its existing onTelemetry). This is
+  // proprioception (the robot's own joints); exteroception (what it SEES) rides the separate
+  // perception channel, read straight off the teleop via the perceive op (Phase F / G3).
   setTelemetry(t: TelemetryView): void {
     this.lastTelemetry = t;
   }
@@ -183,6 +184,10 @@ export class ScriptDriver {
         return this.enqueue(() => this.moveTo(args));
       case "telemetry":
         return Promise.resolve(this.lastTelemetry);
+      case "perceive":
+        // Structured world-state from the daemon perception process (Phase F). Immediate, like
+        // telemetry — returns null if no detector frame has arrived, so scripts guard for it.
+        return Promise.resolve(this.teleop.perceive());
       case "playAudio":
         return this.playAudio(args); // bypasses the motion queue on purpose
       case "reset":

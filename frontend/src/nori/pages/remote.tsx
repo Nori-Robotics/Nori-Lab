@@ -57,7 +57,7 @@ const Remote = () => {
   const {
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call,
     logLines, appendLog, settings, setSetting: set, connect, disconnect: sessionDisconnect,
-    setCurrentsListener,
+    toggleControlMode, setCurrentsListener,
   } = useTeleopSession();
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -87,6 +87,13 @@ const Remote = () => {
   const [leaderActive, setLeaderActive] = useState(false);
   const [leaderCount, setLeaderCount] = useState(0);
   const [leaderSides, setLeaderSides] = useState<ArmSide[]>([]);
+  // SAFETY GATE: the driver auto-starts in monitor-only mode (polls + shows live joints,
+  // sends NOTHING). The robot only follows the leaders after the operator presses Engage —
+  // so connecting mid-setup / pre-calibration can never slam the arms to garbage targets.
+  const [leaderEngaged, setLeaderEngaged] = useState(false);
+  // Calibration-health messages from the live frame (stale wrap schema, corrupted spans).
+  const [leaderWarnings, setLeaderWarnings] = useState<string[]>([]);
+  const [leaderCalibrating, setLeaderCalibrating] = useState(false);
   // Control mode SELECTION is independent of the session: leader doubles as the hardware
   // setup surface and VR as the headset entry point, so both are selectable while
   // disconnected. The actual drivers (leaderActive / inVr) only run on a live session.
@@ -139,6 +146,9 @@ const Remote = () => {
     leaderRef.current = null;
     setLeaderActive(false);
     setLeaderCount(0);
+    setLeaderSides([]);
+    setLeaderEngaged(false);
+    setLeaderCalibrating(false);
     await vrRef.current?.stop();
     vrRef.current = null;
     setInVr(false);
@@ -175,6 +185,8 @@ const Remote = () => {
     setLeaderActive(false);
     setLeaderCount(0);
     setLeaderSides([]);
+    setLeaderEngaged(false);
+    setLeaderCalibrating(false);
   }, []);
 
   const enterLeader = useCallback(() => {
@@ -185,6 +197,8 @@ const Remote = () => {
       fetcher: fetchWithHeaders,
       onFrame: (count, frame) => {
         setLeaderCount(count);
+        setLeaderWarnings(frame.warnings ?? []);
+        setLeaderCalibrating(Boolean(frame.calibrating));
         // Which leader arms produced usable targets this frame — drives the solo-routing
         // hint ("left leader -> right arm") and the no-targets warning below.
         setLeaderSides(
@@ -196,6 +210,10 @@ const Remote = () => {
         );
       },
       onError: (msg) => appendLog("leader read paused: " + msg),
+      onEngagedChange: (engaged, reason) => {
+        setLeaderEngaged(engaged);
+        appendLog(`leader ${engaged ? "ENGAGED — robot arms following leaders" : `disengaged${reason ? ` (${reason})` : ""}`}`);
+      },
     });
     leaderRef.current = driver;
     driver.start();
@@ -478,9 +496,13 @@ const Remote = () => {
               title="Drive the robot's arms from the physical dual leader arms (base + lift stay on the keyboard). Selectable offline for hardware setup."
             >
               {leaderActive
-                ? leaderSides.length === 1
-                  ? `Leader arm · ${leaderCount}/6 → ${settings.arm}`
-                  : `Leader arm · ${leaderCount}/12`
+                ? `Leader arm · ${leaderCount}/${leaderSides.length === 1 ? 6 : 12}${
+                    leaderEngaged
+                      ? leaderSides.length === 1
+                        ? ` → ${settings.arm}`
+                        : " · engaged"
+                      : " · standby"
+                  }`
                 : "Leader arm"}
             </Pill>
             <Pill
@@ -533,9 +555,16 @@ const Remote = () => {
                 left leader silently driving the right arm reads as a wiring bug. Also flag
                 the silent-failure state: driver running but no usable targets (arms unplugged
                 or calibration missing/stale), where nothing is sent to the robot at all. */}
+            {/* Calibration health, summary only — the embedded Leader setup below lists the
+                per-joint details, so repeating them here just doubles the wall of text. */}
+            {leaderActive && leaderWarnings.length > 0 && (
+              <p className="mb-2 rounded bg-[#d24a3d]/10 px-2 py-1 text-xs font-semibold text-[#8f2318]">
+                Calibration problems — recalibrate before engaging. Details in Leader setup below.
+              </p>
+            )}
             {leaderActive && leaderSides.length === 1 && (
               <p className="mb-2 rounded bg-[#8ab135]/15 px-2 py-1 text-xs text-[#4d6a1e]">
-                One leader arm connected ({leaderSides[0]}) — driving the{" "}
+                One leader arm connected ({leaderSides[0]}) — {leaderEngaged ? "driving" : "will drive"} the{" "}
                 <strong>{settings.arm}</strong> follower arm. Use the arm pills to switch sides.
               </p>
             )}
@@ -550,7 +579,38 @@ const Remote = () => {
               embedded
               collapsed={!showLeaderCard}
               onToggleCollapse={() => setShowLeaderCard((v) => !v)}
-              headerExtra={<ArmPills value={settings.arm} onChange={(arm) => set("arm", arm)} />}
+              headerExtra={
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* ENGAGE gate: the driver auto-starts in standby (monitor-only); the robot
+                      only follows the leaders after this explicit engage. Always visible in
+                      leader mode (disabled with a reason) so it never seems to vanish —
+                      locked while disconnected, no joints readable, or calibration is running. */}
+                  <Button
+                    size="sm"
+                    onClick={() => leaderRef.current?.setEngaged(!leaderEngaged)}
+                    disabled={!leaderActive || (!leaderEngaged && (leaderCount === 0 || leaderCalibrating))}
+                    className={
+                      leaderEngaged
+                        ? "rounded-md bg-[#d24a3d] text-foreground hover:bg-[#b93a2e]"
+                        : "rounded-md bg-[#5f9f66] text-foreground hover:bg-[#4d8754]"
+                    }
+                    title={
+                      !leaderActive
+                        ? "Connect to the robot first — engage sends leader poses to the arms"
+                        : leaderEngaged
+                          ? "Robot arms are following the leaders — disengage before letting go of them"
+                          : leaderCalibrating
+                            ? "Calibration in progress — engagement is locked until it finishes"
+                            : leaderCount === 0
+                              ? "Waiting for readable leader joints"
+                              : "Hold the leaders near the robot's current pose, then engage; the arms will move to match"
+                    }
+                  >
+                    {leaderEngaged ? "Disengage" : "Engage"}
+                  </Button>
+                  <ArmPills value={settings.arm} onChange={(arm) => set("arm", arm)} />
+                </div>
+              }
             />
           </div>
         )}
@@ -577,11 +637,12 @@ const Remote = () => {
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <ArmPills value={settings.arm} onChange={(arm) => set("arm", arm)} />
               {/* Cylindrical vs per-motor only affects keyboard driving, so it lives here. */}
+              {/* Toggleable offline too: the choice is held in the session context and passed
+                  to the next RemoteTeleop at connect, so pre-connect selection sticks. */}
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => teleop?.toggleMode()}
-                disabled={!running}
+                onClick={toggleControlMode}
                 title="Switch between cylindrical (rpi4 feel) and per-motor control"
               >
                 Mode: {mode === "joint" ? "per-motor" : "cylindrical"}

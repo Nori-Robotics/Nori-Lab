@@ -73,6 +73,9 @@ export interface TeleopSessionValue {
   setSetting: <K extends keyof Settings>(k: K, v: Settings[K]) => void;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
+  // Flip cylindrical <-> per-motor. Works offline too: the choice is kept here and passed
+  // to the next session at connect, so the displayed mode is always the mode you get.
+  toggleControlMode: () => void;
   // Pages that want gripper-current haptics (VR) register a listener; only one at a time.
   setCurrentsListener: (fn: ((c: Record<string, number>) => void) | null) => void;
   // The pasted/generated script text, persisted so it survives navigation + reload.
@@ -168,6 +171,9 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
       turnCred: settings.turnCred.trim(),
       forceRelay: settings.forceRelay,
       arm: settings.arm,
+      // Honor the CURRENT UI selection: a fresh RemoteTeleop defaults to cylindrical, which
+      // used to silently override a pre-connect (or previous-session) per-motor choice.
+      mode,
       onLog: appendLog,
       onConnState: setConnState,
       onTelemetry,
@@ -192,7 +198,13 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     } finally {
       setConnecting(false);
     }
-  }, [settings, serial, appendLog, onTelemetry]);
+  }, [settings, serial, appendLog, onTelemetry, mode]);
+
+  const toggleControlMode = useCallback(() => {
+    const t = teleopRef.current;
+    if (t) t.toggleMode(); // onMode callback updates `mode`
+    else setMode((m) => (m === "joint" ? "cylindrical" : "joint"));
+  }, []);
 
   const disconnect = useCallback(async () => {
     const t = teleopRef.current;
@@ -211,12 +223,12 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
 
   const value = useMemo<TeleopSessionValue>(() => ({
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call,
-    logLines, appendLog, settings, setSetting, connect, disconnect, setCurrentsListener,
-    scriptSource, setScriptSource,
+    logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
+    setCurrentsListener, scriptSource, setScriptSource,
   }), [
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call,
-    logLines, appendLog, settings, setSetting, connect, disconnect, setCurrentsListener,
-    scriptSource, setScriptSource,
+    logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
+    setCurrentsListener, scriptSource, setScriptSource,
   ]);
 
   return <TeleopSessionContext.Provider value={value}>{children}</TeleopSessionContext.Provider>;

@@ -79,13 +79,17 @@ function Arm({ state, side, active }: { state: Record<string, number>; side: "le
 
   // Joint angles — true FK in the daemon's convention (see file header). Segments extend
   // +Z; a POSITIVE group rotation.x tips the child chain DOWN, so world pitch-up = −rot.x.
-  // `-sign` on pan: yaw was inverted vs. the real joint; the -1 flips the direction while
-  // keeping the left/right mirror (the arms are mirror-mounted, so +joint yaws them
-  // opposite ways — hardware-verified).
+  // Pan is NOT mirrored per side: its axis is vertical, so mounting the arms on opposite
+  // sides of the column can't flip the rotation direction, and calibration writes
+  // drive_mode 0 for every motor — +joint yaws BOTH arms the same world direction. (The
+  // old per-side `-sign` mirror rendered the right arm panning into the body while the
+  // real one panned away.) Global -1: the SO101 URDF's Rotation joint axis is (0,0,-1)
+  // in the Z-up base frame (rpy roll of -pi), i.e. +joint = clockwise from above, while
+  // scene +rot.y is counterclockwise from above.
   const sl = jointDeg(state, `${p}shoulder_lift.pos`);
   const ef = jointDeg(state, `${p}elbow_flex.pos`);
   const wf = jointDeg(state, `${p}wrist_flex.pos`);
-  const pan = jointDeg(state, `${p}shoulder_pan.pos`) * DEG * -sign;
+  const pan = jointDeg(state, `${p}shoulder_pan.pos`) * DEG * -1;
   const lift = -((90 - sl) * DEG - T1O); // −th1: shoulder pitched UP th1 from horizontal
   const elbow = (ef + 90) * DEG - T2O;   // th2: elbow bend, 0 = straight
   const wristFlex = wf * DEG + (T2O - T1O); // revolute wrist; world gripper pitch = −(sl+ef+wf)°

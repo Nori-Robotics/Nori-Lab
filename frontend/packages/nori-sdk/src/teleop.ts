@@ -129,9 +129,11 @@ export function formatCameraLayout(layout: CameraLayout): string {
     return v.includes(" ") || h.includes(" ") ? `${v} ${h}` : `${v}-${h}`;
   };
   const parts = tiles.map((name, i) => `${posLabel(i)} = ${name}`).join("; ");
-  return `Composite is a ${cols}x${rows} grid, tiles left-to-right then top-to-bottom: ${parts}. ` +
-    `(A '<side>_wrist' camera is mounted on that arm and moves with it; 'overhead' looks down at the ` +
-    `workspace; 'front' faces forward.)`;
+  return `Composite camera view — ${cols}x${rows} grid, tiles left-to-right then top-to-bottom: ${parts}. ` +
+    `Acting on it: a "<side>_wrist" tile is the camera ON that arm — drive that arm with side:"<side>" ` +
+    `(e.g. left_wrist → side:"left"). A wrist view is egocentric: its own image left/right is NOT the ` +
+    `robot's. Use the "overhead"/"front" scene tiles to judge the robot's left vs right and which side ` +
+    `of the robot an object is on.`;
 }
 
 // Two-way call state (Phase 7 §B). Reported to the page via onCall so it can render the

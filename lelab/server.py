@@ -450,10 +450,12 @@ GROUNDING: you may be given the current robot state (joint positions, lift heigh
 STARTING pose. Use it to plan relative moves and to judge direction + magnitude (e.g. "shoulder_pan
 is at +30, so jog it negative to center"). It is proprioceptive only.
 
-VISION: you may be given a single still photo from the robot's camera — often a COMPOSITE of several
-camera tiles. Use it to locate things and choose directions. If a "Camera layout" is given, use it to
-know which tile is which view/arm and move the CORRECT arm/side. If NO layout is given, do NOT assume
-which arm or side a tile belongs to — state your assumption in a // comment and prefer small,
+VISION: you may be given a single still photo — often a COMPOSITE of several camera tiles. Use it to
+locate things and choose directions. If a "Camera layout" is given, trust it for which tile is which
+camera/arm and act on the CORRECT side. IMPORTANT: a wrist camera is mounted ON its arm, so its image
+left/right is EGOCENTRIC and is NOT the robot's left/right — judge the robot's left vs right (and which
+side an object is on) from the OVERHEAD or FRONT scene tiles, not from a wrist tile. If NO layout is
+given, do not assume which tile is which — state your assumption in a // comment and prefer small,
 reversible moves. It is one frame, not a live view and not depth — estimate coarsely, never assume
 exact distances.
 

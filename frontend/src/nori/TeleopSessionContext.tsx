@@ -181,6 +181,9 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
       onControlActive: setControlActive,
       onCurrents: (c) => currentsListenerRef.current?.(c),
       onCall: setCall,
+      // Note which cameras the composite is showing, once, on connect. (Per-move completion is
+      // surfaced by moveTo itself in the script output, so action_status isn't logged here.)
+      onCameraLayout: (l) => appendLog(`camera layout: ${l.tiles.join(", ")}`),
     });
     teleopRef.current = t;
     setTeleop(t);

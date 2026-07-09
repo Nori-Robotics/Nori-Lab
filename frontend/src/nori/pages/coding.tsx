@@ -6,9 +6,10 @@
 // keyboard/VR teleop). The code text and the session both persist across page changes.
 //
 // Safety: this can move the robot. The operator is the supervisor — live video is on the Remote
-// page, E-STOP is here and on Remote, and the daemon watchdog safe-stops if the tab dies. Motions
-// are open-loop timed (no arrival feedback until protocol G1). The robot's own clamps/watchdog are
-// the real boundary (the daemon defends itself), which is why this ships without a client-side gate.
+// page, E-STOP is here and on Remote, and the daemon watchdog safe-stops if the tab dies. Timed
+// jogs (reach/joint/grip) are open-loop; moveTo waits for the daemon's arrival result (done/blocked/
+// clamped/timeout). The robot's own clamps/watchdog are the real boundary (the daemon defends
+// itself), which is why this ships without a client-side gate.
 
 import { useContext, useEffect, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
@@ -56,7 +57,7 @@ function blobToBase64(blob: Blob): Promise<string> {
 }
 
 // Shown when the editor is empty, so a first-time user has something runnable.
-const STARTER = `// Drive the robot with the injected \`robot\` API. Motions are open-loop timed.
+const STARTER = `// Drive the robot with the injected \`robot\` API. Timed jogs; moveTo waits for arrival.
 // The robot moves only while a script runs; you are the supervisor (E-STOP below).
 
 await robot.joint("left", { elbow_flex: 0.3 }, 800);   // per-joint jog, held 800ms
@@ -359,7 +360,7 @@ const Coding = () => {
             />
           </div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] text-muted-foreground">open-loop timed · half-speed cap · supervisor required</span>
+            <span className="text-[11px] text-muted-foreground">moveTo reports arrival · timed jogs · half-speed limit · supervisor required</span>
             <div className="flex items-center gap-2">
               {!scriptRunning ? (
                 <Button size="sm" onClick={run} disabled={!connected}

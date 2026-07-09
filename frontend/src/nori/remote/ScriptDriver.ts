@@ -131,7 +131,7 @@ export class ScriptDriver {
     if (this.started || this.stopped) return;
     this.started = true;
     this.teleop.setExternalJog({});
-    this.onLog?.("[script] driver started (half-speed cap, open-loop timing)");
+    this.onLog?.("[script] started (half-speed limit)");
   }
 
   // Idempotent hard-ish stop: cut any in-flight hold, kill audio, release jog to the keyboard.
@@ -322,8 +322,11 @@ export class ScriptDriver {
     const actionId = this.teleop.nextActionId();
     // Holder (not a bare `let`) so the closure assignment is visible to control-flow narrowing.
     const daemon: { status: ActionStatus | null } = { status: null };
+    // The synthetic-timeout fallback must fire LATER than the daemon's own per-action deadline
+    // (NORI_ACTION_TIMEOUT_S, default 6 s), or it masks the daemon's real terminal — we want the
+    // daemon to win the race whenever it's alive. Only a truly dead daemon should hit this.
     void this.teleop
-      .awaitAction(actionId, { timeoutMs: deadline + 2000 })
+      .awaitAction(actionId, { timeoutMs: deadline + 12000 })
       .then((s) => { daemon.status = s; });
 
     let waited = 0;
@@ -333,8 +336,19 @@ export class ScriptDriver {
       // Daemon delivered a terminal verdict — authoritative (this is where `clamped` comes from, and
       // the exact done/blocked the client can only approximate).
       if (daemon.status) {
-        if (daemon.status.state !== "done" && daemon.status.state !== "clamped") this.freezeAt(plan);
-        return daemon.status.state;
+        const s = daemon.status.state;
+        // reason "client-fallback" = the SDK's synthetic timeout (no confirmation arrived); report it
+        // as an unconfirmed local estimate, not a robot verdict.
+        const synthetic = daemon.status.reason === "client-fallback";
+        if (s !== "done" && s !== "clamped") this.freezeAt(plan);
+        if (synthetic) {
+          this.onLog?.(`[moveTo] ${s} (unconfirmed — no result from robot, local estimate)`);
+        } else {
+          const note = s === "clamped" ? " (target was out of range)"
+            : daemon.status.reason ? ` — ${daemon.status.reason}` : "";
+          this.onLog?.(`[moveTo] ${s}${note}`);
+        }
+        return s;
       }
       if (this.motionLatched()) { this.freezeAt(plan); return "blocked"; } // hard latch: stop now
       const state = this.lastTelemetry?.state ?? {};
@@ -357,10 +371,10 @@ export class ScriptDriver {
       // daemon's stall latch handles obstructions. Only when the daemon stays SILENT do we fall back
       // to client-side telemetry detection (the pre-Phase-E behavior).
       if (this.teleop.actionStatus(actionId) === null) {
-        if (arrived) return "done";
+        if (arrived) { this.onLog?.("[moveTo] done (local estimate)"); return "done"; }
         stall = this.drawingStallCurrent(plan) ? stall + 1 : 0;
-        if (stall >= STALL_FRAMES) { this.freezeAt(plan); return "blocked"; }
-        if (waited >= deadline) { this.freezeAt(plan); return "timeout"; }
+        if (stall >= STALL_FRAMES) { this.freezeAt(plan); this.onLog?.("[moveTo] blocked (local estimate)"); return "blocked"; }
+        if (waited >= deadline) { this.freezeAt(plan); this.onLog?.("[moveTo] timeout (local estimate)"); return "timeout"; }
       }
       try { await this.sleep(MOVE_TICK_MS); } catch { this.freezeAt(plan); return "stopped"; }
       waited += MOVE_TICK_MS;

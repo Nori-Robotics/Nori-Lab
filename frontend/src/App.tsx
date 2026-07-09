@@ -30,6 +30,7 @@ import TrainingHistory from "@/nori/pages/training-history";
 import Remote from "@/nori/pages/remote";
 import LeaderSetup from "@/nori/pages/leader-setup";
 import NoriCoding from "@/nori/pages/coding";
+import NoriAgent from "@/nori/pages/agent";
 import NoriTraining from "@/nori/pages/training";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { ApiProvider } from "./contexts/ApiContext";
@@ -78,6 +79,7 @@ function App() {
                           <Route index element={<NoriHome />} />
                           <Route path="account" element={<Account />} />
                           <Route path="coding" element={<NoriCoding />} />
+                          <Route path="agent" element={<NoriAgent />} />
                           <Route path="training" element={<NoriTraining />} />
                           <Route path="training/:jobId" element={<NoriTraining />} />
                           <Route path="remote" element={<Remote />} />

@@ -135,10 +135,73 @@ const blob = await teleop.captureFrame();   // JPEG Blob, or null if no video is
 const still = await teleop.snapshot();       // JPEG Blob, or null
 ```
 
-> **Verification status (v0):** `setVideoEl`/`setAudioEl`, `pauseVideo`/`resumeVideo`, and
-> `captureFrame`/`snapshot` are implemented and typecheck/build-clean, but **pending on-robot
-> verification** (encoder power drop + clean keyframe resume + frame grab). The inbound video feed
-> itself is hardware-verified and stable.
+**The raw stream, no DOM required** — for canvas pipelines, ML/CV consumers, or
+`MediaRecorder`:
+
+```ts
+const stream = teleop.videoStream();        // MediaStream | null (null until the track arrives)
+// e.g. record it:
+const rec = new MediaRecorder(stream!);
+// Do NOT stop() its tracks — they belong to the peer connection. Just drop your reference.
+```
+
+**Per-camera views.** The robot sends **one composite track** (all cameras tiled into a grid —
+see "What to expect" below). The bridge announces which camera is in which tile
+(`cameraLayoutInfo()` / `onCameraLayout`), and `cameraView(role)` crops a tile into its own
+`MediaStream` so you never do quadrant math:
+
+```ts
+teleop.cameraLayoutInfo();                       // {cols, rows, tiles} | null (also: onCameraLayout)
+const view = teleop.cameraView("left_wrist");    // CameraViewHandle | null
+if (view) {
+  myVideoEl.srcObject = view.stream;             // or feed it to CV / MediaRecorder
+  // later:
+  view.stop();                                   // ends the crop loop (composite unaffected)
+}
+```
+
+`cameraView` returns `null` until both the video track **and** the layout frame have arrived,
+or if the role isn't in the layout. Single-camera robots send no layout — use `videoStream()`.
+Each live view runs a canvas draw loop (per decoded frame when the browser supports
+`requestVideoFrameCallback`), so `stop()` views you're not showing.
+
+### Video-only quick start
+
+"Watch the robot" in its entirety — no jog, no telemetry:
+
+```ts
+import { RemoteTeleop } from "@nori/sdk";
+import { SupabaseSignaling } from "@nori/sdk/supabase";
+
+const teleop = new RemoteTeleop({
+  signaling: new SupabaseSignaling(supabase, room, console.log),
+  videoEl: document.querySelector("video")!,
+  token, stun, turnUrls, turnUser, turnCred, forceRelay: false,
+  arm: "right", onLog: console.log, onConnState: console.log,
+  onTelemetry: () => {}, onMode: () => {}, onControlActive: () => {},
+});
+teleop.start();                                  // video appears in the element when connected
+// teleop.stop() to tear down.
+```
+
+### What to expect from the feed (read before filing a video issue)
+
+- **One H.264 track, composite grid** of all robot cameras (typically 320×240 per tile at
+  15 fps as of 2026-07-08). There are no per-camera tracks on the wire — `cameraView()` is
+  the supported per-camera access. This is a deliberate design (one encode on the robot).
+- **The ceiling is robot power, not the protocol**: the Pi 5 has no hardware H.264 encoder,
+  so encode pixels×fps directly hits the robot's power budget. Resolution/fps are tuned to
+  measured hardware limits and will improve when the robot's supply hardware does. A
+  live-switchable resolution API is designed and lands when that headroom exists.
+- `setVideoQuality("low"|"normal")` changes **bitrate only** (bandwidth, not robot CPU);
+  `pauseVideo()` is the control that actually saves robot power.
+- WAN delivery is typically ~15 fps; the encoder doesn't send more than the link carries.
+
+> **Verification status (v0):** `setVideoEl`/`setAudioEl`, `pauseVideo`/`resumeVideo`,
+> `captureFrame`/`snapshot`, and the P4.6 additions (`videoStream`, `cameraView`) are
+> implemented and typecheck/build-clean, but **pending on-robot verification** (encoder power
+> drop + clean keyframe resume + frame grab + tile-crop against a real composite). The inbound
+> video feed itself is hardware-verified and stable.
 
 ## Perception — structured world-state (Phase F)
 

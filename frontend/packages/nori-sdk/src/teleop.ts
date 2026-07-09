@@ -136,6 +136,15 @@ export function formatCameraLayout(layout: CameraLayout): string {
     `of the robot an object is on.`;
 }
 
+// A live cropped view of one camera tile inside the composite feed, from cameraView().
+// `stream` is a canvas-captured MediaStream at the tile's native size; stop() ends the
+// draw loop and its tracks (the underlying composite track is untouched). (P4.6)
+export interface CameraViewHandle {
+  stream: MediaStream;
+  role: string;
+  stop(): void;
+}
+
 // Two-way call state (Phase 7 §B). Reported to the page via onCall so it can render the
 // call bar + on-air indicators. Everything here is renegotiation-free: mic/camera attach to
 // transceivers the robot already offered (R-X.1). Fields degrade gracefully when the robot
@@ -370,6 +379,81 @@ export class RemoteTeleop {
       if (this.inboundAudio && el.srcObject !== this.inboundAudio) el.srcObject = this.inboundAudio;
       el.muted = !this.call.active;
     }
+  }
+
+  // The robot's inbound video as a raw MediaStream (null until the track arrives). For
+  // consumers that don't want a DOM <video> at all — canvas pipelines, ML/CV frame
+  // grabbing, MediaRecorder. The stream is the live composite (or single-camera) feed;
+  // don't stop() its tracks — they belong to the peer connection. (P4.6)
+  videoStream(): MediaStream | null {
+    return this.inboundVideo;
+  }
+
+  // A cropped per-camera view of the composite feed (P4.6). The robot sends ONE composite
+  // H.264 track (tiled grid, see cameraLayoutInfo()); this crops the named tile into its
+  // own MediaStream via canvas.captureStream, so `cameraView("left_wrist")` replaces
+  // hand-rolled quadrant math. Returns null until BOTH the video track and the bridge's
+  // camera_layout frame have arrived (poll or use onCameraLayout), or if `role` isn't in
+  // the layout (single-camera mode has no layout — use videoStream() there).
+  // The crop rect is recomputed every frame from the video's live dimensions, so it
+  // survives a mid-session encode-resolution change. Call handle.stop() when done — the
+  // draw loop costs CPU per view. The source track is never touched.
+  cameraView(role: string, opts?: { fps?: number }): CameraViewHandle | null {
+    const layout = this.cameraLayoutRaw;
+    const src = this.inboundVideo;
+    if (!layout || !src) return null;
+    const idx = layout.tiles.indexOf(role);
+    if (idx < 0) return null;
+    const fps = opts?.fps && opts.fps > 0 ? opts.fps : 15;
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = src;
+    void video.play().catch(() => { /* autoplay quirks: captureStream still pulls frames */ });
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    let stopped = false;
+    // Prefer requestVideoFrameCallback (fires per decoded frame — no wasted draws);
+    // fall back to a plain timer at the requested fps.
+    const rvfc = (video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: () => void) => number;
+    }).requestVideoFrameCallback?.bind(video);
+    const schedule = () => {
+      if (stopped) return;
+      if (rvfc) rvfc(draw);
+      else setTimeout(draw, 1000 / fps);
+    };
+    const draw = () => {
+      if (stopped) return;
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      if (vw > 0 && vh > 0) {
+        const tw = vw / layout.cols;
+        const th = vh / layout.rows;
+        const sx = (idx % layout.cols) * tw;
+        const sy = Math.floor(idx / layout.cols) * th;
+        const cw = Math.max(2, Math.round(tw));
+        const ch = Math.max(2, Math.round(th));
+        if (canvas.width !== cw || canvas.height !== ch) {
+          canvas.width = cw;
+          canvas.height = ch;
+        }
+        ctx.drawImage(video, sx, sy, tw, th, 0, 0, cw, ch);
+      }
+      schedule();
+    };
+    schedule();
+    const stream = canvas.captureStream(fps);
+    return {
+      stream,
+      role,
+      stop() {
+        stopped = true;
+        video.srcObject = null;
+        for (const t of stream.getTracks()) t.stop();
+      },
+    };
   }
 
   // The follower arm the keyboard / selected-arm inputs currently target (the

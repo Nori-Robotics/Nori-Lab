@@ -135,6 +135,21 @@ const blob = await teleop.captureFrame();   // JPEG Blob, or null if no video is
 const still = await teleop.snapshot();       // JPEG Blob, or null
 ```
 
+**Per-camera stills.** Both take an optional camera `role` (from the layout — see "Per-camera
+views" below) to crop one tile out of the composite; this is what a per-camera LLM `look` maps to:
+
+```ts
+const wrist = await teleop.snapshot(500, "left_wrist");     // one tile, or null
+const over  = await teleop.captureFrame("image/jpeg", 0.7, "overhead");
+```
+
+⚠️ **Unknown role → `null`, never the full composite.** Deliberate: if your caller labeled the
+frame (e.g. told a vision model "this is left_wrist"), a silent fallback would hand it a mislabeled
+image. On `null` with a role set, report the valid roles (`cameraLayoutInfo()?.tiles`) instead.
+Single-camera robots send no layout, so any `role` returns `null` there — use the bare calls.
+The role→rect mapping itself is exported as `cameraTileRect(layout, role, w, h)` (pure,
+unit-tested) if you need the same math elsewhere.
+
 **The raw stream, no DOM required** — for canvas pipelines, ML/CV consumers, or
 `MediaRecorder`:
 

@@ -145,6 +145,20 @@ export interface CameraViewHandle {
   stop(): void;
 }
 
+// The source crop rect of one named camera tile inside a composite frame of vw x vh pixels,
+// or null if the role isn't in the layout (or the inputs are degenerate). Pure + exported so
+// the tile mapping is unit-testable without a live peer; shared by cameraView() (live crop),
+// captureFrame(role) (one-shot crop), and anything app-side that needs the same math.
+export function cameraTileRect(
+  layout: CameraLayout, role: string, vw: number, vh: number,
+): { sx: number; sy: number; sw: number; sh: number } | null {
+  const idx = layout.tiles.indexOf(role);
+  if (idx < 0 || layout.cols < 1 || layout.rows < 1 || vw <= 0 || vh <= 0) return null;
+  const sw = vw / layout.cols;
+  const sh = vh / layout.rows;
+  return { sx: (idx % layout.cols) * sw, sy: Math.floor(idx / layout.cols) * sh, sw, sh };
+}
+
 // Two-way call state (Phase 7 §B). Reported to the page via onCall so it can render the
 // call bar + on-air indicators. Everything here is renegotiation-free: mic/camera attach to
 // transceivers the robot already offered (R-X.1). Fields degrade gracefully when the robot
@@ -426,20 +440,15 @@ export class RemoteTeleop {
     };
     const draw = () => {
       if (stopped) return;
-      const vw = video.videoWidth;
-      const vh = video.videoHeight;
-      if (vw > 0 && vh > 0) {
-        const tw = vw / layout.cols;
-        const th = vh / layout.rows;
-        const sx = (idx % layout.cols) * tw;
-        const sy = Math.floor(idx / layout.cols) * th;
-        const cw = Math.max(2, Math.round(tw));
-        const ch = Math.max(2, Math.round(th));
+      const r = cameraTileRect(layout, role, video.videoWidth, video.videoHeight);
+      if (r) {
+        const cw = Math.max(2, Math.round(r.sw));
+        const ch = Math.max(2, Math.round(r.sh));
         if (canvas.width !== cw || canvas.height !== ch) {
           canvas.width = cw;
           canvas.height = ch;
         }
-        ctx.drawImage(video, sx, sy, tw, th, 0, 0, cw, ch);
+        ctx.drawImage(video, r.sx, r.sy, r.sw, r.sh, 0, 0, cw, ch);
       }
       schedule();
     };
@@ -544,7 +553,12 @@ export class RemoteTeleop {
   // Grab a still frame from the robot's inbound video WITHOUT needing a <video> on screen — reads
   // the live track directly. Returns null if no video is arriving (not connected, or paused with no
   // frames). Prefer snapshot() if the encoder may be paused; this one assumes frames are flowing.
-  async captureFrame(mime = "image/jpeg", quality = 0.7): Promise<Blob | null> {
+  // `role` (optional) crops the named tile out of the composite (per-camera `look`): the crop rect
+  // comes from cameraTileRect + the bridge's camera_layout. When role is given but the layout hasn't
+  // arrived / doesn't contain it, this returns NULL — never the full composite. A silent fallback
+  // would hand a caller (e.g. an LLM told "this is left_wrist") a mislabeled frame, which is worse
+  // than no frame; the caller should report the unknown role instead.
+  async captureFrame(mime = "image/jpeg", quality = 0.7, role?: string): Promise<Blob | null> {
     const track = this.inboundVideo?.getVideoTracks?.()[0];
     if (!track || track.readyState !== "live") return null;
     try {
@@ -552,12 +566,21 @@ export class RemoteTeleop {
       // locally rather than depend on the ambient type.
       const capture = new ImageCapture(track) as ImageCapture & { grabFrame(): Promise<ImageBitmap> };
       const bmp = await capture.grabFrame();
+      let rect = { sx: 0, sy: 0, sw: bmp.width, sh: bmp.height };
+      if (role !== undefined) {
+        const r = this.cameraLayoutRaw && cameraTileRect(this.cameraLayoutRaw, role, bmp.width, bmp.height);
+        if (!r) {
+          bmp.close?.();
+          return null; // unknown role / no layout (single-camera mode): see contract above
+        }
+        rect = r;
+      }
       const canvas = document.createElement("canvas");
-      canvas.width = bmp.width;
-      canvas.height = bmp.height;
+      canvas.width = Math.max(2, Math.round(rect.sw));
+      canvas.height = Math.max(2, Math.round(rect.sh));
       const ctx = canvas.getContext("2d");
       if (!ctx) return null;
-      ctx.drawImage(bmp, 0, 0);
+      ctx.drawImage(bmp, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, canvas.width, canvas.height);
       bmp.close?.();
       return await new Promise((res) => canvas.toBlob((b) => res(b), mime, quality));
     } catch {
@@ -568,13 +591,15 @@ export class RemoteTeleop {
   // Snapshot that handles a paused encoder: if video is paused, resume (which forces a keyframe on
   // the robot), wait briefly for a frame to arrive, grab it, then re-pause — so a still can be taken
   // for LLM vision etc. without leaving the encoder running. settleMs is the resume→frame wait.
-  async snapshot(settleMs = 500): Promise<Blob | null> {
+  // `role` crops one camera tile (see captureFrame): the agent-loop `look {camera}` tool maps to
+  // `snapshot(500, camera)`. Null on unknown role — report it, don't substitute the composite.
+  async snapshot(settleMs = 500, role?: string): Promise<Blob | null> {
     const wasPaused = this.videoPaused;
     if (wasPaused) {
       this.resumeVideo();
       await new Promise((res) => setTimeout(res, settleMs));
     }
-    const blob = await this.captureFrame();
+    const blob = await this.captureFrame("image/jpeg", 0.7, role);
     if (wasPaused) this.pauseVideo();
     return blob;
   }

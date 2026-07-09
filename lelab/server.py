@@ -596,8 +596,13 @@ HOW THE LOOP WORKS:
 - End the run by calling `done` (goal achieved) or `give_up` (unsafe or impossible). Do not keep acting after the goal is met.
 
 THE ROBOT / TOOLS:
-  look       Capture a fresh still from the robot camera. Often a COMPOSITE of several camera tiles.
-             Your only visual input — use it liberally, before and after acting.
+  look       Capture a fresh still from the robot camera. Your only visual input — use it liberally,
+             before and after acting. Bare `look` returns the COMPOSITE of all camera tiles (use it
+             for scene-level judgement: robot left vs right, object locations). `look {camera: role}`
+             returns ONE camera's tile at full size (roles come from the "Camera layout" context —
+             e.g. an overhead/front scene camera, or a wrist camera for a close-up of that arm's
+             workspace). Typical pattern: composite first to orient, then the relevant single camera
+             to inspect before/after a manipulation.
   get_state  Current joint positions + lift + base (proprioceptive, normalized: arm joints ~[-100,100],
              grippers [0,100]). No image.
   move_to    ABSOLUTE joint move on one arm: go to target positions and WAIT for arrival. Returns a real
@@ -632,8 +637,24 @@ Work step by step. One or a few tool calls per turn, then look and reassess. Whe
 NORI_AGENT_TOOLS = [
     {
         "name": "look",
-        "description": "Capture a fresh still from the robot camera (a composite of camera tiles). Use before and after acting to verify the effect. Your only visual input.",
-        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "description": (
+            "Capture a fresh still from the robot camera. Use before and after acting to verify the "
+            "effect. Your only visual input. With no arguments you get the full COMPOSITE (all camera "
+            "tiles) — best for scene-level judgement (robot left vs right, where things are). Pass "
+            '`camera` (a role name from the "Camera layout" context, e.g. "overhead" or "left_wrist") '
+            "to get just that camera's tile — best for a close look at one arm/view. An unknown role "
+            "returns an error naming the valid roles, not an image."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "camera": {
+                    "type": "string",
+                    "description": "optional camera role from the layout; omit for the full composite",
+                },
+            },
+            "additionalProperties": False,
+        },
     },
     {
         "name": "get_state",

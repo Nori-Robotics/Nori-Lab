@@ -124,6 +124,12 @@ Old daemons may send a bare ack — every field except `accepted` is optional, s
 you read. The ack is re-sent on every daemon (re)connect (a robot restart mid-session refreshes
 `robotInfo()`). The raw parse is exported as `parseAck(frame)` if you need it standalone.
 
+One rejection worth knowing by name: `accepted:false` with `error:"unauthorized"` is the robot's
+**internal** agent token (its own bridge authenticating to its daemon) being missing or stale —
+a robot-side provisioning problem. It is **not** your `token` option (the room token, checked
+much earlier at signaling); if your room token were wrong you'd never get an offer at all. If
+you see `unauthorized`, nothing on your end fixes it — report it to us.
+
 ## Driving the robot
 
 Two input paths — both ride the **same** wire (the daemon's jog → IK → clamp → motor path is

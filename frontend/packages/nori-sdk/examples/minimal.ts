@@ -38,6 +38,13 @@ export function runMinimalTeleop(videoEl: HTMLVideoElement) {
     arm: "right",
     onLog: (m) => console.log("[teleop]", m),
     onConnState: (s) => console.log("[conn]", s),
+    // The daemon's handshake ack — the robot describing itself. Also readable at any
+    // later point via teleop.robotInfo().
+    onReady: (info) => {
+      if (!info.accepted) { console.error("[ready] robot refused session:", info.error); return; }
+      console.log(`[ready] protocol v${info.protocolVersion} units=${info.normMode}`,
+        "joints:", info.descriptor?.joints?.length, "cameras:", info.descriptor?.cameras);
+    },
     onTelemetry: (t) => {
       // ~50 Hz. `state` holds every joint's normalized "<motor>.pos" plus lift height in mm.
       const lift = t.state["right_lift.pos"];

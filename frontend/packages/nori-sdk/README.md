@@ -33,8 +33,9 @@ their own subpath imports so you never pull them unless you ask for them.
 
 ## Quick start (Supabase signaling)
 
-The fastest path: use the reference **Supabase** transport with a room + token + TURN creds we
-provision for you (you do **not** need your own Supabase account — just the room credentials).
+The fastest path: use the reference **Supabase** transport with a room + token we provision for
+you (you do **not** need your own Supabase account — just the room credentials). See
+["Connectivity"](#connectivity-lan-stun-turn) below for when you'd additionally need TURN values.
 
 ```ts
 import { RemoteTeleop } from "@nori/sdk";
@@ -49,9 +50,8 @@ const teleop = new RemoteTeleop({
   videoEl: video,
   token: ROOM_TOKEN,        // "" for an open dev room; HMAC-authed otherwise
   stun: "stun:stun.l.google.com:19302",
-  turnUrls: [TURN_URL],     // provisioned for WAN; omit for same-LAN
-  turnUser: TURN_USER,
-  turnCred: TURN_CRED,
+  // TURN is optional and currently not issued by default (see "Connectivity" below).
+  // If we've sent you relay credentials, add: turnUrls: [TURN_URL], turnUser, turnCred.
   forceRelay: false,
   arm: "right",             // which arm keyboard/jog drives
   onLog: (m) => console.log(m),
@@ -67,6 +67,62 @@ await teleop.start();       // subscribes, answers the robot's offer, opens the 
 ```
 
 Video now flows into your `<video>` element and `onTelemetry` fires ~50×/s.
+
+## Connectivity: LAN, STUN, TURN
+
+How the media/control connection is established, and what you need for each situation:
+
+- **Same LAN as the robot** (e.g. working on-site): peers connect directly via local host
+  candidates. The STUN default is harmless but not even needed. Nothing to configure.
+- **Over the internet (WAN)**: the default public **STUN** server lets both peers discover
+  their public addresses and connect **directly** — no traffic flows through any third party,
+  and this works on typical home/office networks. This is the current default deployment mode.
+- **Strict networks** (corporate/university firewalls, hotel or co-working Wi-Fi, CGNAT mobile
+  carriers, VPNs): direct connection can be impossible. The symptom is a session stuck at
+  ICE/`connecting` that never reaches `connected` — nothing is wrong with your code. This is
+  the one case that needs a **TURN relay** (`turnUrls`/`turnUser`/`turnCred`). We do not issue
+  TURN credentials by default yet — **if you hit this, tell us and we'll provision relay
+  credentials for you**; they slot into the three options above with no other change.
+  (`forceRelay: true` then forces all traffic through the relay — useful to *verify* the TURN
+  path, not something to leave on.)
+
+Note the relay never sees your media in the clear — WebRTC is DTLS-SRTP end-to-end encrypted;
+a TURN server only ever observes IPs and traffic volume.
+
+## Handshake: what the robot tells you on connect
+
+Shortly after the control channel opens, the daemon sends its **ack** — a self-description of
+the robot you just connected to. Read it at use-time with `robotInfo()` (null until it arrives)
+or subscribe with the `onReady` option:
+
+```ts
+const teleop = new RemoteTeleop({
+  /* ...options as above... */
+  onReady: (info) => {
+    if (!info.accepted) { console.error("robot refused session:", info.error); return; }
+    console.log("protocol v" + info.protocolVersion, "units:", info.normMode);
+    console.log("joints:", info.descriptor?.joints);
+    console.log("cameras:", info.descriptor?.cameras);   // same roles as the CameraLayout tiles
+    console.log("gripper range:", info.descriptor?.ranges?.["right_arm_gripper.pos"]);
+  },
+});
+```
+
+What's in a `RobotInfo`:
+
+| Field | Meaning |
+|---|---|
+| `accepted` | `false` = the daemon refused the session (`error` says why). The connection stays up so you can see logs/telemetry, but control frames are ignored. |
+| `protocolVersion` | The daemon's nori-protocol major. Compared against this SDK's `NORI_PROTOCOL_VERSION`; a difference sets `versionMismatch`. |
+| `normMode` | Units of every `.pos` value in state/action: `"range_m100_100"` (normalized) or `"degrees"`. |
+| `watchdogProfile` | `{ t_warn_ms, t_stop_ms }` — control-frame silence beyond these slows, then stops, the robot. **Disclosure, not negotiation**: the daemon picks it from the measured link; you can't change it. |
+| `descriptor` | What the robot is: `joints` (every drivable `<motor>.pos` key), `base`, `aux` (e.g. lifts), `cameras` (roles, matching the composite layout tiles), and `ranges` — the authoritative `[min, max]` per key. Out-of-range values are **clamped robot-side, never rejected**, so use `ranges` to scale your inputs, not to pre-validate. |
+| `initialState` | The joint pose at session start. |
+| `versionMismatch` | **Advisory.** Mixed daemon versions exist across the fleet, so the SDK warns and proceeds — unknown frame types are ignored by both sides, so a mismatch means vocabulary gaps, never unsafe behavior. |
+
+Old daemons may send a bare ack — every field except `accepted` is optional, so null-check what
+you read. The ack is re-sent on every daemon (re)connect (a robot restart mid-session refreshes
+`robotInfo()`). The raw parse is exported as `parseAck(frame)` if you need it standalone.
 
 ## Driving the robot
 

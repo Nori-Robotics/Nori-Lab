@@ -105,11 +105,11 @@ describe("loop termination", () => {
 });
 
 describe("tool dispatch", () => {
-  it("look returns an image tool_result and records a snapshot", async () => {
+  it("single-camera robot: bare look returns an image tool_result", async () => {
     const { agent, fake, calls } = setup([
       turn([tool("look")]),
       turn([tool("done", { summary: "" })]),
-    ]);
+    ], {}, { layout: null });
     await agent.run("look around");
     expect(fake.snapshots).toEqual([{ settleMs: 500, role: undefined }]);
     // The second turn's messages must include the image tool_result we appended.
@@ -117,6 +117,21 @@ describe("tool dispatch", () => {
     const toolResult = secondTurnMsgs.at(-1)!.content[0];
     expect(toolResult.type).toBe("tool_result");
     expect((toolResult.content as AgentBlock[])[0].type).toBe("image");
+  });
+
+  it("multi-camera robot: bare look errors and demands a camera", async () => {
+    // Default fake has a 4-tile layout → bare look must not return the composite.
+    const { agent, fake, calls } = setup([
+      turn([tool("look")]),
+      turn([tool("done", { summary: "" })]),
+    ]);
+    await agent.run("look around");
+    expect(fake.snapshots).toEqual([]); // never even snapshotted
+    const msgs = calls[1].messages as Array<{ content: AgentBlock[] }>;
+    const result = msgs.at(-1)!.content[0];
+    expect(result.is_error).toBe(true);
+    expect((result.content as AgentBlock[])[0].text).toContain("multiple cameras");
+    expect((result.content as AgentBlock[])[0].text).toContain("valid: left_wrist, right_wrist, overhead, front");
   });
 
   it("per-camera look forwards the role to snapshot", async () => {
@@ -172,6 +187,18 @@ describe("tool dispatch", () => {
     const msgs = calls[1].messages as Array<{ content: AgentBlock[] }>;
     // Target equals current pos (12.4) → immediate arrival → "done".
     expect((msgs.at(-1)!.content[0].content as AgentBlock[])[0].text).toBe("done");
+  });
+
+  it("play_audio rejects a non-https/data URL with an is_error (no fetch attempted)", async () => {
+    const { agent, calls } = setup([
+      turn([tool("play_audio", { url: "http://evil.example/x.mp3" })]),
+      turn([tool("done", { summary: "" })]),
+    ], { confirmFirstMotion: false });
+    await agent.run("beep");
+    const msgs = calls[1].messages as Array<{ content: AgentBlock[] }>;
+    const result = msgs.at(-1)!.content[0];
+    expect(result.is_error).toBe(true);
+    expect((result.content as AgentBlock[])[0].text).toContain("https:// or data:");
   });
 
   it("a bad tool arg comes back as an is_error tool_result, not a throw", async () => {
@@ -250,8 +277,10 @@ describe("estop / stop", () => {
 describe("image pruning", () => {
   it("keeps only the last N frames and stubs older ones", async () => {
     // 4 looks then done, keepLastImages: 2 → the two oldest images become text placeholders.
+    // Multi-camera robot, so each look names a camera.
+    const look = () => turn([tool("look", { camera: "overhead" })]);
     const { agent, calls } = setup([
-      turn([tool("look")]), turn([tool("look")]), turn([tool("look")]), turn([tool("look")]),
+      look(), look(), look(), look(),
       turn([tool("done", { summary: "" })]),
     ], { keepLastImages: 2, confirmFirstMotion: false });
     await agent.run("look a lot");

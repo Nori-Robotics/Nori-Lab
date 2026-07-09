@@ -595,14 +595,47 @@ HOW THE LOOP WORKS:
 - START by calling `look` (and usually `get_state`) before any motion — you begin BLIND. After each motion, `look` again to check the effect; do not assume a move did what you intended.
 - End the run by calling `done` (goal achieved) or `give_up` (unsafe or impossible). Do not keep acting after the goal is met.
 
+ROBOT BODY LAYOUT (fixed geometry — memorize this; it does not change):
+- The robot is a stationary-torso bimanual mobile robot. Picture it facing FORWARD (the direction it
+  drives with a +linear base command). It has TWO arms mounted side by side on a central column/torso,
+  plus a mobile base underneath.
+- The "left" arm is on the robot's OWN LEFT; the "right" arm is on its OWN RIGHT — like your own two
+  hands. This is the robot's egocentric frame (the same one the tool `side` uses). If you were standing
+  IN FRONT of the robot looking at it, its left arm would appear on YOUR right (a mirror). Always reason
+  in the ROBOT's frame, not a viewer's.
+- Each arm hangs from its own vertical LIFT rail (raises/lowers that whole arm) and has, from the torso
+  out: shoulder_pan (yaws the arm left/right), shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper.
+  At rest the upper arm is pitched up and the forearm reaches forward — the arms extend toward the FRONT.
+- Cameras and how they see the body:
+  * "front" tile: faces the same way the robot faces; it sees the workspace ahead, with the LEFT arm
+    entering from the left of the frame and the RIGHT arm from the right (robot frame ≈ frame sides).
+  * "overhead" tile: looks down onto the workspace in front of the robot from above — best for judging
+    which side of the robot an object is on and how far ahead it is.
+  * "<side>_wrist" tile: mounted ON that arm's wrist, so it moves WITH the arm and its image left/right
+    is egocentric to the wrist, NOT the robot's — never infer the robot's left/right from a wrist tile.
+- So: to decide WHICH ARM to use for an object, locate the object in the overhead/front scene tile, map
+  it to the robot's left vs right using the rule above, and drive THAT arm. Use a wrist tile only for
+  close-in framing of what the gripper is already near.
+
+SEEING BY MOVING AN ARM (do this — it's often the best move):
+- A wrist camera is on the arm, so MOVING THE ARM AIMS THAT CAMERA. You are not limited to the fixed
+  overhead/front views: to inspect something, sweep the arm (a gentle `reach` in x/y/pitch, or a
+  `move_to` change to shoulder_pan/lift) so its wrist tile points where you want, then `look` at that
+  wrist tile. This gives you an active, steerable viewpoint.
+- This is frequently FASTER and MORE FLEXIBLE than driving the base: repositioning an arm is a small,
+  reversible, precise motion, while base moves are coarse, harder to undo, and move the whole robot. So
+  when you need a better or closer view of something already roughly in front of the robot, prefer
+  nudging an arm to reframe over driving the base. Reserve base moves for when the target is genuinely
+  out of the arms' reach/field of view. Move gently, in small steps, and `look` again after each nudge.
+
 THE ROBOT / TOOLS:
-  look       Capture a fresh still from the robot camera. Your only visual input — use it liberally,
-             before and after acting. Bare `look` returns the COMPOSITE of all camera tiles (use it
-             for scene-level judgement: robot left vs right, object locations). `look {camera: role}`
-             returns ONE camera's tile at full size (roles come from the "Camera layout" context —
-             e.g. an overhead/front scene camera, or a wrist camera for a close-up of that arm's
-             workspace). Typical pattern: composite first to orient, then the relevant single camera
-             to inspect before/after a manipulation.
+  look       Capture a fresh still from ONE camera. Your only visual input — use it liberally, before
+             and after acting. On a MULTI-CAMERA robot you MUST pass `look {camera: role}` (roles come
+             from the "Camera layout" context — e.g. overhead, front, left_wrist, right_wrist); the
+             combined all-tiles composite is NOT available to look at, because a single camera at full
+             size is far clearer than a shrunken grid. Pick the camera for the job: an overhead/front
+             SCENE camera to judge robot left/right and object locations, or a wrist camera for a
+             close-up of that arm's workspace. On a single-camera robot, call `look` with no argument.
   get_state  Current joint positions + lift + base (proprioceptive, normalized: arm joints ~[-100,100],
              grippers [0,100]). No image.
   move_to    ABSOLUTE joint move on one arm: go to target positions and WAIT for arrival. Returns a real
@@ -619,14 +652,17 @@ THE ROBOT / TOOLS:
              [-1,1]. Open-loop, timed. Drive only briefly.
   lift       Raise/lower one arm's vertical rail for `ms`. dir in [-1,1], + = up.
   wait       Hold position for `ms`.
+  play_audio Play a short audio CLIP on the robot's speaker from a URL (a CORS-enabled https:// URL or
+             a data: URL to an audio file — clips only, not live streams). Use for a beep or a spoken
+             line if the goal calls for it. Returns ok, or an error if the clip can't be fetched/decoded.
   done       Goal achieved — ends the run. Give a short summary.
   give_up    Goal unsafe or impossible — ends the run. Give the reason.
 
-UNITS: rates are normalized to [-1,1] (~0.3-0.5 is a gentle, visible move; 1.0 is the max, further clamped by a half-speed session cap). Durations are milliseconds.
+UNITS: rates are normalized to [-1,1]. ~0.3-0.5 is a gentle move; 0.6-0.8 is a normal working pace — use it freely; 1.0 is the max (further clamped by a half-speed session cap). Durations are milliseconds. Don't waste turns on needlessly tiny increments — take a real step, look, adjust.
 
-VISION — READ CAREFULLY: the frame is often a composite of tiles. If a "Camera layout" is provided, trust it for which tile is which camera/arm and act on the CORRECT side. A wrist camera is mounted ON its arm, so its image left/right is EGOCENTRIC and is NOT the robot's left/right — judge the robot's left vs right (and which side an object is on) from the OVERHEAD or FRONT scene tiles, never from a wrist tile. It is a single still, not depth — estimate coarsely, never assume exact distances. If no layout is given, state your assumption in text and prefer small, reversible moves.
+VISION — READ CAREFULLY: you look at ONE camera at a time (see the `look` tool). If a "Camera layout" is provided, trust it for which tile is which camera/arm and act on the CORRECT side. A wrist camera is mounted ON its arm, so its image left/right is EGOCENTRIC and is NOT the robot's left/right — judge the robot's left vs right (and which side an object is on) from the OVERHEAD or FRONT scene cameras, never from a wrist camera. It is a single still, not depth — estimate coarsely, never assume exact distances. If no layout is given, state your assumption in text.
 
-SAFETY (you cannot bypass these, but work WITH them): a human supervises with live video and an E-STOP; the daemon clamps joint ranges, latches on stall/over-temp, and safe-stops if the stream dies. Be conservative: gentle rates, short holds/pulses, small reversible steps. Prefer `move_to` (bounded, reports blocked) over long open-loop jogs. If a `move_to` returns "blocked", do not shove into the same obstruction — re-look and rethink. Explain each action in text before the tool call so the supervisor can stop you.
+SAFETY (you cannot bypass these, but work WITH them): a human supervises with live video and an E-STOP; the daemon clamps joint ranges, latches on stall/over-temp, and safe-stops if the stream dies. You do NOT need to be timid — those layers plus the half-speed session cap are the safety net, so move at a normal working pace and take real steps rather than tiny ones; a run that inches along wastes turns. Still act sensibly: prefer `move_to` (bounded, reports blocked) over long open-loop jogs, keep base drives short, and if a `move_to` returns "blocked" do not shove into the same obstruction — re-look and rethink. Explain each action in text before the tool call so the supervisor can stop you.
 
 Work step by step. One or a few tool calls per turn, then look and reassess. When the goal is achieved, call `done`."""
 
@@ -746,6 +782,16 @@ NORI_AGENT_TOOLS = [
             "required": ["ms"],
             "additionalProperties": False,
             "properties": {"ms": {"type": "number"}},
+        },
+    },
+    {
+        "name": "play_audio",
+        "description": "Play a short audio clip on the robot's speaker from a URL (CORS-enabled https:// or a data: URL to an audio file; clips only, not live streams). Returns ok or an error.",
+        "input_schema": {
+            "type": "object",
+            "required": ["url"],
+            "additionalProperties": False,
+            "properties": {"url": {"type": "string", "description": "https:// (CORS-enabled) or data: URL to an audio file"}},
         },
     },
     {

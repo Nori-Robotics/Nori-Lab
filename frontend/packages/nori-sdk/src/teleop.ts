@@ -14,6 +14,7 @@
 
 import type { SignalingTransport } from "./signaling";
 import { AudioLatencyProbe, audioLatencyEnabled } from "./audioLatency";
+import { NORI_PROTOCOL_VERSION } from "./version";
 
 export type ControlMode = "cylindrical" | "joint";
 export type ArmSide = "left" | "right";
@@ -159,6 +160,76 @@ export function cameraTileRect(
   return { sx: (idx % layout.cols) * sw, sy: Math.floor(idx / layout.cols) * sh, sw, sh };
 }
 
+// ---- handshake: the daemon's ack (P4.1) ------------------------------------------------
+// The daemon answers the session `hello` with an `ack` (nori-protocol ack.json) carrying its
+// self-description. It arrives on the control channel shortly after open — once per daemon
+// (re)connect, so a robot restart mid-session refreshes it. Read it via robotInfo() or
+// subscribe with onReady.
+
+// The daemon's watchdog timing: control-frame silence past t_warn_ms slows the robot,
+// past t_stop_ms stops it. Disclosure only — NOT settable from the client (the daemon
+// picks the profile from the measured LAN/WAN link; see TelemetryView.linkMode).
+export interface WatchdogProfile {
+  t_warn_ms: number;
+  t_stop_ms: number;
+}
+
+// What the robot physically is, straight from the daemon. `ranges` is the authoritative
+// [min, max] per "<name>.pos" key — values outside it are CLAMPED robot-side (never
+// rejected), so use it to scale your own inputs rather than to pre-validate.
+export interface RobotDescriptor {
+  buses?: string[];
+  joints?: string[];   // every drivable "<motor>.pos" key
+  base?: string[];     // base DOFs ("x.vel", "theta.vel")
+  aux?: string[];      // extra actuators (e.g. "left_lift")
+  cameras?: string[];  // camera roles — matches the composite CameraLayout tiles
+  ranges?: Record<string, [number, number]>;
+}
+
+// The parsed handshake. `accepted:false` means the daemon refused the session (error says
+// why) — the connection stays up but control frames will be ignored. versionMismatch is
+// ADVISORY: mixed daemon versions exist across the fleet, so the SDK proceeds and only
+// warns (expect vocabulary gaps, not danger — unknown frames are ignored by both sides).
+export interface RobotInfo {
+  accepted: boolean;
+  protocolVersion?: number;              // daemon's nori-protocol major
+  normMode?: string;                     // "range_m100_100" | "degrees" — units of all .pos values
+  watchdogProfile?: WatchdogProfile;
+  descriptor?: RobotDescriptor;
+  initialState?: Record<string, number>; // joint pose at session start ("<name>.pos" -> value)
+  error?: string;                        // set when accepted === false
+  versionMismatch: boolean;              // daemon protocolVersion differs from this SDK's target
+}
+
+// Coerce a wire `ack` frame into a RobotInfo. Tolerant of old daemons that send a bare
+// {type:"ack"} (absent `accepted` counts as accepted; everything else optional). Pure +
+// exported so the handshake parse is unit-testable without a live peer.
+export function parseAck(
+  m: Record<string, unknown>, sdkProtocolVersion: number = NORI_PROTOCOL_VERSION,
+): RobotInfo {
+  const wd = m.watchdog_profile as Partial<WatchdogProfile> | undefined;
+  const protocolVersion = typeof m.protocol_version === "number" ? m.protocol_version : undefined;
+  return {
+    accepted: m.accepted !== false,
+    protocolVersion,
+    normMode: typeof m.norm_mode === "string" ? m.norm_mode : undefined,
+    watchdogProfile:
+      wd && typeof wd.t_warn_ms === "number" && typeof wd.t_stop_ms === "number"
+        ? { t_warn_ms: wd.t_warn_ms, t_stop_ms: wd.t_stop_ms }
+        : undefined,
+    descriptor:
+      m.descriptor && typeof m.descriptor === "object"
+        ? (m.descriptor as RobotDescriptor)
+        : undefined,
+    initialState:
+      m.initial_state && typeof m.initial_state === "object"
+        ? (m.initial_state as Record<string, number>)
+        : undefined,
+    error: typeof m.error === "string" ? m.error : undefined,
+    versionMismatch: protocolVersion !== undefined && protocolVersion !== sdkProtocolVersion,
+  };
+}
+
 // Two-way call state (Phase 7 §B). Reported to the page via onCall so it can render the
 // call bar + on-air indicators. Everything here is renegotiation-free: mic/camera attach to
 // transceivers the robot already offered (R-X.1). Fields degrade gracefully when the robot
@@ -215,6 +286,11 @@ export interface RemoteTeleopOptions {
   // Optional: the composite camera layout (bridge-derived), when it arrives. A consumer usually
   // reads cameraLayout() at use-time instead of subscribing.
   onCameraLayout?: (layout: CameraLayout) => void;
+  // Optional: the daemon's handshake ack (robot self-description — joints, cameras, ranges,
+  // watchdog profile, initial pose). Fires once per daemon (re)connect; poll robotInfo()
+  // instead if you only need it at use-time. Check info.accepted / info.versionMismatch here
+  // if you want to surface handshake problems in your own UI (the SDK already logs them).
+  onReady?: (info: RobotInfo) => void;
 }
 
 // Two schemes; 'm' toggles. Default = CYLINDRICAL (the rpi4 feel).
@@ -348,6 +424,9 @@ export class RemoteTeleop {
 
   // Composite camera layout from the bridge (Phase F vision), null until it arrives / single-cam.
   private cameraLayoutRaw: CameraLayout | null = null;
+  // The parsed handshake ack (P4.1). null until the daemon's ack arrives; refreshed on every
+  // daemon (re)connect (a fresh offer means a fresh session, and the daemon re-acks).
+  private ackInfo: RobotInfo | null = null;
 
   // ---- two-way call (Phase 7 §B) -------------------------------------------
   private micStream: MediaStream | null = null;
@@ -1096,7 +1175,7 @@ export class RemoteTeleop {
     } else if (m.type === "camera_layout") {
       this.ingestCameraLayout(m);
     } else if (m.type === "ack") {
-      this.log("daemon ack (watchdog=" + JSON.stringify(m.watchdog_profile || m.watchdog || "?") + ")");
+      this.ingestAck(m);
     } else if (m.type === "error") {
       this.log("daemon error: " + JSON.stringify(m));
     }
@@ -1146,6 +1225,30 @@ export class RemoteTeleop {
     }
   }
 
+  // Parse + cache the daemon's handshake ack (P4.1), warn on trouble, notify onReady.
+  // Problems are ADVISORY, never fatal: mixed daemon versions exist across the fleet, and a
+  // rejected session should stay connected so telemetry/logs can show the operator why.
+  private ingestAck(m: Record<string, unknown>) {
+    const info = parseAck(m);
+    this.ackInfo = info;
+    if (!info.accepted) {
+      this.log("DAEMON REJECTED SESSION: " + (info.error ?? "(no reason given)") +
+        " — connection stays up but control frames will be ignored");
+    } else if (info.versionMismatch) {
+      this.log(`protocol version mismatch — daemon v${info.protocolVersion}, SDK targets ` +
+        `v${NORI_PROTOCOL_VERSION}. Proceeding (unknown frames are ignored by both sides); ` +
+        `expect vocabulary gaps, not unsafe behavior.`);
+    }
+    const d = info.descriptor;
+    this.log("daemon ack: accepted=" + info.accepted +
+      (info.protocolVersion !== undefined ? ` protocol=v${info.protocolVersion}` : "") +
+      (info.normMode ? ` norm=${info.normMode}` : "") +
+      (info.watchdogProfile ? ` watchdog=${info.watchdogProfile.t_warn_ms}/${info.watchdogProfile.t_stop_ms}ms` : "") +
+      (d?.joints ? ` joints=${d.joints.length}` : "") +
+      (d?.cameras?.length ? ` cameras=[${d.cameras.join(",")}]` : ""));
+    this.o.onReady?.(info);
+  }
+
   // Cache the composite camera layout the bridge sends on connect (Phase F vision). Ignores a
   // malformed frame (keeps any prior layout).
   private ingestCameraLayout(m: Record<string, unknown>) {
@@ -1168,6 +1271,16 @@ export class RemoteTeleop {
   // without the operator typing it (an explicit operator description still overrides).
   cameraLayout(): string | null {
     return this.cameraLayoutRaw ? formatCameraLayout(this.cameraLayoutRaw) : null;
+  }
+
+  // ---- handshake (P4.1) ------------------------------------------------------
+  // The robot's self-description from the daemon's handshake ack: what it is (descriptor —
+  // joints, cameras, per-key ranges), how it speaks (protocolVersion, normMode), how it
+  // self-defends (watchdogProfile), and where it started (initialState). null until the ack
+  // arrives (shortly after the control channel opens); refreshed on daemon reconnect. Push
+  // alternative: the onReady option. Old daemons may send a bare ack — fields are optional.
+  robotInfo(): RobotInfo | null {
+    return this.ackInfo;
   }
 
   // ---- perception (Phase F / G3) -------------------------------------------

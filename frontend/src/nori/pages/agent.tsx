@@ -171,7 +171,7 @@ const Agent = () => {
 
         <div className="grid h-[calc(100vh-12rem)] grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Left: goal + controls */}
-          <div className="flex h-full min-h-0 flex-col gap-4">
+          <div className="flex h-full min-w-0 min-h-0 flex-col gap-4">
             <div className="flex flex-col gap-2 rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
               <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// goal</span>
               <Textarea
@@ -216,7 +216,7 @@ const Agent = () => {
             {pendingMotion && (
               <div className="flex flex-col gap-2 rounded-md border border-[#d98b3d]/50 bg-[#fdf3e6] p-4 shadow-sm">
                 <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// approve first motion?</span>
-                <code className="rounded bg-[#fffdf7] px-2 py-1 text-[11px] text-[#5a5346]">
+                <code className="block break-all rounded bg-[#fffdf7] px-2 py-1 text-[11px] text-[#5a5346]">
                   {pendingMotion.name}({JSON.stringify(pendingMotion.input ?? {})})
                 </code>
                 <div className="flex items-center gap-2">
@@ -233,9 +233,9 @@ const Agent = () => {
           </div>
 
           {/* Right: transcript */}
-          <div className="flex h-full min-h-0 flex-col gap-2 rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
+          <div className="flex h-full min-w-0 min-h-0 flex-col gap-2 rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
             <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// transcript</span>
-            <div ref={scrollRef} className="flex-1 space-y-2 overflow-y-auto rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-3 text-xs text-[#5a5346]">
+            <div ref={scrollRef} className="flex-1 min-w-0 space-y-2 overflow-y-auto overflow-x-hidden rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-3 text-xs text-[#5a5346]">
               {rows.length === 0 ? (
                 <span className="font-mono text-muted-foreground">The agent's reasoning, tool calls, and frames appear here.</span>
               ) : rows.map((r, i) => <TranscriptRow key={i} row={r} />)}
@@ -248,14 +248,16 @@ const Agent = () => {
 };
 
 const TranscriptRow = ({ row }: { row: Row }) => {
+  // Every text row wraps (break-words / break-all) so a long tool_result JSON or an unbroken token
+  // can't push the transcript into a wide horizontal scroll.
   switch (row.kind) {
     case "goal":
-      return <div className="font-mono text-[11px] text-[#b06a1c]">▸ goal: {row.text}</div>;
+      return <div className="whitespace-pre-wrap break-words font-mono text-[11px] text-[#b06a1c]">▸ goal: {row.text}</div>;
     case "say":
-      return <div className="whitespace-pre-wrap">{row.text}</div>;
+      return <div className="whitespace-pre-wrap break-words">{row.text}</div>;
     case "call":
       return (
-        <div className="font-mono text-[11px] text-[#4d6a1e]">
+        <div className="whitespace-pre-wrap break-all font-mono text-[11px] text-[#4d6a1e]">
           → {row.tool}({compactArgs(row.input)})
         </div>
       );
@@ -264,12 +266,12 @@ const TranscriptRow = ({ row }: { row: Row }) => {
         return <img src={row.imageDataUrl} alt="frame the agent looked at" className="max-h-40 w-auto rounded border border-[#14131a]/20" />;
       }
       return (
-        <div className={"font-mono text-[11px] " + (row.ok ? "text-[#857b6b]" : "text-[#b4442e]")}>
-          {row.ok ? "  ↳ " : "  ✗ "}{row.text ?? "ok"}
+        <div className={"whitespace-pre-wrap break-all font-mono text-[11px] " + (row.ok ? "text-[#857b6b]" : "text-[#b4442e]")}>
+          {row.ok ? "↳ " : "✗ "}{row.text ?? "ok"}
         </div>
       );
     case "end":
-      return <div className="font-mono text-[11px] font-semibold text-[#b06a1c]">{END_LABEL[row.reason]}{row.detail ? ` — ${row.detail}` : ""}</div>;
+      return <div className="whitespace-pre-wrap break-words font-mono text-[11px] font-semibold text-[#b06a1c]">{END_LABEL[row.reason]}{row.detail ? ` — ${row.detail}` : ""}</div>;
   }
 };
 

@@ -253,6 +253,15 @@ export class AgentSession {
         case "wait":
           await this.driver.exec("wait", [input.ms]);
           return this.textResult(b, "ok");
+        case "play_audio": {
+          // Not a motion tool (harmless, gain-capped on the robot) → outside the confirm gate. Restrict
+          // to https:/data: for an autonomous loop — the agent can't produce blob: and we don't want it
+          // fetching arbitrary http hosts. The driver re-validates the scheme too.
+          const url = String(input.url ?? "");
+          if (!/^(https:|data:)/.test(url)) return this.errorResult(b, `play_audio: url must be an https:// or data: URL`);
+          await this.driver.exec("playAudio", [url]);
+          return this.textResult(b, "ok");
+        }
         default:
           return this.errorResult(b, `unknown tool "${b.name}"`);
       }
@@ -261,10 +270,16 @@ export class AgentSession {
     }
   }
 
-  // look → snapshot (composite, or one tile when `camera` is a layout role). On an unknown role the
-  // SDK returns null and NEVER substitutes the composite (a frame mislabeled as one camera would
-  // corrupt the model's spatial reasoning) — so we error, naming the valid roles.
+  // look → snapshot of ONE camera. On a multi-camera (composite) robot, a `camera` role is REQUIRED:
+  // the whole shrunken grid confuses spatial reasoning and the model just re-queries each tile anyway,
+  // so we don't offer the composite — bare look errors, naming the valid roles. On a single-camera
+  // robot (no layout) bare look returns that camera. On an unknown role the SDK returns null and NEVER
+  // substitutes the composite (a mislabeled frame would corrupt spatial reasoning) — so we error too.
   private async doLook(b: AgentBlock, camera: string | undefined): Promise<AgentBlock> {
+    const tiles = this.o.teleop.cameraLayoutInfo()?.tiles ?? [];
+    if (!camera && tiles.length > 1) {
+      return this.errorResult(b, `this robot has multiple cameras — call look with a "camera" argument (valid: ${tiles.join(", ")})`);
+    }
     const blob = await this.o.teleop.snapshot(500, camera);
     if (!blob) {
       if (camera) {

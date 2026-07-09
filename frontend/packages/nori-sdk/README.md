@@ -18,8 +18,11 @@ video + telemetry, and drive it — from the browser, in ~20 lines.
 
 ## Install
 
+Not on public npm (v0 ships to a named team). Install from the release tarball we send you —
+or from the GitHub release URL if you have repo access:
+
 ```bash
-npm i @nori/sdk
+npm i ./nori-sdk-<version>.tgz
 # optional peers, only if you use them:
 npm i @supabase/supabase-js   # for the reference signaling transport (@nori/sdk/supabase)
 npm i three                   # for VR (@nori/sdk/vr)

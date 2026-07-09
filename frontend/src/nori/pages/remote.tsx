@@ -16,7 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
-import { type ArmSide } from "@nori/sdk";
+import { type ArmSide, type CameraViewHandle } from "@nori/sdk";
 import { VrSession } from "@nori/sdk/vr";
 import { TelemetryPanel, GripForce, ControlLegend, BaseCommandLegend, CallBar, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
@@ -98,6 +98,11 @@ const Remote = () => {
   // setup surface and VR as the headset entry point, so both are selectable while
   // disconnected. The actual drivers (leaderActive / inVr) only run on a live session.
   const [selectedMode, setSelectedMode] = useState<"keyboard" | "vr" | "leader">("keyboard");
+  // Per-camera view (P4.6): the Pi always sends ONE composite track; this picks which tile to show.
+  // "composite" = the full grid; a role = a live client-side crop of that tile (no Pi-side change).
+  const [selectedCamera, setSelectedCamera] = useState("composite");
+  const [cameraTiles, setCameraTiles] = useState<string[]>([]); // roles from the bridge layout, "" if none
+  const cameraViewRef = useRef<CameraViewHandle | null>(null);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -115,6 +120,42 @@ const Remote = () => {
     teleop.resumeVideo();
     return () => { teleop.setVideoEl(null); teleop.setAudioEl(null); teleop.pauseVideo(); };
   }, [teleop]);
+
+  // Track which camera tiles the composite carries (the bridge sends the layout ~2 s after connect,
+  // re-sent a few times). Poll rather than subscribe — the provider owns onCameraLayout — and reset
+  // the picker to composite when the layout goes away (disconnect).
+  useEffect(() => {
+    if (!teleop || connState !== "connected") { setCameraTiles([]); setSelectedCamera("composite"); return; }
+    const read = () => {
+      const tiles = teleop.cameraLayoutInfo()?.tiles ?? [];
+      setCameraTiles((prev) => (prev.length === tiles.length && prev.every((t, i) => t === tiles[i]) ? prev : tiles));
+    };
+    read();
+    const id = setInterval(read, 1500);
+    return () => clearInterval(id);
+  }, [teleop, connState]);
+
+  // Point the <video> at either the full composite or a live per-tile crop. cameraView() crops the
+  // named tile from the SAME composite track into its own canvas-captured stream (client-side; the Pi
+  // is unaware), so switching costs nothing on the robot. Falls back to composite if the crop can't be
+  // built yet (track/layout not ready) or the selected role vanished.
+  useEffect(() => {
+    if (!teleop) return;
+    cameraViewRef.current?.stop();
+    cameraViewRef.current = null;
+    if (selectedCamera === "composite" || !cameraTiles.includes(selectedCamera)) {
+      teleop.setVideoEl(videoRef.current); // re-points srcObject back to the composite
+      return;
+    }
+    const handle = teleop.cameraView(selectedCamera);
+    if (handle && videoRef.current) {
+      videoRef.current.srcObject = handle.stream;
+      cameraViewRef.current = handle;
+    } else {
+      teleop.setVideoEl(videoRef.current);
+    }
+    return () => { cameraViewRef.current?.stop(); cameraViewRef.current = null; };
+  }, [teleop, selectedCamera, cameraTiles, connState]);
 
   // Keep the robot-audio sink at the chosen volume (also re-applies after re-attach above).
   useEffect(() => {
@@ -385,6 +426,21 @@ const Remote = () => {
               className="w-full rounded-md bg-background"
               style={{ aspectRatio: "4 / 3" }}
             />
+            {/* Camera picker — only when the composite carries more than one tile. Crops client-side;
+                the Pi keeps sending the single composite track regardless of the selection. */}
+            {cameraTiles.length > 1 && (
+              <select
+                value={cameraTiles.includes(selectedCamera) ? selectedCamera : "composite"}
+                onChange={(e) => setSelectedCamera(e.target.value)}
+                title="Choose which camera to view. The robot always sends the full composite; this crops one tile locally."
+                className="absolute left-2 top-2 rounded border border-background/40 bg-background/80 px-2 py-1 font-mono text-[11px] text-foreground shadow backdrop-blur"
+              >
+                <option value="composite">all cameras (composite)</option>
+                {cameraTiles.map((role) => (
+                  <option key={role} value={role}>{role}</option>
+                ))}
+              </select>
+            )}
             {/* Reserved operator self-view slot (M6). Hidden until the camera is on. */}
             <video
               ref={selfViewRef}

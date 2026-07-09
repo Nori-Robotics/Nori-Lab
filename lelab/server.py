@@ -581,6 +581,237 @@ def nori_llm_generate_stream(body: NoriLlmGenerateBody):
     return StreamingResponse(gen(), media_type="text/plain; charset=utf-8")
 
 
+# ---- Agentic vision loop (Tier-1.5) ------------------------------------------
+# A closed-loop agent that accomplishes a goal by look -> act -> re-look, using Claude's vision on
+# laptop-fetched frames (no on-Pi model). See docs/agentic_vision_loop.md. This endpoint is a THIN,
+# STATELESS proxy: the browser owns the conversation (messages[]) + executes every tool on the robot;
+# the server only injects the system prompt + tools and forwards each turn to Anthropic (key stays
+# server-side). The tool SCHEMAS here are the contract the browser's dispatcher implements — keep them
+# in sync with ScriptDriver.ts ops (moveTo/reach/joint/grip/base/lift/wait) and teleop.snapshot().
+NORI_AGENT_SYSTEM = """You are an autonomous agent operating a Nori robot to accomplish a goal the operator gives you. You work in a loop: LOOK at the world, decide, ACT with one or more tool calls, then LOOK again to verify — repeating until the goal is done or clearly impossible. A human supervises with live video and an E-STOP and must approve your first motion, so narrate your plan in plain text before you act.
+
+HOW THE LOOP WORKS:
+- Each of your turns may contain reasoning text plus tool calls. The operator's app executes your tool calls on the real robot and returns their results (an image for `look`, JSON/text otherwise) as the next message. Then you continue.
+- START by calling `look` (and usually `get_state`) before any motion — you begin BLIND. After each motion, `look` again to check the effect; do not assume a move did what you intended.
+- End the run by calling `done` (goal achieved) or `give_up` (unsafe or impossible). Do not keep acting after the goal is met.
+
+THE ROBOT / TOOLS:
+  look       Capture a fresh still from the robot camera. Often a COMPOSITE of several camera tiles.
+             Your only visual input — use it liberally, before and after acting.
+  get_state  Current joint positions + lift + base (proprioceptive, normalized: arm joints ~[-100,100],
+             grippers [0,100]). No image.
+  move_to    ABSOLUTE joint move on one arm: go to target positions and WAIT for arrival. Returns a real
+             outcome: "done" (arrived), "blocked" (stalled/obstructed — do NOT blindly retry into the
+             same spot), "clamped" (target was out of range), or "timeout". Same normalized scale as
+             get_state. Best tool for "go to pose X". shoulder_pan/wrist_roll/gripper hold reliably;
+             shoulder_lift/elbow_flex/wrist_flex are IK-coupled and may snap back — prefer `reach` for
+             wrist orientation / height.
+  reach      Task-space (cylindrical) jog held for `ms`, then stops. dofs subset of
+             {x,y,pitch,shoulder_pan,wrist_roll,gripper}, each a rate in [-1,1]; +x forward, +y left.
+             Open-loop and TIMED (no arrival feedback) — use short pulses and re-look.
+  grip       Open or close the gripper on one arm.
+  base       Drive the mobile base for `ms`: linear (+forward) and/or angular (+turn left), rates in
+             [-1,1]. Open-loop, timed. Drive only briefly.
+  lift       Raise/lower one arm's vertical rail for `ms`. dir in [-1,1], + = up.
+  wait       Hold position for `ms`.
+  done       Goal achieved — ends the run. Give a short summary.
+  give_up    Goal unsafe or impossible — ends the run. Give the reason.
+
+UNITS: rates are normalized to [-1,1] (~0.3-0.5 is a gentle, visible move; 1.0 is the max, further clamped by a half-speed session cap). Durations are milliseconds.
+
+VISION — READ CAREFULLY: the frame is often a composite of tiles. If a "Camera layout" is provided, trust it for which tile is which camera/arm and act on the CORRECT side. A wrist camera is mounted ON its arm, so its image left/right is EGOCENTRIC and is NOT the robot's left/right — judge the robot's left vs right (and which side an object is on) from the OVERHEAD or FRONT scene tiles, never from a wrist tile. It is a single still, not depth — estimate coarsely, never assume exact distances. If no layout is given, state your assumption in text and prefer small, reversible moves.
+
+SAFETY (you cannot bypass these, but work WITH them): a human supervises with live video and an E-STOP; the daemon clamps joint ranges, latches on stall/over-temp, and safe-stops if the stream dies. Be conservative: gentle rates, short holds/pulses, small reversible steps. Prefer `move_to` (bounded, reports blocked) over long open-loop jogs. If a `move_to` returns "blocked", do not shove into the same obstruction — re-look and rethink. Explain each action in text before the tool call so the supervisor can stop you.
+
+Work step by step. One or a few tool calls per turn, then look and reassess. When the goal is achieved, call `done`."""
+
+
+# Tool schemas handed to Claude each turn. Mirror docs/agentic_vision_loop.md; the browser dispatcher
+# maps each name -> a ScriptDriver op (or snapshot()/state). additionalProperties:false everywhere so
+# the model can't smuggle unvalidated fields.
+NORI_AGENT_TOOLS = [
+    {
+        "name": "look",
+        "description": "Capture a fresh still from the robot camera (a composite of camera tiles). Use before and after acting to verify the effect. Your only visual input.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "get_state",
+        "description": "Current joint positions + lift + base (proprioception, normalized). No image.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "move_to",
+        "description": "Move one arm's joints to ABSOLUTE normalized targets and WAIT for arrival. Returns done|blocked|clamped|timeout. Best for 'go to pose X'.",
+        "input_schema": {
+            "type": "object",
+            "required": ["side", "targets"],
+            "additionalProperties": False,
+            "properties": {
+                "side": {"enum": ["left", "right"]},
+                "targets": {
+                    "type": "object",
+                    "additionalProperties": {"type": "number"},
+                    "description": 'subset of {shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper} -> target, e.g. {"shoulder_pan": 30, "gripper": 0}',
+                },
+                "slew": {"type": "number", "description": "optional units/sec, capped"},
+            },
+        },
+    },
+    {
+        "name": "reach",
+        "description": "Task-space (cylindrical) jog held for ms, then stopped. Timed and open-loop — use short pulses and re-look.",
+        "input_schema": {
+            "type": "object",
+            "required": ["side", "dofs", "ms"],
+            "additionalProperties": False,
+            "properties": {
+                "side": {"enum": ["left", "right"]},
+                "dofs": {
+                    "type": "object",
+                    "additionalProperties": {"type": "number"},
+                    "description": "subset of {x, y, pitch, shoulder_pan, wrist_roll, gripper}, each a rate in [-1,1]; +x forward, +y left",
+                },
+                "ms": {"type": "number"},
+            },
+        },
+    },
+    {
+        "name": "grip",
+        "description": "Open or close the gripper on one arm.",
+        "input_schema": {
+            "type": "object",
+            "required": ["side", "action"],
+            "additionalProperties": False,
+            "properties": {
+                "side": {"enum": ["left", "right"]},
+                "action": {"enum": ["open", "close"]},
+            },
+        },
+    },
+    {
+        "name": "base",
+        "description": "Drive the mobile base for ms. linear (+forward) and angular (+turn left), rates in [-1,1]. Open-loop, timed — drive only briefly.",
+        "input_schema": {
+            "type": "object",
+            "required": ["ms"],
+            "additionalProperties": False,
+            "properties": {
+                "linear": {"type": "number"},
+                "angular": {"type": "number"},
+                "ms": {"type": "number"},
+            },
+        },
+    },
+    {
+        "name": "lift",
+        "description": "Raise/lower one arm's vertical rail for ms. dir in [-1,1], + = up. Open-loop, timed.",
+        "input_schema": {
+            "type": "object",
+            "required": ["side", "dir", "ms"],
+            "additionalProperties": False,
+            "properties": {
+                "side": {"enum": ["left", "right"]},
+                "dir": {"type": "number"},
+                "ms": {"type": "number"},
+            },
+        },
+    },
+    {
+        "name": "wait",
+        "description": "Hold position for ms.",
+        "input_schema": {
+            "type": "object",
+            "required": ["ms"],
+            "additionalProperties": False,
+            "properties": {"ms": {"type": "number"}},
+        },
+    },
+    {
+        "name": "done",
+        "description": "The goal is achieved. Ends the run.",
+        "input_schema": {
+            "type": "object",
+            "required": ["summary"],
+            "additionalProperties": False,
+            "properties": {"summary": {"type": "string"}},
+        },
+    },
+    {
+        "name": "give_up",
+        "description": "The goal can't be done safely or at all. Ends the run.",
+        "input_schema": {
+            "type": "object",
+            "required": ["reason"],
+            "additionalProperties": False,
+            "properties": {"reason": {"type": "string"}},
+        },
+    },
+]
+
+
+class NoriLlmAgentBody(BaseModel):
+    # The browser owns the conversation and sends the full Anthropic messages[] each turn (user goal,
+    # assistant tool_use turns, and tool_result turns incl. `look` image blocks). Stateless server.
+    messages: list[dict]
+    robot_state: dict | None = None  # optional grounding: current proprioceptive pose
+    camera_layout: str | None = None  # optional: which composite tile is which camera/arm
+
+
+@app.post("/nori/llm/agent")
+def nori_llm_agent(body: NoriLlmAgentBody):
+    """One turn of the agentic vision loop: inject the agent system prompt + tools, forward the
+    browser-held messages[] to Claude, return the raw {stop_reason, content} for the browser to
+    execute + append. Stateless — the browser drives the loop and enforces the caps (step/wall-clock)
+    and the confirm-before-first-motion gate (docs/agentic_vision_loop.md)."""
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set on the server")
+    try:
+        import anthropic
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=503, detail="anthropic package not installed (pip install anthropic)"
+        ) from exc
+    if not body.messages:
+        raise HTTPException(status_code=400, detail="messages[] is required and must be non-empty")
+
+    model = os.environ.get("NORI_LLM_MODEL", "claude-sonnet-5")
+    client = anthropic.Anthropic(api_key=key)
+
+    # Fold optional grounding into the system prompt (a cacheable, stable-ish suffix) rather than
+    # mutating the browser's messages[]. Keeps the conversation the browser holds untouched.
+    system = NORI_AGENT_SYSTEM
+    grounding = []
+    if body.camera_layout:
+        grounding.append(f"Camera layout (which composite tile is which): {body.camera_layout}")
+    if body.robot_state:
+        grounding.append(
+            "Current robot state (proprioceptive, normalized): " + json.dumps(body.robot_state)
+        )
+    if grounding:
+        system = system + "\n\nCONTEXT FOR THIS RUN:\n" + "\n".join(grounding)
+
+    try:
+        msg = client.messages.create(
+            model=model,
+            max_tokens=1500,
+            system=system,
+            tools=NORI_AGENT_TOOLS,
+            messages=body.messages,
+        )
+    except anthropic.APIError as exc:
+        raise HTTPException(status_code=502, detail=f"Anthropic error: {exc}") from exc
+
+    # Return the raw assistant turn: stop_reason + content blocks (text + tool_use). model_dump gives
+    # plain JSON the browser can append verbatim to messages[] as the assistant turn.
+    return {
+        "stop_reason": msg.stop_reason,
+        "content": [b.model_dump() for b in msg.content],
+        "usage": {"input_tokens": msg.usage.input_tokens, "output_tokens": msg.usage.output_tokens},
+    }
+
+
 def nori_jwt(request: Request) -> str | None:
     """Extract the forwarded Supabase JWT from the inbound LeLab request.
 

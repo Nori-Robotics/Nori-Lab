@@ -117,8 +117,9 @@ function Arm({ state, side, active }: { state: Record<string, number>; side: "le
         <meshStandardMaterial color="#acb9cb" />
       </mesh>
 
-      {/* Articulated arm rooted at the carriage */}
-      <group position={[0, carriageY, 0]} rotation={[0, pan, 0]}>
+      {/* Articulated arm rooted at the carriage, with the shoulder pivot nudged outboard
+          and forward of it so panned poses stop clipping through the torso/carriage. */}
+      <group position={[sign * 0.06, carriageY, 0.05]} rotation={[0, pan, 0]}>
         {/* upper arm: pitch about X at the shoulder */}
         <group rotation={[lift, 0, 0]}>
           <mesh position={[0, 0, UPPER_LEN / 2]}>

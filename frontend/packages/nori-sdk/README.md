@@ -354,6 +354,12 @@ src.onended = () => { void teleop.sendClipAudio(null); ctx.close(); }; // hand u
   hands it back to the mic (if a call is active) or detaches.
 - **Real-time Opus, not a file transfer** — audio plays as it streams; a network drop drops it.
   The caller owns the track's lifetime (stop it when the source ends).
+- **Clips don't ring the robot.** Robots gate their room microphone behind a local accept
+  prompt (a person AT the robot must consent before an operator can hear the room). A clip is
+  speaker-only — nobody is asking to listen — so `sendClipAudio` announces itself as a clip and
+  plays immediately: no accept prompt, and the robot's mic stays shut. `joinCall()` is the one
+  that rings: on a consent-gated robot expect silence (no room audio) until someone at the robot
+  accepts. Older robot builds ignore the clip marker and may ring anyway — harmless.
 - **Output level is capped ON THE ROBOT** (self-defending — you don't have to trust the client):
   the robot clamps downlink playback to `NORI_SPEAKER_GAIN` (default **0.7**) with a `volume`
   element before the sink, so no track you send can overdrive the speaker. This exists because a
@@ -431,4 +437,6 @@ The robot side (`webrtc_robot.py`) must exchange the same named events (`sdp`, `
 
 `v0`, for a small set of collaborating devs — not a public release. The core teleop + VR surface
 is stable; the two-way **call** API (`joinCall`/`leaveCall`/mic/camera on `RemoteTeleop`) is
-present but **experimental** and may change.
+present but **experimental** and may change. Note the robot-side consent gate: `joinCall()`
+rings an accept prompt at the robot and room audio stays silent until a person there accepts
+(clips via `sendClipAudio` are exempt — see "Streaming audio").

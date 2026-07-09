@@ -782,15 +782,21 @@ export class RemoteTeleop {
   //    uplink; sendClipAudio(null) restores the mic if a call is active, else detaches.
   //  - Real-time Opus, not a file transfer: audio plays as it streams; a network drop drops
   //    the audio. The caller owns the track's lifetime (stop it when the source ends).
+  //  - Consent-gated robots (§2.1-F accept-before-unmute): the clip:true announce below means
+  //    a clip alone never rings the robot's accept prompt and never opens its room mic — the
+  //    gate applies only when the operator joinCall()s to actually hear the room.
   // Returns whether the track was actually wired to a robot uplink.
   async sendClipAudio(track: MediaStreamTrack | null): Promise<boolean> {
     this.clipTrack = track;
     if (track) {
       const wired = this.attachTrack("audio", track);
       // Announce over the control channel like a call-join so the robot links its speaker
-      // branch + shows "on air" (it intercepts {type:"call"} frames). Skip if a call is
-      // already joined — the uplink is already announced; we're just swapping the source.
-      if (!this.call.active) this.dcSend({ type: "call", state: "join", mic_muted: true });
+      // branch + shows "on air" (it intercepts {type:"call"} frames). clip:true marks it
+      // speaker-only: consent-gated robots (§2.1-F) must NOT ring their accept prompt —
+      // nobody is asking to hear the room — and must keep the room mic shut. Older robots
+      // ignore the extra key (they ring; harmless). Skip if a call is already joined —
+      // the uplink is already announced; we're just swapping the source.
+      if (!this.call.active) this.dcSend({ type: "call", state: "join", mic_muted: true, clip: true });
       this.log(wired
         ? "clip audio -> robot speaker"
         : "clip audio: robot offered no audio uplink — enable --voice on the robot (not transmitting)");

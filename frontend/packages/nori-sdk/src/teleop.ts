@@ -314,6 +314,10 @@ export const JOINT_KEYS: Record<string, [string, number]> = {
 };
 export const BASE_KEYS: Record<string, [string, number]> = {
   i: ["linear", 1], k: ["linear", -1], j: ["angular", 1], l: ["angular", -1],
+  // WASD alias for the same base DOFs. jogTick gives the ARM keymap first claim on a
+  // key, so these only take effect while a leader source owns the arms (arm keys are
+  // ignored then) — plain keyboard driving keeps WASD on the arm exactly as before.
+  w: ["linear", 1], s: ["linear", -1], a: ["angular", 1], d: ["angular", -1],
 };
 export const ZLIFT_KEYS: Record<string, number> = { u: 1, o: -1 };
 export const CMD_KEYS: Record<string, string> = { " ": "estop", p: "reset_latch", c: "reset" };
@@ -327,10 +331,31 @@ function rowsFromAxisMap(map: Record<string, [string, number]>): KeybindRow[] {
   const byDof = new Map<string, KeybindRow>();
   for (const [key, [dof, sign]] of Object.entries(map)) {
     const row = byDof.get(dof) ?? { dof, posKey: "", negKey: "" };
-    if (sign > 0) row.posKey = key; else row.negKey = key;
+    // First key wins per (dof, sign) so alias keys (WASD on the base) don't displace
+    // the primary binding in the legend.
+    if (sign > 0) row.posKey ||= key; else row.negKey ||= key;
     byDof.set(dof, row);
   }
   return [...byDof.values()];
+}
+
+// One inverted-T drive cluster (forward above turn-left/reverse/turn-right), WASD-style.
+export interface BaseKeyCluster { forward: string; left: string; back: string; right: string; }
+
+// Split BASE_KEYS (in declaration order) into complete inverted-T clusters for keypad-style
+// legends — primary IJKL first, then the WASD alias. Derived from the live map so the
+// legend can never drift from what the keys actually send (C3).
+export function baseKeyClusters(): BaseKeyCluster[] {
+  const clusters: BaseKeyCluster[] = [];
+  let cur: Partial<BaseKeyCluster> = {};
+  for (const [key, [dof, sign]] of Object.entries(BASE_KEYS)) {
+    const slot: keyof BaseKeyCluster =
+      dof === "linear" ? (sign > 0 ? "forward" : "back") : sign > 0 ? "left" : "right";
+    if (cur[slot] !== undefined) { clusters.push(cur as BaseKeyCluster); cur = {}; }
+    cur[slot] = key;
+  }
+  if (Object.keys(cur).length) clusters.push(cur as BaseKeyCluster);
+  return clusters;
 }
 
 // Structured control legend for a given mode — derived from the exported maps above so it
@@ -1398,7 +1423,9 @@ export class RemoteTeleop {
       // While a leader source drives the arms, arm keys are ignored (leader wins on those
       // joints); base + lift keys still apply so the operator drives the base/rails by hand.
       if (!leader && k in km) { const [d, s] = km[k]; a[d] = s; }
-      else if (k in BASE_KEYS) { const [dof, s] = BASE_KEYS[k]; base[dof] = s; }
+      // Firmware turns the base opposite our "+angular = left" convention, so negate the
+      // angular sign on the wire (keeps BASE_KEYS/legend reading a,j = left, and now true).
+      else if (k in BASE_KEYS) { const [dof, s] = BASE_KEYS[k]; base[dof] = dof === "angular" ? -s : s; }
       else if (k in ZLIFT_KEYS) z = ZLIFT_KEYS[k];
     }
     // Leader mode: arms come from leader_action_deg, so the jog carries only base + lift.

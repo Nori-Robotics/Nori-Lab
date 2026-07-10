@@ -305,3 +305,30 @@ describe("grounding passed to the transport", () => {
     expect(calls[0].cameraLayout).toBe("2x2 layout");
   });
 });
+
+describe("daily token budget (cost governance)", () => {
+  it("emits a budget event carrying today's spend and the warn threshold", async () => {
+    const t: AgentTurn = {
+      stop_reason: "tool_use", content: [tool("done", { summary: "" })],
+      daily: { spent: 820_000, warn: 800_000 },
+    };
+    const { agent, events } = setup([t]);
+    await agent.run("noop");
+    const budget = events.find((e) => e.kind === "budget") as Extract<AgentEvent, { kind: "budget" }>;
+    expect(budget).toMatchObject({ spent: 820_000, warn: 800_000 });
+  });
+
+  it("finishes cleanly as 'budget' (not 'error') when a turn is refused for cost (429)", async () => {
+    const fake = makeFakeTeleop();
+    const events: AgentEvent[] = [];
+    const postTurn: PostTurn = async () => {
+      const { AgentBudgetError } = await import("./AgentSession");
+      throw new AgentBudgetError("Daily agent token budget reached (500,000 / 500,000 tokens). Resets tomorrow.");
+    };
+    const agent = makeAgent(fake.teleop, { postTurn, onEvent: (e) => events.push(e) });
+    await agent.run("anything");
+    const fin = finished(events)!;
+    expect(fin.reason).toBe("budget");
+    expect(fin.detail).toContain("budget reached");
+  });
+});

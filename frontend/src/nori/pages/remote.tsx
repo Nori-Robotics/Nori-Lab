@@ -8,11 +8,9 @@
 // settings (room, optional room token, ICE/TURN) which must match the Pi's .env.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
@@ -49,14 +47,14 @@ const ArmPills = ({
 );
 
 const Remote = () => {
-  const { ready, customer, activeRobotSerial } = useNori();
+  const { ready } = useNori();
   const { baseUrl, fetchWithHeaders } = useApi();
   // The session now lives in TeleopSessionProvider so it survives navigation (Remote <-> Coding).
   // This page is a consumer: it renders video/telemetry/settings and drives VR/leader/clip, but
   // it no longer owns the RemoteTeleop instance and must NOT stop it on unmount.
   const {
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call,
-    logLines, appendLog, settings, setSetting: set, connect, disconnect: sessionDisconnect,
+    logLines, appendLog, settings, setSetting: set, disconnect: sessionDisconnect,
     toggleControlMode, setCurrentsListener,
   } = useTeleopSession();
 
@@ -68,7 +66,6 @@ const Remote = () => {
   const logRef = useRef<HTMLDivElement>(null);
   const m6 = isM6VideoEnabled();
 
-  const [showSettings, setShowSettings] = useState(false);
   const [showLog, setShowLog] = useState(false);
   // Each control-mode card (keyboard / leader / VR) collapses like Robot logs and
   // Session settings; expanded by default, remembered per mode while on the page.
@@ -171,7 +168,6 @@ const Remote = () => {
   }, [setCurrentsListener]);
   useEffect(() => { vrRef.current?.setTelemetry(tel); }, [tel]);
 
-  const serial = activeRobotSerial ?? customer?.robot_serial_number ?? "";
 
   // VR is an optional mode on top of the same session: detect headset support, and on any
   // link drop require a fresh squeeze before VR drive resumes (re-clutch-on-resume).
@@ -395,7 +391,9 @@ const Remote = () => {
           column starts at the very top, level with the page title. */}
       <div className="grid gap-4 lg:grid-cols-[1fr_400px]">
         <div className="space-y-3">
-          {/* Header: connection status + connect/disconnect, matching the Coding page. */}
+          {/* Header: connection STATUS + Disconnect. Connecting (and session settings) live on the
+              landing page now — one connect surface for the whole app — so a disconnected Remote
+              just points there instead of duplicating the Connect button. */}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-3xl font-bold">Remote Operation</h1>
             <div className="flex items-center gap-3">
@@ -407,12 +405,12 @@ const Remote = () => {
               >
                 ● {status}
               </span>
-              {!running ? (
-                <Button size="sm" variant="secondary" onClick={connect} disabled={connecting || !ready}>
-                  {connecting ? "Connecting…" : "Connect"}
-                </Button>
-              ) : (
+              {running ? (
                 <Button size="sm" variant="destructive" onClick={disconnect}>Disconnect</Button>
+              ) : (
+                <Button asChild size="sm" variant="secondary">
+                  <Link to="/nori">Connect on Home →</Link>
+                </Button>
               )}
             </div>
           </div>
@@ -670,7 +668,10 @@ const Remote = () => {
                 /* Base + lift + commands stay on the keyboard while the leaders drive the
                    arms — keep those bindings visible right where leader driving happens. */
                 <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-3">
-                  <BaseCommandLegend hint="Base + lift stay on the keyboard while the leaders drive the arms. Click the video first so keys register." />
+                  <BaseCommandLegend
+                    wasd
+                    hint="Base + lift stay on the keyboard while the leaders drive the arms; once engaged, WASD drives the base too (until then it still jogs the arm). Click the video first so keys register."
+                  />
                 </div>
               }
             />
@@ -750,82 +751,6 @@ const Remote = () => {
                 <span className="text-muted-foreground">Connect to Nori to view logs</span>
               )}
             </div>
-          </CardContent>
-          )}
-        </Card>
-
-        <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
-          <CardHeader
-            className={`cursor-pointer px-4 pt-3 ${showSettings ? "pb-0" : "pb-4"}`}
-            onClick={() => setShowSettings((v) => !v)}
-          >
-            <CardTitle className="flex min-h-9 items-center justify-between text-base font-semibold">
-              Session settings
-              <span className="text-sm font-normal text-muted-foreground">{showSettings ? "▲ hide" : "▼ show"}</span>
-            </CardTitle>
-          </CardHeader>
-          {showSettings && (
-          <CardContent className="space-y-3 p-4 pt-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="room">Room (NORI_ROOM — must match the Pi)</Label>
-              <Input id="room" value={settings.room} onChange={(e) => set("room", e.target.value)}
-                placeholder={serial || "nori-dev"} />
-              {serial ? (
-                settings.room === serial ? (
-                  <p className="text-xs text-muted-foreground">
-                    using paired robot <span className="font-mono">{serial}</span>
-                  </p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    paired robot: <span className="font-mono">{serial}</span>{" "}
-                    <button type="button" className="underline hover:text-foreground"
-                      onClick={() => set("room", serial)}>use it</button>
-                  </p>
-                )
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  pair a robot (Pairing) to auto-fill this from its serial.
-                </p>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="token">Room token (your Nori serial number)</Label>
-              <Input id="token" type="password" value={settings.token}
-                onChange={(e) => set("token", e.target.value)}
-                placeholder={serial || "your Nori serial number"} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="stun">STUN</Label>
-              <Input id="stun" value={settings.stun} onChange={(e) => set("stun", e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="turn">TURN URL(s) (blank = STUN-only)</Label>
-              <Input id="turn" value={settings.turn} onChange={(e) => set("turn", e.target.value)}
-                placeholder="turn:turn.example.com:3478?transport=udp" />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="turnUser">TURN user</Label>
-                <Input id="turnUser" value={settings.turnUser}
-                  onChange={(e) => set("turnUser", e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="turnCred">TURN cred</Label>
-                <Input id="turnCred" type="password" value={settings.turnCred}
-                  onChange={(e) => set("turnCred", e.target.value)} />
-              </div>
-            </div>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={settings.forceRelay}
-                onCheckedChange={(c) => set("forceRelay", c === true)}
-              />
-              force relay (TURN-only — Step 6 test)
-            </label>
-            <p className="text-xs text-muted-foreground">
-              Settings persist locally and must match the Pi's <span className="font-mono">.env</span>.
-              Change while connected to apply on the next session (Disconnect → Connect).
-            </p>
           </CardContent>
           )}
         </Card>

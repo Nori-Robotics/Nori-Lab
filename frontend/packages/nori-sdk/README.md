@@ -439,6 +439,12 @@ The robot side (`webrtc_robot.py`) must exchange the same named events (`sdp`, `
 | `@nori/sdk/vr` | `VrJogMapper`, `VrSession`, `DEFAULT_BINDINGS`, VR types | `three` |
 | `@nori/sdk/supabase` | `SupabaseSignaling` (reference transport) | `@supabase/supabase-js` |
 
+## License & lineage
+
+Apache-2.0 (see `LICENSE`). Developed within Nori's fork of
+[huggingface/leLab](https://github.com/huggingface/lelab) (Apache-2.0); the SDK package files
+are Nori-original additions, marked with `// NORI:` header comments.
+
 ## Status
 
 `v0`, for a small set of collaborating devs — not a public release. The core teleop + VR surface

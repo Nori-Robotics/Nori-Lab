@@ -5,6 +5,25 @@
 import { useEffect } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useNori } from "@/nori/NoriContext";
+import { useTeleopSession } from "@/nori/TeleopSessionContext";
+
+// Always-visible connection status. Connecting happens once on Home (ConnectionPanel); every
+// page just reads this shared chip. When disconnected it doubles as a shortcut back to Home.
+const ConnectionChip = () => {
+  const { running, connState, connecting } = useTeleopSession();
+  const connected = running && connState === "connected";
+  const status = connected
+    ? "connected"
+    : connecting ? "connecting…" : running ? connState : "not connected";
+  const cls =
+    "rounded-full px-3 py-1 font-mono text-xs " +
+    (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]");
+  return connected ? (
+    <span className={cls} title="Connected. Manage the session on Home.">● {status}</span>
+  ) : (
+    <Link to="/nori" className={cls + " hover:opacity-80"} title="Connect on Home">● {status}</Link>
+  );
+};
 
 const NAV: { to: string; label: string }[] = [
   { to: "/nori/remote", label: "Remote" },
@@ -52,6 +71,9 @@ const NoriLayout = () => {
                 {item.label}
               </Link>
             ))}
+          </div>
+          <div className="ml-auto">
+            <ConnectionChip />
           </div>
         </nav>
       </header>

@@ -36,6 +36,21 @@ export interface AgentTurn {
   stop_reason: string | null;
   content: AgentBlock[];
   usage?: { input_tokens: number; output_tokens: number };
+  // Today's running agent token spend after this turn (cost governance). There's no hard limit yet —
+  // the real per-customer cap will live in Nori-Backend — so this is report-only: `spent` is today's
+  // total, `warn` is the soft threshold past which the UI shows a "high usage" banner (null = no
+  // threshold configured server-side). See lelab/server.py.
+  daily?: { spent: number; warn: number | null };
+}
+
+// Thrown by postTurn when a turn is refused for cost reasons (HTTP 429). Not raised today — the local
+// limit was removed pending the per-customer backend cap — but kept so the loop can end cleanly as
+// `budget` (not a red error) once the backend enforces a limit. Exported for the page's postTurn.
+export class AgentBudgetError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentBudgetError";
+  }
 }
 
 // The injected network call: one turn of the conversation. The page implements it with the app's
@@ -53,11 +68,12 @@ export type AgentMessage = { role: "user" | "assistant"; content: AgentBlock[] }
 export type AgentEvent =
   | { kind: "assistant"; content: AgentBlock[]; usage?: AgentTurn["usage"] }
   | { kind: "tool_result"; tool: string; toolUseId: string; ok: boolean; text?: string; imageDataUrl?: string }
+  | { kind: "budget"; spent: number; warn: number | null }
   | { kind: "status"; text: string }
   | { kind: "finished"; reason: FinishReason; detail?: string };
 
 export type FinishReason =
-  | "done" | "give_up" | "end_turn" | "stopped" | "estop" | "error" | "max_steps" | "wall_clock" | "not_confirmed";
+  | "done" | "give_up" | "end_turn" | "stopped" | "estop" | "error" | "max_steps" | "wall_clock" | "not_confirmed" | "budget";
 
 // ---- config ------------------------------------------------------------------
 
@@ -65,8 +81,11 @@ export type FinishReason =
 // they never trip the confirm-before-first-motion gate. Keep in sync with the tool list in the doc.
 const MOTION_TOOLS = new Set(["move_to", "reach", "grip", "base", "lift"]);
 
-const DEFAULT_MAX_STEPS = 20;
-const DEFAULT_WALL_CLOCK_MS = 5 * 60_000;
+// Per-run caps. These bound a SINGLE run; the per-day cost ceiling is enforced server-side (the
+// daily token budget), so these can be generous — they exist to stop a run that's wandering, not to
+// control cost. Raised from 20/5min once the daily budget became the real spend guard.
+const DEFAULT_MAX_STEPS = 40;
+const DEFAULT_WALL_CLOCK_MS = 10 * 60_000;
 // How many of the most recent `look` frames to keep verbatim in the conversation; older image blocks
 // are replaced with a text placeholder so a long run doesn't blow up context/upload/cost (the model
 // still sees it looked, just not the pixels). 3 keeps "before/after + the current view" live.
@@ -141,6 +160,13 @@ export class AgentSession {
       await this.loop();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      // A refused-for-budget turn is an expected stop, not a fault — finish cleanly so the UI can say
+      // "daily budget reached" rather than flag a red error.
+      if (e instanceof AgentBudgetError) {
+        this.o.onLog?.("[agent] " + msg);
+        this.finish("budget", msg);
+        return;
+      }
       this.o.onLog?.("⚠ [agent] " + msg);
       this.finish("error", msg);
     }
@@ -172,6 +198,9 @@ export class AgentSession {
       if (this.stopped) return; // an E-STOP during the request
       this.messages.push({ role: "assistant", content: turn.content });
       this.o.onEvent?.({ kind: "assistant", content: turn.content, usage: turn.usage });
+      if (turn.daily) {
+        this.o.onEvent?.({ kind: "budget", ...turn.daily });
+      }
 
       // A non-tool_use stop means the model spoke without acting (end_turn / max_tokens). Nudge it
       // once by leaving it to the next iteration only if it also gave tool calls; otherwise end — an

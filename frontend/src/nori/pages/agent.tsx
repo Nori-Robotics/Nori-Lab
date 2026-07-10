@@ -18,7 +18,8 @@ import { Play, Square, OctagonX, Check, X, Bot } from "lucide-react";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { useApi } from "@/contexts/ApiContext";
 import {
-  AgentSession, type AgentBlock, type AgentEvent, type AgentTurn, type FinishReason, type AgentMessage,
+  AgentSession, AgentBudgetError,
+  type AgentBlock, type AgentEvent, type AgentTurn, type FinishReason, type AgentMessage,
 } from "@/nori/remote/AgentSession";
 
 // A rendered transcript line. We keep the raw events and turn them into rows at render time so the
@@ -35,7 +36,12 @@ const END_LABEL: Record<FinishReason, string> = {
   done: "✓ goal reached", give_up: "gave up", end_turn: "stopped (no further action)",
   stopped: "stopped", estop: "■ E-STOP", error: "error", max_steps: "step cap reached",
   wall_clock: "time cap reached", not_confirmed: "first motion declined",
+  budget: "daily token budget reached",
 };
+
+// Today's server-tracked agent token spend (report-only; no hard limit yet — see server.py). `warn`
+// is the soft threshold past which we show a "high usage" banner (null = no threshold configured).
+type DailyBudget = { spent: number; warn: number | null };
 
 const Agent = () => {
   const { teleop, connState, connecting, connect, tel } = useTeleopSession();
@@ -47,10 +53,14 @@ const Agent = () => {
   const [confirmFirstMotion, setConfirmFirstMotion] = useState(true);
   const [pendingMotion, setPendingMotion] = useState<AgentBlock | null>(null); // the block awaiting OK
   const [usage, setUsage] = useState({ steps: 0, inTokens: 0, outTokens: 0 });
+  const [daily, setDaily] = useState<DailyBudget | null>(null); // today's spend vs the daily limit
 
   const sessionRef = useRef<AgentSession | null>(null);
   const confirmResolveRef = useRef<((ok: boolean) => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Today's spend crossed the soft warning threshold → show a "high usage" note (no hard stop).
+  const budgetWarn = daily?.warn != null && daily.spent >= daily.warn;
 
   const connected = connState === "connected";
   const status = connected
@@ -78,7 +88,10 @@ const Agent = () => {
     });
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}));
-      throw new Error(detail?.detail || res.statusText);
+      const msg = detail?.detail || res.statusText;
+      // 429 = daily token budget used up; a distinct error so the loop ends cleanly (not as a fault).
+      if (res.status === 429) throw new AgentBudgetError(msg);
+      throw new Error(msg);
     }
     return (await res.json()) as AgentTurn;
   };
@@ -107,6 +120,9 @@ const Agent = () => {
         // `look` already renders as the assistant's call chip + this thumbnail; text results attach to
         // the call. We push a compact result row (thumbnail or short text).
         push({ kind: "result", tool: ev.tool, ok: ev.ok, text: ev.text, imageDataUrl: ev.imageDataUrl });
+        break;
+      case "budget":
+        setDaily({ spent: ev.spent, warn: ev.warn });
         break;
       case "finished":
         push({ kind: "end", reason: ev.reason, detail: ev.detail });
@@ -156,17 +172,21 @@ const Agent = () => {
       <div className="pointer-events-none absolute -right-20 top-32 h-64 w-64 rounded-full bg-sticker opacity-60 blur-3xl" aria-hidden />
 
       <div className="relative space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="flex items-center gap-2 text-3xl font-bold"><Bot className="h-7 w-7" /> Agent</h1>
-          <span className={"rounded-full px-3 py-1 font-mono text-xs " + (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]")}>
-            ● {status}
-          </span>
-          {!connected && (
-            <Button size="sm" variant="secondary" onClick={connect} disabled={connecting}>
-              {connecting ? "Connecting…" : "Connect"}
-            </Button>
-          )}
-          <span className="text-[11px] text-muted-foreground">autonomous look→act→look · supervise with live video on Remote · E-STOP below</span>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="flex items-center gap-2 text-3xl font-bold"><Bot className="h-7 w-7" /> Agent</h1>
+            <p className="text-sm text-muted-foreground">autonomous look→act→look · supervise with live video on Remote · E-STOP below</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={"rounded-full px-3 py-1 font-mono text-xs " + (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]")}>
+              ● {status}
+            </span>
+            {!connected && (
+              <Button size="sm" variant="secondary" onClick={connect} disabled={connecting}>
+                {connecting ? "Connecting…" : "Connect"}
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="grid h-[calc(100vh-12rem)] grid-cols-1 gap-4 lg:grid-cols-2">
@@ -205,12 +225,26 @@ const Agent = () => {
                   </Button>
                 </div>
               </div>
-              <div className="flex items-center gap-3 font-mono text-[10px] text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-muted-foreground">
                 <span>step {usage.steps}</span>
                 <span>· ~{usage.outTokens} tok out</span>
                 {usage.inTokens > 0 && <span>· {usage.inTokens} ctx</span>}
+                {daily && (
+                  <span className={budgetWarn ? "font-semibold text-[#b4442e]" : ""}>
+                    · today {fmtTokens(daily.spent)} tok
+                  </span>
+                )}
               </div>
             </div>
+
+            {/* Soft "high token usage" note — spend is tracked but not capped yet (per-customer limit
+                will live in the backend). Just a heads-up; runs continue. */}
+            {budgetWarn && daily?.warn != null && (
+              <div className="flex flex-col gap-1 rounded-md border border-[#b4442e]/40 bg-[#fbecea] p-3 text-[11px] text-[#8a2f20] shadow-sm">
+                <span className="font-mono uppercase tracking-[0.18em] text-[#b4442e]">// high token usage</span>
+                <span>You've used {fmtTokens(daily.spent)} agent tokens today (past the {fmtTokens(daily.warn)} heads-up mark). No limit is enforced yet — just keep an eye on spend.</span>
+              </div>
+            )}
 
             {/* Confirm-before-first-motion banner */}
             {pendingMotion && (
@@ -274,6 +308,13 @@ const TranscriptRow = ({ row }: { row: Row }) => {
       return <div className="whitespace-pre-wrap break-words font-mono text-[11px] font-semibold text-[#b06a1c]">{END_LABEL[row.reason]}{row.detail ? ` — ${row.detail}` : ""}</div>;
   }
 };
+
+// Compact token count: 500000 -> "500k", 12345 -> "12.3k", <1000 -> as-is.
+function fmtTokens(n: number): string {
+  if (n < 1000) return String(n);
+  const k = n / 1000;
+  return (k >= 100 ? Math.round(k) : Math.round(k * 10) / 10) + "k";
+}
 
 // Short one-line arg preview for a tool-call chip (full object would wrap the transcript).
 function compactArgs(input: Record<string, unknown>): string {

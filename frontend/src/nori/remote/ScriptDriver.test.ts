@@ -81,6 +81,15 @@ describe("op -> ExternalJog mapping", () => {
     await p;
   });
 
+  it("negates angular (firmware turns opposite our +angular=left convention)", async () => {
+    const { driver, jogs } = setup();
+    const p = driver.exec("base", [{ linear: 0, angular: 0.5 }, 200]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(lastJog(jogs)).toEqual({ base: { linear: 0, angular: -0.5 } });
+    await vi.advanceTimersByTimeAsync(200);
+    await p;
+  });
+
   it("lift maps a scalar onto <side>_lift", async () => {
     const { driver, jogs } = setup();
     const p = driver.exec("lift", ["left", 0.3, 100]);

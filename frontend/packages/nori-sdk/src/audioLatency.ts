@@ -1,3 +1,4 @@
+// NORI: Additive file.
 // Audio-latency harness (R-X.2). Reads RTCPeerConnection getStats() to break down the *tunable*
 // part of one-way audio latency — network RTT/2 + jitter-buffer delay (+ jitter/loss for context).
 // This is measurable NOW on the M3a uplink (robot mic → operator) and is reused unchanged for the

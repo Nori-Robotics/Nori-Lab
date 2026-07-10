@@ -4,6 +4,7 @@
 
 import { Link } from "react-router-dom";
 import { FadeIn } from "@/nori/components/FadeIn";
+import { ConnectionPanel } from "@/nori/components/ConnectionPanel";
 import { useNori } from "@/nori/NoriContext";
 
 /** "NORI-L2-0042" -> "Nori L2". Unknown serial formats fall back to the generic name. */
@@ -79,41 +80,46 @@ const Home = () => {
       </div>
     </div>
 
-    {/* ROBOT — pairing status: a nudge to pair, or the active robot + its serial. */}
+    {/* ROBOT + CONNECT — one card: pairing status (or a nudge to pair) plus the single connect
+        surface. Connection state is global and outlives navigation, so every page drives this one
+        session. Merged into a single row so the feature cards below stay above the fold. */}
     <FadeIn delay={200}>
-    <Link
-      to="/nori/pairing"
-      className="group mt-4 flex items-center gap-6 overflow-hidden rounded-[24px] border border-border bg-background p-6 transition-[transform,box-shadow] duration-200 ease-bounce hover:-translate-y-1 hover:shadow-pop md:px-8"
-    >
-      <div className="min-w-0 flex-1">
-        <span className="eyebrow">{paired ? "// your robot" : "// get set up"}</span>
-        <h2 className="mt-3 font-display text-[1.7rem] font-normal leading-[1] tracking-tight text-ink">
-          {paired ? modelFromSerial(serial!) : "Pair your robot"}
-        </h2>
-        {paired ? (
-          <p className="mt-3 text-[14px] leading-relaxed text-ink-2">
-            <span className="rounded-full border border-ink/20 bg-background px-2.5 py-0.5 font-mono text-[12px] font-semibold tracking-[0.08em] text-ink">
-              {serial}
-            </span>{" "}
-            is linked to this account and ready to connect.
-          </p>
-        ) : (
-          <p className="mt-3 max-w-lg text-[14px] leading-relaxed text-ink-2">
-            {provisioning
-              ? "Checking your account…"
-              : "No robot is linked to this account yet. Pair yours with the serial number on the sticker under the base — it takes a minute."}
-          </p>
-        )}
-        <span className="eyebrow mt-5 block text-ink">
-          {paired ? "manage pairing →" : "pair now →"}
-        </span>
+    <div className="mt-4 rounded-[24px] border border-border bg-background p-6 md:px-8">
+      <div className="flex items-center gap-6">
+        <div className="min-w-0 flex-1">
+          <span className="eyebrow">{paired ? "// your robot" : "// get set up"}</span>
+          <h2 className="mt-3 font-display text-[1.7rem] font-normal leading-[1] tracking-tight text-ink">
+            {paired ? modelFromSerial(serial!) : "Pair your robot"}
+          </h2>
+          {paired ? (
+            <p className="mt-3 text-[14px] leading-relaxed text-ink-2">
+              <span className="rounded-full border border-ink/20 bg-background px-2.5 py-0.5 font-mono text-[12px] font-semibold tracking-[0.08em] text-ink">
+                {serial}
+              </span>{" "}
+              is linked to this account and ready to connect.{" "}
+              <Link to="/nori/pairing" className="font-semibold text-ink underline-offset-2 hover:underline">
+                manage pairing →
+              </Link>
+            </p>
+          ) : (
+            <p className="mt-3 max-w-lg text-[14px] leading-relaxed text-ink-2">
+              {provisioning
+                ? "Checking your account…"
+                : "No robot is linked to this account yet. Pair yours with the serial number on the sticker under the base — it takes a minute."}{" "}
+              <Link to="/nori/pairing" className="font-semibold text-ink underline-offset-2 hover:underline">
+                pair now →
+              </Link>
+            </p>
+          )}
+        </div>
+        <img
+          src="/images/nori-l2.png"
+          alt="Nori L2 robot"
+          className="mr-4 h-28 w-auto shrink-0 md:mr-6 md:h-32"
+        />
       </div>
-      <img
-        src="/images/nori-l2.png"
-        alt="Nori L2 robot"
-        className="mr-4 h-36 w-auto shrink-0 transition-transform duration-200 ease-bounce group-hover:scale-[1.03] md:mr-10 md:h-44"
-      />
-    </Link>
+      <ConnectionPanel />
+    </div>
     </FadeIn>
 
     {/* FEATURES — the website's three-step tinted card rhythm, linking into the app. */}

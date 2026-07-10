@@ -11,7 +11,9 @@ import { Button } from "@/components/ui/button";
 import { HelpCircle, Mic, MicOff, Phone, PhoneOff, Video, VideoOff, Volume2, VolumeX } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
+  baseKeyClusters,
   keybindLegend,
+  type BaseKeyCluster,
   type CallState,
   type ControlMode,
   type TelemetryView,
@@ -380,21 +382,40 @@ export function ControlLegend({ mode }: { mode: ControlMode }) {
   );
 }
 
+// One base drive cluster rendered as a physical keypad — forward on top, turn-left /
+// reverse / turn-right below (the traditional WASD inverted-T).
+function BaseKeypad({ cluster }: { cluster: BaseKeyCluster }) {
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <Key>{cluster.forward.toUpperCase()}</Key>
+      <div className="flex gap-1">
+        <Key>{cluster.left.toUpperCase()}</Key>
+        <Key>{cluster.back.toUpperCase()}</Key>
+        <Key>{cluster.right.toUpperCase()}</Key>
+      </div>
+    </div>
+  );
+}
+
 // Base + lift + command keybinds only — shared between the keyboard legend above and the
 // Leader card (where the arms follow the leader hardware but base/lift/commands stay on
 // the keyboard). These bindings don't vary with the arm control mode.
-export function BaseCommandLegend({ hint }: { hint?: string }) {
+// `wasd` also shows the WASD alias keypad — only pass it where WASD really reaches the
+// base (the Leader card): with the keyboard driving the arms, WASD belongs to the arm.
+export function BaseCommandLegend({ hint, wasd }: { hint?: string; wasd?: boolean }) {
   const legend = keybindLegend("cylindrical");
+  const clusters = wasd ? baseKeyClusters() : baseKeyClusters().slice(0, 1);
   return (
     <div className="space-y-3 text-sm">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+      <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1">
         <span className="w-full font-medium">Base</span>
-        {legend.base.map((r) => (
-          <div key={r.dof} className="flex items-center gap-1.5 whitespace-nowrap">
-            <Key>{r.posKey.toUpperCase()}</Key><Key>{r.negKey.toUpperCase()}</Key>
-            <span className="text-muted-foreground">{r.dof}</span>
+        {clusters.map((c, i) => (
+          <div key={c.forward} className="flex items-center gap-3">
+            {i > 0 && <span className="text-xs text-muted-foreground">or</span>}
+            <BaseKeypad cluster={c} />
           </div>
         ))}
+        <span className="text-muted-foreground">forward / reverse, turn left / right</span>
         <div className="flex items-center gap-1.5 whitespace-nowrap">
           <Key>{legend.lift.posKey.toUpperCase()}</Key><Key>{legend.lift.negKey.toUpperCase()}</Key>
           <span className="text-muted-foreground">{legend.lift.dof}</span>

@@ -474,7 +474,6 @@ const LeaderSetup = ({
               {/* The global h1 rule applies the display font — embedded must render the same
                   element as CardTitle (h3, font-sans) to match the Keyboard controls title. */}
               <h3 className="text-base font-semibold leading-none tracking-tight">Leader setup</h3>
-              {titleExtra && <span onClick={(e) => e.stopPropagation()}>{titleExtra}</span>}
             </div>
             {onToggleCollapse && (
               <span className="text-sm text-muted-foreground">
@@ -490,6 +489,7 @@ const LeaderSetup = ({
                   <span className={`h-2 w-2 rounded-full ${liveStatus.dot}`} />
                   {liveStatus.label}
                 </StatusPill>
+                {titleExtra && <span onClick={(e) => e.stopPropagation()}>{titleExtra}</span>}
                 {busy && (
                   <StatusPill tone="neutral">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -605,6 +605,19 @@ const LeaderSetup = ({
             </StatusPill>
           </div>
 
+          {/* Manual calibration captures the zero reference from the arm's pose at the
+              moment start is pressed; the robot interprets leader targets as absolute
+              offsets from that pose, so it must match the follower's zero/ready pose —
+              and the SAME pose on every recalibration. */}
+          {calibrationMode === "manual" && (
+            <p className="rounded bg-[#ebe8db] px-2 py-1 text-xs text-[#5c564b]">
+              Hold the leader in its <strong>zero pose</strong> (matching the follower arm&apos;s
+              zero/ready pose) when you press <strong>start</strong> — that pose is captured as the
+              zero reference for every joint. Use the same pose each time you recalibrate, or the
+              robot arms will track offset or pin at their limits.
+            </p>
+          )}
+
           {/* Only one calibration session can exist server-side, and it survives page
               reloads — say so explicitly, since a running session is why the start
               button is disabled ("why won't it let me start?"). */}
@@ -669,7 +682,7 @@ const LeaderSetup = ({
                     "Start manual calibration",
                     () => manualStart(baseUrl, fetchWithHeaders, calibrationSide, calibrationId.trim(), sharedPort.trim() || undefined),
                     () => void refreshManualStatus(),
-                    "Session started — center captured. Sweep every joint through its full range, then press finish."
+                    "Session started — zero pose captured from the arm's current position. Sweep every joint through its full range, then press finish."
                   );
                   return;
                 }

@@ -8,6 +8,10 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL?: string;
   readonly VITE_SUPABASE_ANON_KEY?: string;
   readonly VITE_NORI_BACKEND_URL?: string;
+  // Public origin where the hosted VR page (`/nori/vr`) is served, e.g.
+  // "https://app.nori.com". Used to build the laptop→headset handoff link. Falls back to
+  // the current origin when unset (correct only when the app itself is hosted there).
+  readonly VITE_VR_BASE_URL?: string;
 }
 
 interface ImportMeta {

@@ -92,6 +92,39 @@ SPA catch-all rewrite.
 Cloudflare Pages works identically (same `vercel.json` semantics via its Vite preset +
 an SPA fallback rule).
 
+### Domain: use a subdomain, not the marketing apex
+
+Put the app on a **subdomain of the main root domain** (e.g. `app.nori.com` or
+`vr.nori.com`) as its **own Vercel project**, separate from the NoriWebsite project.
+
+- ✅ **Subdomain (recommended).** Brand-consistent, but independent deploys, rollbacks,
+  and env vars. No routing collisions. On Vercel: add the domain to *this* project;
+  point a CNAME at Vercel. WebXR just needs HTTPS, which any subdomain gets.
+- ⚠️ **Same apex + subpath** (`nori.com/app`). Avoid. This app is a catch-all SPA (the
+  `/(.*) → index.html` rewrite); sharing the apex means that rewrite fights the
+  marketing site's routes, and the two deploys become entangled. Only worth it with a
+  deliberate path-prefix reverse proxy, which is more moving parts than a subdomain.
+
+So: same *brand domain*, different *subdomain*. Keep NoriWebsite and the app as two
+Vercel projects under one root domain.
+
+### The laptop → headset handoff (the "Enter VR" link)
+
+Mental model: the full app does **not** push the user into VR. The headset is the
+operator — it opens the hosted `/nori/vr` page directly and holds the WebRTC session to
+the robot. The full app just **hands off a link**. Flow:
+
+1. In the full app (Remote → VR control card) the operator sees an **"Open on your Quest
+   browser"** link: `https://<vr-domain>/nori/vr?room=<robot>` (+ optional `&token=`).
+2. They open it on the Quest → the page pre-fills room/token from the query → **Connect**
+   → **Enter VR**. The laptop can be closed; the headset drives directly.
+
+For the link to point at the hosted page (not `localhost`), the full-app / desktop build
+bakes **`VITE_VR_BASE_URL`** = the VR domain (e.g. `https://app.nori.com`). The hosted
+build itself leaves it blank (falls back to its own origin). Token-in-link is opt-in
+(off by default) — it saves typing on the VR keyboard but puts the access token in the
+URL, so it's gated behind a checkbox + warning (`src/nori/components/VrHandoff.tsx`).
+
 ## 4. What a hosted page does NOT solve
 
 - **NAT traversal.** WAN WebRTC behind CGNAT needs **TURN (coturn)** — separate infra

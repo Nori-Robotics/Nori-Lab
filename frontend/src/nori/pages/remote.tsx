@@ -16,6 +16,7 @@ import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
 import { type ArmSide, type CameraViewHandle } from "@nori/sdk";
 import { VrSession } from "@nori/sdk/vr";
+import { VrHandoff } from "@/nori/components/VrHandoff";
 import { TelemetryPanel, GripForce, ControlLegend, BaseCommandLegend, CallBar, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
@@ -594,22 +595,25 @@ const Remote = () => {
               <span className="text-sm text-muted-foreground">{showVrCard ? "▲ hide" : "▼ show"}</span>
             </div>
             {showVrCard && (
-              xrSupported ? (
-                <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <Button
-                    onClick={enterVr}
-                    disabled={!connected || inVr}
-                    title="Open the headset (AR passthrough) on this same session"
-                  >
-                    {inVr ? "In VR" : "Enter VR"}
-                  </Button>
-                  {!connected && (
-                    <span className="text-sm text-[#6f6858]">connect to the robot first</span>
-                  )}
-                </div>
-              ) : (
-                <p className="mt-3 text-sm text-[#6f6858]">Connect using a VR device</p>
-              )
+              <div className="mt-3 space-y-3">
+                {/* On a headset browser: enter VR directly on this same session. */}
+                {xrSupported && (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button
+                      onClick={enterVr}
+                      disabled={!connected || inVr}
+                      title="Open the headset (AR passthrough) on this same session"
+                    >
+                      {inVr ? "In VR" : "Enter VR"}
+                    </Button>
+                    {!connected && (
+                      <span className="text-sm text-[#6f6858]">connect to the robot first</span>
+                    )}
+                  </div>
+                )}
+                {/* On a laptop: hand off a link to the hosted VR page to open on the headset. */}
+                <VrHandoff room={settings.room} token={settings.token} />
+              </div>
             )}
           </div>
         )}

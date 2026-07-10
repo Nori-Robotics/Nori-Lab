@@ -33,6 +33,18 @@ export default function VrLanding() {
   const [xrSupported, setXrSupported] = useState<boolean | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // Pre-fill from the laptop→headset handoff link (?room / ?token) so a headset that opened
+  // the app's shared link doesn't have to retype on a VR keyboard. Applied once on mount; a
+  // value present in the URL wins over whatever was persisted.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const room = p.get("room");
+    const token = p.get("token");
+    if (room) set("room", room);
+    if (token) set("token", token);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const connected = running && connState === "connected";
   const status = connected
     ? "connected"

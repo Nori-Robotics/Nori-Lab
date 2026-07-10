@@ -2,9 +2,10 @@
 // NoriWebsite visual language (paper/ink, // eyebrows, display headline, tinted
 // feature cards) pointing at the app's three main surfaces.
 
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { FadeIn } from "@/nori/components/FadeIn";
-import { ConnectionPanel } from "@/nori/components/ConnectionPanel";
+import { ConnectionControls, ConnectionSettings } from "@/nori/components/ConnectionPanel";
 import { useNori } from "@/nori/NoriContext";
 
 /** "NORI-L2-0042" -> "Nori L2". Unknown serial formats fall back to the generic name. */
@@ -47,11 +48,12 @@ const Home = () => {
   const { customer, activeRobotSerial, provisioning } = useNori();
   const serial = activeRobotSerial ?? customer?.robot_serial_number ?? null;
   const paired = !!customer?.is_paired && !!serial;
+  const [showSettings, setShowSettings] = useState(false);
 
   return (
   <section>
     {/* HERO — the marketplace-style wash: dot grid + pastel blobs behind a display headline. */}
-    <div className="relative overflow-hidden rounded-[24px] border border-border bg-background px-5 py-8 md:px-8 md:py-10">
+    <div className="relative overflow-hidden rounded-[24px] border border-border bg-background px-5 py-6 md:px-8 md:py-7">
       <div className="dot-grid pointer-events-none absolute inset-0 opacity-60" aria-hidden />
       <div
         className="pointer-events-none absolute -left-16 -top-16 h-48 w-48 rounded-full bg-leaf opacity-70 blur-3xl"
@@ -82,11 +84,12 @@ const Home = () => {
 
     {/* ROBOT + CONNECT — one card: pairing status (or a nudge to pair) plus the single connect
         surface. Connection state is global and outlives navigation, so every page drives this one
-        session. Merged into a single row so the feature cards below stay above the fold. */}
+        session. Merged into a single row so the feature cards below stay above the fold. The image
+        spans the full card height on the right; session settings drop full-width below the row. */}
     <FadeIn delay={200}>
-    <div className="mt-4 rounded-[24px] border border-border bg-background p-6 md:px-8">
-      <div className="flex items-center gap-6">
-        <div className="min-w-0 flex-1">
+    <div className="mt-4 overflow-hidden rounded-[24px] border border-border bg-background">
+      <div className="flex items-stretch gap-6">
+        <div className="min-w-0 flex-1 p-6 md:pl-8">
           <span className="eyebrow">{paired ? "// your robot" : "// get set up"}</span>
           <h2 className="mt-3 font-display text-[1.7rem] font-normal leading-[1] tracking-tight text-ink">
             {paired ? modelFromSerial(serial!) : "Pair your robot"}
@@ -111,14 +114,22 @@ const Home = () => {
               </Link>
             </p>
           )}
+          <ConnectionControls
+            showSettings={showSettings}
+            onToggleSettings={() => setShowSettings((v) => !v)}
+          />
         </div>
         <img
           src="/images/nori-l2.png"
           alt="Nori L2 robot"
-          className="mr-4 h-28 w-auto shrink-0 md:mr-6 md:h-32"
+          className="mr-6 h-44 w-auto shrink-0 self-end object-contain object-bottom md:mr-12 md:h-52"
         />
       </div>
-      <ConnectionPanel />
+      {showSettings && (
+        <div className="px-6 pb-6 md:px-8">
+          <ConnectionSettings />
+        </div>
+      )}
     </div>
     </FadeIn>
 

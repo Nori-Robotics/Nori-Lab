@@ -43,6 +43,12 @@ const ArmPills = ({
         {arm}
       </Pill>
     ))}
+    <span
+      className="font-mono text-[11px] text-muted-foreground"
+      title="Press Enter to switch arms"
+    >
+      ⏎
+    </span>
   </div>
 );
 
@@ -348,6 +354,22 @@ const Remote = () => {
     };
   }, [running, teleop]);
 
+  // Enter toggles the active follower arm — same as the left/right pills — in the modes that
+  // scope by it (keyboard + leader). Kept out of the SDK jog keymap since it's a UI selection,
+  // not a jog. Ignored while typing in a field so it never hijacks form input.
+  useEffect(() => {
+    if (selectedMode !== "keyboard" && selectedMode !== "leader") return;
+    const onEnter = (e: KeyboardEvent) => {
+      if (e.key !== "Enter") return;
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+      set("arm", settings.arm === "left" ? "right" : "left");
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onEnter);
+    return () => window.removeEventListener("keydown", onEnter);
+  }, [selectedMode, settings.arm, set]);
+
   // On unmount / navigate away, stop only the PAGE-LOCAL drivers (leader / VR / clip) and detach
   // media. The session itself lives in TeleopSessionProvider and stays connected across pages —
   // do NOT stop it here (that was the old bug that killed the link on every navigation).
@@ -549,15 +571,7 @@ const Remote = () => {
               onClick={selectLeader}
               title="Drive the robot's arms from the physical dual leader arms (base + lift stay on the keyboard). Selectable offline for hardware setup."
             >
-              {leaderActive
-                ? `Leader arm · ${leaderCount}/${leaderSides.length === 1 ? 6 : 12}${
-                    leaderEngaged
-                      ? leaderSides.length === 1
-                        ? ` → ${settings.arm}`
-                        : " · engaged"
-                      : " · standby"
-                  }`
-                : "Leader arm"}
+              Leader arm
             </Pill>
             <Pill
               active={controlMode === "vr"}
@@ -609,6 +623,16 @@ const Remote = () => {
                 left leader silently driving the right arm reads as a wiring bug. Also flag
                 the silent-failure state: driver running but no usable targets (arms unplugged
                 or calibration missing/stale), where nothing is sent to the robot at all. */}
+            {/* Live joint count + engagement — moved off the mode pill (which stays a plain
+                "Leader arm" label) into the card's status area, right below the pills. */}
+            {leaderActive && (
+              <p className="mb-2 rounded bg-[#14131a]/5 px-2 py-1 text-xs font-medium text-[#4d463a]">
+                {leaderCount}/{leaderSides.length === 1 ? 6 : 12} leader joints readable ·{" "}
+                {leaderEngaged
+                  ? leaderSides.length === 1 ? `engaged → ${settings.arm} arm` : "engaged"
+                  : "standby (monitor-only)"}
+              </p>
+            )}
             {/* Calibration health, summary only — the embedded Leader setup below lists the
                 per-joint details, so repeating them here just doubles the wall of text. */}
             {leaderActive && leaderWarnings.length > 0 && (
@@ -641,11 +665,12 @@ const Remote = () => {
                    calibration is running. */
                 <Button
                   size="sm"
+                  variant={leaderEngaged ? "destructive" : "default"}
                   onClick={() => leaderRef.current?.setEngaged(!leaderEngaged)}
                   disabled={!leaderActive || (!leaderEngaged && (leaderCount === 0 || leaderCalibrating))}
                   className={
                     leaderEngaged
-                      ? "rounded-md bg-[#d24a3d] text-foreground hover:bg-[#b93a2e]"
+                      ? "rounded-md"
                       : "rounded-md bg-[#8ab135] text-foreground hover:bg-[#799c2a]"
                   }
                   title={

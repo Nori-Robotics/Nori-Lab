@@ -252,22 +252,25 @@ const Coding = () => {
         aria-hidden
       />
       <div className="relative space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-3xl font-bold">Run Nori with code</h1>
-        {/* Connection status — the session is shared with the Remote page and persists. */}
-        <span
-          className={
-            "rounded-full px-3 py-1 font-mono text-xs " +
-            (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]")
-          }
-        >
-          ● {status}
-        </span>
-        {!connected && (
-          <Button size="sm" variant="secondary" onClick={connect} disabled={connecting}>
-            {connecting ? "Connecting…" : "Connect"}
-          </Button>
-        )}
+        {/* Connection status — the session is shared with the Remote page and persists. Grouped
+            on the far right for consistency with the Agent page header. */}
+        <div className="flex items-center gap-3">
+          <span
+            className={
+              "rounded-full px-3 py-1 font-mono text-xs " +
+              (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]")
+            }
+          >
+            ● {status}
+          </span>
+          {!connected && (
+            <Button size="sm" variant="secondary" onClick={connect} disabled={connecting}>
+              {connecting ? "Connecting…" : "Connect"}
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="grid h-[calc(100vh-12rem)] grid-cols-1 gap-4 lg:grid-cols-2">

@@ -174,7 +174,12 @@ const Agent = () => {
       <div className="relative space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="flex items-center gap-2 text-3xl font-bold"><Bot className="h-7 w-7" /> Agent</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="flex items-center gap-2 text-3xl font-bold"><Bot className="h-7 w-7" /> Agent</h1>
+              <span className="inline-flex -rotate-3 animate-floaty items-center rounded-full bg-sticker px-2 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink shadow-soft">
+                {"// beta"}
+              </span>
+            </div>
             <p className="text-sm text-muted-foreground">autonomous look→act→look · supervise with live video on Remote · E-STOP below</p>
           </div>
           <div className="flex items-center gap-3">

@@ -36,16 +36,22 @@ export interface AgentTurn {
   stop_reason: string | null;
   content: AgentBlock[];
   usage?: { input_tokens: number; output_tokens: number };
-  // Today's running agent token spend after this turn (cost governance). There's no hard limit yet —
-  // the real per-customer cap will live in Nori-Backend — so this is report-only: `spent` is today's
-  // total, `warn` is the soft threshold past which the UI shows a "high usage" banner (null = no
-  // threshold configured server-side). See lelab/server.py.
-  daily?: { spent: number; warn: number | null };
+  // The customer's per-day agent token budget after this turn (cost governance, enforced in
+  // Nori-Backend). `spent` = today's billable tokens, `warn` = the soft-warning threshold past which
+  // the UI shows a "high usage" banner, `allowed`/`remaining` = the hard daily cap, `capped` = past
+  // the cap (further turns are refused with 429). See lelab/server.py + Nori-Backend routes/agent.py.
+  daily?: {
+    spent: number;
+    warn: number | null;
+    allowed?: number | null;
+    remaining?: number | null;
+    capped?: boolean;
+  };
 }
 
-// Thrown by postTurn when a turn is refused for cost reasons (HTTP 429). Not raised today — the local
-// limit was removed pending the per-customer backend cap — but kept so the loop can end cleanly as
-// `budget` (not a red error) once the backend enforces a limit. Exported for the page's postTurn.
+// Thrown by postTurn when a turn is refused for cost reasons (HTTP 429) — the customer hit their
+// per-day agent token cap (enforced in Nori-Backend). The loop ends cleanly as `budget` (not a red
+// error). Exported for the page's postTurn. See lelab/server.py `/nori/llm/agent`.
 export class AgentBudgetError extends Error {
   constructor(message: string) {
     super(message);
@@ -68,7 +74,7 @@ export type AgentMessage = { role: "user" | "assistant"; content: AgentBlock[] }
 export type AgentEvent =
   | { kind: "assistant"; content: AgentBlock[]; usage?: AgentTurn["usage"] }
   | { kind: "tool_result"; tool: string; toolUseId: string; ok: boolean; text?: string; imageDataUrl?: string }
-  | { kind: "budget"; spent: number; warn: number | null }
+  | { kind: "budget"; spent: number; warn: number | null; allowed?: number | null; remaining?: number | null; capped?: boolean }
   | { kind: "status"; text: string }
   | { kind: "finished"; reason: FinishReason; detail?: string };
 

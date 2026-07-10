@@ -14,6 +14,7 @@ import type { Session } from "@supabase/supabase-js";
 import { useApi } from "@/contexts/ApiContext";
 import {
   getNoriConfig,
+  getBuildTimeConfig,
   provisionCustomer,
   type CustomerProfile,
   type NoriPublicConfig,
@@ -71,7 +72,19 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     (async () => {
       try {
-        const cfg = await getNoriConfig(baseUrl, fetchWithHeaders);
+        // Default path: config comes from the LeLab server (`/nori/config`). For a
+        // LeLab-free hosted deploy (the standalone VR page), LeLab is unreachable — fall
+        // back to build-time public config baked into the bundle. A reachable-but-
+        // unconfigured LeLab also defers to the build-time values when present.
+        let cfg: NoriPublicConfig;
+        try {
+          cfg = await getNoriConfig(baseUrl, fetchWithHeaders);
+          if (!cfg.configured) cfg = getBuildTimeConfig() ?? cfg;
+        } catch (e) {
+          const fallback = getBuildTimeConfig();
+          if (!fallback) throw e;
+          cfg = fallback;
+        }
         if (cancelled) return;
         setConfig(cfg);
         if (cfg.configured) {
@@ -80,7 +93,8 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           unsubscribe = onAuthStateChange(setSession);
         } else {
           setError(
-            "Nori auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY in the laptop environment."
+            "Nori auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY on the " +
+              "LeLab server, or VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY at build time."
           );
         }
       } catch (e) {

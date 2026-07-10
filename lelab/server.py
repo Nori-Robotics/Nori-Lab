@@ -823,56 +823,50 @@ class NoriLlmAgentBody(BaseModel):
     messages: list[dict]
     robot_state: dict | None = None  # optional grounding: current proprioceptive pose
     camera_layout: str | None = None  # optional: which composite tile is which camera/arm
+    # Optional explicit "first turn of a new run" signal for the backend's run_count.
+    # If omitted, the server infers it from messages[] (no assistant turn yet).
+    new_run: bool | None = None
 
 
-# ---- agent daily token spend (cost governance — soft warning only for now) ----
+# ---- agent daily token spend (cost governance — enforced per-customer in Nori-Backend) ----
 #
-# The browser enforces the PER-RUN caps (step + wall-clock). Per-DAY spend is TRACKED here (the server
-# is the one choke point that holds the API key and sees every turn's real usage) but NOT hard-limited
-# yet: this local, machine-shared counter isn't per-customer, so gating on it would penalize the wrong
-# person. The real limit will live in Nori-Backend, keyed by customer (day + all-time) — see
-# Nori-Backend/todos.md "Per-customer agent (LLM) token spend". Until then we only REPORT today's total
-# so the UI can show a soft warning past NORI_AGENT_DAILY_TOKEN_WARN (default 800k); no turn is refused.
+# The browser enforces the PER-RUN caps (step + wall-clock). Per-DAY, per-CUSTOMER spend is now the
+# authoritative cost guard and lives in Nori-Backend (migration 011 + routes/agent.py): a ledger keyed
+# by customer, a hard daily cap (default 150k billable tokens = input+output) and a soft-warning line
+# (default 100k). This endpoint no longer keeps a local counter — it GATES each turn against the
+# backend before spending on Claude and CHARGES the real usage after, both behind the customer's
+# forwarded JWT (X-Nori-JWT) so spend attributes to the right account.
 #
-# The counter lives in a tiny date-keyed JSON file (survives server restarts within the day; resets
-# when the local date rolls over). Single-user dev tool: the read-modify-write below is not locked,
-# which is fine at one-turn-every-few-seconds; a burst of concurrent turns could under-count slightly.
-NORI_AGENT_DAILY_TOKEN_WARN = int(os.environ.get("NORI_AGENT_DAILY_TOKEN_WARN", "800000"))
-_AGENT_USAGE_PATH = Path(
-    os.environ.get("NORI_AGENT_USAGE_FILE", str(Path.home() / ".nori" / "agent_usage.json"))
-)
+# Cutover note: the old machine-local ~/.nori/agent_usage.json counter (shared, un-attributed, no hard
+# limit) is GONE. Consequence: this endpoint now requires an authenticated request AND a reachable
+# Nori-Backend — it fails closed (401/502) rather than falling back to an unbounded local counter,
+# which is the point of the cap. See Nori-Backend/todos.md "Per-customer agent (LLM) token spend".
 
 
-def _agent_usage_today() -> dict:
-    """Load {date, tokens} for the current local day, resetting the counter if the date rolled over."""
-    try:
-        data = json.loads(_AGENT_USAGE_PATH.read_text())
-    except (OSError, ValueError):
-        data = {}
-    today = time.strftime("%Y-%m-%d")
-    if data.get("date") != today:
-        data = {"date": today, "tokens": 0}
-    return data
-
-
-def _agent_usage_add(tokens: int) -> dict:
-    """Add this turn's tokens to today's total and persist (best-effort). Returns the updated record."""
-    data = _agent_usage_today()
-    data["tokens"] = int(data.get("tokens", 0)) + max(0, int(tokens))
-    try:
-        _AGENT_USAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _AGENT_USAGE_PATH.write_text(json.dumps(data))
-    except OSError:
-        pass  # persistence is best-effort; a failed write just means this turn isn't counted
-    return data
+def _daily_view(budget: dict) -> dict:
+    """Shape a Nori-Backend agent-budget snapshot into the `daily` field the browser consumes.
+    Keeps `spent` (today's tokens) and `warn` (the soft-warning THRESHOLD number, so the existing
+    `spent >= warn` banner logic is unchanged) and adds the now-enforced allowed/remaining/capped."""
+    return {
+        "spent": budget.get("used_today"),
+        "allowed": budget.get("allowed_today"),
+        "remaining": budget.get("remaining_today"),
+        "warn": budget.get("soft_warn_threshold"),
+        "capped": budget.get("hard_capped"),
+    }
 
 
 @app.post("/nori/llm/agent")
-def nori_llm_agent(body: NoriLlmAgentBody):
+def nori_llm_agent(body: NoriLlmAgentBody, request: Request):
     """One turn of the agentic vision loop: inject the agent system prompt + tools, forward the
     browser-held messages[] to Claude, return the raw {stop_reason, content} for the browser to
-    execute + append. Stateless — the browser drives the loop and enforces the caps (step/wall-clock)
-    and the confirm-before-first-motion gate (docs/agentic_vision_loop.md)."""
+    execute + append. Stateless — the browser drives the loop and enforces the per-run caps
+    (step/wall-clock) and the confirm-before-first-motion gate (docs/agentic_vision_loop.md).
+
+    COST GOVERNANCE (per-customer, enforced in Nori-Backend): GATE before spending on Claude
+    (GET /agent/usage → 429 if the customer is hard-capped for the day) and CHARGE the turn's real
+    usage after (POST /agent/usage/charge), both behind the forwarded JWT. Requires auth + a
+    reachable backend; there is no local fallback counter (fails closed)."""
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set on the server")
@@ -887,6 +881,19 @@ def nori_llm_agent(body: NoriLlmAgentBody):
 
     model = os.environ.get("NORI_LLM_MODEL", "claude-sonnet-5")
     client = anthropic.Anthropic(api_key=key)
+
+    # --- pre-turn budget gate: refuse BEFORE spending on Claude if the customer is out of daily
+    #     budget. The hard cap is enforced by Nori-Backend, keyed by the forwarded customer JWT. ---
+    nori = _nori_client(request)
+    budget = _nori_proxy(nori.get_agent_usage)
+    if budget.get("hard_capped"):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "reason": "Daily agent token limit reached. It resets tomorrow (UTC).",
+                "daily": _daily_view(budget),
+            },
+        )
 
     # Fold optional grounding into the system prompt (a cacheable, stable-ish suffix) rather than
     # mutating the browser's messages[]. Keeps the conversation the browser holds untouched.
@@ -912,19 +919,36 @@ def nori_llm_agent(body: NoriLlmAgentBody):
     except anthropic.APIError as exc:
         raise HTTPException(status_code=502, detail=f"Anthropic error: {exc}") from exc
 
-    # Track this turn's tokens against today's running total and report where we stand. No hard limit
-    # (see the note above) — we send `warn` so the browser can show a soft "high usage" banner past the
-    # threshold, but every turn is served.
-    spent = int(msg.usage.input_tokens) + int(msg.usage.output_tokens)
-    updated = _agent_usage_add(spent)
+    # --- post-turn charge: record the turn's ACTUAL usage against the customer's ledger. Input vs
+    #     output are billed differently; cache read/write are captured for cost (not the cap). ---
+    u = msg.usage
+    cache_read = int(getattr(u, "cache_read_input_tokens", 0) or 0)
+    cache_write = int(getattr(u, "cache_creation_input_tokens", 0) or 0)
+    # new_run: honor an explicit browser signal, else infer "first turn" (no assistant turn yet).
+    new_run = (
+        body.new_run
+        if body.new_run is not None
+        else not any(m.get("role") == "assistant" for m in body.messages)
+    )
+    updated = _nori_proxy(
+        lambda: nori.charge_agent_usage(
+            model=model,
+            input_tokens=int(u.input_tokens),
+            output_tokens=int(u.output_tokens),
+            cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
+            new_run=bool(new_run),
+        )
+    )
 
     # Return the raw assistant turn: stop_reason + content blocks (text + tool_use). model_dump gives
-    # plain JSON the browser can append verbatim to messages[] as the assistant turn.
+    # plain JSON the browser can append verbatim to messages[] as the assistant turn. `daily` now
+    # reflects the customer's backend-enforced budget (spent/warn unchanged for the existing banner).
     return {
         "stop_reason": msg.stop_reason,
         "content": [b.model_dump() for b in msg.content],
         "usage": {"input_tokens": msg.usage.input_tokens, "output_tokens": msg.usage.output_tokens},
-        "daily": {"spent": updated["tokens"], "warn": NORI_AGENT_DAILY_TOKEN_WARN or None},
+        "daily": _daily_view(updated),
     }
 
 

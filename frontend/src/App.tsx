@@ -28,6 +28,7 @@ import Pairing from "@/nori/pages/pairing";
 import Marketplace from "@/nori/pages/marketplace";
 import TrainingHistory from "@/nori/pages/training-history";
 import Remote from "@/nori/pages/remote";
+import VrLanding from "@/nori/pages/vr";
 import LeaderSetup from "@/nori/pages/leader-setup";
 import NoriCoding from "@/nori/pages/coding";
 import NoriAgent from "@/nori/pages/agent";
@@ -66,6 +67,19 @@ function App() {
 
                         {/* NORI: Nori app routes, isolated under a NoriProvider + layout. */}
                         <Route path="/nori/sign-in" element={<NoriProvider><SignIn /></NoriProvider>} />
+                        {/* Standalone headset entry — providers but NO NoriLayout nav, and no
+                            auth gate (VR needs only public config + room + token). This is the
+                            LeLab-free hosted VR surface; see DEPLOY_FRONTEND.md. */}
+                        <Route
+                          path="/nori/vr"
+                          element={
+                            <NoriProvider>
+                              <TeleopSessionProvider>
+                                <VrLanding />
+                              </TeleopSessionProvider>
+                            </NoriProvider>
+                          }
+                        />
                         <Route
                           path="/nori"
                           element={

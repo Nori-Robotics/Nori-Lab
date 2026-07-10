@@ -43,10 +43,28 @@ export interface ExternalJog {
 // $defs/leaderActionDeg and the daemon's normalize_leader_action_deg().
 export type LeaderActionDeg = Record<string, number>;
 
+// P4.4 — typed safety disclosure. The daemon's externally visible safety states (see the
+// README "Safety contract" for the behavioral meaning of each). `(string & {})` keeps the
+// union open: a newer daemon may add values, and unknown strings must render, not crash.
+//   safety:  "ok"        — normal
+//            "safe_hold" — motion refused, no latch: the robot is protecting itself
+//                          (thermal hold, or control-frame silence past the watchdog stop
+//                          threshold). Self-clears when the cause does.
+//            "latched"   — E-STOP latched (operator command / robot button). Motion blocked
+//                          until `command("reset_latch")`.
+// NOTE: a per-joint STALL is deliberately NOT a safety state — it's soft: torque drops on
+// the stalled joint only and it self-clears when that joint is jogged AWAY from the
+// obstruction (or on reset_latch). Scripts see it as action_status reason "stall:<joint>".
+export type SafetyState = "ok" | "safe_hold" | "latched" | (string & {});
+//   watchdog: "ok" | "warn" (control silence past t_warn_ms, or thermal load-shed) |
+//             "stop" (silence past t_stop_ms — motion blocked until frames resume).
+// Thresholds are the handshake's watchdogProfile (robotInfo()) — disclosed, not settable.
+export type WatchdogState = "ok" | "warn" | "stop" | (string & {});
+
 export interface TelemetryView {
   loopHz: number;
-  safety: string;
-  watchdog: string;
+  safety: SafetyState;
+  watchdog: WatchdogState;
   tempC: number;
   active: boolean;
   // Measured ICE path (host/host = "lan", anything via STUN/TURN = "wan"); null until the

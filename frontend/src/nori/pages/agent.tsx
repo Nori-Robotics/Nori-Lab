@@ -41,7 +41,15 @@ const END_LABEL: Record<FinishReason, string> = {
 
 // Today's server-tracked agent token spend (report-only; no hard limit yet — see server.py). `warn`
 // is the soft threshold past which we show a "high usage" banner (null = no threshold configured).
-type DailyBudget = { spent: number; warn: number | null };
+// Backend-enforced per-customer daily budget. `spent` = today's billable tokens, `warn` = the
+// soft-warning threshold, `allowed`/`remaining` = the hard daily cap, `capped` = past it (turns 429).
+type DailyBudget = {
+  spent: number;
+  warn: number | null;
+  allowed?: number | null;
+  remaining?: number | null;
+  capped?: boolean;
+};
 
 const Agent = () => {
   const { teleop, connState, connecting, connect, tel } = useTeleopSession();
@@ -122,7 +130,7 @@ const Agent = () => {
         push({ kind: "result", tool: ev.tool, ok: ev.ok, text: ev.text, imageDataUrl: ev.imageDataUrl });
         break;
       case "budget":
-        setDaily({ spent: ev.spent, warn: ev.warn });
+        setDaily({ spent: ev.spent, warn: ev.warn, allowed: ev.allowed, remaining: ev.remaining, capped: ev.capped });
         break;
       case "finished":
         push({ kind: "end", reason: ev.reason, detail: ev.detail });
@@ -242,12 +250,12 @@ const Agent = () => {
               </div>
             </div>
 
-            {/* Soft "high token usage" note — spend is tracked but not capped yet (per-customer limit
-                will live in the backend). Just a heads-up; runs continue. */}
+            {/* Soft "high token usage" note — the per-customer daily cap is enforced by the backend;
+                this warns as you approach it. Past the hard cap, turns return 429 and the loop ends. */}
             {budgetWarn && daily?.warn != null && (
               <div className="flex flex-col gap-1 rounded-md border border-[#b4442e]/40 bg-[#fbecea] p-3 text-[11px] text-[#8a2f20] shadow-sm">
                 <span className="font-mono uppercase tracking-[0.18em] text-[#b4442e]">// high token usage</span>
-                <span>You've used {fmtTokens(daily.spent)} agent tokens today (past the {fmtTokens(daily.warn)} heads-up mark). No limit is enforced yet — just keep an eye on spend.</span>
+                <span>You've used {fmtTokens(daily.spent)} agent tokens today (past the {fmtTokens(daily.warn)} heads-up mark){daily.allowed != null ? ` of a ${fmtTokens(daily.allowed)} daily limit` : ""}. Approaching the cap — turns stop once it's reached.</span>
               </div>
             )}
 

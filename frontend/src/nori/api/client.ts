@@ -81,6 +81,28 @@ export function getNoriConfig(baseUrl: string, fetcher: Fetcher): Promise<NoriPu
   });
 }
 
+/**
+ * Build-time public config, used as a fallback when no LeLab server is reachable
+ * (the LeLab-free hosted deploy — e.g. the standalone VR page). Populated from
+ * `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` (+ optional `VITE_NORI_BACKEND_URL`)
+ * baked in at build time. Returns null when the bundle was built without them, so the
+ * default LeLab-served `/nori/config` path is completely unaffected.
+ *
+ * These are PUBLIC values — the anon key already ships to every browser via
+ * `/nori/config`; baking it is not a secrets leak. A service-role key must never go here.
+ */
+export function getBuildTimeConfig(): NoriPublicConfig | null {
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseAnonKey) return null;
+  return {
+    noriBackendUrl: import.meta.env.VITE_NORI_BACKEND_URL ?? "",
+    supabaseUrl,
+    supabaseAnonKey,
+    configured: true,
+  };
+}
+
 // -- customers / provisioning (Phase 2) ----------------------------------------
 
 /** POST /nori/customers/me/provision — idempotent; safe on every sign-in. */

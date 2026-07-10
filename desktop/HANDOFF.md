@@ -28,6 +28,15 @@ We evaluated three paths. Picked **Option 1: Tauri shell + frozen Python backend
 2. **Training stays cloud** (already true via `nori_cloud`/`hf_cloud` in `jobs.py`). The
    bundle therefore excludes `wandb` and does **not** support the local training runner.
 
+**Scope boundary — the VR counterpart ships separately, not from this bundle.** The
+easy-access VR surface is a *hosted, LeLab-free static page* (Vercel/Cloudflare Pages),
+because the VR drive loop needs no local server — see
+[`../frontend/DEPLOY_FRONTEND.md`](../frontend/DEPLOY_FRONTEND.md). So this desktop
+bundle owns the full operator app (setup/pairing/marketplace/training/keyboard teleop);
+it does **not** need to solve headset access. The two tracks are independent and can be
+built in parallel. (This hosted page is a first taste of Option 2 above, scoped down to
+the one surface that doesn't need the local agent.)
+
 ---
 
 ## What's built (current state)

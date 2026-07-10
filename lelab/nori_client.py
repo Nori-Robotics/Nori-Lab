@@ -402,8 +402,45 @@ class NoriClient:
     # -- deletion requests (Phase 6) -----------------------------------------------
 
     def create_deletion_request(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """POST /deletion-requests (backend purge sweeper not yet wired — status row only)."""
+        """POST /deletion-requests — the backend worker's `deletions` surface performs
+        the erasure (S3/HF/checkpoint teardown, + account + Auth-user for `full`)."""
         return self._request("POST", f"{API}/deletion-requests", json=payload)
+
+    # -- agent (LLM) token metering (cost governance) ------------------------------
+
+    def get_agent_usage(self) -> dict[str, Any]:
+        """GET /agent/usage — the customer's current daily agent-token budget.
+
+        Returns {used_today, allowed_today, remaining_today, all_time_tokens,
+        soft_warn_threshold, soft_warning, hard_capped}. Cheap, non-mutating; the
+        pre-turn gate blocks a new turn when `hard_capped` is true.
+        """
+        return self._request("GET", f"{API}/agent/usage")
+
+    def charge_agent_usage(
+        self,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        new_run: bool = False,
+    ) -> dict[str, Any]:
+        """POST /agent/usage/charge — record ONE turn's actual token usage and get the
+        updated budget snapshot back. Additive: call exactly once per turn (retrying
+        double-counts). `new_run` marks the first turn of a new agent run (for run_count)."""
+        return self._request(
+            "POST",
+            f"{API}/agent/usage/charge",
+            json={
+                "model": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_read_tokens": cache_read_tokens,
+                "cache_write_tokens": cache_write_tokens,
+                "new_run": new_run,
+            },
+        )
 
 
 # -- dataset manifest helpers (module-level so they're unit-testable w/o a client) -----

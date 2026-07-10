@@ -63,7 +63,7 @@ export function ConnectionSettings() {
   const serial = activeRobotSerial ?? customer?.robot_serial_number ?? "";
 
   return (
-    <div className="mt-4 space-y-3 border-t border-border pt-4">
+    <div className="mt-4 space-y-3 border-t border-[#14131a]/10 pt-4">
       <div className="space-y-1.5">
         <Label htmlFor="room">Room (NORI_ROOM — must match the Pi)</Label>
         <Input id="room" value={settings.room} onChange={(e) => set("room", e.target.value)}

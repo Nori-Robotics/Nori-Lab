@@ -421,7 +421,7 @@ const Remote = () => {
             <div className="flex items-center gap-3">
               <span
                 className={
-                  "rounded-full px-3 py-1 font-mono text-xs " +
+                  "inline-flex h-9 items-center rounded-full px-3 font-mono text-xs " +
                   (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]")
                 }
               >

@@ -40,6 +40,10 @@ const NoriLayout = () => {
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
+  // Landing (/nori) and marketplace bring themselves up with their own staggered FadeIn, so the
+  // blanket page fade would double up there — everywhere else gets the quick full-page fade.
+  const pageFade = pathname !== "/nori" && pathname !== "/nori/marketplace";
+
   // Once bootstrap is done and Supabase is ready, an unauthenticated visitor to any
   // Nori page is sent to sign-in. We wait for `!loading` so we don't bounce during the
   // initial session restore.
@@ -90,7 +94,16 @@ const NoriLayout = () => {
       )}
 
       <main className="mx-auto max-w-5xl px-4 py-6">
-        <Outlet />
+        {/* Quick 0.7s page fade on every navigation, keyed by path so it re-plays. Skipped on
+            landing + marketplace, which already run their own staggered FadeIn bring-up. The
+            motion-reduce guard drops the animation for users who ask for reduced motion. */}
+        {pageFade ? (
+          <div key={pathname} className="animate-in fade-in duration-700 motion-reduce:animate-none">
+            <Outlet />
+          </div>
+        ) : (
+          <Outlet />
+        )}
       </main>
     </div>
   );

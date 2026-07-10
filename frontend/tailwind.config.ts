@@ -60,6 +60,8 @@ export default {
 					2: '#ffd4d4'
 				},
 				leaf: '#cde8b5',
+				tan: '#efe8d6',
+				steel: '#b9bfc9',
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
 				ring: 'hsl(var(--ring))',

@@ -183,7 +183,7 @@ const Agent = () => {
             <p className="text-sm text-muted-foreground">autonomous look→act→look · supervise with live video on Remote · E-STOP below</p>
           </div>
           <div className="flex items-center gap-3">
-            <span className={"rounded-full px-3 py-1 font-mono text-xs " + (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]")}>
+            <span className={"inline-flex h-9 items-center rounded-full px-3 font-mono text-xs " + (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]")}>
               ● {status}
             </span>
             {!connected && (

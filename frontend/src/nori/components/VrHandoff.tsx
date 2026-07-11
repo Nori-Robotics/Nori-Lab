@@ -18,8 +18,12 @@ export function VrHandoff({ room, token }: { room: string; token: string }) {
   const url = useMemo(() => {
     const u = new URL("/nori/vr", vrBase());
     if (room.trim()) u.searchParams.set("room", room.trim());
-    if (includeToken && token.trim()) u.searchParams.set("token", token.trim());
-    return u.toString();
+    let s = u.toString();
+    // The token rides in the URL FRAGMENT (#), never the query: fragments are not sent to
+    // the server, so the credential never lands in CDN/proxy access logs or the Referer
+    // header. Room stays in the query (it's the semi-public serial). See DEPLOY_FRONTEND.md.
+    if (includeToken && token.trim()) s += "#token=" + encodeURIComponent(token.trim());
+    return s;
   }, [room, token, includeToken]);
 
   const copy = async () => {
@@ -54,7 +58,8 @@ export function VrHandoff({ room, token }: { room: string; token: string }) {
       </label>
       {includeToken && (
         <p className="text-xs text-[#a06a1e]">
-          This link contains your robot access token — only open it on your own devices.
+          Carries your access token in the URL fragment (kept out of server logs) — still,
+          only open it on your own devices.
         </p>
       )}
     </div>

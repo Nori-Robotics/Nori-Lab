@@ -115,15 +115,24 @@ operator — it opens the hosted `/nori/vr` page directly and holds the WebRTC s
 the robot. The full app just **hands off a link**. Flow:
 
 1. In the full app (Remote → VR control card) the operator sees an **"Open on your Quest
-   browser"** link: `https://<vr-domain>/nori/vr?room=<robot>` (+ optional `&token=`).
-2. They open it on the Quest → the page pre-fills room/token from the query → **Connect**
-   → **Enter VR**. The laptop can be closed; the headset drives directly.
+   browser"** link: `https://<vr-domain>/nori/vr?room=<robot>` (+ optional `#token=`).
+2. They open it on the Quest → the page pre-fills room/token → **Connect** → **Enter VR**.
+   The laptop can be closed; the headset drives directly.
 
 For the link to point at the hosted page (not `localhost`), the full-app / desktop build
 bakes **`VITE_VR_BASE_URL`** = the VR domain (e.g. `https://app.nori.com`). The hosted
-build itself leaves it blank (falls back to its own origin). Token-in-link is opt-in
-(off by default) — it saves typing on the VR keyboard but puts the access token in the
-URL, so it's gated behind a checkbox + warning (`src/nori/components/VrHandoff.tsx`).
+build itself leaves it blank (falls back to its own origin).
+
+**Token embedding is opt-in and uses the URL _fragment_, not the query.** The room rides
+in `?room=` (semi-public serial); the token rides in `#token=`. Fragments are **never
+sent to the server**, so the access token never lands in CDN/proxy access logs or the
+`Referer` header — the main leak surface of a URL-borne credential. On arrival the VR page
+captures the token (into localStorage) and **scrubs it from the address bar** via
+`history.replaceState`, so it isn't left for bookmarking / re-share. What remains
+(clipboard, local history) is on the user's own devices. The checkbox is still off by
+default and warns the user (`src/nori/components/VrHandoff.tsx`); with the fragment scheme
+it is safe to default-on if desired (a one-line change). The proper long-term replacement
+is a short-lived one-time pairing code (R14 room-auth work), not any URL-borne secret.
 
 ## 4. What a hosted page does NOT solve
 

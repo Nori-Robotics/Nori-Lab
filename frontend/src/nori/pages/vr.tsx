@@ -33,15 +33,24 @@ export default function VrLanding() {
   const [xrSupported, setXrSupported] = useState<boolean | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // Pre-fill from the laptop→headset handoff link (?room / ?token) so a headset that opened
-  // the app's shared link doesn't have to retype on a VR keyboard. Applied once on mount; a
-  // value present in the URL wins over whatever was persisted.
+  // Pre-fill from the laptop→headset handoff link so a headset that opened the app's shared
+  // link doesn't have to retype on a VR keyboard. Room comes via the query (?room=); the
+  // token comes via the FRAGMENT (#token=) so the credential is never sent to the server /
+  // access logs. Applied once on mount; a value in the URL wins over what was persisted.
   useEffect(() => {
-    const p = new URLSearchParams(window.location.search);
-    const room = p.get("room");
-    const token = p.get("token");
+    const q = new URLSearchParams(window.location.search);
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const room = q.get("room");
+    const token = hash.get("token") ?? q.get("token"); // query token tolerated but discouraged
     if (room) set("room", room);
     if (token) set("token", token);
+    // Once captured (persisted to localStorage by set()), scrub the token out of the address
+    // bar so it isn't left in the fragment for shoulder-surfing, bookmarking, or re-share.
+    if (token) {
+      try {
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      } catch { /* ignore */ }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

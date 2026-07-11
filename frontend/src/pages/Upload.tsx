@@ -62,9 +62,13 @@ const Upload = () => {
   const [isLoadingDatasetInfo, setIsLoadingDatasetInfo] = useState(true);
 
   // Upload configuration state
+  // NORI: private-by-default — the UI sends `private` explicitly, so this
+  // default (not the backend Pydantic one) decides real uploads. Upstream
+  // ships false; for Nori's audience a recording is home video and must
+  // never default to a public HF repo. Mirrors lelab/record.py.
   const [uploadConfig, setUploadConfig] = useState<UploadConfig>({
     tags: ["robotics", "lerobot"],
-    private: false,
+    private: true,
   });
 
   const [tagsInput, setTagsInput] = useState(uploadConfig.tags.join(", "));

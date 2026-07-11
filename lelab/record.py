@@ -67,7 +67,11 @@ class RecordingRequest(BaseModel):
     video: bool = True
     push_to_hub: bool = False
     tags: list[str] = []
-    private: bool = False
+    # NORI: private-by-default. Upstream defaults False, which publishes home
+    # video to a public HF repo unless the user opts out — inverted for Nori's
+    # audience. The sanctioned upload path is backend-mediated (/nori/datasets/
+    # upload); this legacy HF-direct path stays private unless explicitly flipped.
+    private: bool = True
     resume: bool = False
     streaming_encoding: bool = True
     cameras: dict = {}
@@ -77,7 +81,8 @@ class RecordingRequest(BaseModel):
 class UploadRequest(BaseModel):
     dataset_repo_id: str
     tags: list[str] = []
-    private: bool = False
+    # NORI: private-by-default (see RecordingRequest.private above).
+    private: bool = True
 
 
 class DatasetInfoRequest(BaseModel):

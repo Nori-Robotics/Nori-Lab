@@ -48,12 +48,17 @@ ROBOTS_PATH = os.path.expanduser("~/.cache/huggingface/lerobot/robots")
 # query the Hub for LeLab-produced datasets and compute usage metrics.
 LELAB_TAG = "LeLab"
 
-# NORI: load a project-root `.env` (if present) so the vars below can be set there
-# instead of exported in every shell. Real environment variables still win over `.env`.
+# NORI: load a `.env` (if present) so the vars below can be set there instead of
+# exported in every shell. Real environment variables still win over `.env`.
+# usecwd=True is load-bearing: bare load_dotenv() searches upward from the CALLING
+# FILE's directory, which for a tool install (uv/pipx) is the tool venv — a repo
+# `.env` is never found and the Nori config silently comes up empty. Searching from
+# the invocation cwd makes `cd <repo> && lelab` behave the same for source checkouts
+# and tool installs.
 try:
-    from dotenv import load_dotenv
+    from dotenv import find_dotenv, load_dotenv
 
-    load_dotenv()
+    load_dotenv(find_dotenv(usecwd=True))
 except ImportError:  # python-dotenv is optional; env vars still work without it.
     pass
 

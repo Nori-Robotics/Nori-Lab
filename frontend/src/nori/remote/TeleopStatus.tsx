@@ -15,6 +15,9 @@ import {
   keybindLegend,
   type BaseKeyCluster,
   type CallState,
+  type ConnectFailure,
+  type ConnectPhase,
+  type ConnectStatus,
   type ControlMode,
   type DaemonStatus,
   type TelemetryView,
@@ -85,6 +88,70 @@ export function ControlOfflineBanner({ status }: { status: DaemonStatus | null }
         Robot motor control offline, reconnecting
       </p>
       <p className="mt-1 text-sm">{controlRemedy(status.reason)}</p>
+    </div>
+  );
+}
+
+// What the operator is told for each connect failure. Same contract as CONTROL_REMEDIES above:
+// headline = what's wrong in their words, body = what to DO about it.
+//
+// A NOTE ON HONESTY: `robot_not_responding` deliberately lists three possible causes instead of
+// asserting one. Today the browser genuinely cannot tell a wrong access code from a robot that is
+// switched off — the robot rejects a bad code SILENTLY, so both look like "nobody answered". Once
+// the robot sends an explicit rejection, this splits into two messages, one of which can finally
+// say "check your call settings" with confidence. Until then, guessing would be worse than asking.
+const CONNECT_TROUBLE: Record<ConnectFailure, { headline: string; body: string }> = {
+  signaling_unreachable: {
+    headline: "Can't reach Nori",
+    body: "Your device can't reach Nori's servers. Check your internet connection — the robot is probably fine.",
+  },
+  robot_not_responding: {
+    headline: "Your robot isn't answering",
+    body: "Check that the robot is powered on and connected to Wi-Fi, and that the access code in your call settings matches the one on the robot. It will connect automatically once it's reachable.",
+  },
+  ice_failed: {
+    headline: "Couldn't open a video connection",
+    body: "Your robot answered, but no network path could be opened between you — usually a restrictive firewall or office network. Try a different network, or a phone hotspot, to confirm.",
+  },
+  negotiation_failed: {
+    headline: "The connection failed to start",
+    body: "Something went wrong setting up the video link. Disconnect and try again; if it keeps happening, contact support.",
+  },
+  session_rejected: {
+    headline: "The robot refused this session",
+    body: "The robot is reachable but wouldn't accept control. This usually means a provisioning problem — contact support.",
+  },
+};
+
+// What we're doing, while it's still going fine. Only used pre-connection.
+const CONNECT_PROGRESS: Partial<Record<ConnectPhase, string>> = {
+  joining: "Connecting to Nori…",
+  waiting: "Waiting for your robot…",
+  negotiating: "Your robot answered — opening the video link…",
+};
+
+// The connection surface: a calm progress line while a connect is in flight, a red banner with a
+// remedy when it fails. Renders nothing once connected (the chips take over) or when idle.
+export function ConnectionBanner({ status }: { status: ConnectStatus }) {
+  if (status.phase === "idle" || status.phase === "connected") return null;
+
+  if (status.phase === "failed") {
+    const t = status.reason ? CONNECT_TROUBLE[status.reason] : undefined;
+    // An unknown reason must still render as a failure rather than vanish.
+    const headline = t?.headline ?? "Couldn't connect";
+    const body = t?.body ?? "Disconnect and try again; if it keeps happening, contact support.";
+    return (
+      <div className="rounded-md border border-[#d24a3d]/35 bg-[#fde7e4] px-4 py-3 text-[#a3271c]">
+        <p className="font-mono text-[11px] uppercase tracking-[0.14em]">{headline}</p>
+        <p className="mt-1 text-sm">{body}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2.5 rounded-md border border-[#14131a]/12 bg-[#f3f1e8] px-4 py-3 text-[#14131a]">
+      <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[#857b6b]" />
+      <p className="text-sm">{CONNECT_PROGRESS[status.phase] ?? "Connecting…"}</p>
     </div>
   );
 }

@@ -141,6 +141,46 @@ export interface DaemonStatus {
   detail?: string; // operator-facing text; carries the daemon's own message when it sent one
 }
 
+// ---- connect diagnostics ---------------------------------------------------------------
+// Why this exists: `connState` is the raw RTCPeerConnection state, and a peer connection isn't
+// even created until the robot's offer arrives. So during the ENTIRE "is my robot going to
+// answer?" window — the window where nearly every real-world failure happens — connState reads
+// "idle" and the UI showed `conn: idle` forever with no error text. This is a phase the operator
+// can actually reason about, plus a machine reason the UI maps to a plain-English remedy (the
+// same shape as DaemonStatus above).
+export type ConnectPhase =
+  | "idle"          // not connecting
+  | "joining"       // opening the signaling room
+  | "waiting"       // in the room, announced 'ready', waiting for the robot to offer
+  | "negotiating"   // offer received; building the peer + exchanging ICE
+  | "connected"     // peer connected
+  | "failed";       // gave up / hard failure — `reason` says why
+
+export type ConnectFailure =
+  // Can't reach the signaling service at all: the operator's own internet, or Nori's service.
+  | "signaling_unreachable"
+  // Nobody answered in the room. Until the robot-side nack lands (stage 2), this ALSO covers a
+  // wrong access code and a wrong room — they are indistinguishable from here, so the remedy
+  // text must name all three possibilities rather than assert one.
+  | "robot_not_responding"
+  // The robot answered but no network path could be established (NAT/firewall/TURN).
+  | "ice_failed"
+  // The offer/answer exchange itself threw (malformed SDP, browser refused the answer).
+  | "negotiation_failed"
+  // We reached the robot and it refused the session (handshake ack accepted:false).
+  | "session_rejected";
+
+export interface ConnectStatus {
+  phase: ConnectPhase;
+  reason?: ConnectFailure;
+  detail?: string; // free text for the log / secondary line; never the primary user message
+}
+
+// How long to sit in "waiting" before calling it a failure. The client keeps re-announcing
+// 'ready' underneath (a robot that boots late still connects on its own) — this deadline only
+// decides when we STOP staying silent and tell the operator something is wrong.
+const WAIT_FOR_ROBOT_MS = 12_000;
+
 // Which camera is in which composite tile (bridge-derived, from cameras.json order). Sent by the Pi
 // media bridge on control-channel open in composite mode; lets the LLM-vision path know which feed is
 // which arm WITHOUT the operator hand-typing it and WITHOUT labels burned into the pixels. `tiles` is
@@ -309,6 +349,10 @@ export interface RemoteTeleopOptions {
   mode?: ControlMode;
   onLog: (msg: string) => void;
   onConnState: (state: string) => void;
+  // Optional: the connect-phase machine (see ConnectStatus). This is what a UI should render as
+  // "what is happening / what went wrong"; onConnState remains the raw WebRTC state for anyone
+  // who wants it. Fires on every transition, deduped.
+  onConnectStatus?: (s: ConnectStatus) => void;
   onTelemetry: (t: TelemetryView) => void;
   onMode: (mode: ControlMode) => void;
   onControlActive: (active: boolean) => void;
@@ -452,6 +496,9 @@ export class RemoteTeleop {
   private controlCh: RTCDataChannel | null = null;
   private curMac = ""; // HMAC of the robot's nonce, proving we hold the token
   private linkMode: "lan" | "wan" | null = null; // measured ICE path -> daemon watchdog
+  // Connect-phase machine (see ConnectStatus). `waitTimer` is the "robot never answered" deadline.
+  private connStatus: ConnectStatus = { phase: "idle" };
+  private waitTimer: ReturnType<typeof setTimeout> | null = null;
   private mode: ControlMode = "cylindrical";
   // When non-null, the jog tick sends this payload instead of the keyboard-derived one
   // (set by the VR session each frame; null = keyboard owns the stream). An all-zeros
@@ -968,9 +1015,43 @@ export class RemoteTeleop {
     return servers;
   }
 
+  // ---- connect phase machine -----------------------------------------------
+  // Single writer for ConnectStatus. Deduped so a repeated transition (e.g. Supabase flapping
+  // CHANNEL_ERROR) doesn't spam the UI or the log.
+  private setPhase(phase: ConnectPhase, reason?: ConnectFailure, detail?: string) {
+    const prev = this.connStatus;
+    if (prev.phase === phase && prev.reason === reason && prev.detail === detail) return;
+    this.connStatus = { phase, ...(reason ? { reason } : {}), ...(detail ? { detail } : {}) };
+    this.o.onConnectStatus?.(this.connStatus);
+  }
+
+  // Latest connect phase, for consumers that poll rather than subscribe.
+  connectStatus(): ConnectStatus {
+    return this.connStatus;
+  }
+
+  // Arm the "the robot never answered" deadline. Called when we enter `waiting`. NOTE this does
+  // NOT stop the 2 s 'ready' retry loop — a robot that powers on two minutes late still connects
+  // by itself. The deadline only governs when we admit to the operator that nothing is answering.
+  private armWaitDeadline() {
+    if (this.waitTimer) clearTimeout(this.waitTimer);
+    this.waitTimer = setTimeout(() => {
+      this.waitTimer = null;
+      if (this.stopped || this.connected) return;
+      if (this.connStatus.phase !== "waiting") return; // an offer already moved us on
+      this.log("no answer from the robot after " + Math.round(WAIT_FOR_ROBOT_MS / 1000) + "s");
+      this.setPhase("failed", "robot_not_responding");
+    }, WAIT_FOR_ROBOT_MS);
+  }
+
+  private clearWaitDeadline() {
+    if (this.waitTimer) { clearTimeout(this.waitTimer); this.waitTimer = null; }
+  }
+
   // ---- lifecycle -----------------------------------------------------------
   async start() {
     this.stopped = false;
+    this.setPhase("joining");
     if (this.o.forceRelay && !this.o.turnUrls.length) {
       this.log("force relay is on but no TURN URL set — connect will fail");
     }
@@ -985,6 +1066,11 @@ export class RemoteTeleop {
       // a fresh offer => a fresh peer connection (handles robot restarts / reconnects)
       onSdp: async (payload) => {
         if (!payload || payload.type !== "offer") return;
+        // The robot answered — whatever else goes wrong from here, it is NOT absent, so the
+        // "nobody is home" deadline is void.
+        this.clearWaitDeadline();
+        this.setPhase("negotiating");
+        try {
         this.log("offer received; building fresh peer + answering...");
         const pc = this.freshPeer();
         await pc.setRemoteDescription({ type: "offer", sdp: payload.sdp });
@@ -1012,6 +1098,14 @@ export class RemoteTeleop {
         // If a call was already joined before (re)connect, re-wire mic/cam onto this fresh
         // peer's transceivers. Pure replaceTrack — no renegotiation (R-X.1).
         this.attachLocalMedia();
+        } catch (e) {
+          // This whole body runs inside a signaling event callback, so a throw here used to
+          // become an unhandled rejection: the operator saw the session simply stop, with no
+          // error anywhere. Surface it instead.
+          const msg = (e as Error).message;
+          this.log("negotiation failed: " + msg);
+          this.setPhase("failed", "negotiation_failed", msg);
+        }
       },
 
       onIce: async (payload) => {
@@ -1039,8 +1133,24 @@ export class RemoteTeleop {
         this.connected = false;
         this.sendReady();
         this.log("announced 'ready' — waiting for robot offer");
+        // Only (re)enter `waiting` from a pre-connection phase. onOpen also fires on a mid-session
+        // signaling reconnect, and that must not knock a live session back to "waiting".
+        if (this.connStatus.phase === "joining" || this.connStatus.phase === "failed") {
+          this.setPhase("waiting");
+          this.armWaitDeadline();
+        }
         if (this.retryTimer) clearInterval(this.retryTimer);
         this.retryTimer = setInterval(() => { if (!this.connected) this.sendReady(); }, 2000);
+      },
+
+      // Transport health. Distinct from robot health: this is "can we reach the room at all".
+      // supabase-js retries underneath, so we report the outage but never tear the session down —
+      // if it recovers, onOpen fires again and we go back to waiting for the robot.
+      onState: (state) => {
+        if (state === "error" || state === "timeout") {
+          if (this.connected) return; // a live session rides out a signaling blip; media is P2P
+          this.setPhase("failed", "signaling_unreachable", state);
+        }
       },
     });
 
@@ -1061,6 +1171,7 @@ export class RemoteTeleop {
     this.emitCall();
     if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
     if (this.jogTimer) { clearInterval(this.jogTimer); this.jogTimer = null; }
+    this.clearWaitDeadline();
     this.latencyProbe?.stop();
     // tell the robot to exit (clean restart) before we tear down
     this.o.signaling.sendBye();
@@ -1072,6 +1183,8 @@ export class RemoteTeleop {
     this.o.onTelemetry({ ...this.tel });
     this.o.onControlActive(false);
     this.o.onConnState("closed");
+    // Back to a clean slate: a deliberate Disconnect must not leave a failure banner on screen.
+    this.setPhase("idle");
   }
 
   // On-demand audio-latency snapshot (R-X.2). Logs + returns the network+jitter-buffer breakdown;
@@ -1127,6 +1240,8 @@ export class RemoteTeleop {
       this.o.onConnState(pc.connectionState);
       if (pc.connectionState === "connected") {
         this.connected = true;
+        this.clearWaitDeadline();
+        this.setPhase("connected");
         if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
         this.logSelectedPath();
         // Latency harness (R-X.2): with ?audiolatency, log the network+jitter-buffer breakdown
@@ -1135,6 +1250,17 @@ export class RemoteTeleop {
       } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
         this.connected = false; // robot will exit + restart; keep asking for a new offer
         this.latencyProbe?.stop();
+        // "failed" = ICE could find no working path (NAT/firewall/TURN) — a real, nameable fault.
+        // "disconnected" is often a transient blip that heals itself, so we drop back to `waiting`
+        // (the retry loop below is already asking for a fresh offer) rather than crying failure.
+        if (!this.stopped) {
+          if (pc.connectionState === "failed") {
+            this.setPhase("failed", "ice_failed");
+          } else {
+            this.setPhase("waiting");
+            this.armWaitDeadline();
+          }
+        }
         if (!this.retryTimer && !this.stopped) {
           this.retryTimer = setInterval(() => { if (!this.connected) this.sendReady(); }, 2000);
         }
@@ -1324,6 +1450,9 @@ export class RemoteTeleop {
     if (!info.accepted) {
       this.log("ROBOT REJECTED SESSION: " + (info.error ?? "(no reason given)") +
         " — connection stays up but control frames will be ignored");
+      // The peer is "connected" but the robot will ignore every control frame — without this the
+      // UI reads fully healthy while nothing moves.
+      this.setPhase("failed", "session_rejected", info.error);
     } else if (info.versionMismatch) {
       this.log(`protocol version mismatch — robot v${info.protocolVersion}, SDK targets ` +
         `v${NORI_PROTOCOL_VERSION}. Proceeding (unknown frames are ignored by both sides); ` +

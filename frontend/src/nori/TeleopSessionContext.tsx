@@ -17,7 +17,8 @@ import React, {
 } from "react";
 import {
   RemoteTeleop,
-  type ArmSide, type CallState, type ControlMode, type DaemonStatus, type TelemetryView,
+  type ArmSide, type CallState, type ConnectStatus, type ControlMode, type DaemonStatus,
+  type TelemetryView,
 } from "@nori/sdk";
 import { SupabaseSignaling } from "@nori/sdk/supabase";
 import { getSupabase } from "@/nori/auth/supabase";
@@ -75,6 +76,10 @@ export interface TeleopSessionValue {
   // Distinguishes "robot online but daemon down/restarting/refusing" from a healthy session —
   // connState alone cannot (the media bridge stays connected while the daemon is dead).
   daemonStatus: DaemonStatus | null;
+  // What the connect attempt is doing, and why it failed if it did (see ConnectStatus in the SDK).
+  // connState is the raw WebRTC state and is "idle" for the whole waiting-for-the-robot window,
+  // so it cannot answer "what is wrong" — this can.
+  connectStatus: ConnectStatus;
   logLines: string[];
   appendLog: (msg: string) => void;
   settings: Settings;
@@ -107,6 +112,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
   const [stale, setStale] = useState(false);
   const [call, setCall] = useState<CallState>(EMPTY_CALL);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
+  const [connectStatus, setConnectStatus] = useState<ConnectStatus>({ phase: "idle" });
   const [logLines, setLogLines] = useState<string[]>([]);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [scriptSource, setScriptSourceState] = useState<string>(() => {
@@ -181,10 +187,23 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     setConnecting(true);
     setLogLines([]);
     setDaemonStatus(null);
+    setConnectStatus({ phase: "joining" });
     const turnUrls = settings.turn.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
     const room = settings.room.trim() || serial || "nori-dev";
+    // getSupabase() throws when the app never got its config. That throw used to happen OUTSIDE
+    // the try below (it's an argument to the constructor), so `connecting` was never cleared and
+    // the button sat on "Connecting…" forever with no error.
+    let supabase: ReturnType<typeof getSupabase>;
+    try {
+      supabase = getSupabase();
+    } catch (e) {
+      appendLog("start failed: " + (e instanceof Error ? e.message : String(e)));
+      setConnectStatus({ phase: "failed", reason: "signaling_unreachable" });
+      setConnecting(false);
+      return;
+    }
     const t = new RemoteTeleop({
-      signaling: new SupabaseSignaling(getSupabase(), room, appendLog),
+      signaling: new SupabaseSignaling(supabase, room, appendLog),
       // No videoEl/audioEl here: the session is page-independent. The page that shows video
       // attaches its elements via teleop.setVideoEl()/setAudioEl() on mount.
       token: settings.token.trim(),
@@ -210,6 +229,16 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
       // Daemon health transitions (the SDK already appends them to the log; this drives the
       // banner/chip so "daemon down/restarting" never reads as random dead control).
       onDaemonStatus: setDaemonStatus,
+      // The connect-phase machine — drives the connection banner.
+      onConnectStatus: setConnectStatus,
+      // The handshake ack. It was never wired, so a robot that REFUSED the session (accepted:false)
+      // or spoke a different protocol version left no trace outside the collapsed log box. The SDK
+      // turns a refusal into a `session_rejected` phase; this is here for the advisory mismatch.
+      onReady: (info) => {
+        if (info.versionMismatch) {
+          appendLog("this robot is running different software than the app expects");
+        }
+      },
     });
     teleopRef.current = t;
     setTeleop(t);
@@ -246,6 +275,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     setTel(EMPTY_TEL);
     setCall(EMPTY_CALL);
     setDaemonStatus(null);  // health is per-session; don't show a stale banner next connect
+    setConnectStatus({ phase: "idle" });
   }, []);
 
   // Leaving /nori entirely unmounts this provider — tear the session down cleanly (robot `bye`).
@@ -253,10 +283,12 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
 
   const value = useMemo<TeleopSessionValue>(() => ({
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
+    connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, scriptSource, setScriptSource,
   }), [
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
+    connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, scriptSource, setScriptSource,
   ]);

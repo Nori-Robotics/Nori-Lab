@@ -16,7 +16,7 @@ import { useApi } from "@/contexts/ApiContext";
 import { type ArmSide, type CameraViewHandle } from "@nori/sdk";
 import { VrSession } from "@nori/sdk/vr";
 import { VrHandoff } from "@/nori/components/VrHandoff";
-import { TelemetryPanel, GripForce, ControlLegend, BaseCommandLegend, CallBar, ControlOfflineBanner, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
+import { TelemetryPanel, GripForce, ControlLegend, BaseCommandLegend, CallBar, ConnectionBanner, ControlOfflineBanner, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import LeaderSetup from "@/nori/pages/leader-setup";
@@ -60,6 +60,7 @@ const Remote = () => {
   // it no longer owns the RemoteTeleop instance and must NOT stop it on unmount.
   const {
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
+    connectStatus,
     logLines, appendLog, settings, setSetting: set, connect, disconnect: sessionDisconnect,
     toggleControlMode, setCurrentsListener,
   } = useTeleopSession();
@@ -383,9 +384,19 @@ const Remote = () => {
   const connected = running && connState === "connected";
   // Keep the pill terse — just the connection state. Loop rate / VR / control-active
   // detail lives in the telemetry card, not up here.
+  // The pill speaks the connect PHASE, not the raw WebRTC state: `connState` is "idle" for the
+  // whole waiting-for-the-robot window, so the old pill read "conn: idle" while the real answer
+  // was "waiting for your robot" (or, after the deadline, "couldn't connect").
+  const PHASE_PILL: Record<string, string> = {
+    joining: "connecting…",
+    waiting: "waiting for robot…",
+    negotiating: "connecting…",
+    connected: "connected",
+    failed: "couldn't connect",
+  };
   const status = connected
     ? "connected"
-    : connecting ? "connecting…" : running ? `conn: ${connState}` : "not connected";
+    : running || connecting ? (PHASE_PILL[connectStatus.phase] ?? "connecting…") : "not connected";
   // Which control method is selected (keyboard is the passive default — base + lift always
   // stay on the keyboard regardless). Each mode shows its own card below // controls.
   const controlMode = selectedMode;
@@ -441,7 +452,10 @@ const Remote = () => {
               )}
             </div>
           </div>
-          {/* Daemon outage banner: video/link can be perfectly healthy while the robot's
+          {/* Connection banner: what the connect attempt is doing, or why it failed + the remedy.
+              Every connect failure used to land ONLY in the collapsed "Robot logs" box. */}
+          <ConnectionBanner status={connectStatus} />
+          {/* Motor-control outage banner: video/link can be perfectly healthy while the robot's
               controller is down or refusing sessions (dead arm) — say so, with the remedy,
               instead of letting it read as random dead control. */}
           {running && <ControlOfflineBanner status={daemonStatus} />}

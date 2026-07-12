@@ -261,6 +261,10 @@ const LeaderSetup = ({
 
   const [calibrationId, setCalibrationId] = useState(DEFAULT_CALIBRATION_ID);
   const [sharedPort, setSharedPort] = useState("");
+  // True once an auto-detect has run and found no USB leader bus (arm unplugged, a
+  // charge-only cable, or a hub swallowing it) — drives a plain-language hint instead
+  // of leaving a consumer staring at an empty field.
+  const [noArmFound, setNoArmFound] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -321,8 +325,10 @@ const LeaderSetup = ({
     const response = await autoSaveLeaderPorts(baseUrl, fetchWithHeaders);
     const detected = portFromResponse(response);
     if (!detected) {
+      setNoArmFound(true);
       throw new Error(response.message || "Could not find one USB bus with both leader arms");
     }
+    setNoArmFound(false);
     setSharedPort(detected);
     return response;
   }, [baseUrl, fetchWithHeaders]);
@@ -600,6 +606,14 @@ const LeaderSetup = ({
                 auto
               </Button>
             </div>
+            {noArmFound && !portReady && busy == null && (
+              <p className="text-xs leading-relaxed text-[#8a5a12]">
+                No leader arm found. Check that it’s plugged in with a{" "}
+                <span className="font-medium">data</span> USB cable (some cables only charge)
+                and connected <span className="font-medium">directly</span> to the computer,
+                not through a hub or dock — then tap <span className="font-medium">auto</span> again.
+              </p>
+            )}
           </div>
           {/* Calibration id + save share a line, mirroring the usb + auto pattern above. */}
           <div className="space-y-1.5">

@@ -28,6 +28,12 @@ export interface RobotHerePayload {
   nonce?: string;
 }
 
+// Transport health, as distinct from robot health. "open" = the room is live and we can speak;
+// "error"/"timeout" = we cannot reach the signaling service at all (down, offline, bad URL).
+// Without this the operator cannot tell "my internet is broken" from "my robot is off" — both
+// used to look like an unbounded silent wait.
+export type SignalingState = "open" | "error" | "timeout" | "closed";
+
 // Inbound events RemoteTeleop reacts to. Registered once, when connect() is called.
 export interface SignalingHandlers {
   // The robot published an SDP OFFER (the operator is always the answerer, so only offers
@@ -41,6 +47,10 @@ export interface SignalingHandlers {
   // The transport is live (e.g. Supabase "SUBSCRIBED") — safe to announce 'ready'. May fire
   // more than once across a session's reconnects; RemoteTeleop is idempotent on it.
   onOpen: () => void;
+  // Optional: every transport state change, including the failures onOpen can't express. A
+  // transport that can't distinguish these may simply never call it (RemoteTeleop then behaves
+  // exactly as before). Implementations should still call onOpen on "open" for compatibility.
+  onState?: (state: SignalingState) => void;
 }
 
 // The operator side of the signaling room. One instance per teleop session. RemoteTeleop owns

@@ -40,6 +40,13 @@ export class SupabaseSignaling implements SignalingTransport {
     channel.subscribe((status) => {
       this.log?.("channel:", status);
       if (status === "SUBSCRIBED") h.onOpen();
+      // Supabase reports its non-open states only through this callback; they used to be a log
+      // line and nothing else, so an unreachable signaling service was invisible to the UI.
+      // supabase-js keeps retrying underneath, so these are reported, not fatal.
+      if (status === "CHANNEL_ERROR") h.onState?.("error");
+      else if (status === "TIMED_OUT") h.onState?.("timeout");
+      else if (status === "CLOSED") h.onState?.("closed");
+      else if (status === "SUBSCRIBED") h.onState?.("open");
     });
   }
 

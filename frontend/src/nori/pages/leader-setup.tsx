@@ -354,13 +354,17 @@ const LeaderSetup = ({
   }, [baseUrl, calibrationId, fetchWithHeaders, sharedPort]);
 
   useEffect(() => {
+    // No local LeLab (hosted build) -> the unavailable-guard renders below, but hooks
+    // still run before that early return. Don't probe a dead localhost.
+    if (!leLabAvailable) return;
     void refreshManualStatus().catch(() => undefined);
     void refreshAutoStatus().catch(() => undefined);
-  }, [refreshAutoStatus, refreshManualStatus]);
+  }, [leLabAvailable, refreshAutoStatus, refreshManualStatus]);
 
   useEffect(() => {
+    if (!leLabAvailable) return;
     void autoDetectPort().catch(() => undefined);
-  }, [autoDetectPort]);
+  }, [leLabAvailable, autoDetectPort]);
 
   useEffect(() => {
     // Don't poll live telemetry until a leader USB port is known (auto-detected or
@@ -473,10 +477,8 @@ const LeaderSetup = ({
         <Alert className="border-[#14131a]/12 bg-[#fffdf7] text-[#14131a]">
           <AlertTitle>Leader driving isn’t available on the web app</AlertTitle>
           <AlertDescription className="text-[#5c5344]">
-            Leader arms connect over a USB cable and are controlled by the Nori Lab desktop
-            app running on the same computer. This page is served over the web, which can’t
-            reach local USB hardware — so arm search and calibration only work in the desktop
-            app. Use a headset with the VR controls for remote driving, or open Nori Lab on
+            Leader arm connection and calibration are only available in the desktop
+            app over USB connection. Use a VR headset for remote driving over web, or open Nori Lab on
             the computer the arms are plugged into.
           </AlertDescription>
         </Alert>

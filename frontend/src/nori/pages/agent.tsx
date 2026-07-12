@@ -233,7 +233,7 @@ const Agent = () => {
                     </Button>
                   )}
                   <Button size="sm" variant="destructive" className="font-bold" onClick={estop}
-                    title="Latch the daemon + abort the loop + zero motion, immediately">
+                    title="Stop the robot + abort the loop + zero motion, immediately">
                     <OctagonX className="mr-2 h-4 w-4" /> E-STOP
                   </Button>
                 </div>

@@ -16,7 +16,7 @@ import { useApi } from "@/contexts/ApiContext";
 import { type ArmSide, type CameraViewHandle } from "@nori/sdk";
 import { VrSession } from "@nori/sdk/vr";
 import { VrHandoff } from "@/nori/components/VrHandoff";
-import { TelemetryPanel, GripForce, ControlLegend, BaseCommandLegend, CallBar, DaemonBanner, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
+import { TelemetryPanel, GripForce, ControlLegend, BaseCommandLegend, CallBar, ControlOfflineBanner, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import LeaderSetup from "@/nori/pages/leader-setup";
@@ -173,6 +173,11 @@ const Remote = () => {
     return () => setCurrentsListener(null);
   }, [setCurrentsListener]);
   useEffect(() => { vrRef.current?.setTelemetry(tel); }, [tel]);
+  // Keep the HUD's control row honest about motor health (same rule as the 2D chip). No status
+  // yet = treat as online; the HUD's own staleness timer still catches a dead controller.
+  useEffect(() => {
+    vrRef.current?.setMotorsOnline(!daemonStatus || daemonStatus.state === "online");
+  }, [daemonStatus]);
 
 
   // VR is an optional mode on top of the same session: detect headset support, and on any
@@ -439,7 +444,7 @@ const Remote = () => {
           {/* Daemon outage banner: video/link can be perfectly healthy while the robot's
               controller is down or refusing sessions (dead arm) — say so, with the remedy,
               instead of letting it read as random dead control. */}
-          {running && <DaemonBanner status={daemonStatus} />}
+          {running && <ControlOfflineBanner status={daemonStatus} />}
           <div className="relative">
             <video
               ref={videoRef}

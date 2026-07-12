@@ -376,7 +376,7 @@ const Coding = () => {
                 </Button>
               )}
               <Button size="sm" variant="destructive" className="font-bold" onClick={estop}
-                title="Latch the daemon + kill the script + zero motion, immediately">
+                title="Stop the robot + kill the script + zero motion, immediately">
                 <OctagonX className="mr-2 h-4 w-4" /> E-STOP
               </Button>
             </div>

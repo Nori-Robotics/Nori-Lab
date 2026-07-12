@@ -45,7 +45,7 @@ function Stat({
   );
 }
 
-// Map the daemon's free-text safety string to a tone. Anything that isn't a plain
+// Map the robot's free-text safety string to a tone. Anything that isn't a plain
 // "ok"/"normal"/"-" reads as a warning so a latch/hold stands out.
 function safetyTone(safety: string): "good" | "warn" | "default" {
   const s = safety.toLowerCase();
@@ -54,35 +54,37 @@ function safetyTone(safety: string): "good" | "warn" | "default" {
   return "warn";
 }
 
-// Operator-facing remedy per daemon_status offline reason (nori_protocol_schema §5b). The bridge's
-// `detail` usually carries the daemon's own message; this is the what-do-I-do line under it.
-const DAEMON_REMEDIES: Record<string, string> = {
+// Operator-facing remedy per motor-control offline reason (nori_protocol_schema §5b). The wire
+// still carries a machine `reason`/`detail`; neither is shown — this is the what-do-I-do line
+// that replaces them, in plain language for a non-technical operator.
+const CONTROL_REMEDIES: Record<string, string> = {
   startup_positions:
     "An arm isn't responding — it has likely lost power. Power-cycle (unplug/replug) the arm; the robot reconnects automatically.",
   bus_lost:
-    "A servo bus disconnected (USB). The robot is restarting its controller — control should return in ~15 s. If it repeats, check the bus cable.",
+    "A motor cable disconnected. The robot is restarting motor control — it should return in about 15 seconds. If it keeps happening, check the cable.",
   unauthorized:
     "The robot rejected the control token (provisioning problem). Contact support — this won't fix itself.",
   unreachable:
-    "The robot's controller is down or restarting. Control should return shortly; video keeps working.",
+    "The robot's motor control is down or restarting. It should return shortly; video keeps working.",
   connection_lost:
-    "The robot's controller restarted. Control should return shortly; video keeps working.",
+    "The robot's motor control restarted. It should return shortly; video keeps working.",
 };
-export function daemonRemedy(reason?: string): string {
-  return (reason && DAEMON_REMEDIES[reason]) || DAEMON_REMEDIES.unreachable;
+export function controlRemedy(reason?: string): string {
+  return (reason && CONTROL_REMEDIES[reason]) || CONTROL_REMEDIES.unreachable;
 }
 
-// Full-width alert shown while the daemon is offline: the reason + remedy, so a dead-arm refusal
-// loop reads as "power-cycle the arm" instead of random downtime with a connected video feed.
-export function DaemonBanner({ status }: { status: DaemonStatus | null }) {
+// Full-width alert shown while motor control is offline. Fixed headline + the plain-English
+// remedy, so a dead-arm refusal loop reads as "power-cycle the arm" instead of random downtime
+// with a connected video feed. The raw reason code and the robot's `detail` string are
+// deliberately NOT rendered — the remedy above is the operator-facing version of both.
+export function ControlOfflineBanner({ status }: { status: DaemonStatus | null }) {
   if (!status || status.state === "online") return null;
   return (
     <div className="rounded-md border border-[#d24a3d]/35 bg-[#fde7e4] px-4 py-3 text-[#a3271c]">
       <p className="font-mono text-[11px] uppercase tracking-[0.14em]">
-        robot controller offline{status.reason ? ` — ${status.reason.replace(/_/g, " ")}` : ""}
+        Robot motor control offline, reconnecting
       </p>
-      <p className="mt-1 text-sm">{daemonRemedy(status.reason)}</p>
-      {status.detail && <p className="mt-1 font-mono text-xs opacity-80">{status.detail}</p>}
+      <p className="mt-1 text-sm">{controlRemedy(status.reason)}</p>
     </div>
   );
 }
@@ -100,11 +102,21 @@ export function TelemetryPanel({
   controlActive: boolean;
   stale: boolean; // no telemetry frame for a while -> the readouts below are not live
   inVr: boolean;
-  daemonStatus?: DaemonStatus | null; // bridge-reported daemon health (null = none received yet)
+  daemonStatus?: DaemonStatus | null; // robot-reported motor-control health (null = none received yet)
 }) {
   const connected = connState === "connected";
   // loop_hz should sit near 50; flag a sag so a struggling control loop is visible.
   const hzTone = !controlActive || stale ? "default" : tel.loopHz >= 45 ? "good" : tel.loopHz >= 30 ? "warn" : "bad";
+  // One honest control readout, gated on all three independent signals — they can disagree:
+  //   * controlActive : the command channel is open (transport).
+  //   * !stale        : telemetry is still arriving (the robot is actually running the loop).
+  //   * motorsOk      : the robot's own motor-control health push.
+  // The media bridge can be fully connected while motor control behind it is dead, which used to
+  // read as a green "active" chip; requiring all three keeps the chip from lying. A null
+  // daemonStatus means the robot never sent one (older bridge) — don't punish that, the
+  // staleness timer still catches a genuinely dead controller.
+  const motorsOk = !daemonStatus || daemonStatus.state === "online";
+  const controlOk = controlActive && !stale && motorsOk;
 
   // Bare chip row — the page composes this into its combined // telemetry card.
   return (
@@ -119,13 +131,8 @@ export function TelemetryPanel({
         value={tel.linkMode ? tel.linkMode.toUpperCase() : "—"}
         tone={tel.linkMode === "lan" ? "good" : tel.linkMode === "wan" ? "warn" : "default"}
       />
-      <Stat label="control" value={controlActive ? (stale ? "stale" : "active") : "inactive"}
-        tone={!controlActive ? "default" : stale ? "warn" : "good"} />
-      {/* Daemon health is a separate axis from link: the media bridge (video, this chip's
-          transport) can be fully connected while the daemon behind it is dead/restarting. */}
-      <Stat label="daemon"
-        value={daemonStatus ? daemonStatus.state : "—"}
-        tone={!daemonStatus ? "default" : daemonStatus.state === "online" ? "good" : "bad"} />
+      <Stat label="control" value={controlOk ? "connected" : "disconnected"}
+        tone={controlOk ? "good" : "bad"} />
       <Stat label="loop" value={`${tel.loopHz.toFixed(1)} Hz`} tone={hzTone} />
       <Stat label="safety" value={tel.safety} tone={safetyTone(tel.safety)} />
       <Stat label="watchdog" value={tel.watchdog} tone={tel.watchdog === "-" ? "default" : "warn"} />
@@ -349,7 +356,9 @@ export function CallBar({
             : <MicOff className="h-3.5 w-3.5 text-muted-foreground/60" />}
         </span>
         <span className="flex items-center gap-1.5">
-          <OnAir live={call.robotMicLive || call.robotAudio} label="nori" />
+          {/* robotAudio only says a track is ATTACHED — a robot-side mute (W2.5: robots
+              boot muted) still drops the audio, so don't glow "on air" while muted. */}
+          <OnAir live={(call.robotMicLive || call.robotAudio) && !call.robotMicMuted} label="nori" />
           {/* Same two tones as the mic glyph beside "you": ink when audible, dim when muted. */}
           <button
             type="button"
@@ -374,6 +383,18 @@ export function CallBar({
         </span>
         {call.active && !call.micMuted && !call.micSending && (
           <Badge variant="outline" className="text-[10px]">mic local-only (Pi M3 pending)</Badge>
+        )}
+        {/* W2.5 consent UX: robots ship muted-by-default; only someone physically at the
+            robot can unmute (kiosk / mute button). Tell the operator that instead of
+            leaving a silently dead robot mic. */}
+        {call.robotMicMuted && (
+          <Badge
+            variant="outline"
+            className="text-[10px]"
+            title="The robot's microphone is muted on the robot itself. Only a person at the robot can unmute it — from the robot's screen or its mute button."
+          >
+            <MicOff className="mr-1 h-3 w-3" /> robot is muted — ask someone at the robot to unmute
+          </Badge>
         )}
       </div>
     </div>

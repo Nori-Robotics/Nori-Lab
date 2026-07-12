@@ -222,8 +222,8 @@ const Pairing = () => {
       </Card>
 
       <p className="text-xs text-muted-foreground">
-        Automatic discovery (mDNS / QR) arrives once the robot daemon ships. For now, find
-        the serial on the sticker under your robot.
+        Automatic discovery is coming soon. For now, find the serial on the sticker under
+        your robot.
       </p>
     </section>
   );

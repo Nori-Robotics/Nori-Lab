@@ -92,6 +92,17 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running LeLab");
+        .build(tauri::generate_context!())
+        .expect("error while building Nori Lab")
+        .run(|app_handle, event| {
+            // Also kill on app exit (e.g. Cmd+Q), not just window-destroyed — otherwise
+            // a quit that doesn't emit Destroyed would orphan the backend on :8000. The
+            // backend also self-exits if we die abruptly (parent-death watchdog in
+            // backend_entry.py), so all three exit paths are covered.
+            if let tauri::RunEvent::Exit = event {
+                if let Some(mut child) = app_handle.state::<Backend>().0.lock().unwrap().take() {
+                    let _ = child.kill();
+                }
+            }
+        });
 }

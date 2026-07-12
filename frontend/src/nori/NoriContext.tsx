@@ -96,10 +96,18 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           cfg = await getNoriConfig(baseUrl, fetchWithHeaders);
           if (!cfg.configured) cfg = getBuildTimeConfig() ?? cfg;
         } catch (e) {
-          const fallback = getBuildTimeConfig();
-          if (!fallback) throw e;
-          cfg = fallback;
+          // `/nori/config` didn't answer -> no local LeLab, full stop. Record that even
+          // when there's no build-time fallback to continue with — otherwise a hosted
+          // build without baked VITE_SUPABASE_* rethrows with leLabAvailable stuck at
+          // its optimistic `true`, and local-hardware pages (leader-setup) render their
+          // full UI polling a dead localhost instead of the "unavailable on web" guard.
           leLab = false;
+          const fallback = getBuildTimeConfig();
+          if (!fallback) {
+            if (!cancelled) setLeLabAvailable(false);
+            throw e;
+          }
+          cfg = fallback;
         }
         if (cancelled) return;
         setConfig(cfg);

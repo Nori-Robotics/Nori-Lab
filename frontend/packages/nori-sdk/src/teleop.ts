@@ -275,6 +275,11 @@ export interface CallState {
   micSending: boolean;   // mic is actually wired to a robot uplink transceiver (else: local-only)
   robotAudio: boolean;   // an inbound audio track from the robot is attached to the sink
   robotMicLive: boolean; // robot reports its mic is live (telemetry; reserved field)
+  // Robot-side local mute (W2.5 consent UX): robots BOOT muted; someone at the robot
+  // unmutes via the kiosk/button. Distinct from !robotMicLive (which is also false when
+  // audio simply isn't wired) — true means "muted at the robot, ask a local person".
+  // Absent on old bridges -> stays false and the UI behaves as before.
+  robotMicMuted: boolean;
   cameraOn: boolean;     // M6 (gated): operator camera is sending
 }
 
@@ -506,7 +511,7 @@ export class RemoteTeleop {
   private clipTrack: MediaStreamTrack | null = null;
   private call: CallState = {
     active: false, micMuted: true, micSending: false,
-    robotAudio: false, robotMicLive: false, cameraOn: false,
+    robotAudio: false, robotMicLive: false, robotMicMuted: false, cameraOn: false,
   };
 
   constructor(opts: RemoteTeleopOptions) {
@@ -1051,7 +1056,7 @@ export class RemoteTeleop {
     this.clipTrack = null; // caller owns the clip track's lifetime; just drop our reference
     this.call = {
       active: false, micMuted: true, micSending: false,
-      robotAudio: false, robotMicLive: false, cameraOn: false,
+      robotAudio: false, robotMicLive: false, robotMicMuted: false, cameraOn: false,
     };
     this.emitCall();
     if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
@@ -1188,7 +1193,7 @@ export class RemoteTeleop {
     if (!this.linkMode) return;
     if (this.controlCh && this.controlCh.readyState === "open") {
       this.dcSend({ type: "link", mode: this.linkMode });
-      this.log("link -> " + this.linkMode + " (daemon watchdog follows ICE path)");
+      this.log("link -> " + this.linkMode);
     }
   }
 
@@ -1239,6 +1244,14 @@ export class RemoteTeleop {
         this.call.robotMicLive = m.robot_mic_live;
         this.emitCall();
       }
+      // Robot-side local mute (W2.5): robots boot muted; surface it so the UI can say
+      // "ask someone at the robot to unmute". Absent on old bridges -> never fires.
+      // Key is robot_LOCAL_mic_muted: plain robot_mic_muted already exists on the
+      // control channel INBOUND (operator-driven robot-mic mute) — different state.
+      if (typeof m.robot_local_mic_muted === "boolean" && m.robot_local_mic_muted !== this.call.robotMicMuted) {
+        this.call.robotMicMuted = m.robot_local_mic_muted;
+        this.emitCall();
+      }
       this.o.onTelemetry({ ...this.tel });
     } else if (m.type === "perception") {
       this.ingestPerception(m);
@@ -1251,10 +1264,10 @@ export class RemoteTeleop {
     } else if (m.type === "ack") {
       this.ingestAck(m);
     } else if (m.type === "error") {
-      // Human-readable in the session log; the daemon's msg carries the remedy for actionable
+      // Human-readable in the session log; the robot's msg carries the remedy for actionable
       // faults (e.g. startup_positions → "power-cycle the arm"). Persistent outage state is the
       // daemon_status frame above — this line is the transient event record.
-      this.log(`daemon error [${String(m.code ?? "?")}]${m.fatal ? " (fatal)" : ""}: ${String(m.msg ?? "")}`);
+      this.log(`robot error [${String(m.code ?? "?")}]${m.fatal ? " (fatal)" : ""}: ${String(m.msg ?? "")}`);
     }
   }
 
@@ -1309,15 +1322,15 @@ export class RemoteTeleop {
     const info = parseAck(m);
     this.ackInfo = info;
     if (!info.accepted) {
-      this.log("DAEMON REJECTED SESSION: " + (info.error ?? "(no reason given)") +
+      this.log("ROBOT REJECTED SESSION: " + (info.error ?? "(no reason given)") +
         " — connection stays up but control frames will be ignored");
     } else if (info.versionMismatch) {
-      this.log(`protocol version mismatch — daemon v${info.protocolVersion}, SDK targets ` +
+      this.log(`protocol version mismatch — robot v${info.protocolVersion}, SDK targets ` +
         `v${NORI_PROTOCOL_VERSION}. Proceeding (unknown frames are ignored by both sides); ` +
         `expect vocabulary gaps, not unsafe behavior.`);
     }
     const d = info.descriptor;
-    this.log("daemon ack: accepted=" + info.accepted +
+    this.log("robot ack: accepted=" + info.accepted +
       (info.protocolVersion !== undefined ? ` protocol=v${info.protocolVersion}` : "") +
       (info.normMode ? ` norm=${info.normMode}` : "") +
       (info.watchdogProfile ? ` watchdog=${info.watchdogProfile.t_warn_ms}/${info.watchdogProfile.t_stop_ms}ms` : "") +
@@ -1346,6 +1359,15 @@ export class RemoteTeleop {
   // Cache + dedupe the bridge's daemon_status health frames (it re-broadcasts every 3 s while
   // offline because the control channel is unreliable — only transitions reach the callback/log).
   private ingestDaemonStatus(m: Record<string, unknown>) {
+    // W2.5: the bridge stamps its local-mute state on daemon_status frames too —
+    // telemetry carries it only while the daemon is UP, so without this a boot-muted
+    // robot with a DOWN daemon would render an unmuted-looking call UI (robotAudio
+    // still attaches; media is daemon-independent). Read BEFORE the dedup below:
+    // a mute toggle alone must update the call state even when health is unchanged.
+    if (typeof m.robot_local_mic_muted === "boolean" && m.robot_local_mic_muted !== this.call.robotMicMuted) {
+      this.call.robotMicMuted = m.robot_local_mic_muted;
+      this.emitCall();
+    }
     const s: DaemonStatus = { state: String(m.state ?? "") };
     if (typeof m.reason === "string" && m.reason) s.reason = m.reason;
     if (typeof m.detail === "string" && m.detail) s.detail = m.detail;
@@ -1353,9 +1375,11 @@ export class RemoteTeleop {
     const prev = this.daemonStat;
     if (prev && prev.state === s.state && prev.reason === s.reason && prev.detail === s.detail) return;
     this.daemonStat = s;
+    // Operator-facing log line: no reason code, no raw detail — the on-screen banner carries the
+    // plain-English remedy for the same event.
     this.log(s.state === "online"
-      ? "robot daemon: online"
-      : `robot daemon: OFFLINE [${s.reason ?? "unknown"}]${s.detail ? " — " + s.detail : ""}`);
+      ? "Robot motor control connected"
+      : "Robot motor control offline, reconnecting");
     this.o.onDaemonStatus?.(s);
   }
 

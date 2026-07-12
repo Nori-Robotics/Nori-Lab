@@ -78,6 +78,11 @@ export function noriRequest<T = unknown>(
 export function getNoriConfig(baseUrl: string, fetcher: Fetcher): Promise<NoriPublicConfig> {
   return apiRequest<NoriPublicConfig>(baseUrl, fetcher, "/nori/config", {
     action: "Load Nori config",
+    // This is THE LeLab-reachability probe (leLabAvailable gates local-hardware pages
+    // on it). On a hosted page a fetch to the default dead localhost:8000 can hang
+    // indefinitely — the bootstrap never settles and pages that should show
+    // "unavailable on the web" just spin. A local server answers in ms; 4s is generous.
+    signal: AbortSignal.timeout(4000),
   });
 }
 

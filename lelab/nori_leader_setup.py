@@ -328,14 +328,37 @@ def scan_ids(bus: SCSBus, start: int = 1, stop: int = 253) -> list[int]:
 # one of these while holding the bus lock freezes every leader endpoint.
 _PORT_SKIP_TOKENS = ("bluetooth", "debug-console", "wlan", "airpod")
 
+# A leader bus is ALWAYS a USB serial device: macOS names it cu.usbmodem* /
+# cu.usbserial* / cu.wchusbserial* ("usbserial" catches the CH340/FTDI/PL2303
+# variants); Linux uses ttyUSB* / ttyACM*. Everything else on /dev/cu.* is a
+# Bluetooth or virtual port that can never be a leader — and a Bluetooth *audio*
+# device (a paired speaker/headset, whose name we can't enumerate up front) has no
+# fixed token to blocklist, yet its open() can hang. So we ALLOWLIST USB serial
+# instead of blocklisting an open-ended set of Bluetooth names.
+_USB_SERIAL_TOKENS = ("usbmodem", "usbserial", "ttyusb", "ttyacm")
+
 # Hard cap per probed port. A silent-but-real USB serial port answers all 12 pings
 # well inside this; anything slower is not our bus and gets abandoned.
 PROBE_TIMEOUT_SEC = 3.0
 
 
+def _looks_like_usb_serial(identity: PortIdentity) -> bool:
+    name = f"{identity.device} {identity.stable_path or ''}".lower()
+    if any(token in name for token in _USB_SERIAL_TOKENS):
+        return True
+    # Fallback for oddly-named nodes: a populated USB hardware id (VID:PID) also marks
+    # a USB device. Bluetooth / virtual ports report hwid 'n/a' (no vid/pid).
+    hwid = (identity.hwid or "").lower()
+    return "usb" in hwid or "vid:pid" in hwid
+
+
 def _is_probeable_port(identity: PortIdentity) -> bool:
     name = f"{identity.device} {identity.stable_path or ''}".lower()
-    return not any(token in name for token in _PORT_SKIP_TOKENS)
+    if any(token in name for token in _PORT_SKIP_TOKENS):
+        return False
+    # Only USB serial can be a leader bus; skip Bluetooth/virtual ports entirely so a
+    # paired audio device can never stall the probe (see _USB_SERIAL_TOKENS).
+    return _looks_like_usb_serial(identity)
 
 
 def probe_port(

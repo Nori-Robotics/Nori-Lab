@@ -97,12 +97,33 @@ The build smoke test only checks imports. Run the *actual* bundle binary and:
 - [ ] **Run inference on a checkpoint** — the torch + `_child` path most likely to break.
       If an import fails here, a needed module is in `excludes` in the spec — pull it out.
 
+**Fixed en route — leader auto-detect hung on Bluetooth serial ports.** The leader-setup
+page auto-runs `autoDetectPort()` on load, which probed *every* `/dev/cu.*` port. A paired
+Bluetooth audio device (a Bose speaker / Razer headset showed up as `cu.MicroBoseSpeaker`,
+`cu.RazerKrakenBTKittyEditi`) isn't caught by the name blocklist, and opening its RFCOMM
+serial port can block macOS indefinitely — freezing the loading wheel. Fix
+(`nori_leader_setup.py`): `_is_probeable_port` now **allowlists USB serial only**
+(`usbmodem`/`usbserial`/`ttyUSB`/`ttyACM`, or a populated USB hwid) instead of blocklisting
+Bluetooth names — a leader bus is always USB. Verified auto-save dropped from ~6 s (two BT
+ports × 3 s deadline) to ~0 s. NOTE: the real arm still needs an on-device check that it
+detects (its `cu.usbmodem*`/`cu.usbserial*` node passes the allowlist).
+
 ### 3. Wrap it in Tauri (1–2 days)
 - [ ] `cargo install tauri-cli`; generate icons: `cargo tauri icon <logo.png>`.
 - [ ] `cd desktop/tauri && cargo tauri build`. The Rust is written against the Tauri v2
       API but has never been compiled — expect small API/signature fixes.
 - [ ] Verify lifecycle: window opens at `:8000` only after the backend answers, and the
       backend child is **killed on window close** (check for orphan `lelab-backend` procs).
+
+**Orphan-kill hardening (implemented) — three exit paths covered:** (1) `main.rs`
+`WindowEvent::Destroyed` kills the child on window close; (2) `main.rs` now also handles
+`RunEvent::Exit` (via `.build().run(|handle, event| …)`) so a Cmd+Q that skips Destroyed
+still tears it down; (3) `backend_entry.py::_install_parent_death_watchdog()` polls
+`getppid()` and hard-exits when the parent dies — the only thing that catches a Ctrl+C on
+`tauri dev`, a crash, or a force-quit, none of which fire the Rust handlers. Symptom this
+fixes: `[Errno 48] Address already in use` on the next launch because a prior frozen
+backend still held :8000. Manual clear if ever needed:
+`lsof -nP -iTCP:8000 -sTCP:LISTEN -t | xargs kill`.
 
 ### 4. Build matrix + signing (1–2 days)
 - [ ] GitHub Actions matrix (macos / windows / ubuntu) running `build.sh` + `cargo tauri
@@ -111,9 +132,26 @@ The build smoke test only checks imports. Run the *actual* bundle binary and:
 - [ ] Windows: Authenticode cert (~$100–400/yr) or users hit SmartScreen.
 
 ### 5. Config UX + secret handling (½–1 day)
-- [ ] Today Nori features read `NORI_BACKEND_URL` / Supabase keys from a repo-root `.env`.
-      A shipped app has no repo. Decide: bundle a default, or add a settings screen. Until
-      then, calibrate/teleop/record/inference work offline; only cloud features need it.
+Nori cloud features need **three PUBLIC values** in the frozen backend's env:
+`SUPABASE_URL`, `SUPABASE_ANON_KEY` (browser auth via `/nori/config`) and **`NORI_BACKEND_URL`**
+(the JWT proxy target — its default `http://localhost:8001` is dev-only, so without it every
+cloud feature proxies to nowhere even when auth works). A shipped app has no repo `.env`, and
+the frozen backend's CWD is `resources/backend/`, so lelab's own `load_dotenv()` finds nothing.
+
+**Mechanism (implemented):** `backend_entry.py::_load_adjacent_env()` loads a `.env` sitting
+next to the executable (`override=False`, so a real exported env var still wins for dev). Template:
+`desktop/env.public.example`. To self-configure a build, copy it to `resources/backend/.env`
+and fill in the public values:
+```
+cp desktop/env.public.example desktop/tauri/resources/backend/.env   # then edit
+```
+- [ ] Wire `build.sh` to stage that `.env` into the bundle on release (currently manual).
+- [ ] For **local `tauri dev`** you can skip the file and just export the three vars first
+      (they're inherited by the spawned backend): `export SUPABASE_URL=… SUPABASE_ANON_KEY=…
+      NORI_BACKEND_URL=https://nori-backend-production.up.railway.app`.
+- NEVER put the Supabase service-role key or `ANTHROPIC_API_KEY` in this file (see the
+  secret-handling decision above — LLM routes through Railway). `resources/backend/` is
+  gitignored, so a filled-in `.env` there won't be committed.
 
 **Decision — the Anthropic key must NEVER live on a customer machine (route LLM through
 the cloud).** A desktop bundle is fully in the customer's hands: PyInstaller archives unzip,

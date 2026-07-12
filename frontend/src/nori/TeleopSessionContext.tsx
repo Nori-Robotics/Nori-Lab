@@ -57,7 +57,8 @@ const EMPTY_TEL: TelemetryView = {
 };
 
 const EMPTY_CALL: CallState = {
-  active: false, micMuted: true, micSending: false, robotAudio: false, robotMicLive: false, cameraOn: false,
+  active: false, micMuted: true, micSending: false, robotAudio: false, robotMicLive: false,
+  robotMicMuted: false, cameraOn: false,
 };
 
 export interface TeleopSessionValue {

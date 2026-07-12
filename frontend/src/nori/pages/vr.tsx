@@ -23,7 +23,7 @@ export default function VrLanding() {
   const {
     teleop, running, connecting, connState,
     settings, setSetting: set, connect, disconnect, appendLog, tel,
-    setCurrentsListener,
+    setCurrentsListener, daemonStatus,
   } = useTeleopSession();
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -75,6 +75,10 @@ export default function VrLanding() {
     return () => setCurrentsListener(null);
   }, [setCurrentsListener]);
   useEffect(() => { vrRef.current?.setTelemetry(tel); }, [tel]);
+  // Keep the HUD's control row honest about motor health (same rule as the 2D chip).
+  useEffect(() => {
+    vrRef.current?.setMotorsOnline(!daemonStatus || daemonStatus.state === "online");
+  }, [daemonStatus]);
 
   // Detect headset support once, and force a fresh clutch squeeze after any link drop (no snap).
   useEffect(() => { VrSession.isSupported().then(setXrSupported); }, []);

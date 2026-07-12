@@ -59,7 +59,7 @@ const HAPTIC_BASE_RISE = 3; // baseline upward creep (units/s): slow enough that
                             // absorb idle-current drift
 const HAPTIC_PULSE_MS = 100; // longer pulse per frame -> a more solid, continuous buzz (was 60)
 const CURRENT_FULL = 600; // Present_Current mapped to a full HUD bar (matches TeleopStatus)
-const TEL_STALE_MS = 1500; // no telemetry for this long -> HUD shows "stale" (matches remote.tsx)
+const TEL_STALE_MS = 1500; // no telemetry for this long -> HUD control row reads "disconnected"
 const HUD_REDRAW_MS = 250;  // repaint cadence so staleness updates even without new frames
 
 type Hand = "left" | "right";
@@ -131,6 +131,7 @@ export class VrSession {
   // with the same stats, uploaded as a texture on a panel beside the video.
   private tel: TelemetryView | null = null;
   private lastTelAt = 0;
+  private motorsOnline = true;
   private hudCanvas: HTMLCanvasElement | null = null;
   private hudCtx: CanvasRenderingContext2D | null = null;
   private hudTexture: THREE.CanvasTexture | null = null;
@@ -176,6 +177,14 @@ export class VrSession {
   setTelemetry(t: TelemetryView) {
     this.tel = t;
     this.lastTelAt = performance.now();
+  }
+
+  // The robot's motor-control health (the page wires RemoteTeleop.onDaemonStatus here). The HUD's
+  // "control" row needs it for the same reason the 2D chip does: the command channel can be open
+  // and the media bridge healthy while motor control behind them is dead. Default true so a robot
+  // that never reports health isn't shown as offline — telemetry staleness still catches that.
+  setMotorsOnline(ok: boolean) {
+    this.motorsOnline = ok;
   }
 
   // Force a fresh squeeze before driving resumes (after any safe-hold). The page calls
@@ -327,6 +336,7 @@ export class VrSession {
     this.rcPoked = false;
     this.rcBtnHot = false;
     this.tel = null;
+    this.motorsOnline = true;
     this.session = null;
     this.o.onLog("VR session ended");
     this.o.onEnd();
@@ -578,8 +588,9 @@ export class VrSession {
       const safetyTone = s === "-" || s === "" ? DIM
         : ["ok", "normal", "nominal", "clear"].includes(s) ? GREEN : AMBER;
       const tempTone = t.tempC >= 80 ? RED : t.tempC >= 70 ? AMBER : FG;
-      row("control", t.active ? (stale ? "stale" : "active") : "inactive",
-        !t.active ? DIM : stale ? AMBER : GREEN);
+      // Same three-signal rule as the 2D chip (TeleopStatus.tsx) — keep them in lockstep.
+      const controlOk = t.active && !stale && this.motorsOnline;
+      row("control", controlOk ? "connected" : "disconnected", controlOk ? GREEN : RED);
       row("path", t.linkMode ? t.linkMode.toUpperCase() : "—",
         t.linkMode === "lan" ? GREEN : t.linkMode === "wan" ? AMBER : DIM);
       row("loop", `${t.loopHz.toFixed(1)} Hz`, hzTone);

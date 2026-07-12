@@ -15,7 +15,10 @@
 import React, {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode,
 } from "react";
-import { RemoteTeleop, type ArmSide, type CallState, type ControlMode, type TelemetryView } from "@nori/sdk";
+import {
+  RemoteTeleop,
+  type ArmSide, type CallState, type ControlMode, type DaemonStatus, type TelemetryView,
+} from "@nori/sdk";
 import { SupabaseSignaling } from "@nori/sdk/supabase";
 import { getSupabase } from "@/nori/auth/supabase";
 import { useNori } from "@/nori/NoriContext";
@@ -67,6 +70,10 @@ export interface TeleopSessionValue {
   controlActive: boolean;
   mode: ControlMode;
   call: CallState;
+  // Robot-daemon health from the Pi bridge (daemon_status frames), null until one arrives.
+  // Distinguishes "robot online but daemon down/restarting/refusing" from a healthy session —
+  // connState alone cannot (the media bridge stays connected while the daemon is dead).
+  daemonStatus: DaemonStatus | null;
   logLines: string[];
   appendLog: (msg: string) => void;
   settings: Settings;
@@ -98,6 +105,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
   const [tel, setTel] = useState<TelemetryView>(EMPTY_TEL);
   const [stale, setStale] = useState(false);
   const [call, setCall] = useState<CallState>(EMPTY_CALL);
+  const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
   const [logLines, setLogLines] = useState<string[]>([]);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [scriptSource, setScriptSourceState] = useState<string>(() => {
@@ -108,7 +116,20 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
   const currentsListenerRef = useRef<((c: Record<string, number>) => void) | null>(null);
 
   const appendLog = useCallback((msg: string) => {
-    setLogLines((prev) => [...prev.slice(-300), msg]);
+    setLogLines((prev) => {
+      // Collapse consecutive duplicates into one line with a counter ("… (x12)") — a daemon
+      // refusal loop re-sends the same fatal error every ~1 s, which used to bury everything
+      // else in the log box. Only CONSECUTIVE repeats collapse, so interleaved events keep
+      // their order.
+      const last = prev[prev.length - 1];
+      const m = last?.match(/^(.*) \(x(\d+)\)$/);
+      const lastBase = m ? m[1] : last;
+      if (lastBase === msg) {
+        const n = m ? parseInt(m[2], 10) + 1 : 2;
+        return [...prev.slice(0, -1), `${msg} (x${n})`];
+      }
+      return [...prev.slice(-300), msg];
+    });
   }, []);
 
   const setSetting = useCallback(<K extends keyof Settings>(k: K, v: Settings[K]) => {
@@ -158,6 +179,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     if (teleopRef.current) return; // already have a session
     setConnecting(true);
     setLogLines([]);
+    setDaemonStatus(null);
     const turnUrls = settings.turn.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
     const room = settings.room.trim() || serial || "nori-dev";
     const t = new RemoteTeleop({
@@ -184,6 +206,9 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
       // Note which cameras the composite is showing, once, on connect. (Per-move completion is
       // surfaced by moveTo itself in the script output, so action_status isn't logged here.)
       onCameraLayout: (l) => appendLog(`camera layout: ${l.tiles.join(", ")}`),
+      // Daemon health transitions (the SDK already appends them to the log; this drives the
+      // banner/chip so "daemon down/restarting" never reads as random dead control).
+      onDaemonStatus: setDaemonStatus,
     });
     teleopRef.current = t;
     setTeleop(t);
@@ -219,17 +244,18 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     setConnState("idle");
     setTel(EMPTY_TEL);
     setCall(EMPTY_CALL);
+    setDaemonStatus(null);  // health is per-session; don't show a stale banner next connect
   }, []);
 
   // Leaving /nori entirely unmounts this provider — tear the session down cleanly (robot `bye`).
   useEffect(() => () => { teleopRef.current?.stop(); }, []);
 
   const value = useMemo<TeleopSessionValue>(() => ({
-    teleop, running, connecting, connState, tel, stale, controlActive, mode, call,
+    teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, scriptSource, setScriptSource,
   }), [
-    teleop, running, connecting, connState, tel, stale, controlActive, mode, call,
+    teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, scriptSource, setScriptSource,
   ]);

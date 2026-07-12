@@ -110,10 +110,30 @@ The build smoke test only checks imports. Run the *actual* bundle binary and:
 - [ ] macOS: Apple Developer ID ($99/yr) → codesign + notarize (unsigned = Gatekeeper block).
 - [ ] Windows: Authenticode cert (~$100–400/yr) or users hit SmartScreen.
 
-### 5. Config UX (½ day)
+### 5. Config UX + secret handling (½–1 day)
 - [ ] Today Nori features read `NORI_BACKEND_URL` / Supabase keys from a repo-root `.env`.
       A shipped app has no repo. Decide: bundle a default, or add a settings screen. Until
       then, calibrate/teleop/record/inference work offline; only cloud features need it.
+
+**Decision — the Anthropic key must NEVER live on a customer machine (route LLM through
+the cloud).** A desktop bundle is fully in the customer's hands: PyInstaller archives unzip,
+`strings` finds embedded keys, traffic can be sniffed. So *no* long-lived provider secret
+(`ANTHROPIC_API_KEY`, Supabase service-role) may ship in the bundle. Verified the current
+bundle is clean — PyInstaller doesn't embed env vars, `build.sh` copies no secrets, `main.rs`
+injects none, and a `strings` scan finds no `sk-ant…`. The consequence is that today the
+agent/coding endpoints return `503 ANTHROPIC_API_KEY not set` in a shipped app.
+
+The fix (implement later): **`lelab/server.py`'s LLM endpoints proxy to Nori-Backend
+(Railway) instead of calling `anthropic.Anthropic(...)` directly with a local key.** Railway
+holds the key server-side and authenticates per-user via the forwarded JWT — the exact
+pattern the other `/nori/*` proxy routes already use (`_nori_proxy`). Then no key ever
+touches a customer's machine. Cost is already governed there: the agent loop
+(`nori_llm_agent`, `server.py:860`) gates on `GET /agent/usage` (429 when `hard_capped`) and
+charges actual usage post-turn, per-customer, JWT-keyed, failing closed. TODO when doing
+this: extend the same per-user gate to the one-shot coding endpoint (`_llm_prepare`,
+`server.py:498`), which currently checks the key but not the daily budget.
+- Supabase **anon** key is public by design — safe to bake (VITE_ / `/nori/config`).
+  Service-role key stays Railway-only, never client-side.
 
 ---
 

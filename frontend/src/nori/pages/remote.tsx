@@ -16,7 +16,7 @@ import { useApi } from "@/contexts/ApiContext";
 import { type ArmSide, type CameraViewHandle } from "@nori/sdk";
 import { VrSession } from "@nori/sdk/vr";
 import { VrHandoff } from "@/nori/components/VrHandoff";
-import { TelemetryPanel, GripForce, ControlLegend, BaseCommandLegend, CallBar, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
+import { TelemetryPanel, GripForce, ControlLegend, BaseCommandLegend, CallBar, DaemonBanner, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import LeaderSetup from "@/nori/pages/leader-setup";
@@ -59,7 +59,7 @@ const Remote = () => {
   // This page is a consumer: it renders video/telemetry/settings and drives VR/leader/clip, but
   // it no longer owns the RemoteTeleop instance and must NOT stop it on unmount.
   const {
-    teleop, running, connecting, connState, tel, stale, controlActive, mode, call,
+    teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
     logLines, appendLog, settings, setSetting: set, connect, disconnect: sessionDisconnect,
     toggleControlMode, setCurrentsListener,
   } = useTeleopSession();
@@ -436,6 +436,10 @@ const Remote = () => {
               )}
             </div>
           </div>
+          {/* Daemon outage banner: video/link can be perfectly healthy while the robot's
+              controller is down or refusing sessions (dead arm) — say so, with the remedy,
+              instead of letting it read as random dead control. */}
+          {running && <DaemonBanner status={daemonStatus} />}
           <div className="relative">
             <video
               ref={videoRef}
@@ -534,6 +538,7 @@ const Remote = () => {
                 controlActive={controlActive}
                 stale={stale}
                 inVr={inVr}
+                daemonStatus={running ? daemonStatus : null}
               />
             </div>
             <h2 className="mt-4 flex items-center gap-1.5 text-sm font-semibold">
@@ -771,7 +776,7 @@ const Remote = () => {
           <CardContent className="p-4 pt-3">
             <div
               ref={logRef}
-              className="max-h-44 overflow-auto whitespace-pre-wrap rounded border border-[#14131a]/10 bg-[#f3f1e8] p-2 font-mono text-xs"
+              className="max-h-96 min-h-44 overflow-auto whitespace-pre-wrap rounded border border-[#14131a]/10 bg-[#f3f1e8] p-2 font-mono text-xs"
             >
               {logLines.length > 0 ? (
                 logLines.join("\n")

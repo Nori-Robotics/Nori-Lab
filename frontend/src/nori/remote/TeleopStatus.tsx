@@ -16,6 +16,7 @@ import {
   type BaseKeyCluster,
   type CallState,
   type ControlMode,
+  type DaemonStatus,
   type TelemetryView,
 } from "@nori/sdk";
 
@@ -53,18 +54,53 @@ function safetyTone(safety: string): "good" | "warn" | "default" {
   return "warn";
 }
 
+// Operator-facing remedy per daemon_status offline reason (nori_protocol_schema §5b). The bridge's
+// `detail` usually carries the daemon's own message; this is the what-do-I-do line under it.
+const DAEMON_REMEDIES: Record<string, string> = {
+  startup_positions:
+    "An arm isn't responding — it has likely lost power. Power-cycle (unplug/replug) the arm; the robot reconnects automatically.",
+  bus_lost:
+    "A servo bus disconnected (USB). The robot is restarting its controller — control should return in ~15 s. If it repeats, check the bus cable.",
+  unauthorized:
+    "The robot rejected the control token (provisioning problem). Contact support — this won't fix itself.",
+  unreachable:
+    "The robot's controller is down or restarting. Control should return shortly; video keeps working.",
+  connection_lost:
+    "The robot's controller restarted. Control should return shortly; video keeps working.",
+};
+export function daemonRemedy(reason?: string): string {
+  return (reason && DAEMON_REMEDIES[reason]) || DAEMON_REMEDIES.unreachable;
+}
+
+// Full-width alert shown while the daemon is offline: the reason + remedy, so a dead-arm refusal
+// loop reads as "power-cycle the arm" instead of random downtime with a connected video feed.
+export function DaemonBanner({ status }: { status: DaemonStatus | null }) {
+  if (!status || status.state === "online") return null;
+  return (
+    <div className="rounded-md border border-[#d24a3d]/35 bg-[#fde7e4] px-4 py-3 text-[#a3271c]">
+      <p className="font-mono text-[11px] uppercase tracking-[0.14em]">
+        robot controller offline{status.reason ? ` — ${status.reason.replace(/_/g, " ")}` : ""}
+      </p>
+      <p className="mt-1 text-sm">{daemonRemedy(status.reason)}</p>
+      {status.detail && <p className="mt-1 font-mono text-xs opacity-80">{status.detail}</p>}
+    </div>
+  );
+}
+
 export function TelemetryPanel({
   connState,
   tel,
   controlActive,
   stale,
   inVr,
+  daemonStatus,
 }: {
   connState: string;
   tel: TelemetryView;
   controlActive: boolean;
   stale: boolean; // no telemetry frame for a while -> the readouts below are not live
   inVr: boolean;
+  daemonStatus?: DaemonStatus | null; // bridge-reported daemon health (null = none received yet)
 }) {
   const connected = connState === "connected";
   // loop_hz should sit near 50; flag a sag so a struggling control loop is visible.
@@ -85,6 +121,11 @@ export function TelemetryPanel({
       />
       <Stat label="control" value={controlActive ? (stale ? "stale" : "active") : "inactive"}
         tone={!controlActive ? "default" : stale ? "warn" : "good"} />
+      {/* Daemon health is a separate axis from link: the media bridge (video, this chip's
+          transport) can be fully connected while the daemon behind it is dead/restarting. */}
+      <Stat label="daemon"
+        value={daemonStatus ? daemonStatus.state : "—"}
+        tone={!daemonStatus ? "default" : daemonStatus.state === "online" ? "good" : "bad"} />
       <Stat label="loop" value={`${tel.loopHz.toFixed(1)} Hz`} tone={hzTone} />
       <Stat label="safety" value={tel.safety} tone={safetyTone(tel.safety)} />
       <Stat label="watchdog" value={tel.watchdog} tone={tel.watchdog === "-" ? "default" : "warn"} />

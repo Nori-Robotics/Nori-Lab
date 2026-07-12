@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useApi } from "@/contexts/ApiContext";
+import { useNori } from "@/nori/NoriContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   autoSaveLeaderPorts,
@@ -255,6 +256,7 @@ const LeaderSetup = ({
   onToggleCollapse?: () => void;
 }) => {
   const { baseUrl, fetchWithHeaders } = useApi();
+  const { leLabAvailable } = useNori();
   const { toast } = useToast();
 
   const [calibrationId, setCalibrationId] = useState(DEFAULT_CALIBRATION_ID);
@@ -453,6 +455,34 @@ const LeaderSetup = ({
       : autoStatus?.active || autoStatus?.status === "completed"
         ? autoStatus.message || "auto calibration"
         : "ready");
+
+  // Leader driving depends on the LeLab server enumerating the USB serial bus (pyserial
+  // behind `/nori/leader/*`). On the hosted, LeLab-free deploy there is no such server —
+  // a headset browser can't reach any local hardware — so the whole flow is impossible.
+  // Show an honest notice instead of a Search button that can only ever fail. All hooks
+  // above still run, so this early return is rules-of-hooks safe.
+  if (!leLabAvailable) {
+    return (
+      <section
+        className={
+          embedded
+            ? "text-[#14131a]"
+            : "min-h-[calc(100vh-2rem)] rounded-md bg-[#fbfaf5] px-4 py-5 text-[#14131a] sm:px-5"
+        }
+      >
+        <Alert className="border-[#14131a]/12 bg-[#fffdf7] text-[#14131a]">
+          <AlertTitle>Leader driving isn’t available on the web app</AlertTitle>
+          <AlertDescription className="text-[#5c5344]">
+            Leader arms connect over a USB cable and are controlled by the Nori Lab desktop
+            app running on the same computer. This page is served over the web, which can’t
+            reach local USB hardware — so arm search and calibration only work in the desktop
+            app. Use a headset with the VR controls for remote driving, or open Nori Lab on
+            the computer the arms are plugged into.
+          </AlertDescription>
+        </Alert>
+      </section>
+    );
+  }
 
   return (
     <section

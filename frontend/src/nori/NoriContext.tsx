@@ -30,6 +30,14 @@ interface NoriContextType {
   loading: boolean;
   /** Set if bootstrap failed (backend unreachable or Supabase env missing). */
   error: string | null;
+  /**
+   * True when a local LeLab server answered `/nori/config` — i.e. the desktop app,
+   * which owns local hardware. False on the hosted, LeLab-free deploy (where config
+   * came from the build-time fallback), on which local-hardware features (leader-arm
+   * USB search, calibration, live driving) are physically impossible — there is no
+   * server to enumerate serial ports. Gate those UIs on this.
+   */
+  leLabAvailable: boolean;
   session: Session | null;
   /** The provisioned customer profile, once signed in + provisioned. */
   customer: CustomerProfile | null;
@@ -65,6 +73,9 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [provisioning, setProvisioning] = useState(false);
   const [customerError, setCustomerError] = useState<string | null>(null);
   const [activeRobotSerial, setActiveRobotSerialState] = useState<string | null>(null);
+  // Optimistic default: the desktop app is the common case, so we assume a local LeLab
+  // until the bootstrap proves otherwise (avoids a flash of "unavailable" on desktop).
+  const [leLabAvailable, setLeLabAvailable] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,6 +88,10 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // back to build-time public config baked into the bundle. A reachable-but-
         // unconfigured LeLab also defers to the build-time values when present.
         let cfg: NoriPublicConfig;
+        // Reachability of the LeLab server is what gates local-hardware features, and it
+        // is exactly "did `/nori/config` answer" — independent of whether Supabase is
+        // configured. Only the fallback (catch) path means no local server is present.
+        let leLab = true;
         try {
           cfg = await getNoriConfig(baseUrl, fetchWithHeaders);
           if (!cfg.configured) cfg = getBuildTimeConfig() ?? cfg;
@@ -84,9 +99,11 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           const fallback = getBuildTimeConfig();
           if (!fallback) throw e;
           cfg = fallback;
+          leLab = false;
         }
         if (cancelled) return;
         setConfig(cfg);
+        setLeLabAvailable(leLab);
         if (cfg.configured) {
           initSupabase(cfg);
           setSession(await getSession());
@@ -176,6 +193,7 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       ready: !!config?.configured && !error,
       loading,
       error,
+      leLabAvailable,
       session,
       customer,
       provisioning,
@@ -188,6 +206,7 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       config,
       loading,
       error,
+      leLabAvailable,
       session,
       customer,
       provisioning,

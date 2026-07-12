@@ -76,7 +76,7 @@ fn main() {
                     "main",
                     WebviewUrl::External(BACKEND_URL.parse().unwrap()),
                 )
-                .title("LeLab")
+                .title("Nori Lab")
                 .inner_size(1400.0, 900.0)
                 .resizable(true)
                 .build();

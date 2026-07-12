@@ -71,3 +71,22 @@ HTTPS_SETUP.md
 
 # Self-signed dev certs (regenerate per HTTPS_SETUP.md)
 certs/
+
+# --- Desktop app build artifacts (Tauri + PyInstaller) — all regenerable, never commit ---
+# PyInstaller: build venv (~1.6G torch), work dir, and freeze output
+desktop/.build-venv/
+desktop/build/
+desktop/dist/
+# The staged, frozen backend bundle (~768M) — produced by desktop/build.sh into the
+# Tauri resource dir at build time; recreated per release, must not bloat the remote.
+desktop/tauri/resources/backend/
+# Cargo build output (also redirected off-repo via CARGO_TARGET_DIR, but ignore in case)
+desktop/tauri/target/
+# Tauri-generated ACL/permission schemas
+desktop/tauri/gen/schemas/
+# `tauri icon` emits a full cross-platform set; a desktop app (dmg/nsis/appimage) only
+# uses the handful referenced in tauri.conf.json. Ignore the mobile/Windows-Store variants.
+desktop/tauri/icons/android/
+desktop/tauri/icons/ios/
+desktop/tauri/icons/Square*Logo.png
+desktop/tauri/icons/StoreLogo.png

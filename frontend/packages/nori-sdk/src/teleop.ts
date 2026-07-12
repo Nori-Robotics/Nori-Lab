@@ -124,6 +124,23 @@ export interface ActionStatus {
 // The states that end an action's lifecycle (awaitAction resolves on these).
 const TERMINAL_ACTION_STATES = new Set<ActionState>(["done", "clamped", "blocked", "timeout"]);
 
+// Robot-daemon health as observed by the Pi's media bridge (nori_protocol_schema §5b). The bridge —
+// not the daemon — knows when the daemon is down/restarting/refusing sessions, so it publishes this
+// on the control channel: on every transition, re-broadcast every 3 s while offline. Idempotent
+// state, not an event — render the latest one. Distinct from the WebRTC connState: the peer (media
+// bridge) can be fully connected while the daemon behind it is dead, which used to read as
+// "connected" with silently dead control ("random downtime").
+export interface DaemonStatus {
+  state: "online" | "offline" | (string & {});
+  // offline only — why. Known values the UI maps to remedies:
+  //   startup_positions  an arm reports no positions (usually lost power) → power-cycle the arm
+  //   bus_lost           USB servo bus disconnected → daemon is restarting itself
+  //   unauthorized       agent token mismatch (provisioning problem)
+  //   unreachable | connection_lost   daemon down or restarting (no more-specific reason)
+  reason?: string;
+  detail?: string; // operator-facing text; carries the daemon's own message when it sent one
+}
+
 // Which camera is in which composite tile (bridge-derived, from cameras.json order). Sent by the Pi
 // media bridge on control-channel open in composite mode; lets the LLM-vision path know which feed is
 // which arm WITHOUT the operator hand-typing it and WITHOUT labels burned into the pixels. `tiles` is
@@ -304,6 +321,11 @@ export interface RemoteTeleopOptions {
   // Optional: the composite camera layout (bridge-derived), when it arrives. A consumer usually
   // reads cameraLayout() at use-time instead of subscribing.
   onCameraLayout?: (layout: CameraLayout) => void;
+  // Optional: robot-daemon health transitions (bridge-derived daemon_status frames). Fires on
+  // every state/reason change (the bridge's 3 s while-offline repeats are deduped). This is how
+  // a UI distinguishes "robot online but daemon down/restarting" from a healthy session — the
+  // WebRTC connState alone cannot. Poll daemonStatus() for the latest value at use-time.
+  onDaemonStatus?: (s: DaemonStatus) => void;
   // Optional: the daemon's handshake ack (robot self-description — joints, cameras, ranges,
   // watchdog profile, initial pose). Fires once per daemon (re)connect; poll robotInfo()
   // instead if you only need it at use-time. Check info.accepted / info.versionMismatch here
@@ -467,6 +489,7 @@ export class RemoteTeleop {
 
   // Composite camera layout from the bridge (Phase F vision), null until it arrives / single-cam.
   private cameraLayoutRaw: CameraLayout | null = null;
+  private daemonStat: DaemonStatus | null = null;   // latest daemon_status (bridge health frame)
   // The parsed handshake ack (P4.1). null until the daemon's ack arrives; refreshed on every
   // daemon (re)connect (a fresh offer means a fresh session, and the daemon re-acks).
   private ackInfo: RobotInfo | null = null;
@@ -1223,10 +1246,15 @@ export class RemoteTeleop {
       this.ingestActionStatus(m);
     } else if (m.type === "camera_layout") {
       this.ingestCameraLayout(m);
+    } else if (m.type === "daemon_status") {
+      this.ingestDaemonStatus(m);
     } else if (m.type === "ack") {
       this.ingestAck(m);
     } else if (m.type === "error") {
-      this.log("daemon error: " + JSON.stringify(m));
+      // Human-readable in the session log; the daemon's msg carries the remedy for actionable
+      // faults (e.g. startup_positions → "power-cycle the arm"). Persistent outage state is the
+      // daemon_status frame above — this line is the transient event record.
+      this.log(`daemon error [${String(m.code ?? "?")}]${m.fatal ? " (fatal)" : ""}: ${String(m.msg ?? "")}`);
     }
   }
 
@@ -1313,6 +1341,28 @@ export class RemoteTeleop {
   // The raw composite layout, or null if unknown (single-camera, or not yet received).
   cameraLayoutInfo(): CameraLayout | null {
     return this.cameraLayoutRaw;
+  }
+
+  // Cache + dedupe the bridge's daemon_status health frames (it re-broadcasts every 3 s while
+  // offline because the control channel is unreliable — only transitions reach the callback/log).
+  private ingestDaemonStatus(m: Record<string, unknown>) {
+    const s: DaemonStatus = { state: String(m.state ?? "") };
+    if (typeof m.reason === "string" && m.reason) s.reason = m.reason;
+    if (typeof m.detail === "string" && m.detail) s.detail = m.detail;
+    if (!s.state) return;
+    const prev = this.daemonStat;
+    if (prev && prev.state === s.state && prev.reason === s.reason && prev.detail === s.detail) return;
+    this.daemonStat = s;
+    this.log(s.state === "online"
+      ? "robot daemon: online"
+      : `robot daemon: OFFLINE [${s.reason ?? "unknown"}]${s.detail ? " — " + s.detail : ""}`);
+    this.o.onDaemonStatus?.(s);
+  }
+
+  // The latest bridge-reported daemon health, or null if none received yet (pre-2026-07-11
+  // bridge, or the control channel just opened).
+  daemonStatus(): DaemonStatus | null {
+    return this.daemonStat;
   }
 
   // A one-line description of the composite layout for the LLM vision prompt, or null if unknown.

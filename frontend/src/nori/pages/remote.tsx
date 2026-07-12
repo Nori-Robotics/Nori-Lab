@@ -8,7 +8,6 @@
 // settings (room, optional room token, ICE/TURN) which must match the Pi's .env.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,7 +60,7 @@ const Remote = () => {
   // it no longer owns the RemoteTeleop instance and must NOT stop it on unmount.
   const {
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call,
-    logLines, appendLog, settings, setSetting: set, disconnect: sessionDisconnect,
+    logLines, appendLog, settings, setSetting: set, connect, disconnect: sessionDisconnect,
     toggleControlMode, setCurrentsListener,
   } = useTeleopSession();
 
@@ -414,9 +413,9 @@ const Remote = () => {
           column starts at the very top, level with the page title. */}
       <div className="grid gap-4 lg:grid-cols-[1fr_400px]">
         <div className="space-y-3">
-          {/* Header: connection STATUS + Disconnect. Connecting (and session settings) live on the
-              landing page now — one connect surface for the whole app — so a disconnected Remote
-              just points there instead of duplicating the Connect button. */}
+          {/* Header: connection status + Connect/Disconnect. The session itself lives in
+              TeleopSessionProvider, so connecting from here is the same action as connecting on
+              Home — it just saves the round trip. */}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-3xl font-bold">Remote Operation</h1>
             <div className="flex items-center gap-3">
@@ -431,8 +430,8 @@ const Remote = () => {
               {running ? (
                 <Button size="sm" variant="destructive" onClick={disconnect}>Disconnect</Button>
               ) : (
-                <Button asChild size="sm" variant="secondary">
-                  <Link to="/nori">Connect on Home →</Link>
+                <Button size="sm" variant="secondary" onClick={connect} disabled={connecting}>
+                  {connecting ? "Connecting…" : "Connect"}
                 </Button>
               )}
             </div>

@@ -15,8 +15,27 @@
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # --- lerobot + its dynamic-import friends: grab everything (py + data + dylibs).
+# lerobot gates optional deps behind require_package("<name>") calls that run at
+# IMPORT time and find_spec() the top-level package — so any such dep on a path we
+# exercise (teleop / calibrate / record / inference) must physically be in the
+# bundle or the frozen `_child` aborts. The list below is every require_package
+# target that is actually installed in the build venv (the rest are hardware/model
+# backends we never touch and aren't installed). They load submodules by string
+# and ship data/dylibs (av's ffmpeg, arrow files), so each needs a full collect_all,
+# not a lone hiddenimport. NOTE: feetech's import name is `scservo_sdk`, NOT
+# `feetech_servo_sdk` (which does not exist — the old spec silently collected nothing).
+# `rerun` is intentionally NOT here: it's excluded below (dataset-viz only).
 datas, binaries, hiddenimports = [], [], []
-for pkg in ("lerobot", "draccus", "feetech_servo_sdk"):
+for pkg in (
+    # `lelab` is our own app package. The serving path is `uvicorn.run("lelab.server:app")`
+    # — a STRING import PyInstaller's static analysis can't see — so the package must be
+    # collected explicitly or the frozen backend dies at boot with ModuleNotFoundError.
+    # (The `_child` smoke test only imports lerobot, so this gap surfaced only at runtime.)
+    "lelab",
+    "lerobot", "draccus", "scservo_sdk",
+    "datasets", "av", "accelerate", "deepdiff",
+    "gymnasium", "jsonlines", "pandas", "pynput", "serial",
+):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b

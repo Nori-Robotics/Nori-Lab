@@ -46,8 +46,8 @@ the one surface that doesn't need the local agent.)
 | `lelab/utils/child_process.py` | `module_cmd()` shim — frozen vs source subprocess argv | ✅ compiles, lints clean |
 | `lelab/rollout.py` (edited) | inference spawn routed through `module_cmd()`; removed unused `import sys` | ✅ compiles, lints clean |
 | `desktop/backend_entry.py` | frozen entry: `_child` runpy dispatch, else headless uvicorn | ✅ compiles |
-| `desktop/lelab_desktop.spec` | PyInstaller: collect lerobot, exclude rerun/wandb/cmake | ⚠️ never run |
-| `desktop/build.sh` | CPU-torch pin → freeze → smoke test → stage into Tauri | ⚠️ never run |
+| `desktop/lelab_desktop.spec` | PyInstaller: collect lerobot, exclude rerun/wandb/cmake | ✅ runs; produces a working 768 MB bundle (macOS arm64) |
+| `desktop/build.sh` | CPU-torch pin → freeze → smoke test → stage into Tauri | ✅ run on macOS (use `PYTHON=python3.13`; 3.12 default absent) |
 | `desktop/tauri/*` | Rust shell (v2 API): spawn backend, wait for port, open window | ⚠️ never compiled |
 
 **"Verified" means the Python compiles and lints — it does NOT mean a bundle was
@@ -58,13 +58,37 @@ Treat the `.spec`, `build.sh`, and Rust as first-draft-that-should-work, not pro
 
 ## TODO — in order
 
-### 1. Produce a working backend bundle (½–1 day)
-- [ ] `cd frontend && npm run build` (backend serves `frontend/dist`).
-- [ ] Run `./desktop/build.sh` on macOS. Fix whatever PyInstaller misses — expect
-      **`hiddenimports` gaps** (lerobot/draccus load modules by string; the spec has a
-      starter list but won't be complete) and possibly a missing data file.
-- [ ] Confirm the smoke test passes (it checks the `_child` inference import survives the
-      excludes). **Record the actual `du -sh`** — target ~1 GB on disk / ~400 MB packed.
+### 1. Produce a working backend bundle (½–1 day) — ✅ DONE on macOS arm64
+- [x] `cd frontend && npm run build` (backend serves `frontend/dist`).
+- [x] Run `./desktop/build.sh` on macOS. **Invoke as `PYTHON=python3.13 ./desktop/build.sh`**
+      — the script defaults to `python3.12`, which may be absent (3.13 satisfies
+      requires-python; avoid 3.14 — no prebuilt torch/lerobot wheels yet).
+- [x] Confirm the smoke test passes — `_child lerobot.scripts.lerobot_rollout --help`
+      imports cleanly with torch. **Bundle size: 768 MB on disk** (under the ~1 GB target).
+      No `nvidia_*` CUDA leak; rerun/wandb excludes held.
+
+**Spec fixes made to get here** (`lelab_desktop.spec`) — lerobot gates optional deps behind
+`require_package("<name>")` calls that `find_spec()` at import time, so each must be
+physically bundled or the frozen `_child` aborts. Two rounds surfaced `datasets` then `av`;
+rather than loop, the spec now `collect_all`s **every installed `require_package` target**
+(datasets, av, accelerate, deepdiff, gymnasium, jsonlines, pandas, pynput, serial). Also
+fixed: the old spec collected `feetech_servo_sdk` — **a module that does not exist**; the
+real feetech import name is **`scservo_sdk`**, so the serial driver was never actually
+bundled before (latent hardware-path bug, would've bitten in step 2). `rerun` is installed
+but stays excluded (dataset-viz only, not on our paths) — revisit if a record path needs it.
+
+**Critically, `lelab` itself must be collected.** The serving path is
+`uvicorn.run("lelab.server:app")` — a *string* import PyInstaller can't see statically — so
+without `"lelab"` in the collect list the frozen backend boots and dies with
+`ModuleNotFoundError: No module named 'lelab'`. The old `_child`-only smoke test missed this
+because it imports lerobot, not lelab. The build now **also boots the backend headless and
+asserts `:8000` answers `HTTP 200`** — test the real serving path, not just imports. When
+you add a new string/lazy import to the serving path, extend this boot test too.
+
+> ⚠️ This was built with Python **3.13** (`python3.14` is the machine default but lacks
+> torch wheels). The `.build-venv` is warm; a fast re-freeze that skips the torch download
+> is: `source desktop/.build-venv/bin/activate && cd desktop && rm -rf build dist &&
+> pyinstaller lelab_desktop.spec --noconfirm --distpath ./dist --workpath ./build`.
 
 ### 2. Prove the hardware paths in the frozen bundle (1 day, needs an arm)
 The build smoke test only checks imports. Run the *actual* bundle binary and:

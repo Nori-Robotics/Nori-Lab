@@ -14,7 +14,6 @@ import EditDataset from "@/pages/EditDataset";
 import Upload from "@/pages/Upload";
 
 import NotFound from "@/pages/NotFound";
-import SingleTabGuard from "@/components/SingleTabGuard";
 import TeleopStopNotice from "@/components/TeleopStopNotice";
 import UpdateNotice from "@/components/UpdateNotice";
 // NORI: additive Nori laptop-app surface (all under /nori/*; no upstream routes touched).
@@ -49,8 +48,7 @@ function App() {
               <UrdfProvider>
                 <DragAndDropProvider>
                   <BrowserRouter>
-                    <SingleTabGuard>
-                      <TeleopStopNotice />
+                    <TeleopStopNotice />
                       <UpdateNotice />
                       <Routes>
                         {/* NORI: start on the Nori app; the upstream LeLab landing lives at /lelab. */}
@@ -105,7 +103,6 @@ function App() {
 
                         <Route path="*" element={<NotFound />} />
                       </Routes>
-                    </SingleTabGuard>
                     <Toaster />
                   </BrowserRouter>
                 </DragAndDropProvider>

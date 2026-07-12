@@ -1209,11 +1209,17 @@ def nori_acquire_policy(listing_id: str, request: Request):
 
 @app.post("/nori/marketplace/policies/{ref}/download")
 def nori_download_policy(ref: str, request: Request):
-    """Stream the policy's safetensors bytes through LeLab into the local Nori cache.
-    Returns {ref, path, size_bytes}; the cached file is what rollout will load later."""
+    """Install the policy's FULL runnable bundle through LeLab into the local
+    Nori cache: model.safetensors + config.json + pre/post-processor files,
+    each sha256-verified against the backend's promotion-time manifest.
+    Returns {ref, path, size_bytes, files} — `path` is the model file
+    (backward-compatible); the cache dir is what rollout loads later.
+    # NORI: switched from single-file download_policy to the manifest bundle
+    # flow (backend routes /manifest + /files/{name}) so installed policies
+    # are actually loadable by LeRobot from_pretrained."""
     client = _nori_client(request)
     dest = config.nori_policy_dir(ref)
-    return _nori_proxy(lambda: client.download_policy(ref, dest))
+    return _nori_proxy(lambda: client.download_policy_bundle(ref, dest))
 
 
 # NORI: dataset upload (Phase 4). Reroutes the HF-direct push to the backend-mediated

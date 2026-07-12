@@ -12,8 +12,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Literal
@@ -38,6 +40,27 @@ UPLOAD_REQUIRED_FILE = "info.json"
 # Terminal upload-session states (GET /datasets/upload/{id}).status.
 UPLOAD_TERMINAL_STATES = {"PROMOTED", "FAILED", "PROMOTION_FAILED", "CANCELLED"}
 UPLOAD_SUCCESS_STATE = "PROMOTED"
+
+# Policy-bundle member names we will write to disk. The backend's manifest is
+# trusted for CONTENT (it hashes the sanitized bytes), but never for PATHS:
+# a name is used only as a bare filename inside the destination dir, and must
+# look like one. Mirrors the backend's sanitize.py allowlist discipline.
+_BUNDLE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _safe_bundle_name(name: str) -> bool:
+    """True iff `name` is a plain filename: no separators, no traversal, no
+    leading dot, sane charset. Defense-in-depth — the backend already
+    allowlists names at promotion; this keeps a compromised/buggy backend from
+    turning an install into an arbitrary file write."""
+    return (
+        bool(name)
+        and len(name) <= 255
+        and "/" not in name
+        and "\\" not in name
+        and ".." not in name
+        and bool(_BUNDLE_NAME_RE.match(name))
+    )
 
 
 class ManifestError(ValueError):
@@ -222,6 +245,107 @@ class NoriClient:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
         return {"ref": ref, "path": final_path, "size_bytes": size}
+
+    def get_policy_manifest(self, ref: str) -> dict[str, Any]:
+        """GET /marketplace/policies/{ref}/manifest — the policy's runnable file
+        set: {files: [{name, size_bytes, sha256}]}. sha256/size are null on
+        legacy single-file promotions."""
+        return self._request("GET", f"{API}/marketplace/policies/{ref}/manifest")
+
+    def download_policy_bundle(self, ref: str, dest_dir: str) -> dict[str, Any]:
+        """Download a policy's FULL runnable bundle into `dest_dir`.
+
+        Fetches /manifest, then streams each file from /files/{name}, verifying
+        the bytes against the manifest sha256 (when recorded) BEFORE the atomic
+        rename — a corrupt or tampered file never lands under its final name.
+        Mirrors `upload_dataset`'s manifest-then-per-file loop, downstream.
+
+        Returns {ref, path, size_bytes, files} where `path` is the model file
+        (backward-compatible with download_policy's result shape) and `files`
+        lists every installed member. Raises NoriBackendError on any backend,
+        integrity, or unsafe-name failure; on failure no partial .part files
+        are left behind (completed earlier members may remain — reinstall
+        overwrites them atomically).
+        """
+        manifest = self.get_policy_manifest(ref)
+        entries = manifest.get("files") or []
+        if not entries:
+            raise NoriBackendError(
+                f"policy {ref} manifest is empty", status_code=502, detail=manifest
+            )
+
+        os.makedirs(dest_dir, exist_ok=True)
+        installed: list[dict[str, Any]] = []
+        model_path: str | None = None
+
+        for entry in entries:
+            name = entry.get("name") or ""
+            if not _safe_bundle_name(name):
+                raise NoriBackendError(
+                    f"manifest contains unsafe file name {name!r}", status_code=502
+                )
+            final_path = os.path.join(dest_dir, name)
+            tmp_path = f"{final_path}.part"
+            url = f"{self.base_url}{API}/marketplace/policies/{ref}/files/{name}"
+            digest = hashlib.sha256()
+            size = 0
+            try:
+                with (
+                    httpx.Client(timeout=httpx.Timeout(None, connect=10.0)) as client,
+                    client.stream("GET", url, headers=self._headers()) as resp,
+                ):
+                    if not resp.is_success:
+                        resp.read()
+                        detail: Any
+                        try:
+                            body = resp.json()
+                            detail = body.get("detail", body) if isinstance(body, dict) else body
+                        except ValueError:
+                            detail = resp.text or None
+                        raise NoriBackendError(
+                            f"GET {url} -> {resp.status_code}: {detail}",
+                            status_code=resp.status_code,
+                            detail=detail,
+                        )
+                    with open(tmp_path, "wb") as f:
+                        for chunk in resp.iter_bytes():
+                            f.write(chunk)
+                            digest.update(chunk)
+                            size += len(chunk)
+
+                expected = entry.get("sha256")
+                if expected and digest.hexdigest() != expected:
+                    raise NoriBackendError(
+                        f"integrity failure for {name}: bytes do not match the "
+                        f"promotion-time sha256 — not installing",
+                        status_code=502,
+                    )
+                expected_size = entry.get("size_bytes")
+                if expected_size is not None and size != expected_size:
+                    raise NoriBackendError(
+                        f"size mismatch for {name}: got {size}, manifest says "
+                        f"{expected_size} — not installing",
+                        status_code=502,
+                    )
+                os.replace(tmp_path, final_path)
+            except httpx.RequestError as exc:
+                raise NoriBackendError(
+                    f"Could not reach Nori-Backend at {url}: {exc}", status_code=502
+                ) from exc
+            finally:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+
+            installed.append({"name": name, "size_bytes": size, "sha256": digest.hexdigest()})
+            if name == "model.safetensors":
+                model_path = final_path
+
+        if model_path is None:
+            raise NoriBackendError(
+                f"policy {ref} bundle has no model.safetensors", status_code=502
+            )
+        total = sum(f["size_bytes"] for f in installed)
+        return {"ref": ref, "path": model_path, "size_bytes": total, "files": installed}
 
     # -- training (Phase 4 dispatch + log polling) ---------------------------------
 

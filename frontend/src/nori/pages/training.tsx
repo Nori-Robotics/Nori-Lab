@@ -3,14 +3,21 @@
 // local job data path (@/lib/jobsApi — /jobs/*, no Nori JWT needed) for the monitor
 // and forwards the full config through startNoriTraining. Nori-styled throughout.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Loader2, Play, Square } from "lucide-react";
+import { ArrowLeft, Loader2, Play, Square, UploadCloud } from "lucide-react";
 
 import { useApi } from "@/contexts/ApiContext";
 import { useToast } from "@/hooks/use-toast";
-import { useNori } from "@/nori/NoriContext";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import Panel from "@/nori/components/Panel";
 
 import ConfigForm from "@/nori/components/training/ConfigForm";
@@ -20,7 +27,8 @@ import {
 } from "@/nori/components/training/types";
 import NoriTrainingStats from "@/nori/components/training/NoriTrainingStats";
 import NoriTrainingLogs from "@/nori/components/training/NoriTrainingLogs";
-import { startNoriTraining } from "@/nori/api/client";
+import { startNoriTraining, listMyDatasets, uploadDataset } from "@/nori/api/client";
+import { listDatasets } from "@/lib/replayApi";
 import {
   getJob,
   getJobLogs,
@@ -37,43 +45,71 @@ const MAX_LOG_LINES = 5000;
 
 const ConfigurationMode = () => {
   const { baseUrl, fetchWithHeaders } = useApi();
-  const { customer } = useNori();
   const { toast } = useToast();
   const navigate = useNavigate();
 
   const [config, setConfig] = useState<NoriTrainingFormState>(DEFAULT_TRAINING_CONFIG);
   const [starting, setStarting] = useState(false);
-  const datasetTouched = useRef(false);
 
-  // Prefill the dataset from the customer's Nori dataset once it loads, unless
-  // the user has already typed their own.
+  // Dataset is chosen via dataset_ref (a promoted upload); unset => backend uses
+  // the latest upload. Populate the dropdown from the customer's promoted uploads.
+  const [datasets, setDatasets] = useState<{ ref: string; label: string }[]>([]);
+  const refreshMyDatasets = useCallback(() => {
+    listMyDatasets(baseUrl, fetchWithHeaders)
+      .then((rows) => setDatasets(rows.map((d) => ({ ref: d.dataset_ref, label: d.label }))))
+      .catch(() => {
+        // No datasets / transient — the form still works with the "Latest" default.
+      });
+  }, [baseUrl, fetchWithHeaders]);
+  useEffect(() => refreshMyDatasets(), [refreshMyDatasets]);
+
+  // Local (on-disk) datasets available to upload to Nori (record → upload → train).
+  const [localDatasets, setLocalDatasets] = useState<string[]>([]);
+  const [selectedLocal, setSelectedLocal] = useState<string>("");
+  const [uploading, setUploading] = useState(false);
   useEffect(() => {
-    if (!datasetTouched.current && customer?.hf_dataset_repo) {
-      setConfig((prev) =>
-        prev.dataset_repo_id
-          ? prev
-          : { ...prev, dataset_repo_id: customer.hf_dataset_repo },
-      );
+    let cancelled = false;
+    listDatasets(baseUrl, fetchWithHeaders)
+      .then((rows) => {
+        // Only local-on-disk datasets can be uploaded (source "local" or "both").
+        if (!cancelled) setLocalDatasets(rows.filter((d) => d.source !== "hub").map((d) => d.repo_id));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [baseUrl, fetchWithHeaders]);
+
+  const handleUpload = async () => {
+    if (!selectedLocal) return;
+    setUploading(true);
+    try {
+      const session = await uploadDataset(baseUrl, fetchWithHeaders, selectedLocal);
+      if (session.status === "PROMOTED") {
+        toast({ title: "Dataset uploaded", description: selectedLocal });
+        refreshMyDatasets(); // the new dataset appears in the training picker
+      } else {
+        toast({ title: "Upload finished", description: `status: ${session.status}` });
+      }
+    } catch (e) {
+      toast({
+        title: "Upload failed",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setUploading(false);
     }
-  }, [customer?.hf_dataset_repo]);
+  };
 
   const updateConfig = <T extends keyof NoriTrainingFormState>(
     key: T,
     value: NoriTrainingFormState[T],
   ) => {
-    if (key === "dataset_repo_id") datasetTouched.current = true;
     setConfig((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleStart = async () => {
-    if (!config.dataset_repo_id.trim()) {
-      toast({
-        title: "Dataset required",
-        description: "Enter a dataset repository to train on.",
-        variant: "destructive",
-      });
-      return;
-    }
     setStarting(true);
     try {
       const { timeout_seconds, ...trainingConfig } = config;
@@ -114,13 +150,51 @@ const ConfigurationMode = () => {
         </Button>
       </div>
 
-      <ConfigForm config={config} updateConfig={updateConfig} />
+      {/* Upload a recorded dataset to Nori so it can be trained on. */}
+      <Panel eyebrow="datasets" title="Upload a dataset">
+        <div className="space-y-3">
+          <p className="text-sm text-[#14131a]/70">
+            Push a dataset you recorded locally to your Nori account. Once
+            uploaded it appears in the dataset picker above.
+          </p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div className="flex-1">
+              <Label className="text-[#14131a]/70">Local dataset</Label>
+              <Select value={selectedLocal} onValueChange={setSelectedLocal}>
+                <SelectTrigger className="mt-1 border-[#14131a]/15 bg-white text-[#14131a] rounded-md">
+                  <SelectValue placeholder={localDatasets.length ? "Choose a local dataset" : "No local datasets found"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {localDatasets.map((repo) => (
+                    <SelectItem key={repo} value={repo}>
+                      {repo}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button variant="outline" onClick={handleUpload} disabled={uploading || !selectedLocal}>
+              {uploading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Uploading…
+                </>
+              ) : (
+                <>
+                  <UploadCloud className="mr-2 h-4 w-4" /> Upload to Nori
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      </Panel>
+
+      <ConfigForm config={config} updateConfig={updateConfig} datasets={datasets} />
 
       <div className="flex justify-end">
         <Button
           size="lg"
           onClick={handleStart}
-          disabled={starting || !config.dataset_repo_id.trim()}
+          disabled={starting}
         >
           {starting ? (
             <>

@@ -19,7 +19,7 @@ import {
 } from "@/nori/components/training/types";
 import NoriTrainingStats from "@/nori/components/training/NoriTrainingStats";
 import NoriTrainingLogs from "@/nori/components/training/NoriTrainingLogs";
-import { startNoriTraining } from "@/nori/api/client";
+import { startNoriTraining, listMyDatasets } from "@/nori/api/client";
 import {
   getJob,
   getJobLogs,
@@ -42,11 +42,23 @@ const ConfigurationMode = () => {
   const [config, setConfig] = useState<NoriTrainingFormState>(DEFAULT_TRAINING_CONFIG);
   const [starting, setStarting] = useState(false);
 
-  // Dataset is chosen via dataset_ref (a promoted upload), defaulting to the
-  // customer's latest upload server-side — no repo to prefill. The dropdown is
-  // populated from the customer's uploads (TODO: wire listMyDatasets once the
-  // backend list endpoint lands; empty => the "Latest upload" default).
-  const datasets: { ref: string; label: string }[] = [];
+  // Dataset is chosen via dataset_ref (a promoted upload); unset => backend uses
+  // the latest upload. Populate the dropdown from the customer's promoted uploads.
+  const [datasets, setDatasets] = useState<{ ref: string; label: string }[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    listMyDatasets(baseUrl, fetchWithHeaders)
+      .then((rows) => {
+        if (!cancelled)
+          setDatasets(rows.map((d) => ({ ref: d.dataset_ref, label: d.label })));
+      })
+      .catch(() => {
+        // No datasets / transient — the form still works with the "Latest" default.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [baseUrl, fetchWithHeaders]);
 
   const updateConfig = <T extends keyof NoriTrainingFormState>(
     key: T,

@@ -1176,6 +1176,13 @@ def nori_list_public_datasets(request: Request):
     return _nori_proxy(client.list_public_datasets)
 
 
+@app.get("/nori/datasets/mine")
+def nori_list_my_datasets(request: Request):
+    """The caller's promoted datasets, for the training dataset picker."""
+    client = _nori_client(request)
+    return _nori_proxy(client.list_my_datasets)
+
+
 @app.post("/nori/marketplace/policies/{listing_id}/acquire")
 def nori_acquire_policy(listing_id: str, request: Request):
     client = _nori_client(request)

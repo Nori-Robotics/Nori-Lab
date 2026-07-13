@@ -239,6 +239,11 @@ class NoriClient:
         """GET /marketplace/datasets/public (auth-optional)."""
         return self._request("GET", f"{API}/marketplace/datasets/public")
 
+    def list_my_datasets(self) -> Any:
+        """GET /datasets/upload — the caller's promoted datasets (training
+        dataset picker). Each entry: {dataset_ref, label, created_at, session_id}."""
+        return self._request("GET", f"{API}/datasets/upload")
+
     def download_policy(self, ref: str, dest_dir: str, filename: str = "model.safetensors") -> dict[str, Any]:
         """GET /marketplace/policies/{ref}/download — stream safetensors bytes to disk.
 

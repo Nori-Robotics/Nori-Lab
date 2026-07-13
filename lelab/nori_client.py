@@ -199,6 +199,19 @@ class NoriClient:
         """POST /marketplace/policies/{listing_id}/acquire."""
         return self._request("POST", f"{API}/marketplace/policies/{listing_id}/acquire")
 
+    def get_policy_details(self, ref: str) -> dict[str, Any]:
+        """GET /marketplace/policies/{ref} — full detail view (source, class,
+        provenance, file manifest, editable flag)."""
+        return self._request("GET", f"{API}/marketplace/policies/{ref}")
+
+    def rename_policy(self, ref: str, title: str | None) -> dict[str, Any]:
+        """PATCH /marketplace/policies/{ref} — set/clear an own policy's title.
+        Backend PII-scans the title (422 on disallowed content) and 404s on a
+        non-own ref. Returns the updated detail view."""
+        return self._request(
+            "PATCH", f"{API}/marketplace/policies/{ref}", json={"title": title}
+        )
+
     def list_public_datasets(self) -> Any:
         """GET /marketplace/datasets/public (auth-optional)."""
         return self._request("GET", f"{API}/marketplace/datasets/public")

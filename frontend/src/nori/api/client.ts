@@ -162,6 +162,92 @@ export function downloadPolicy(
   );
 }
 
+/** One file of a policy bundle, as reported by the details endpoint. */
+export interface PolicyFileSummary {
+  name: string;
+  size_bytes: number | null;
+  sha256: string | null;
+}
+/** Full detail view — superset of the catalog list entry. */
+export interface PolicyDetails {
+  ref: string;
+  source: string;
+  title: string;
+  is_renamed: boolean;
+  description: string | null;
+  policy_class: string | null;
+  price_usd: number | null;
+  created_at: string;
+  dataset_repo: string | null;
+  promoted_at: string | null;
+  final_cost_usd: number | null;
+  timeout_seconds: number | null;
+  editable: boolean;
+  files: PolicyFileSummary[];
+}
+
+/** GET /nori/marketplace/policies/{ref}/details — full detail view. */
+export function getPolicyDetails(
+  baseUrl: string,
+  fetcher: Fetcher,
+  ref: string
+): Promise<PolicyDetails> {
+  return noriRequest<PolicyDetails>(
+    baseUrl,
+    fetcher,
+    `/nori/marketplace/policies/${encodeURIComponent(ref)}/details`,
+    { action: "Load policy details" }
+  );
+}
+
+/** PATCH /nori/marketplace/policies/{ref} — rename an own policy (title=null clears). */
+export function renamePolicy(
+  baseUrl: string,
+  fetcher: Fetcher,
+  ref: string,
+  title: string | null
+): Promise<PolicyDetails> {
+  return noriRequest<PolicyDetails>(
+    baseUrl,
+    fetcher,
+    `/nori/marketplace/policies/${encodeURIComponent(ref)}`,
+    { method: "PATCH", body: { title }, action: "Rename policy" }
+  );
+}
+
+/** One installed policy in the local Nori cache. */
+export interface LocalPolicy {
+  ref: string;
+  path: string;
+  files: { name: string; size_bytes: number }[];
+  size_bytes: number;
+  runnable: boolean;
+}
+
+/** GET /nori/policies/local — installed policies (survives refresh; local disk). */
+export function listLocalPolicies(
+  baseUrl: string,
+  fetcher: Fetcher
+): Promise<LocalPolicy[]> {
+  return noriRequest<LocalPolicy[]>(baseUrl, fetcher, "/nori/policies/local", {
+    action: "Load installed policies",
+  });
+}
+
+/** DELETE /nori/policies/local/{ref} — remove an installed policy from the cache. */
+export function deleteLocalPolicy(
+  baseUrl: string,
+  fetcher: Fetcher,
+  ref: string
+): Promise<{ ref: string; deleted: boolean }> {
+  return noriRequest<{ ref: string; deleted: boolean }>(
+    baseUrl,
+    fetcher,
+    `/nori/policies/local/${encodeURIComponent(ref)}`,
+    { method: "DELETE", action: "Remove installed policy" }
+  );
+}
+
 // -- datasets / training (Phase 4) ---------------------------------------------
 
 /** POST /nori/datasets/upload — runs the backend-mediated 4-step S3 upload. */

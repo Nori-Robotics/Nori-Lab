@@ -70,20 +70,42 @@ class NoriCloudJobRunner:
 
     # -- lifecycle -----------------------------------------------------------------
 
+    # The DispatchRequest fields Nori-Backend honors. Mirrors the frontend's
+    # types.ts::HONORED_DISPATCH_KEYS — everything else in TrainingRequest is
+    # recorded on the LeLab job record but not forwarded (the backend forces or
+    # ignores it). dataset_ref is omitted when None (=> backend uses latest upload).
+    _HONORED_KEYS = (
+        "policy_type", "steps", "batch_size", "num_workers",
+        "seed", "policy_use_amp", "log_freq",
+    )
+
+    def _dispatch_body(self, config: TrainingRequest) -> dict:
+        body: dict = {"timeout_seconds": self._timeout_seconds}
+        for k in self._HONORED_KEYS:
+            v = getattr(config, k, None)
+            if v is not None:
+                body[k] = v
+        dataset_ref = getattr(config, "dataset_ref", None)
+        if dataset_ref:
+            body["dataset_ref"] = dataset_ref
+        return body
+
     def start(self, job_id: str, config: TrainingRequest, output_dir: str) -> None:
-        del config, output_dir  # backend owns the training config; nothing local to write
+        del output_dir  # backend owns the run dir; nothing local to write
         if self._job_uuid is not None:
             raise RuntimeError("NoriCloudJobRunner already started")
 
         self._log_file_path.parent.mkdir(parents=True, exist_ok=True)
         self._log_file = self._log_file_path.open("a", buffering=1)
 
-        resp = self._client.dispatch_training(self._timeout_seconds)
+        dispatch_body = self._dispatch_body(config)
+        resp = self._client.dispatch_training(dispatch_body)
         self._job_uuid = resp.get("internal_job_uuid")
         self._hf_job_id = resp.get("hf_job_id")
         self._log_line(
             f"[nori] dispatched training job {self._job_uuid} "
-            f"(hf_job_id={self._hf_job_id}, timeout={self._timeout_seconds}s)"
+            f"(hf_job_id={self._hf_job_id}, policy={dispatch_body.get('policy_type')}, "
+            f"steps={dispatch_body.get('steps')}, timeout={self._timeout_seconds}s)"
         )
         if not self._job_uuid:
             raise RuntimeError(f"Nori dispatch returned no internal_job_uuid: {resp}")

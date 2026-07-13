@@ -1328,7 +1328,7 @@ class NoriDispatchBody(BaseModel):
 @app.post("/nori/training/dispatch")
 def nori_dispatch_training(body: NoriDispatchBody, request: Request):
     client = _nori_client(request)
-    return _nori_proxy(lambda: client.dispatch_training(body.timeout_seconds))
+    return _nori_proxy(lambda: client.dispatch_training({"timeout_seconds": body.timeout_seconds}))
 
 
 @app.get("/nori/training/jobs")

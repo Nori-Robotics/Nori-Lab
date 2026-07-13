@@ -385,14 +385,17 @@ class NoriClient:
 
     # -- training (Phase 4 dispatch + log polling) ---------------------------------
 
-    def dispatch_training(self, timeout_seconds: int) -> dict[str, Any]:
-        """POST /training/dispatch — body {timeout_seconds: 60..3600}.
+    def dispatch_training(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST /training/dispatch — the DispatchRequest body.
+
+        `body` must include `timeout_seconds`; it may also carry the honored
+        training config (policy_type, steps, batch_size, num_workers, seed,
+        policy_use_amp, log_freq, dataset_ref). The backend validates + clamps
+        and ignores any field it doesn't consume (forward-compatible).
 
         Returns {internal_job_uuid, hf_job_id, ...}.
         """
-        return self._request(
-            "POST", f"{API}/training/dispatch", json={"timeout_seconds": timeout_seconds}
-        )
+        return self._request("POST", f"{API}/training/dispatch", json=body)
 
     def list_jobs(self) -> Any:
         """GET /training/jobs."""

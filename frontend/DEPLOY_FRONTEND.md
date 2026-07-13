@@ -218,5 +218,5 @@ signed into **different accounts**. The marketplace catalog is per-customer
 (`own` policies are `customer_id`-scoped) + shared first-party. Check *who* is
 logged in before suspecting the backend link.
 
-See `Nori-Backend/HF_ORG_MIGRATION.md` for the backend half (org swap, token,
+See `Nori-Backend/lessons.md (Lesson 1)` for the backend half (org swap, token,
 billing) of the same incident.

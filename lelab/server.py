@@ -1226,6 +1226,32 @@ def nori_rename_policy(ref: str, body: NoriRenameBody, request: Request):
     return _nori_proxy(lambda: client.rename_policy(ref, body.title))
 
 
+# NORI: community publishing (backend feature C). Publish requests create a
+# pending_review listing (consent + review gated server-side); unpublish is an
+# instant idempotent takedown; my-listings is the owner's submission view.
+class NoriPublishBody(BaseModel):
+    title: str
+    description: str | None = None
+
+
+@app.post("/nori/marketplace/policies/{ref}/publish")
+def nori_publish_policy(ref: str, body: NoriPublishBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.publish_policy(ref, body.title, body.description))
+
+
+@app.delete("/nori/marketplace/policies/{ref}/publish")
+def nori_unpublish_policy(ref: str, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.unpublish_policy(ref))
+
+
+@app.get("/nori/marketplace/my-listings")
+def nori_my_listings(request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(client.list_my_listings)
+
+
 @app.post("/nori/marketplace/policies/{ref}/download")
 def nori_download_policy(ref: str, request: Request):
     """Install the policy's FULL runnable bundle through LeLab into the local

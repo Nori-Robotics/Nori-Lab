@@ -286,6 +286,65 @@ export function renamePolicy(
   );
 }
 
+/**
+ * One of the caller's community-publish submissions (any lifecycle state).
+ * `status`: pending_review | public | rejected | taken_down. Non-public states
+ * are visible ONLY to the owner (this view); the public catalog never shows them.
+ */
+export interface MyListing {
+  listing_id: string;
+  source_job_id: string | null;
+  title: string;
+  description: string | null;
+  status: string;
+  review_reason: string | null;
+  in_review: boolean;
+  is_public: boolean;
+  created_at: string;
+}
+
+/**
+ * POST .../publish — request community publication of an OWN policy. Creates a
+ * pending_review listing; re-homing + human review happen server-side before it
+ * goes public. 403 = grant the publish_public consent first; 409 = already has
+ * an active listing / in-flight deletion / pre-bundle legacy policy.
+ */
+export function publishPolicy(
+  baseUrl: string,
+  fetcher: Fetcher,
+  ref: string,
+  title: string,
+  description: string | null
+): Promise<MyListing> {
+  return noriRequest<MyListing>(
+    baseUrl,
+    fetcher,
+    `/nori/marketplace/policies/${encodeURIComponent(ref)}/publish`,
+    { method: "POST", body: { title, description }, action: "Publish policy" }
+  );
+}
+
+/** DELETE .../publish — instant, idempotent takedown of the active listing. */
+export function unpublishPolicy(
+  baseUrl: string,
+  fetcher: Fetcher,
+  ref: string
+): Promise<{ taken_down: string[] }> {
+  return noriRequest<{ taken_down: string[] }>(
+    baseUrl,
+    fetcher,
+    `/nori/marketplace/policies/${encodeURIComponent(ref)}/publish`,
+    { method: "DELETE", action: "Unpublish policy" }
+  );
+}
+
+/** GET /nori/marketplace/my-listings — the caller's submissions + review state. */
+export function listMyListings(baseUrl: string, fetcher: Fetcher): Promise<MyListing[]> {
+  return noriRequest<MyListing[]>(baseUrl, fetcher, "/nori/marketplace/my-listings", {
+    action: "Load my listings",
+  });
+}
+
 /** One installed policy in the local Nori cache. */
 export interface LocalPolicy {
   ref: string;

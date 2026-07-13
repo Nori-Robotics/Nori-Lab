@@ -212,6 +212,28 @@ class NoriClient:
             "PATCH", f"{API}/marketplace/policies/{ref}", json={"title": title}
         )
 
+    def publish_policy(self, ref: str, title: str, description: str | None = None) -> dict[str, Any]:
+        """POST /marketplace/policies/{ref}/publish — request community
+        publication of an OWN policy. Creates a pending_review listing (NOT
+        public yet — re-homing + human review follow); poll list_my_listings
+        for the outcome. 403 without publish_public consent, 409 for an
+        already-active listing / in-flight deletion / pre-bundle legacy job."""
+        return self._request(
+            "POST", f"{API}/marketplace/policies/{ref}/publish",
+            json={"title": title, "description": description},
+        )
+
+    def unpublish_policy(self, ref: str) -> dict[str, Any]:
+        """DELETE /marketplace/policies/{ref}/publish — instant, idempotent
+        takedown of the caller's active listing for this job (revokes derived
+        acquisitions; the row is kept for audit)."""
+        return self._request("DELETE", f"{API}/marketplace/policies/{ref}/publish")
+
+    def list_my_listings(self) -> Any:
+        """GET /marketplace/my-listings — the caller's community submissions in
+        every lifecycle state (pending_review/public/rejected/taken_down)."""
+        return self._request("GET", f"{API}/marketplace/my-listings")
+
     def list_public_datasets(self) -> Any:
         """GET /marketplace/datasets/public (auth-optional)."""
         return self._request("GET", f"{API}/marketplace/datasets/public")

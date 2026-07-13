@@ -114,7 +114,6 @@ const PolicyCard = ({
   state,
   installed,
   listingStatus,
-  isMine,
   onInstall,
   onOpen,
 }: {

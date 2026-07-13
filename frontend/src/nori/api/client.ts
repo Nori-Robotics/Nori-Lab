@@ -73,8 +73,30 @@ function withNoriAuth(fetcher: Fetcher): Fetcher {
 let directBackendUrl: string | null = null;
 
 /** LeLab-local surfaces with no backend equivalent (hardware, local disk,
- * the local LLM proxy). Blocked with a clear error instead of a confusing 404. */
-const LELAB_ONLY_PREFIXES = ["/nori/llm", "/nori/leader", "/nori/datasets/upload"];
+ * the local LLM proxy, the installed-policy cache). Blocked with a clear
+ * error instead of a confusing 404. */
+const LELAB_ONLY_PREFIXES = [
+  "/nori/llm",
+  "/nori/leader",
+  "/nori/datasets/upload",
+  "/nori/policies/local",
+];
+
+// Routing gate: pages fetch on mount, but proxy-vs-direct is only decided when
+// the bootstrap's config probe settles (up to 4s later on a hosted page). Every
+// noriRequest waits on this gate so a mount-time fetch can't race ahead and hit
+// the dead localhost proxy before direct mode is enabled. Mirrors the Supabase
+// auth gate in auth/supabase.ts. NoriContext MUST settle it on every bootstrap
+// terminal path (success, fallback, and error) or all /nori/* requests hang.
+let settleRouting: (() => void) | undefined;
+const routingSettled = new Promise<void>((resolve) => {
+  settleRouting = resolve;
+});
+
+/** Called by NoriContext once proxy-vs-direct routing is decided. Idempotent. */
+export function settleBackendRouting(): void {
+  settleRouting?.();
+}
 
 export function enableDirectBackend(url: string): void {
   directBackendUrl = url.replace(/\/+$/, "");
@@ -101,19 +123,20 @@ function withDirectAuth(fetcher: Fetcher): Fetcher {
  * hosted direct-backend mode, to the equivalent Nori-Backend route.
  * `baseUrl` is the LeLab server (from ApiContext), not Nori-Backend directly.
  */
-export function noriRequest<T = unknown>(
+export async function noriRequest<T = unknown>(
   baseUrl: string,
   fetcher: Fetcher,
   path: string,
   options: ApiRequestOptions = {}
 ): Promise<T> {
+  await routingSettled; // proxy-vs-direct decided by the bootstrap — see gate above
   if (directBackendUrl) {
     if (
       LELAB_ONLY_PREFIXES.some((p) => path.startsWith(p)) ||
       path.endsWith("/download") // marketplace install writes to LeLab's local disk
     ) {
-      return Promise.reject(
-        new Error("This action needs the Nori desktop app — it isn't available on the hosted site.")
+      throw new Error(
+        "This action needs the Nori desktop app — it isn't available on the hosted site."
       );
     }
     const apiPath = path.replace(/^\/nori/, "/api/v1");

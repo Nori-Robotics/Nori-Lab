@@ -16,6 +16,7 @@ import {
   getNoriConfig,
   enableDirectBackend,
   getBuildTimeConfig,
+  settleBackendRouting,
   provisionCustomer,
   type CustomerProfile,
   type NoriPublicConfig,
@@ -115,6 +116,10 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           // surfaces stay gated by leLabAvailable as before.
           if (fallback.noriBackendUrl) enableDirectBackend(fallback.noriBackendUrl);
         }
+        // Routing decided (proxy vs direct) — release any mount-time /nori/*
+        // fetches waiting on the gate. Before this point a page's useEffect
+        // fetch would race the config probe and hit the dead localhost proxy.
+        settleBackendRouting();
         if (cancelled) return;
         setConfig(cfg);
         setLeLabAvailable(leLab);
@@ -136,6 +141,10 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           );
         }
       } catch (e) {
+        // Terminal bootstrap failure (e.g. hosted build with no baked config).
+        // Settle the routing gate too so queued /nori/* fetches fail fast on
+        // the proxy path instead of hanging forever on the gate.
+        settleBackendRouting();
         if (!cancelled) {
           settleSupabaseGate();
           setError(e instanceof Error ? e.message : String(e));

@@ -61,8 +61,44 @@ function withNoriAuth(fetcher: Fetcher): Fetcher {
   };
 }
 
+// -- hosted direct-backend mode --------------------------------------------
+// On the hosted site (Vercel) there is no local LeLab, so the `/nori/*` proxy
+// has nowhere to go. The pure-proxy routes are 1:1 mirrors of Nori-Backend's
+// `/api/v1/*` surface and the backend validates the Supabase JWT itself, so in
+// hosted mode we call the backend directly: `/nori/X` → `<backend>/api/v1/X`
+// with `Authorization: Bearer <jwt>` (instead of the X-Nori-JWT proxy header).
+// Enabled by NoriContext when the bootstrap falls back to build-time config
+// AND the bundle carries VITE_NORI_BACKEND_URL. Requires the backend to
+// allowlist this origin (Nori-Backend config.py `_HOSTED_APP_ORIGINS`).
+let directBackendUrl: string | null = null;
+
+/** LeLab-local surfaces with no backend equivalent (hardware, local disk,
+ * the local LLM proxy). Blocked with a clear error instead of a confusing 404. */
+const LELAB_ONLY_PREFIXES = ["/nori/llm", "/nori/leader", "/nori/datasets/upload"];
+
+export function enableDirectBackend(url: string): void {
+  directBackendUrl = url.replace(/\/+$/, "");
+}
+
+/** True when requests go straight to Nori-Backend (hosted, LeLab-free). */
+export function isDirectBackend(): boolean {
+  return directBackendUrl !== null;
+}
+
+function withDirectAuth(fetcher: Fetcher): Fetcher {
+  return async (url, options = {}) => {
+    const token = await getAccessToken();
+    const headers: Record<string, string> = {
+      ...(options.headers as Record<string, string>),
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    return fetcher(url, { ...options, headers });
+  };
+}
+
 /**
- * Make an authenticated request to a LeLab `/nori/*` proxy route.
+ * Make an authenticated request to a LeLab `/nori/*` proxy route — or, in
+ * hosted direct-backend mode, to the equivalent Nori-Backend route.
  * `baseUrl` is the LeLab server (from ApiContext), not Nori-Backend directly.
  */
 export function noriRequest<T = unknown>(
@@ -71,6 +107,18 @@ export function noriRequest<T = unknown>(
   path: string,
   options: ApiRequestOptions = {}
 ): Promise<T> {
+  if (directBackendUrl) {
+    if (
+      LELAB_ONLY_PREFIXES.some((p) => path.startsWith(p)) ||
+      path.endsWith("/download") // marketplace install writes to LeLab's local disk
+    ) {
+      return Promise.reject(
+        new Error("This action needs the Nori desktop app — it isn't available on the hosted site.")
+      );
+    }
+    const apiPath = path.replace(/^\/nori/, "/api/v1");
+    return apiRequest<T>(directBackendUrl, withDirectAuth(fetcher), apiPath, options);
+  }
   return apiRequest<T>(baseUrl, withNoriAuth(fetcher), path, options);
 }
 

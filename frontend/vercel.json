@@ -4,6 +4,11 @@
   "installCommand": "npm ci",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "build": {
+    "env": {
+      "VITE_NORI_BACKEND_URL": "https://nori-backend-production.up.railway.app"
+    }
+  },
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]

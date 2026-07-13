@@ -14,6 +14,7 @@ import type { Session } from "@supabase/supabase-js";
 import { useApi } from "@/contexts/ApiContext";
 import {
   getNoriConfig,
+  enableDirectBackend,
   getBuildTimeConfig,
   provisionCustomer,
   type CustomerProfile,
@@ -108,6 +109,11 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             throw e;
           }
           cfg = fallback;
+          // Hosted, LeLab-free build with a baked backend URL: send the
+          // account/billing/marketplace traffic straight to Nori-Backend
+          // (the /nori/* proxy has no server to run on here). Local-hardware
+          // surfaces stay gated by leLabAvailable as before.
+          if (fallback.noriBackendUrl) enableDirectBackend(fallback.noriBackendUrl);
         }
         if (cancelled) return;
         setConfig(cfg);

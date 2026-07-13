@@ -25,6 +25,7 @@
 
 import * as THREE from "three";
 import { VrJogMapper, type VrControllerFrame, type VrFrame } from "./vr";
+import { buildRobotModel, type ArmHighlight, type RobotModel } from "./robot-model";
 import type { RemoteTeleop, TelemetryView } from "./teleop";
 
 const RESET_HOLD_MS = 1500;
@@ -34,6 +35,23 @@ const PANEL_DIST = 2.0; // metres in front of the operator the panel cluster sit
 // Uniform shrink applied to the whole in-VR UI (video + HUD panel cluster + recenter button).
 // 0.8 = 80% of the original size; distance/anchoring are unchanged, panels just read smaller.
 const UI_SCALE = 0.8;
+// The 3D robot schematic (C6), mounted to the RIGHT of the telemetry HUD so the instruments
+// read left-to-right: video | telemetry | robot. Unlike the video/HUD panels this is NOT a
+// textured plane — it's the real articulated model in the scene, so it has genuine stereo
+// depth: lean or step sideways and you see around it.
+//   X — HUD spans 0.85..1.45 (0.6 wide at x=1.15); this sits just outboard of it.
+//   Y — the model stands on y=0 and is ~1.5 units tall centred ~1.08, so scaling by
+//       ROBOT_SCALE and dropping it by ROBOT_Y centres it vertically on the panel row.
+//   Z — pushed toward the operator, OFF the panel plane, so it reads as a hologram in front
+//       of the instruments rather than a sticker on them (+Z is toward the viewer after
+//       recenter — see serviceRecenter).
+//   YAW — the model faces +Z (at the operator); this yaws it to the same 3/4 view the desktop
+//       card frames, so you see the front and one flank instead of a flat head-on silhouette.
+const ROBOT_X = 1.8;
+const ROBOT_Y = -0.76;
+const ROBOT_Z = 0.35;
+const ROBOT_SCALE = 0.7;
+const ROBOT_YAW = -0.6;
 // Recenter poke button geometry (metres). The button floats this far above the left
 // controller, and fires when the right controller tip enters POKE_FIRE_R of it; it must
 // then leave POKE_REARM_R before it can fire again (hysteresis, no repeat-fire). NEAR_R
@@ -122,6 +140,9 @@ export class VrSession {
   // The video + HUD panels live in one group so recenter moves them together and later
   // displays (multi-camera feeds, 3D cube view) can be added as more children.
   private panelGroup: THREE.Group | null = null;
+  // The C6 robot schematic — a real articulated three.js model (not a texture), re-posed from
+  // telemetry every frame. Same builder the desktop card mounts, so the two can't drift.
+  private robot: RobotModel | null = null;
   private session: XRSession | null = null;
   private currents: Record<string, number> = {};
   // Per-gripper adaptive idle-current baseline for haptics (see applyHaptics).
@@ -254,6 +275,21 @@ export class VrSession {
     group.add(hud);
     this.drawHud(); // paint once so it's not blank before the first telemetry frame
 
+    // The 3D robot schematic, right of the HUD. A genuine articulated model in the scene —
+    // stereo depth, parallax, walk-around — not a 2D viewport rendered to a texture. Its grid
+    // is off: a 3-unit floor plane looks right in the desktop card but would punch through the
+    // panel cluster here. Lit by the directional light added below (the hemisphere light alone
+    // renders the MeshStandardMaterial links flat and shapeless).
+    const robot = buildRobotModel({ showGrid: false });
+    robot.root.position.set(ROBOT_X, ROBOT_Y, ROBOT_Z);
+    robot.root.rotation.set(0, ROBOT_YAW, 0);
+    robot.root.scale.setScalar(ROBOT_SCALE);
+    group.add(robot.root);
+    this.robot = robot;
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    keyLight.position.set(2, 4, 3); // same key as the desktop card, so the model shades alike
+    scene.add(keyLight);
+
     // In-VR "Recenter" poke button — a small labeled plane added straight to the SCENE (not
     // the panel group): it's hand-anchored (repositioned each frame above the left controller)
     // so it stays reachable no matter where the operator turns. depthTest off + a high render
@@ -321,11 +357,13 @@ export class VrSession {
     this.texture?.dispose();
     this.hudTexture?.dispose();
     this.rcBtnTexture?.dispose();
+    this.robot?.dispose();
     this.renderer = null;
     this.scene = null;
     this.camera = null;
     this.texture = null;
     this.panelGroup = null;
+    this.robot = null;
     this.hudTexture = null;
     this.hudCanvas = null;
     this.hudCtx = null;
@@ -382,6 +420,17 @@ export class VrSession {
         if (this.recenterPending) this.serviceRecenter(frame, refSpace);
         this.applyHaptics(session);
       }
+    }
+    // Re-pose the 3D robot EVERY frame (unlike the HUD's slow repaint below): it's live motion,
+    // not text, so a 4 Hz cadence would visibly judder. It only writes joint rotations into the
+    // existing scene graph — no allocation, no texture upload — so it's cheap enough to run at
+    // headset rate. VR is dual-arm, so the green highlight tracks the engaged clutch(es)
+    // rather than the keyboard's single "active arm".
+    if (this.robot) {
+      const eng = this.mapper.engagedArms();
+      const highlight: ArmHighlight =
+        eng.left && eng.right ? "both" : eng.left ? "left" : eng.right ? "right" : "none";
+      this.robot.update(this.tel?.state ?? {}, highlight);
     }
     // Repaint the HUD on a slow cadence (keeps staleness/values fresh without redrawing text
     // every 72–90 Hz frame).

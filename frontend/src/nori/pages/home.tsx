@@ -182,8 +182,8 @@ const Home = () => {
     {/* DEVELOPERS — the closing note for builders: everything (app + SDK) is open source, with
         social links out to GitHub / Discord / X. Light border to match the rest of the page; it
         stands apart from the feature trio by being a full-width leaf band with social pills. */}
-    <FadeIn delay={520}>
-    <div className="mt-6 rounded-[24px] border border-[#14131a]/10 bg-steel p-6 md:px-8 md:py-8">
+    <FadeIn delay={200}>
+    <div className="mt-6 rounded-[24px] border border-[#14131a]/10 bg-moss p-6 md:px-8 md:py-8">
       <span className="eyebrow text-ink">{"// devs first"}</span>
       <h2 className="mt-3 font-display text-[1.7rem] font-normal leading-[1.05] tracking-tight text-ink">
         Built to be built on.
@@ -209,7 +209,7 @@ const Home = () => {
     </div>
     </FadeIn>
 
-    <FadeIn delay={580}>
+    <FadeIn delay={260}>
       <p className="eyebrow mt-8">{"// manage your account under Account"}</p>
     </FadeIn>
   </section>

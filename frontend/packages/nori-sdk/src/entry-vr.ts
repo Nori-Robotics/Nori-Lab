@@ -6,3 +6,6 @@
 export * from "./vr";
 // The WebXR session that runs the mapper and feeds a RemoteTeleop (uses three.js math).
 export * from "./vr-session";
+// The robot schematic as a plain three.js Object3D — mounted BOTH in the desktop R3F canvas
+// and in the VR panel cluster, so the two can never drift apart.
+export * from "./robot-model";

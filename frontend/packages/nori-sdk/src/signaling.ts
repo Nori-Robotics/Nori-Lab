@@ -28,6 +28,16 @@ export interface RobotHerePayload {
   nonce?: string;
 }
 
+// The robot REFUSED our 'ready'. Today the only reason is "unauthorized" (the room token's HMAC
+// didn't match). Before this existed the robot rejected a bad token silently, so a wrong access
+// code and a switched-off robot were the same event from the browser: nothing.
+//
+// TRUST: the signaling room is unauthenticated, so a nack can be forged by anyone already in the
+// room. It is a HINT used only to pick better error copy — never a security decision.
+export interface NackPayload {
+  reason?: "unauthorized" | (string & {});
+}
+
 // Transport health, as distinct from robot health. "open" = the room is live and we can speak;
 // "error"/"timeout" = we cannot reach the signaling service at all (down, offline, bad URL).
 // Without this the operator cannot tell "my internet is broken" from "my robot is off" — both
@@ -44,6 +54,9 @@ export interface SignalingHandlers {
   // The robot (re)joined the room, carrying its auth nonce — prove possession of the room
   // token (HMAC) and re-handshake. May fire repeatedly (robot restarts / reconnects).
   onRobotHere: (payload: RobotHerePayload) => void;
+  // The robot rejected our 'ready' (see NackPayload). Optional: robots older than 2026-07-12
+  // never send it, so its ABSENCE must never be read as success.
+  onNack?: (payload: NackPayload) => void;
   // The transport is live (e.g. Supabase "SUBSCRIBED") — safe to announce 'ready'. May fire
   // more than once across a session's reconnects; RemoteTeleop is idempotent on it.
   onOpen: () => void;

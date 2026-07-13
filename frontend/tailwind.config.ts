@@ -62,6 +62,7 @@ export default {
 				leaf: '#cde8b5',
 				tan: '#efe8d6',
 				steel: '#b9bfc9',
+				moss: '#bfcf9f',
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
 				ring: 'hsl(var(--ring))',

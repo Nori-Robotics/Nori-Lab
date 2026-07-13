@@ -77,6 +77,9 @@ certs/
 desktop/.build-venv/
 desktop/build/
 desktop/dist/
+# Filled-in PUBLIC bundle config (build.sh stages it into the bundle as .env). The
+# committed template is desktop/env.public.example; the real local copy stays untracked.
+desktop/env.public
 # The staged, frozen backend bundle (~768M) — produced by desktop/build.sh into the
 # Tauri resource dir at build time; recreated per release, must not bloat the remote.
 desktop/tauri/resources/backend/

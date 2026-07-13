@@ -125,11 +125,16 @@ fixes: `[Errno 48] Address already in use` on the next launch because a prior fr
 backend still held :8000. Manual clear if ever needed:
 `lsof -nP -iTCP:8000 -sTCP:LISTEN -t | xargs kill`.
 
-### 4. Build matrix + signing (1–2 days)
-- [ ] GitHub Actions matrix (macos / windows / ubuntu) running `build.sh` + `cargo tauri
-      build`, uploading installers as artifacts. (I offered to draft this — not done yet.)
+### 4. Build matrix + signing (1–2 days) — 📄 OWNED SEPARATELY
+**Full handoff:** [`BUILD_AND_SIGNING.md`](BUILD_AND_SIGNING.md). Assigned to a colleague;
+it's a self-contained CI + platform-signing chunk that doesn't touch app code. Summary:
+- [ ] GitHub Actions matrix (macos-14 / windows / ubuntu-22.04) running `build.sh` + `cargo
+      tauri build`, uploading installers as release artifacts (one native runner per OS —
+      PyInstaller can't cross-compile).
 - [ ] macOS: Apple Developer ID ($99/yr) → codesign + notarize (unsigned = Gatekeeper block).
-- [ ] Windows: Authenticode cert (~$100–400/yr) or users hit SmartScreen.
+- [ ] Windows: Authenticode cert (~$100–400/yr, OV vs EV decision) or users hit SmartScreen.
+- [ ] Linux AppImage: no signing; verify on clean Ubuntu, watch the glibc floor.
+- Depends on step 5's public `.env` being staged into the bundle before `tauri build`.
 
 ### 5. Config UX + secret handling (½–1 day)
 Nori cloud features need **three PUBLIC values** in the frozen backend's env:
@@ -140,18 +145,32 @@ the frozen backend's CWD is `resources/backend/`, so lelab's own `load_dotenv()`
 
 **Mechanism (implemented):** `backend_entry.py::_load_adjacent_env()` loads a `.env` sitting
 next to the executable (`override=False`, so a real exported env var still wins for dev). Template:
-`desktop/env.public.example`. To self-configure a build, copy it to `resources/backend/.env`
-and fill in the public values:
-```
-cp desktop/env.public.example desktop/tauri/resources/backend/.env   # then edit
-```
-- [ ] Wire `build.sh` to stage that `.env` into the bundle on release (currently manual).
+`desktop/env.public.example`.
+- [x] **Wire `build.sh` to stage the `.env` into the bundle (done).** After staging the
+      frozen backend, `build.sh` copies a public `.env` next to the binary. Source, in
+      priority order: `$NORI_BUNDLE_ENV` (a path — use in CI) → `desktop/env.public` (a
+      gitignored local copy you fill from `env.public.example`). Missing → warns but still
+      builds (app runs, cloud stays unconfigured). So to self-configure a build now:
+      `cp desktop/env.public.example desktop/env.public && $EDITOR desktop/env.public`,
+      then re-run `build.sh`. `desktop/env.public` is gitignored.
 - [ ] For **local `tauri dev`** you can skip the file and just export the three vars first
       (they're inherited by the spawned backend): `export SUPABASE_URL=… SUPABASE_ANON_KEY=…
       NORI_BACKEND_URL=https://nori-backend-production.up.railway.app`.
 - NEVER put the Supabase service-role key or `ANTHROPIC_API_KEY` in this file (see the
   secret-handling decision above — LLM routes through Railway). `resources/backend/` is
   gitignored, so a filled-in `.env` there won't be committed.
+
+**Remaining step-5 work — the LLM cloud-proxy (NOT done; needs a Railway endpoint).**
+The agent/coding endpoints (`_llm_prepare`, `server.py:499`; `nori_llm_agent`,
+`server.py:860`) still call `anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])`
+**locally**, so in a shipped bundle (no key) they return `503 ANTHROPIC_API_KEY not set`.
+The budget check already forwards the JWT (`_nori_proxy(nori.get_agent_usage)`), so half the
+plumbing exists — but the actual completion must move server-side. **Blocking dependency:**
+Nori-Backend (Railway) must expose an authenticated LLM completion/stream endpoint for the
+local backend to `_nori_proxy` to. That's a cross-service change; confirm the Railway
+endpoint exists / who owns it before implementing the client side here. When doing it, also
+extend the per-user daily-budget gate (currently only on the agent loop) to the one-shot
+coding path (`_llm_prepare`).
 
 **Decision — the Anthropic key must NEVER live on a customer machine (route LLM through
 the cloud).** A desktop bundle is fully in the customer's hands: PyInstaller archives unzip,

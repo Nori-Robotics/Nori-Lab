@@ -88,7 +88,11 @@ function portFromResponse(response: LeaderPortsResponse): string {
   if (typeof stable === "string" && stable) return stable;
   if (typeof device === "string" && device) return device;
 
-  const sharedProbe = response.probes?.find((probe) => probe.can_left && probe.can_right);
+  // Prefer a full dual bus, but accept a bus with a single complete arm (can_left OR
+  // can_right) so one-arm setups auto-detect instead of reporting "not found".
+  const sharedProbe =
+    response.probes?.find((probe) => probe.can_left && probe.can_right) ??
+    response.probes?.find((probe) => probe.can_left || probe.can_right);
   return sharedProbe?.open_path ?? "";
 }
 
@@ -326,7 +330,7 @@ const LeaderSetup = ({
     const detected = portFromResponse(response);
     if (!detected) {
       setNoArmFound(true);
-      throw new Error(response.message || "Could not find one USB bus with both leader arms");
+      throw new Error(response.message || "Could not find a leader arm on any USB bus");
     }
     setNoArmFound(false);
     setSharedPort(detected);

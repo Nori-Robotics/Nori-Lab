@@ -461,11 +461,19 @@ def save_ports_from_paths(left_port: str, right_port: str | None = None) -> dict
 
 def auto_save_detected_ports() -> dict[str, Any]:
     probes = [probe_port(identity) for identity in detect_serial_ports()]
-    shared = next((probe for probe in probes if probe.can_left and probe.can_right), None)
+    # A single leader arm is a valid setup: one 6-servo arm on the bus (IDs 1-6 or
+    # 7-12) drives whichever robot side the operator selects downstream. Prefer a full
+    # dual bus (both arms daisy-chained) when one is present, but fall back to any bus
+    # carrying one complete arm so single-arm users aren't blocked.
+    shared = next(
+        (probe for probe in probes if probe.can_left and probe.can_right), None
+    ) or next(
+        (probe for probe in probes if probe.can_left or probe.can_right), None
+    )
     if shared is None:
         return {
             "success": False,
-            "message": "Could not find one USB bus with both leader arms",
+            "message": "Could not find a leader arm on any USB bus",
             "probes": [probe.to_json() for probe in probes],
         }
     identity = PortIdentity.from_json(shared.identity)

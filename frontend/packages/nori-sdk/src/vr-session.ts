@@ -61,6 +61,20 @@ const ROBOT_YAW = -0.6;
 // feel doesn't change between a 72 Hz and a 90 Hz headset.
 const ROBOT_SPIN_DEADZONE = 0.15; // ignore stick slop / resting thumb
 const ROBOT_SPIN_RATE = 2.2; // rad/s at full deflection (~2.9 s for a full turn)
+// Controls cheat-sheet: a card anchored to the left controller, revealed by GLANCING at it —
+// rotate your wrist so the controller's face turns toward you, like checking a watch. Hidden the
+// rest of the time, so it costs no screen space during teleop and spends no button.
+//
+// The test is the dot product of the controller's local UP axis with the direction from the
+// controller to the head: hand held out to drive -> up axis points at the ceiling, dot ~0;
+// wrist rolled toward your face -> up axis swings toward you, dot -> 1. SHOW/HIDE differ
+// (hysteresis) so a hand hovering exactly at the threshold can't strobe the card.
+const CARD_UP = 0.17; // metres above the left controller — clear of the Recenter button (0.09)
+const CARD_W = 0.19;
+const CARD_H = 0.152; // 1.25 aspect, matches the 640x512 canvas
+const CARD_SHOW_DOT = 0.6;
+const CARD_HIDE_DOT = 0.45;
+const CARD_FADE_PER_S = 8; // opacity units/sec — fades instead of popping
 // Recenter poke button geometry (metres). The button floats this far above the left
 // controller, and fires when the right controller tip enters POKE_FIRE_R of it; it must
 // then leave POKE_REARM_R before it can fire again (hysteresis, no repeat-fire). NEAR_R
@@ -180,6 +194,15 @@ export class VrSession {
   private rcBtnCanvas: HTMLCanvasElement | null = null;
   private rcBtnCtx: CanvasRenderingContext2D | null = null;
   private rcBtnTexture: THREE.CanvasTexture | null = null;
+  // Wrist-glance controls card (left controller). Static art — painted once; only its opacity
+  // changes, so there's no per-frame canvas upload.
+  private card: THREE.Mesh | null = null;
+  private cardCanvas: HTMLCanvasElement | null = null;
+  private cardCtx: CanvasRenderingContext2D | null = null;
+  private cardTexture: THREE.CanvasTexture | null = null;
+  private cardMat: THREE.MeshBasicMaterial | null = null;
+  private cardShown = false; // hysteresis latch: is the glance currently "open"?
+  private cardOpacity = 0;
   private rcPoked = false;      // armed-state: true between fire and re-arm (hysteresis)
   private rcBtnHot = false;     // last painted highlight state (redraw only on change)
   private running = false;
@@ -328,6 +351,29 @@ export class VrSession {
     this.rcBtn = rcBtn;
     this.drawRecenterButton(false);
 
+    // Controls cheat-sheet, hand-anchored like the Recenter button (same reason: it has to stay
+    // reachable/readable wherever the operator turns) but revealed only on a wrist glance. Starts
+    // fully transparent — updateControlsCard() fades it in.
+    const cardCanvas = document.createElement("canvas");
+    cardCanvas.width = 640;
+    cardCanvas.height = 512;
+    this.cardCanvas = cardCanvas;
+    this.cardCtx = cardCanvas.getContext("2d");
+    const cardTex = new THREE.CanvasTexture(cardCanvas);
+    cardTex.colorSpace = THREE.SRGBColorSpace;
+    this.cardTexture = cardTex;
+    const cardMat = new THREE.MeshBasicMaterial({
+      map: cardTex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthTest: false,
+    });
+    this.cardMat = cardMat;
+    const card = new THREE.Mesh(new THREE.PlaneGeometry(CARD_W, CARD_H), cardMat);
+    card.renderOrder = 998; // above the panels, just under the Recenter button
+    card.visible = false;
+    card.scale.setScalar(UI_SCALE);
+    scene.add(card);
+    this.card = card;
+    this.drawControlsCard(); // static content — painted once, never repainted
+
     const session = await xr.requestSession(mode, {
       optionalFeatures: ["local-floor", "bounded-floor"],
     });
@@ -371,6 +417,7 @@ export class VrSession {
     this.texture?.dispose();
     this.hudTexture?.dispose();
     this.rcBtnTexture?.dispose();
+    this.cardTexture?.dispose();
     this.robot?.dispose();
     this.renderer = null;
     this.scene = null;
@@ -387,6 +434,13 @@ export class VrSession {
     this.rcBtnTexture = null;
     this.rcBtnCanvas = null;
     this.rcBtnCtx = null;
+    this.card = null;
+    this.cardCanvas = null;
+    this.cardCtx = null;
+    this.cardTexture = null;
+    this.cardMat = null;
+    this.cardShown = false;
+    this.cardOpacity = 0;
     this.rcPoked = false;
     this.rcBtnHot = false;
     this.tel = null;
@@ -446,6 +500,7 @@ export class VrSession {
         const resetHeld = this.buttonDown(this.b.reset, sources);
         this.handleResetHold(resetHeld);   // sustained hold of the reset button = reset_latch
         this.updateRecenterButton(vrFrame); // in-VR poke button -> recenter()
+        this.updateControlsCard(vrFrame, dt); // wrist-glance controls cheat-sheet
         if (this.recenterPending) this.serviceRecenter(frame, refSpace);
         this.applyHaptics(session);
       }
@@ -579,6 +634,97 @@ export class VrSession {
     }
     // Redraw only when the highlight state flips (canvas upload isn't free).
     if (hot !== this.rcBtnHot) { this.rcBtnHot = hot; this.drawRecenterButton(hot); }
+  }
+
+  // Anchor + reveal the controls card. Mirrors updateRecenterButton's hand-anchoring, but instead
+  // of a poke test it runs the wrist-glance dot product (see CARD_SHOW_DOT).
+  private updateControlsCard(f: VrFrame, dt: number) {
+    const card = this.card;
+    const mat = this.cardMat;
+    if (!card || !mat) return;
+
+    const lp = f.left?.position;
+    const lq = f.left?.orientation;
+    if (!lp) {
+      // Left hand not tracked: fade out rather than snapping the card away mid-read.
+      this.cardShown = false;
+    } else {
+      // Float it above the controller in the controller's OWN frame, so it rolls with the wrist.
+      const off = new THREE.Vector3(0, CARD_UP, 0);
+      const q = lq ? new THREE.Quaternion(lq[0], lq[1], lq[2], lq[3]) : null;
+      if (q) off.applyQuaternion(q);
+      card.position.set(lp[0] + off.x, lp[1] + off.y, lp[2] + off.z);
+
+      const head = new THREE.Vector3();
+      this.renderer?.xr.getCamera().getWorldPosition(head);
+
+      // Glance test: how much does the controller's up axis point at the head?
+      if (q) {
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+        const toHead = head.clone().sub(card.position).normalize();
+        const facing = up.dot(toHead);
+        // Hysteresis — open above SHOW, stay open until we drop below HIDE.
+        if (!this.cardShown && facing > CARD_SHOW_DOT) this.cardShown = true;
+        else if (this.cardShown && facing < CARD_HIDE_DOT) this.cardShown = false;
+      }
+      card.lookAt(head); // billboard, same as the Recenter button
+    }
+
+    // Fade toward the target so the card doesn't pop in and out as the wrist crosses threshold.
+    const target = this.cardShown ? 1 : 0;
+    const step = CARD_FADE_PER_S * dt;
+    this.cardOpacity =
+      this.cardOpacity < target
+        ? Math.min(target, this.cardOpacity + step)
+        : Math.max(target, this.cardOpacity - step);
+    mat.opacity = this.cardOpacity;
+    card.visible = this.cardOpacity > 0.01; // fully faded -> skip drawing it entirely
+  }
+
+  // Paint the controls cheat-sheet. Static — called once at session start. Keep the rows in sync
+  // with DEFAULT_BINDINGS above and with the session-start log line.
+  private drawControlsCard() {
+    const ctx = this.cardCtx;
+    const cv = this.cardCanvas;
+    if (!ctx || !cv) return;
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+
+    ctx.fillStyle = "rgba(15,23,42,0.92)";
+    this.roundRect(ctx, 4, 4, W - 8, H - 8, 26);
+    ctx.fill();
+    ctx.strokeStyle = "#64748b";
+    ctx.lineWidth = 4;
+    this.roundRect(ctx, 4, 4, W - 8, H - 8, 26);
+    ctx.stroke();
+
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "start";
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "bold 30px system-ui, sans-serif";
+    ctx.fillText("CONTROLS", 36, 52);
+
+    const rows: [string, string][] = [
+      ["grip", "hold = clutch (move arm)"],
+      ["trigger", "that arm's gripper"],
+      ["A/X · B/Y", "that arm's lift up / down"],
+      ["right stick", "drive the base"],
+      ["left stick", "spin the 3D robot"],
+      ["left press", "E-STOP"],
+      ["right press", "hold = reset"],
+      ["poke ⟳", "recenter the view"],
+    ];
+    let y = 108;
+    for (const [key, what] of rows) {
+      ctx.fillStyle = "#e2e8f0";
+      ctx.font = "bold 30px system-ui, sans-serif";
+      ctx.fillText(key, 36, y);
+      ctx.fillStyle = "#cbd5e1";
+      ctx.font = "28px system-ui, sans-serif";
+      ctx.fillText(what, 250, y);
+      y += 48;
+    }
+    if (this.cardTexture) this.cardTexture.needsUpdate = true;
   }
 
   // Paint the Recenter button canvas. `hot` = right controller is near / poking -> highlight.

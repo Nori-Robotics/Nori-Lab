@@ -58,5 +58,25 @@ mkdir -p "$(dirname "$DEST")"
 cp -R "$BUNDLE" "$DEST"
 echo "    staged -> desktop/tauri/resources/backend/"
 
+# --- Self-configure the bundle: drop a PUBLIC .env next to the frozen binary so
+#     `backend_entry.py::_load_adjacent_env()` finds it and cloud features work in a
+#     shipped app (SUPABASE_URL / SUPABASE_ANON_KEY / NORI_BACKEND_URL). PUBLIC VALUES
+#     ONLY — never the Supabase service-role key or ANTHROPIC_API_KEY (see HANDOFF §5).
+#     Source, in priority order:
+#       1. $NORI_BUNDLE_ENV  -> path to a filled-in .env (use this in CI)
+#       2. desktop/env.public -> a gitignored local copy you fill from env.public.example
+#     If neither exists we warn but still build — the app runs, cloud features just stay
+#     unconfigured until a .env is added (or the 3 vars are exported for `tauri dev`).
+BUNDLE_ENV="${NORI_BUNDLE_ENV:-$ROOT/desktop/env.public}"
+if [ -f "$BUNDLE_ENV" ]; then
+  cp "$BUNDLE_ENV" "$DEST/.env"
+  echo "    staged .env <- $BUNDLE_ENV"
+else
+  echo "    ⚠ no bundle .env found (looked at \$NORI_BUNDLE_ENV and desktop/env.public)."
+  echo "      Cloud features won't self-configure. Copy desktop/env.public.example ->"
+  echo "      desktop/env.public, fill in the PUBLIC values, and re-run — or export the"
+  echo "      three vars for a local 'tauri dev'."
+fi
+
 echo "==> done. Bundle size:"
 du -sh "$BUNDLE"

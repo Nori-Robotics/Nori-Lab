@@ -263,7 +263,14 @@ function baseFromThumb(f: VrControllerFrame | null | undefined): Record<string, 
   if (!f) return null;
   const { x, y } = f.thumbstick;
   const linear = Math.abs(y) > THUMB_DEADZONE ? -y : 0; // stick up = forward
-  const angular = Math.abs(x) > THUMB_DEADZONE ? -x : 0; // reference negates tx
+  // Stick RIGHT = turn right. This used to be `-x`, copied from the rpi4 reference's "negate
+  // tx", which left VR steering MIRRORED: the jog we emit here goes onto the wire verbatim
+  // (teleop.ts sends externalJog untouched), whereas the keyboard/script paths negate angular
+  // on the way out to correct for the firmware turning opposite our "+angular = left"
+  // convention (teleop.ts BASE_KEYS / ScriptDriver.base). Those two got the fix; VR didn't, so
+  // it inherited the raw firmware sign and steered backwards. Sending +x lines VR up with the
+  // wire convention the other two already send.
+  const angular = Math.abs(x) > THUMB_DEADZONE ? x : 0;
   if (!linear && !angular) return null;
   return { linear: capRate(linear), angular: capRate(angular) };
 }

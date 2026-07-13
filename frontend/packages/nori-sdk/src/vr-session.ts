@@ -48,10 +48,19 @@ const UI_SCALE = 0.8;
 //   YAW — the model faces +Z (at the operator); this yaws it to the same 3/4 view the desktop
 //       card frames, so you see the front and one flank instead of a flat head-on silhouette.
 const ROBOT_X = 1.8;
-const ROBOT_Y = -0.76;
+const ROBOT_Y = -0.96;
 const ROBOT_Z = 0.35;
 const ROBOT_SCALE = 0.7;
 const ROBOT_YAW = -0.6;
+// Turntable spin: the LEFT thumbstick's X axis yaws the 3D robot so the operator can look at a
+// pose from any side. That stick's axes are the only unbound input left on either controller
+// (its PRESS is E-STOP, but the axes were unused; the base drive is on the RIGHT stick), which
+// is why it wins over a point-and-grab: grip/trigger/A-X/B-Y are all bound to real robot motion,
+// so "grab" would have to borrow a button that commands the arm. Push right = the robot's front
+// swings right, like spinning a turntable. Rate is per-SECOND (scaled by real frame dt) so the
+// feel doesn't change between a 72 Hz and a 90 Hz headset.
+const ROBOT_SPIN_DEADZONE = 0.15; // ignore stick slop / resting thumb
+const ROBOT_SPIN_RATE = 2.2; // rad/s at full deflection (~2.9 s for a full turn)
 // Recenter poke button geometry (metres). The button floats this far above the left
 // controller, and fires when the right controller tip enters POKE_FIRE_R of it; it must
 // then leave POKE_REARM_R before it can fire again (hysteresis, no repeat-fire). NEAR_R
@@ -143,6 +152,10 @@ export class VrSession {
   // The C6 robot schematic — a real articulated three.js model (not a texture), re-posed from
   // telemetry every frame. Same builder the desktop card mounts, so the two can't drift.
   private robot: RobotModel | null = null;
+  // Operator-controlled turntable yaw of that model (left thumbstick X), radians. Survives
+  // recenter: it's relative to the panel group, so re-aiming the cluster doesn't spin the robot.
+  private robotYaw = ROBOT_YAW;
+  private lastFrameAt = 0; // for the per-second spin rate
   private session: XRSession | null = null;
   private currents: Record<string, number> = {};
   // Per-gripper adaptive idle-current baseline for haptics (see applyHaptics).
@@ -331,6 +344,7 @@ export class VrSession {
     this.o.onLog(
       `${mode === "immersive-ar" ? "AR (passthrough)" : "VR"} session started — ` +
         "grip to engage clutch, A/X & B/Y = that arm's lift up/down, "
+          + "right stick = drive the base, left stick = spin the 3D robot, "
           + "left stick-press = E-STOP, hold right stick-press = reset, "
           + "poke the Recenter button above your left hand to recenter the view"
     );
@@ -364,6 +378,8 @@ export class VrSession {
     this.texture = null;
     this.panelGroup = null;
     this.robot = null;
+    this.robotYaw = ROBOT_YAW; // next session starts from the default 3/4 view
+    this.lastFrameAt = 0;
     this.hudTexture = null;
     this.hudCanvas = null;
     this.hudCtx = null;
@@ -386,6 +402,12 @@ export class VrSession {
     const camera = this.camera;
     if (!renderer || !scene || !camera) return;
 
+    // Seconds since the previous XR frame. Clamped so a hitch (or the headset being taken off
+    // and put back on) can't integrate one enormous step and fling the robot's spin.
+    const nowMs = performance.now();
+    const dt = this.lastFrameAt ? Math.min(0.1, (nowMs - this.lastFrameAt) / 1000) : 0;
+    this.lastFrameAt = nowMs;
+
     if (frame) {
       const refSpace = renderer.xr.getReferenceSpace();
       const session = renderer.xr.getSession();
@@ -406,6 +428,13 @@ export class VrSession {
           rightLiftDown: this.buttonDown(this.b.rightLiftDown, sources),
           estop: this.buttonDown(this.b.estop, sources),
         };
+        // Left stick X spins the 3D robot (see ROBOT_SPIN_RATE). Read straight off the sampled
+        // frame — the mapper never consumes this axis, so it drives nothing on the real robot.
+        const spinX = vrFrame.left?.thumbstick.x ?? 0;
+        if (Math.abs(spinX) > ROBOT_SPIN_DEADZONE) {
+          this.robotYaw += spinX * ROBOT_SPIN_RATE * dt;
+        }
+
         const res = this.mapper.map(vrFrame);
         // null = nothing engaged this frame -> hand the stream back to the keyboard.
         this.o.teleop.setExternalJog(res.jog);
@@ -431,6 +460,7 @@ export class VrSession {
       const highlight: ArmHighlight =
         eng.left && eng.right ? "both" : eng.left ? "left" : eng.right ? "right" : "none";
       this.robot.update(this.tel?.state ?? {}, highlight);
+      this.robot.root.rotation.y = this.robotYaw; // operator turntable (left stick X)
     }
     // Repaint the HUD on a slow cadence (keeps staleness/values fresh without redrawing text
     // every 72–90 Hz frame).

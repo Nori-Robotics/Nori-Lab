@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApi } from "@/contexts/ApiContext";
+import { ApiError } from "@/lib/apiClient";
 import { Pill } from "@/components/ui/pill";
 import {
   acquirePolicy,
@@ -22,6 +23,49 @@ import {
   type PolicyDetails,
   type PolicyListEntry,
 } from "@/nori/api/client";
+
+/**
+ * PREVIEW-ONLY stand-in for GET .../details while the backend endpoint is
+ * unreleased (it lands with the marketplace-details branch + migration 014).
+ * Values are plausible placeholders modeled on a real promoted bundle; the
+ * description carries an explicit preview-data banner so nobody mistakes
+ * them for real stats. Delete once the endpoint is deployed everywhere.
+ */
+function mockDetailsFor(p: PolicyListEntry): PolicyDetails {
+  const withRepo = p as PolicyListEntry & { dataset_repo?: string | null };
+  return {
+    ref: p.ref,
+    source: p.source,
+    title: p.title,
+    is_renamed: false,
+    description:
+      `${p.description ?? ""}\n\n` +
+      "⚠ preview data — the policy-details endpoint isn't deployed yet; " +
+      "the file list and stats below are placeholders.",
+    policy_class: p.policy_class ?? "act",
+    price_usd: p.price_usd ?? null,
+    created_at: p.created_at,
+    dataset_repo: withRepo.dataset_repo ?? (p.source === "own" ? "NoriRobotics/customer-preview" : null),
+    promoted_at: p.created_at,
+    final_cost_usd: p.source === "own" ? 0.0751 : null,
+    timeout_seconds: p.source === "own" ? 900 : null,
+    editable: p.source === "own",
+    files: [
+      {
+        name: "model.safetensors",
+        size_bytes: 206766560,
+        sha256: "42772891cb6eba1e7bc36ad8e12c0fa0723c61f036fa235c725ce6026e6e81df",
+      },
+      {
+        name: "config.json",
+        size_bytes: 198,
+        sha256: "d2ef3c412258b5daf89205d2a651e53c2631ce3adea78cd2d08df698cc58334c",
+      },
+      { name: "policy_preprocessor.safetensors", size_bytes: 1184, sha256: null },
+      { name: "policy_postprocessor.safetensors", size_bytes: 1088, sha256: null },
+    ],
+  };
+}
 
 type SourceFilter = "all" | "own" | "first_party" | "community";
 const SOURCES: { key: SourceFilter; label: string }[] = [
@@ -343,10 +387,20 @@ const Marketplace = () => {
   );
 
   const openDrawer = useCallback(
-    async (ref: string) => {
+    async (policy: PolicyListEntry) => {
       try {
-        setOpenDetails(await getPolicyDetails(baseUrl, fetchWithHeaders, ref));
+        setOpenDetails(await getPolicyDetails(baseUrl, fetchWithHeaders, policy.ref));
       } catch (e) {
+        // The details endpoint ships with the backend's marketplace-details
+        // branch (gated on migration 014). Until that deploys, a 404 here
+        // would dead-end the drawer — synthesize CLEARLY-MARKED preview
+        // details from the catalog entry instead so the drawer stays
+        // testable. Real responses take over automatically once the
+        // endpoint exists; every other error still surfaces.
+        if (e instanceof ApiError && e.status === 404) {
+          setOpenDetails(mockDetailsFor(policy));
+          return;
+        }
         setError(e instanceof Error ? e.message : String(e));
       }
     },
@@ -465,7 +519,7 @@ const Marketplace = () => {
                 state={installs[p.ref] ?? { status: "idle" }}
                 installed={installedRefs.has(p.ref)}
                 onInstall={() => install(p)}
-                onOpen={() => openDrawer(p.ref)}
+                onOpen={() => openDrawer(p)}
               />
             </div>
           ))}

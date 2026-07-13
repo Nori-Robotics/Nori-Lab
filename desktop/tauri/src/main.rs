@@ -46,6 +46,9 @@ fn wait_for_port(timeout: Duration) -> bool {
 
 fn main() {
     tauri::Builder::default()
+        // Opens external URLs (the hosted docs site) in the user's real browser. Without this
+        // the UI can only navigate its own webview, which would replace the app with a web page.
+        .plugin(tauri_plugin_opener::init())
         .manage(Backend(Mutex::new(None)))
         .setup(|app| {
             // resources/backend/ -> <bundle-resources>/backend/

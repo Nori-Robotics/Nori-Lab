@@ -110,11 +110,12 @@ class NoriClient:
         *,
         json: Any = None,
         params: dict[str, Any] | None = None,
+        timeout: httpx.Timeout | None = None,
     ) -> Any:
         """Issue a request and return parsed JSON, raising NoriBackendError on non-2xx."""
         url = f"{self.base_url}{path}"
         try:
-            with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
+            with httpx.Client(timeout=timeout or DEFAULT_TIMEOUT) as client:
                 resp = client.request(
                     method, url, json=json, params=params, headers=self._headers()
                 )
@@ -613,6 +614,88 @@ class NoriClient:
                 "new_run": new_run,
             },
         )
+
+    # -- LLM gateway (the ANTHROPIC key lives ONLY on the backend) ------------------
+
+    @staticmethod
+    def _llm_body(
+        model: str,
+        max_tokens: int,
+        messages: list[dict[str, Any]],
+        system: str | None,
+        tools: list[dict[str, Any]] | None,
+        new_run: bool,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"model": model, "max_tokens": max_tokens, "messages": messages}
+        if system is not None:
+            body["system"] = system
+        if tools is not None:
+            body["tools"] = tools
+        body["new_run"] = new_run
+        return body
+
+    def llm_messages(
+        self,
+        *,
+        model: str,
+        max_tokens: int,
+        messages: list[dict[str, Any]],
+        system: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        new_run: bool = False,
+    ) -> dict[str, Any]:
+        """POST /agent/llm/messages — the gated, metered Anthropic proxy. The backend holds
+        the key, checks the daily budget (429 if capped), calls Claude, charges the turn, and
+        returns {stop_reason, content[], usage, budget}. Longer timeout than the default: a
+        1500-token completion (possibly with an image) routinely exceeds 30s."""
+        return self._request(
+            "POST",
+            f"{API}/agent/llm/messages",
+            json=self._llm_body(model, max_tokens, messages, system, tools, new_run),
+            timeout=httpx.Timeout(120.0, connect=10.0),
+        )
+
+    def llm_messages_stream(
+        self,
+        *,
+        model: str,
+        max_tokens: int,
+        messages: list[dict[str, Any]],
+        system: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        new_run: bool = False,
+    ):
+        """POST /agent/llm/messages/stream — same gate/charge, but yields the model's TEXT in
+        chunks (the backend charges on stream completion). A non-2xx (429/503) is read and
+        raised as NoriBackendError BEFORE any text is yielded, so the caller can turn it into
+        the right pre-flight HTTP error just like the non-streaming path."""
+        url = f"{self.base_url}{API}/agent/llm/messages/stream"
+        body = self._llm_body(model, max_tokens, messages, system, tools, new_run)
+        try:
+            with (
+                httpx.Client(timeout=httpx.Timeout(120.0, connect=10.0)) as client,
+                client.stream("POST", url, json=body, headers=self._headers()) as resp,
+            ):
+                if not resp.is_success:
+                    resp.read()  # must drain before accessing .text on a stream response
+                    detail: Any = None
+                    try:
+                        parsed = resp.json()
+                        detail = parsed.get("detail", parsed) if isinstance(parsed, dict) else parsed
+                    except ValueError:
+                        detail = resp.text or None
+                    raise NoriBackendError(
+                        f"POST {API}/agent/llm/messages/stream -> {resp.status_code}: {detail}",
+                        status_code=resp.status_code,
+                        detail=detail,
+                    )
+                for chunk in resp.iter_text():
+                    if chunk:
+                        yield chunk
+        except httpx.RequestError as exc:
+            raise NoriBackendError(
+                f"Could not reach Nori-Backend at {url}: {exc}", status_code=502
+            ) from exc
 
 
 # -- dataset manifest helpers (module-level so they're unit-testable w/o a client) -----

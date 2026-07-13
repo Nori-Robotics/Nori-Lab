@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useNori } from "@/nori/NoriContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
+import { openDocs } from "@/lib/docs";
 
 // Always-visible connection status. Connecting happens once on Home (ConnectionPanel); every
 // page just reads this shared chip. When disconnected it doubles as a shortcut back to Home.
@@ -75,6 +76,17 @@ const NoriLayout = () => {
                 {item.label}
               </Link>
             ))}
+            {/* Docs live on a separately-hosted site, never bundled into the desktop build —
+                so this is a link OUT, not a route. openDocs() sends it to the system browser
+                on desktop (a plain <a> would navigate the app's own webview away from itself). */}
+            <button
+              type="button"
+              onClick={() => void openDocs()}
+              className="text-muted-foreground hover:text-foreground"
+              title="Open the Nori docs in your browser"
+            >
+              Docs ↗
+            </button>
           </div>
           <div className="ml-auto">
             <ConnectionChip />

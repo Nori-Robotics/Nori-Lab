@@ -6,7 +6,8 @@
   "outputDirectory": "dist",
   "build": {
     "env": {
-      "VITE_NORI_BACKEND_URL": "https://nori-backend-production.up.railway.app"
+      "VITE_NORI_BACKEND_URL": "https://nori-backend-production.up.railway.app",
+      "VITE_DOCS_URL": "https://docs.nori.com"
     }
   },
   "rewrites": [

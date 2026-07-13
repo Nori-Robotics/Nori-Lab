@@ -12,6 +12,11 @@ interface ImportMetaEnv {
   // "https://app.nori.com". Used to build the laptop→headset handoff link. Falls back to
   // the current origin when unset (correct only when the app itself is hosted there).
   readonly VITE_VR_BASE_URL?: string;
+  // Public origin of the hosted docs site (the `docs/` VitePress project), e.g.
+  // "https://docs.nori.com". The app links OUT to this; docs are never bundled, so they stay
+  // fixable without shipping an app release. Defaults to https://docs.nori.com — see
+  // src/lib/docs.ts.
+  readonly VITE_DOCS_URL?: string;
 }
 
 interface ImportMeta {

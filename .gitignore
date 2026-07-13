@@ -65,12 +65,15 @@ yarn-error.log*
 .superpowers/
 .worktrees/
 outputs/
-docs/
 PHONE_CAMERA_SETUP.md
 HTTPS_SETUP.md
 
 # Self-signed dev certs (regenerate per HTTPS_SETUP.md)
 certs/
+
+# --- Docs site (docs/) — VitePress build output + cache; the markdown IS committed ---
+docs/.vitepress/dist/
+docs/.vitepress/cache/
 
 # --- Desktop app build artifacts (Tauri + PyInstaller) — all regenerable, never commit ---
 # PyInstaller: build venv (~1.6G torch), work dir, and freeze output

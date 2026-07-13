@@ -1,0 +1,15 @@
+{
+  "name": "nori-docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Nori documentation + troubleshooting site. Hosted separately from the app; never bundled into the desktop build.",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.3"
+  }
+}

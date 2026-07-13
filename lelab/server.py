@@ -384,9 +384,11 @@ def nori_config():
 
 
 # ---- LLM codegen for the Coding page ("Generate") ----------------------------
-# Server-side proxy to Anthropic so the API key never reaches the browser (docs/
-# llm_codegen_design.md). Key + model come from the laptop .env (ANTHROPIC_API_KEY /
-# NORI_LLM_MODEL, loaded by utils.config's load_dotenv). Keep NORI_CODEGEN_SYSTEM in sync with
+# LeLab assembles the prompt and forwards it to Nori-Backend's gated/metered LLM proxy
+# (/agent/llm/messages) behind the customer JWT — the ANTHROPIC key lives ONLY on the
+# backend, never on the laptop or in a shipped bundle (docs/llm_codegen_design.md,
+# HANDOFF.md §5). `model` here is just an id string (NORI_LLM_MODEL, default claude-sonnet-5);
+# the backend holds the key. Keep NORI_CODEGEN_SYSTEM in sync with
 # frontend/src/nori/remote/ScriptDriver.ts — that file is the ground-truth robot API.
 NORI_CODEGEN_SYSTEM = """You generate short JavaScript routines that drive a Nori robot through an injected async `robot` API. Your ENTIRE output is the BODY of an async function: no imports, no function wrapper, no markdown fences, no prose. Only statements, using `await robot.*`.
 
@@ -497,21 +499,10 @@ def _strip_code_fences(s: str) -> str:
 
 
 def _llm_prepare(body: NoriLlmGenerateBody):
-    """Shared setup for both the one-shot and streaming endpoints: validate the key/dep (pre-flight
-    HTTPExceptions), build the client + the user message (code + 9a pose + Part-3 image). Returns
-    (anthropic_module, client, model, content)."""
-    key = os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set on the server")
-    try:
-        import anthropic
-    except ImportError as exc:
-        raise HTTPException(
-            status_code=503, detail="anthropic package not installed (pip install anthropic)"
-        ) from exc
-
+    """Shared setup for both the one-shot and streaming endpoints: build the model id + the user
+    message (code + 9a pose + Part-3 image). Returns (model, content). The Anthropic call itself
+    is done by Nori-Backend (the key lives there, not here) — see nori_llm_generate."""
     model = os.environ.get("NORI_LLM_MODEL", "claude-sonnet-5")
-    client = anthropic.Anthropic(api_key=key)
     parts = []
     if body.current_code:
         parts.append(f"Current code:\n```js\n{body.current_code}\n```")
@@ -539,45 +530,64 @@ def _llm_prepare(body: NoriLlmGenerateBody):
             "type": "image",
             "source": {"type": "base64", "media_type": "image/jpeg", "data": body.image_b64},
         })
-    return anthropic, client, model, content
+    return model, content
 
 
 @app.post("/nori/llm/generate")
-def nori_llm_generate(body: NoriLlmGenerateBody):
-    anthropic, client, model, content = _llm_prepare(body)
-    try:
-        msg = client.messages.create(
+def nori_llm_generate(body: NoriLlmGenerateBody, request: Request):
+    """One-shot codegen. Forwards the assembled prompt to Nori-Backend's gated/metered LLM
+    proxy (the key lives there); each generation is its own run (`new_run=True`). Requires
+    an authenticated request + a reachable backend — no local key path (fails closed)."""
+    model, content = _llm_prepare(body)
+    nori = _nori_client(request)
+    result = _nori_proxy(
+        lambda: nori.llm_messages(
             model=model,
             max_tokens=1500,
             system=NORI_CODEGEN_SYSTEM,
             messages=[{"role": "user", "content": content}],
+            new_run=True,
         )
-    except anthropic.APIError as exc:
-        raise HTTPException(status_code=502, detail=f"Anthropic error: {exc}") from exc
-
-    text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+    )
+    text = "".join(
+        b.get("text", "") for b in result.get("content", []) if b.get("type") == "text"
+    )
     return {"code": _strip_code_fences(text)}
 
 
 @app.post("/nori/llm/generate/stream")
-def nori_llm_generate_stream(body: NoriLlmGenerateBody):
+def nori_llm_generate_stream(body: NoriLlmGenerateBody, request: Request):
     """Same as /generate but streams the model's text as it's produced (text/plain chunks) so the
-    editor fills live. Pre-flight errors (no key / dep) still raise before the stream opens; an
-    Anthropic error mid-stream is emitted as a trailing JS comment (headers are already sent)."""
-    anthropic, client, model, content = _llm_prepare(body)
+    editor fills live. The stream is piped straight from Nori-Backend's proxy, which charges the
+    turn on completion. Pre-flight errors (429 hard-capped / 503 no key / auth) raise BEFORE the
+    stream opens (an explicit budget gate here); a backend error mid-stream is emitted as a
+    trailing JS comment (headers are already sent)."""
+    model, content = _llm_prepare(body)
+    nori = _nori_client(request)
+
+    # Pre-flight budget gate so an out-of-budget customer gets a real 429 instead of a 200
+    # stream — mirrors the /nori/llm/agent gate. The backend re-checks + charges regardless.
+    budget = _nori_proxy(nori.get_agent_usage)
+    if budget.get("hard_capped"):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "reason": "Daily agent token limit reached. It resets tomorrow (UTC).",
+                "daily": _daily_view(budget),
+            },
+        )
 
     def gen():
         try:
-            with client.messages.stream(
+            yield from nori.llm_messages_stream(
                 model=model,
                 max_tokens=1500,
                 system=NORI_CODEGEN_SYSTEM,
                 messages=[{"role": "user", "content": content}],
-            ) as stream:
-                for chunk in stream.text_stream:
-                    yield chunk
-        except anthropic.APIError as exc:
-            yield f"\n/* Anthropic error: {exc} */"
+                new_run=True,
+            )
+        except NoriBackendError as exc:
+            yield f"\n/* LLM error: {exc.detail} */"
 
     return StreamingResponse(gen(), media_type="text/plain; charset=utf-8")
 
@@ -864,37 +874,14 @@ def nori_llm_agent(body: NoriLlmAgentBody, request: Request):
     execute + append. Stateless — the browser drives the loop and enforces the per-run caps
     (step/wall-clock) and the confirm-before-first-motion gate (docs/agentic_vision_loop.md).
 
-    COST GOVERNANCE (per-customer, enforced in Nori-Backend): GATE before spending on Claude
-    (GET /agent/usage → 429 if the customer is hard-capped for the day) and CHARGE the turn's real
-    usage after (POST /agent/usage/charge), both behind the forwarded JWT. Requires auth + a
-    reachable backend; there is no local fallback counter (fails closed)."""
-    key = os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set on the server")
-    try:
-        import anthropic
-    except ImportError as exc:
-        raise HTTPException(
-            status_code=503, detail="anthropic package not installed (pip install anthropic)"
-        ) from exc
+    COST GOVERNANCE (per-customer, enforced in Nori-Backend): the LLM proxy GATES before spending
+    on Claude (429 if the customer is hard-capped for the day) and CHARGES the turn's real usage
+    after, both behind the forwarded JWT — all server-side now. Requires auth + a reachable
+    backend; there is no local key or fallback counter (fails closed)."""
     if not body.messages:
         raise HTTPException(status_code=400, detail="messages[] is required and must be non-empty")
 
     model = os.environ.get("NORI_LLM_MODEL", "claude-sonnet-5")
-    client = anthropic.Anthropic(api_key=key)
-
-    # --- pre-turn budget gate: refuse BEFORE spending on Claude if the customer is out of daily
-    #     budget. The hard cap is enforced by Nori-Backend, keyed by the forwarded customer JWT. ---
-    nori = _nori_client(request)
-    budget = _nori_proxy(nori.get_agent_usage)
-    if budget.get("hard_capped"):
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "reason": "Daily agent token limit reached. It resets tomorrow (UTC).",
-                "daily": _daily_view(budget),
-            },
-        )
 
     # Fold optional grounding into the system prompt (a cacheable, stable-ish suffix) rather than
     # mutating the browser's messages[]. Keeps the conversation the browser holds untouched.
@@ -909,47 +896,34 @@ def nori_llm_agent(body: NoriLlmAgentBody, request: Request):
     if grounding:
         system = system + "\n\nCONTEXT FOR THIS RUN:\n" + "\n".join(grounding)
 
-    try:
-        msg = client.messages.create(
-            model=model,
-            max_tokens=1500,
-            system=system,
-            tools=NORI_AGENT_TOOLS,
-            messages=body.messages,
-        )
-    except anthropic.APIError as exc:
-        raise HTTPException(status_code=502, detail=f"Anthropic error: {exc}") from exc
-
-    # --- post-turn charge: record the turn's ACTUAL usage against the customer's ledger. Input vs
-    #     output are billed differently; cache read/write are captured for cost (not the cap). ---
-    u = msg.usage
-    cache_read = int(getattr(u, "cache_read_input_tokens", 0) or 0)
-    cache_write = int(getattr(u, "cache_creation_input_tokens", 0) or 0)
     # new_run: honor an explicit browser signal, else infer "first turn" (no assistant turn yet).
     new_run = (
         body.new_run
         if body.new_run is not None
         else not any(m.get("role") == "assistant" for m in body.messages)
     )
-    updated = _nori_proxy(
-        lambda: nori.charge_agent_usage(
+
+    # Forward to the gated/metered proxy: it gates the budget (429), calls Claude with the
+    # server-held key, charges the turn, and returns the raw assistant turn + updated budget.
+    nori = _nori_client(request)
+    result = _nori_proxy(
+        lambda: nori.llm_messages(
             model=model,
-            input_tokens=int(u.input_tokens),
-            output_tokens=int(u.output_tokens),
-            cache_read_tokens=cache_read,
-            cache_write_tokens=cache_write,
+            max_tokens=1500,
+            system=system,
+            tools=NORI_AGENT_TOOLS,
+            messages=body.messages,
             new_run=bool(new_run),
         )
     )
 
-    # Return the raw assistant turn: stop_reason + content blocks (text + tool_use). model_dump gives
-    # plain JSON the browser can append verbatim to messages[] as the assistant turn. `daily` now
-    # reflects the customer's backend-enforced budget (spent/warn unchanged for the existing banner).
+    # content[] blocks (text + tool_use) are already plain JSON the browser appends verbatim as the
+    # assistant turn. `daily` reflects the customer's backend-enforced budget (post-charge snapshot).
     return {
-        "stop_reason": msg.stop_reason,
-        "content": [b.model_dump() for b in msg.content],
-        "usage": {"input_tokens": msg.usage.input_tokens, "output_tokens": msg.usage.output_tokens},
-        "daily": _daily_view(updated),
+        "stop_reason": result.get("stop_reason"),
+        "content": result.get("content", []),
+        "usage": result.get("usage", {}),
+        "daily": _daily_view(result.get("budget", {})),
     }
 
 

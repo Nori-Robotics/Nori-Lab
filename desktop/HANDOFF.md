@@ -160,17 +160,21 @@ next to the executable (`override=False`, so a real exported env var still wins 
   secret-handling decision above — LLM routes through Railway). `resources/backend/` is
   gitignored, so a filled-in `.env` there won't be committed.
 
-**Remaining step-5 work — the LLM cloud-proxy (NOT done; needs a Railway endpoint).**
-The agent/coding endpoints (`_llm_prepare`, `server.py:499`; `nori_llm_agent`,
-`server.py:860`) still call `anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])`
-**locally**, so in a shipped bundle (no key) they return `503 ANTHROPIC_API_KEY not set`.
-The budget check already forwards the JWT (`_nori_proxy(nori.get_agent_usage)`), so half the
-plumbing exists — but the actual completion must move server-side. **Blocking dependency:**
-Nori-Backend (Railway) must expose an authenticated LLM completion/stream endpoint for the
-local backend to `_nori_proxy` to. That's a cross-service change; confirm the Railway
-endpoint exists / who owns it before implementing the client side here. When doing it, also
-extend the per-user daily-budget gate (currently only on the agent loop) to the one-shot
-coding path (`_llm_prepare`).
+**LLM cloud-proxy — ✅ CODE-COMPLETE (pending Railway key + deploy).** The Anthropic key no
+longer lives on the laptop or in the bundle. All three LLM surfaces now forward through
+Nori-Backend behind the customer JWT:
+- **Nori-Backend** (branch `feat/llm-cloud-proxy`): new `POST /api/v1/agent/llm/messages`
+  and `/messages/stream` in `src/routes/agent.py` — gate on the daily budget (429 if capped),
+  call Anthropic with the server-held key, charge the turn's real usage, return the raw
+  message. `anthropic` added to `requirements.txt`; `ANTHROPIC_API_KEY` documented in
+  `.env.example`.
+- **LeLab**: `NoriClient.llm_messages` / `llm_messages_stream` (`nori_client.py`) forward the
+  payload; `server.py`'s `nori_llm_generate`, `nori_llm_generate_stream`, and `nori_llm_agent`
+  dropped their local `anthropic.Anthropic(...)` calls. Codegen is now metered too (it forwards
+  the JWT via the existing `X-Nori-JWT` the frontend already sends — no frontend change).
+- **To go live (human steps):** (1) set `ANTHROPIC_API_KEY` (and optionally `NORI_LLM_MODEL`)
+  in Railway's env; (2) review + deploy the `feat/llm-cloud-proxy` branch (the requirements
+  bump makes Railway install `anthropic`). Neither repo has been committed/pushed.
 
 **Decision — the Anthropic key must NEVER live on a customer machine (route LLM through
 the cloud).** A desktop bundle is fully in the customer's hands: PyInstaller archives unzip,

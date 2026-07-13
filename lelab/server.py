@@ -1315,6 +1315,14 @@ def nori_select_robot(serial: str, request: Request):
     return _nori_proxy(lambda: client.select_robot(serial))
 
 
+# NORI: billing summary (backend Phase 1, free-tier enforcement). Read-only
+# tier + monthly compute + agent-token budgets for the Account page's Billing
+# panel. Monthly fields arrive null until backend migration 013 is applied.
+@app.get("/nori/billing/summary")
+def nori_billing_summary(request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(client.get_billing_summary)
+
 @app.get("/nori/consents")
 def nori_list_consents(request: Request):
     client = _nori_client(request)

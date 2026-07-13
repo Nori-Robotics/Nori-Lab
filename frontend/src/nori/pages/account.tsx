@@ -10,7 +10,12 @@ import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
 import { signOut } from "@/nori/auth/session";
 import ConsentsSection from "@/nori/components/ConsentsSection";
-import { listRobots, type PairedRobot } from "@/nori/api/client";
+import {
+  getBillingSummary,
+  listRobots,
+  type BillingSummary,
+  type PairedRobot,
+} from "@/nori/api/client";
 
 function fmtSeconds(s: number): string {
   if (s <= 0) return "0m";
@@ -18,6 +23,32 @@ function fmtSeconds(s: number): string {
   const m = Math.round((s % 3600) / 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return String(n);
+}
+
+const TIER_LABELS: Record<string, string> = {
+  free: "Free",
+  pro: "Pro — $20/mo",
+  developer: "Developer (contract)",
+};
+
+/** Thin usage bar: green under the soft line, amber near it, red at the cap. */
+const UsageBar = ({ used, allowed }: { used: number; allowed: number }) => {
+  const frac = allowed > 0 ? Math.min(1, used / allowed) : 0;
+  const color = frac >= 1 ? "#c0392b" : frac >= 0.66 ? "#d98b3d" : "#8ab135";
+  return (
+    <div className="mt-1 h-1.5 w-full rounded bg-[#14131a]/10">
+      <div
+        className="h-1.5 rounded"
+        style={{ width: `${Math.round(frac * 100)}%`, backgroundColor: color }}
+      />
+    </div>
+  );
+};
 
 const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
   <div className="flex justify-between gap-4 py-1.5 text-sm">
@@ -44,6 +75,25 @@ const Account = () => {
       })
       .catch(() => {
         if (!cancelled) setRobots(null); // profile fallback below
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session, baseUrl, fetchWithHeaders]);
+
+  // Billing summary (tier + monthly compute + agent tokens). Optional: when the
+  // backend predates /billing/summary, fall back to the profile-derived
+  // compute panel so the page keeps working against older deployments.
+  const [billing, setBilling] = useState<BillingSummary | null>(null);
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    getBillingSummary(baseUrl, fetchWithHeaders)
+      .then((b) => {
+        if (!cancelled) setBilling(b);
+      })
+      .catch(() => {
+        if (!cancelled) setBilling(null); // profile fallback below
       });
     return () => {
       cancelled = true;
@@ -93,15 +143,96 @@ const Account = () => {
 
       <Panel eyebrow="account" title="Profile" bodyClassName="divide-y divide-[#14131a]/10">
         <Row label="Email" value={customer.email ?? "—"} />
-        <Row label="Billing tier" value={customer.billing_tier} />
+        <Row
+          label="Plan"
+          value={TIER_LABELS[billing?.billing_tier ?? customer.billing_tier] ??
+            (billing?.billing_tier ?? customer.billing_tier)}
+        />
         <Row label="Dataset repo" value={customer.hf_dataset_repo} />
       </Panel>
 
-      <Panel eyebrow="account" title="Compute allowance" bodyClassName="divide-y divide-[#14131a]/10">
-        <Row label="Allowed" value={fmtSeconds(customer.allowed_seconds)} />
-        <Row label="Consumed" value={fmtSeconds(customer.consumed_seconds)} />
-        <Row label="Remaining" value={fmtSeconds(customer.remaining_seconds)} />
-      </Panel>
+      {billing ? (
+        <Panel eyebrow="billing" title="Usage this month" bodyClassName="space-y-3">
+          <div>
+            <div className="flex justify-between gap-4 text-sm">
+              <span className="text-[#5c564b]">Training compute</span>
+              <span className="font-medium text-[#14131a]">
+                {fmtSeconds(
+                  billing.compute.consumed_seconds_this_month +
+                    billing.compute.reserved_seconds_this_month
+                )}{" "}
+                / {fmtSeconds(billing.compute.allowed_seconds_per_month)}
+              </span>
+            </div>
+            <UsageBar
+              used={
+                billing.compute.consumed_seconds_this_month +
+                billing.compute.reserved_seconds_this_month
+              }
+              allowed={billing.compute.allowed_seconds_per_month}
+            />
+          </div>
+
+          <div>
+            <div className="flex justify-between gap-4 text-sm">
+              <span className="text-[#5c564b]">Assistant tokens (today)</span>
+              <span className="font-medium text-[#14131a]">
+                {fmtTokens(billing.agent_tokens.used_today)} /{" "}
+                {fmtTokens(billing.agent_tokens.allowed_today)}
+              </span>
+            </div>
+            <UsageBar
+              used={billing.agent_tokens.used_today}
+              allowed={billing.agent_tokens.allowed_today}
+            />
+          </div>
+
+          {billing.agent_tokens.used_this_month != null &&
+            billing.agent_tokens.allowed_per_month != null && (
+              <div>
+                <div className="flex justify-between gap-4 text-sm">
+                  <span className="text-[#5c564b]">Assistant tokens (this month)</span>
+                  <span className="font-medium text-[#14131a]">
+                    {fmtTokens(billing.agent_tokens.used_this_month)} /{" "}
+                    {fmtTokens(billing.agent_tokens.allowed_per_month)}
+                  </span>
+                </div>
+                <UsageBar
+                  used={billing.agent_tokens.used_this_month}
+                  allowed={billing.agent_tokens.allowed_per_month}
+                />
+              </div>
+            )}
+
+          {billing.agent_tokens.hard_capped && (
+            <p className="text-xs font-medium text-[#c0392b]">
+              Assistant budget exhausted — resets {billing.agent_tokens.used_this_month != null
+                ? "daily and monthly (UTC)"
+                : "at midnight UTC"}.
+            </p>
+          )}
+
+          {billing.billing_tier === "free" && (
+            <p className="pt-1 text-xs text-[#5c564b]">
+              Free plan{billing.limits
+                ? ` — training jobs up to ${Math.round(
+                    billing.limits.max_job_timeout_seconds / 60
+                  )} min, ${billing.limits.max_robots} robots`
+                : ""}. Pro ($20/mo) with higher limits is coming soon.
+            </p>
+          )}
+        </Panel>
+      ) : (
+        <Panel
+          eyebrow="account"
+          title="Compute allowance"
+          bodyClassName="divide-y divide-[#14131a]/10"
+        >
+          <Row label="Allowed" value={fmtSeconds(customer.allowed_seconds)} />
+          <Row label="Consumed" value={fmtSeconds(customer.consumed_seconds)} />
+          <Row label="Remaining" value={fmtSeconds(customer.remaining_seconds)} />
+        </Panel>
+      )}
 
       <Panel eyebrow="account" title={paired.length > 1 ? "Robots" : "Robot"}>
         {paired.length > 0 ? (

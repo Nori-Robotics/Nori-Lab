@@ -530,6 +530,19 @@ class NoriClient:
         the erasure (S3/HF/checkpoint teardown, + account + Auth-user for `full`)."""
         return self._request("POST", f"{API}/deletion-requests", json=payload)
 
+    # -- billing ---------------------------------------------------------------
+
+    def get_billing_summary(self) -> dict[str, Any]:
+        """GET /billing/summary — tier, monthly compute usage, and agent-token
+        budgets in one read-only call. Backs the account page's Billing panel.
+
+        Returns {billing_tier, tier_price_usd_per_month, compute: {...seconds,
+        monthly}, agent_tokens: {used_today/allowed_today/used_this_month/
+        allowed_per_month/hard_capped}, limits: {...}|null}. Monthly fields are
+        null until backend migration 013 is applied.
+        """
+        return self._request("GET", f"{API}/billing/summary")
+
     # -- agent (LLM) token metering (cost governance) ------------------------------
 
     def get_agent_usage(self) -> dict[str, Any]:

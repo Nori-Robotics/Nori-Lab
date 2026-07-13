@@ -362,3 +362,41 @@ export function createDeletionRequest(
     action: "Request deletion",
   });
 }
+
+/**
+ * Billing summary (backend Phase 1 — prepaid tiers: free / pro $20/mo / developer).
+ * Monthly fields are null until backend migration 013 is applied; the Account page
+ * falls back to profile-derived numbers when this endpoint is unavailable.
+ */
+export interface BillingSummary {
+  billing_tier: string;
+  /** 0 for free, 20 for pro, null for developer (negotiated). */
+  tier_price_usd_per_month: number | null;
+  compute: {
+    allowed_seconds_per_month: number;
+    consumed_seconds_this_month: number;
+    reserved_seconds_this_month: number;
+    remaining_seconds_this_month: number;
+  };
+  agent_tokens: {
+    used_today: number;
+    allowed_today: number;
+    soft_warn_threshold: number;
+    used_this_month: number | null;
+    allowed_per_month: number | null;
+    hard_capped: boolean;
+  };
+  /** Route-level clamps for this tier; null = none (pro/developer today). */
+  limits: {
+    max_job_timeout_seconds: number;
+    max_concurrent_jobs: number;
+    max_robots: number;
+  } | null;
+}
+
+/** GET /nori/billing/summary — tier + monthly compute + agent-token budgets. */
+export function getBillingSummary(baseUrl: string, fetcher: Fetcher): Promise<BillingSummary> {
+  return noriRequest<BillingSummary>(baseUrl, fetcher, "/nori/billing/summary", {
+    action: "Load billing summary",
+  });
+}

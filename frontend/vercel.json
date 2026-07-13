@@ -7,7 +7,7 @@
   "build": {
     "env": {
       "VITE_NORI_BACKEND_URL": "https://nori-backend-production.up.railway.app",
-      "VITE_DOCS_URL": "https://docs.nori.com"
+      "VITE_DOCS_URL": "https://docs.norirobotics.com"
     }
   },
   "rewrites": [

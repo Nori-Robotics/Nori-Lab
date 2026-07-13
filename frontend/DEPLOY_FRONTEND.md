@@ -159,3 +159,64 @@ Runbook cross-ref: `NoriTeleop/rpi5/media/README.md` → "M2 — VR teleop".
 2. `GET {baseUrl}/nori/config` (LeLab). If it responds `configured`, use it.
 3. Else `getBuildTimeConfig()` — `VITE_SUPABASE_*` baked at build (the hosted VR path).
 4. Else the "Nori auth is not configured" state.
+
+## 7. Troubleshooting: "works on Vercel, broken locally" (2026-07-12 incident)
+
+The single most confusing failure mode. Symptom: a fix is merged to `main`, the
+Vercel deploy behaves correctly, but a **local tool-installed `lelab`** still runs
+the old buggy behavior. Root cause and the general lesson:
+
+**`frontend/dist/` is committed, and the two vehicles get it differently.**
+- **Vercel** runs `npm run build` on every deploy (`vercel.json buildCommand`) →
+  always builds from current source → a merged source fix is live immediately.
+- **The local/desktop vehicle** serves the **committed** `frontend/dist/` bundle
+  (the Python server mounts it as StaticFiles). A source fix merged to `main`
+  does **nothing** for it until `dist/` is rebuilt AND committed.
+
+So a `.ts` fix that passes `tsc` + vitest (which run against **source**) can be
+completely absent from what a tool install actually serves. When in doubt, the
+served bundle — not the source — is the truth.
+
+### What to check, in order
+1. **Which bundle is actually served?** `curl -s localhost:8000/ | grep -o
+   'index-[A-Za-z0-9_-]*\.js'`. The bundle is content-hashed, so its filename
+   changes on every rebuild — that hash IS the version identity. Compare against
+   `frontend/dist/index.html` and the installed tool's copy.
+   - ⚠️ **Do NOT grep the minified bundle for a function name** to check "is the
+     fix in here." Minification renames identifiers → false negatives every time.
+     Use the hashed filename, not the symbol.
+2. **Is the committed `dist/` current?** If `git`'s `frontend/dist/index.html`
+   references an *old* hash, the fix was never built into the committed bundle.
+   Rebuild and commit it: `cd frontend && npm run build` → `git add -f
+   frontend/dist && git commit`. (This is what the `build_frontend` CI *should*
+   do automatically on `main` — if it didn't, that CI is broken and this trap
+   will recur.)
+3. **`uv tool install` packages COMMITTED git state, not your working tree.** A
+   local `npm run build` you haven't committed is invisible to
+   `uv tool install .` — it builds from the committed dist. You must commit the
+   rebuilt dist, then `uv tool install --force "git+…@main"`.
+4. **The running process + browser still cache the old bundle.** After fixing the
+   files on disk: **restart `lelab`** (the running process was started on the old
+   bundle) and **hard-refresh** the browser (`Cmd+Shift+R`) — the tab has the old
+   hashed JS cached and a soft refresh may reuse the page shell.
+
+### Two real bugs found underneath, worth knowing
+- **Hard-refresh auth race** (fixed, `20038af`): refreshing directly onto an
+  authenticated page raced the Supabase bootstrap; `getAccessToken()` returned
+  `null` before init, so the request went out with no auth header and the backend
+  401'd ("Missing or malformed Authorization header") despite a valid session.
+  Fix: token lookups now await a bootstrap gate. If you see that 401 only on
+  refresh (never on in-app nav), it's this class of race.
+- **`.env` discovery for tool installs** (fixed, `e82b5f7`): bare `load_dotenv()`
+  searches from the *calling file's* dir (the tool venv), never a repo `.env`, so
+  the Nori config came up empty ("Nori auth is not configured") and
+  `NORI_BACKEND_URL` fell back to `localhost:8001`. Fix: `find_dotenv(usecwd=True)`.
+
+### "Same backend, different catalog" is NOT a bug
+Two sessions showing different policy counts against the same backend = they're
+signed into **different accounts**. The marketplace catalog is per-customer
+(`own` policies are `customer_id`-scoped) + shared first-party. Check *who* is
+logged in before suspecting the backend link.
+
+See `Nori-Backend/HF_ORG_MIGRATION.md` for the backend half (org swap, token,
+billing) of the same incident.

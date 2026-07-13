@@ -27,7 +27,9 @@ export function FadeIn({ children, delay = 0, y = 12, className = "" }: Props) {
           }
         });
       },
-      { rootMargin: "-10% 0px", threshold: 0.05 }
+      // Bottom margin pre-triggers content below the fold, so a short page reveals in one
+      // pass instead of making the reader scroll and wait for the last card.
+      { rootMargin: "0px 0px 50% 0px", threshold: 0 }
     );
     io.observe(el);
     return () => io.disconnect();

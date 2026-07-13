@@ -140,6 +140,12 @@ class HandState {
   private prevQuat: Quat | null = null; // last frame's orientation (body-frame increments)
   private engaged = false; // clutch latched on
 
+  // Is this hand's clutch latched right now? (Post-hysteresis — the same state that decides
+  // whether step() contributes jog, so a UI reading this shows exactly what's driving.)
+  get isEngaged(): boolean {
+    return this.engaged;
+  }
+
   // Drop all baselines so a fresh squeeze re-establishes them with no jump (used on
   // clutch release AND on forced re-clutch after a safe-hold — re-clutch-on-resume).
   release() {
@@ -286,6 +292,13 @@ export class VrJogMapper {
   // frame.
   setControlYaw(yawRad: number) {
     this.controlYaw = yawRad;
+  }
+
+  // Which arms are under active clutch this frame. VR is dual-arm (each controller drives its
+  // own arm), so unlike the keyboard's single `settings.arm` there's no one "active" arm —
+  // the 3D robot highlights whichever arm(s) you're actually commanding.
+  engagedArms(): { left: boolean; right: boolean } {
+    return { left: this.left.isEngaged, right: this.right.isEngaged };
   }
 
   // Force both hands to require a fresh squeeze before driving again. Call after any

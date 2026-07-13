@@ -95,19 +95,23 @@ export function ControlOfflineBanner({ status }: { status: DaemonStatus | null }
 // What the operator is told for each connect failure. Same contract as CONTROL_REMEDIES above:
 // headline = what's wrong in their words, body = what to DO about it.
 //
-// A NOTE ON HONESTY: `robot_not_responding` deliberately lists three possible causes instead of
-// asserting one. Today the browser genuinely cannot tell a wrong access code from a robot that is
-// switched off — the robot rejects a bad code SILENTLY, so both look like "nobody answered". Once
-// the robot sends an explicit rejection, this splits into two messages, one of which can finally
-// say "check your call settings" with confidence. Until then, guessing would be worse than asking.
+// A NOTE ON HONESTY: `robot_not_responding` still mentions the access code even though
+// `bad_access_code` now exists. A robot only reports a bad code if its software is new enough to
+// send a rejection; an older one in the fleet still refuses SILENTLY, and that is indistinguishable
+// from being switched off. So the "isn't answering" copy names both causes rather than asserting
+// the robot is off and sending the operator to hunt a power cable that's already plugged in.
 const CONNECT_TROUBLE: Record<ConnectFailure, { headline: string; body: string }> = {
   signaling_unreachable: {
     headline: "Can't reach Nori",
     body: "Your device can't reach Nori's servers. Check your internet connection — the robot is probably fine.",
   },
+  bad_access_code: {
+    headline: "Wrong access code",
+    body: "Your robot is online but rejected this access code. Open your call settings and re-enter the code shown on the robot.",
+  },
   robot_not_responding: {
     headline: "Your robot isn't answering",
-    body: "Check that the robot is powered on and connected to Wi-Fi, and that the access code in your call settings matches the one on the robot. It will connect automatically once it's reachable.",
+    body: "Check that the robot is powered on and connected to Wi-Fi. If it's on and online, the access code in your call settings may not match the one on the robot. It will connect on its own once it's reachable.",
   },
   ice_failed: {
     headline: "Couldn't open a video connection",
@@ -269,24 +273,12 @@ export function GripForce({ currents }: { currents: Record<string, number> }) {
 // the rail dives. depth-below-top = |h| (sign-agnostic: NORI_LIFT_SIGN is still pending a HW
 // test, and from the top the only direction is down, so magnitude is unambiguous).
 //
-// RAIL_TRAVEL_MM = full downward travel = the gauge's full scale. Per robot variant:
-// 950 mm (tall) / 650 mm (short) — the Pi's NORI_LIFT_TRAVEL_MM. Not carried in telemetry
-// yet, so it's a tunable constant here; default to the TALL variant since most of the fleet
-// is 950. On a short 650 unit the gauge/3D just tops out at ~68% of the bar (mm text stays
-// exact) — the safe direction, unlike 650-on-a-950 which pins the visual at "bottom" with
-// 300 mm of real travel left and makes motion read ~1.5x too fast. (When the Pi starts
-// publishing travel_mm, consume that instead of this constant.)
-const RAIL_TRAVEL_MM = 950;
-
-// Shared reading so the C6 3D scene and this gauge agree. `depthMm` = distance below the top
-// (>=0), `frac` = fraction of full travel descended (0 = at top/home, 1 = at bottom).
-export function railReading(state: Record<string, number>, key: string):
-  { known: boolean; depthMm: number; frac: number } {
-  const h = state[key];
-  if (typeof h !== "number") return { known: false, depthMm: 0, frac: 0 };
-  const depthMm = Math.min(RAIL_TRAVEL_MM, Math.abs(h));
-  return { known: true, depthMm, frac: depthMm / RAIL_TRAVEL_MM };
-}
+// railReading() + RAIL_TRAVEL_MM moved to the SDK (packages/nori-sdk/src/rail.ts) when the 3D
+// robot became shared with the headset: this gauge, the desktop 3D card and the in-VR model all
+// derive the carriage height from that one function, so they can't drift. Re-exported here
+// because existing callers import it from this module.
+import { railReading, RAIL_TRAVEL_MM } from "@nori/sdk";
+export { railReading, RAIL_TRAVEL_MM };
 
 export function RailHeight({ state }: { state: Record<string, number> }) {
   const rails: { key: string; label: string }[] = [

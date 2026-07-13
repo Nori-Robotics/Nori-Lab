@@ -13,6 +13,7 @@ import type {
   SignalingHandlers,
   SdpPayload,
   IcePayload,
+  NackPayload,
   RobotHerePayload,
 } from "./signaling";
 
@@ -36,6 +37,9 @@ export class SupabaseSignaling implements SignalingTransport {
     channel.on("broadcast", { event: "ice" }, ({ payload }) => h.onIce(payload as IcePayload));
     channel.on("broadcast", { event: "robot_here" }, ({ payload }) =>
       h.onRobotHere((payload ?? {}) as RobotHerePayload)
+    );
+    channel.on("broadcast", { event: "nack" }, ({ payload }) =>
+      h.onNack?.((payload ?? {}) as NackPayload)
     );
     channel.subscribe((status) => {
       this.log?.("channel:", status);

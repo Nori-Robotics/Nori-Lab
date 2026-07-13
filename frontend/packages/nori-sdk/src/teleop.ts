@@ -159,9 +159,13 @@ export type ConnectPhase =
 export type ConnectFailure =
   // Can't reach the signaling service at all: the operator's own internet, or Nori's service.
   | "signaling_unreachable"
-  // Nobody answered in the room. Until the robot-side nack lands (stage 2), this ALSO covers a
-  // wrong access code and a wrong room — they are indistinguishable from here, so the remedy
-  // text must name all three possibilities rather than assert one.
+  // The robot explicitly rejected our access code (it sent a `nack`). This is the ONLY way to
+  // know the code is wrong: a robot that doesn't recognise the code otherwise stays silent, which
+  // is indistinguishable from being switched off.
+  | "bad_access_code"
+  // Nobody answered in the room at all. That means the robot is off, has no internet, or we're
+  // pointed at the wrong robot. It ALSO still covers a wrong access code on a robot too old to
+  // send a nack — so the remedy text names that possibility rather than asserting the robot is off.
   | "robot_not_responding"
   // The robot answered but no network path could be established (NAT/firewall/TURN).
   | "ice_failed"
@@ -1127,6 +1131,22 @@ export class RemoteTeleop {
         } catch (e) { this.log("auth error:", (e as Error).message); this.curMac = ""; }
         this.log("robot announced — sending 'ready'" + (this.curMac ? " (authenticated)" : ""));
         this.sendReady();
+      },
+
+      // The robot refused our access code. Report it immediately — no point waiting out the
+      // deadline, the answer won't change. Advisory (a nack is forgeable by anyone in the room),
+      // so it only picks the error copy; it never grants or denies anything.
+      onNack: (payload) => {
+        if (this.connected) return; // a live session ignores late/stray nacks
+        if (payload?.reason && payload.reason !== "unauthorized") {
+          this.log("robot refused the session: " + payload.reason);
+          this.clearWaitDeadline();
+          this.setPhase("failed", "session_rejected", payload.reason);
+          return;
+        }
+        this.log("robot refused the access code");
+        this.clearWaitDeadline();
+        this.setPhase("failed", "bad_access_code");
       },
 
       onOpen: () => {

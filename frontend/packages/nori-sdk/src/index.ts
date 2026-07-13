@@ -11,6 +11,8 @@
 
 // RemoteTeleop + its option/telemetry/keybind types + the control-key maps + keybindLegend.
 export * from "./teleop";
+// Z-lift (rail) telemetry reading — pure, shared by the 2D gauge and the 3D robot model.
+export * from "./rail";
 // The signaling transport contract (bring your own, or use @nori/sdk/supabase).
 export * from "./signaling";
 // The nori-protocol version this SDK targets + the compat policy.

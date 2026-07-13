@@ -27,9 +27,9 @@ const SignIn = () => {
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  // Already signed in (or just signed in) → go to the account page.
+  // Already signed in (or just signed in) → go to the landing page.
   useEffect(() => {
-    if (session) navigate("/nori/account", { replace: true });
+    if (session) navigate("/nori", { replace: true });
   }, [session, navigate]);
 
   const switchMode = (next: Mode) => {

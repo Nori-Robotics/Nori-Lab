@@ -60,25 +60,55 @@ The ledger is advisory — datasets on disk that aren't in it still show up
 
 ## 2. Page placement — decision
 
-**A new page: `/nori/projects` ("Projects"), plus a 4th card on the Nori
-home page.** Rationale over the alternatives:
+Two surfaces, split by what the user is doing:
 
-- *Extend `/nori/remote` (teleop)?* Recording is teleop-adjacent but the
-  project lifecycle (create, browse, upload, train handoff) isn't — it
-  would bury data management inside a live-driving screen.
-- *Extend `/nori/training`?* Training is the consumer of projects, not the
-  home of recording. It gets a **picker**, not the management UI.
-- *Legacy `/recording` page?* Wrong visual language, no account context,
-  and we want the home-page journey (01 Teleoperate → 02 Code → 03 Train)
-  to gain its missing step: **collect data**.
+- **Recording happens on `/nori/remote` (the teleop page).** Good
+  demonstrations require watching what the robot's cameras see while you
+  drive — that live view already lives on the remote page, and recording
+  is an act of teleoperation, not of file management. A **record bar**
+  joins the teleop UI (see 3b).
+- **Everything else — create/browse projects, session history, HF backup,
+  Nori upload, train handoff — is a new page: `/nori/projects`.** The
+  project lifecycle would bury a live-driving screen if crammed into
+  remote, and the training page is the *consumer* of projects, not their
+  home (it gets a **picker**, not management UI).
+
+Rejected: reusing the legacy `/recording` page (wrong visual language, no
+account context, and it drives the laptop-attached SO-101 path — not the
+Nori L2 the remote page controls).
 
 Home page card order becomes: 01 Teleoperate · 02 Record & collect
 (**new**, → `/nori/projects`) · 03 Code · 04 Train.
 
-Hosted-app note: recording and local datasets require the LeLab process
-(robot + disk), so in the Vercel/direct-backend app `/nori/projects`
-renders the existing "needs the desktop app" pattern (same as other
-`LELAB_ONLY_PREFIXES` surfaces). The page is desktop-first by nature.
+Hosted-app note: the projects library requires the LeLab process (local
+datasets + disk), so in the Vercel/direct-backend app `/nori/projects`
+renders the existing "needs the desktop app" pattern, and the record bar
+on `/nori/remote` is hidden (same `LELAB_ONLY_PREFIXES` posture).
+
+### 2a. Recording data path (why this needs care)
+
+What the remote page *displays* is the WebRTC composite — compressed,
+latest-wins, sized for human eyes. Training data must instead come from
+the raw sources, and there is already a proven pattern for this:
+`NoriTelop/examples/xlerobot/9_phase2_vr_record.py` builds a
+`LeRobotDataset` by subscribing to the robot's **per-camera ZMQ JPEG
+feeds** plus joint state over LAN (`Nori-Protocol/CLIENTS.md` documents
+the sockets; "the robot's own compositor and recorder are two of them").
+
+v1 capture engine: a `lelab/` module (LeLab already ships `lerobot`) that,
+on "start episode", subscribes the ZMQ cameras + telemetry and appends
+frames to the project's local dataset at the camera FPS — the browser
+record bar only sends start/stop/save/discard commands to LeLab endpoints.
+Actions: recorded from the same command stream driving the robot; the
+exact action source (leader positions vs. commanded targets from the
+bridge) is a confirm-during-implementation item against the protocol.
+
+Consequence to state honestly in the UI: **v1 recording requires the
+laptop to be on the robot's LAN** (the ZMQ feeds are LAN-scoped by
+design). Driving over WAN still works; the record button shows
+"recording needs the same network as your robot" when the feeds aren't
+reachable. Robot-side recording (Pi records locally, dataset ships up
+afterwards) removes that constraint and is the v2 path.
 
 ## 3. UI flow (easy-to-follow path)
 
@@ -102,17 +132,35 @@ Header: title, task line, repo id, sync chips. Body:
 
 - **Sessions table**: date, episodes added, duration. (From the ledger.)
 - **Primary actions**, in journey order, left→right:
-  1. **Record a session** → v1: navigate to the legacy `/recording` page
-     with `?repo_id={repo}&task={task}&return=/nori/projects/{slug}`; the
-     recording page pre-fills and **locks** the dataset field, sets
-     `resume=true` when the dataset exists, and returns here on finish
-     (writing a session entry to the ledger). v2 (later): a nori-styled
-     record panel replaces the handoff.
+  1. **Record a session** → navigates to `/nori/remote?project={slug}`,
+     which arms the record bar there (see 3b-bis). Returning here after
+     the session shows the new episodes in the table.
   2. **Back up to my HF** — `push_to_hub` with the user's token
      (`private=true` default). Shows last-pushed time.
   3. **Send to Nori** — the existing `/nori/datasets/upload` 4-step flow,
      with progress; on finalize, stamps `last_nori_upload`.
   4. **Train on this →** — deep-links `/nori/training?project={slug}`.
+
+### 3b-bis. Record bar on `/nori/remote`
+
+A slim bar docked under the live video (visible only when LeLab is local
+and the ZMQ feeds are reachable; otherwise a quiet "recording needs the
+same network as your robot" hint):
+
+```
+[ project: pick-place-mugs ▾ ]  task: "Pick up the mug…"   ● REC 00:12  ep 13
+[⏺ Start episode] [✔ Save episode] [✖ Discard] [Skip →]        [End session]
+```
+
+- Arriving via `?project=slug` pre-selects the project; the dropdown also
+  allows picking/creating one in place, so a user who starts driving and
+  *then* decides to record never has to leave the page.
+- Start/save/discard mirror the episode controls recording users already
+  know from LeRobot (`exit_early` / `rerecord_episode` semantics).
+- The episode counter and elapsed time render next to the live video so
+  the demonstrator's eyes never leave what the robot sees.
+- **End session** writes the ledger entry (episodes added, duration) and
+  offers a one-click "Back to project →".
 
 ### 3c. `/nori/training` — picker instead of free text
 
@@ -138,17 +186,22 @@ Frontend (`frontend/src/nori/`):
 - `pages/projects.tsx` (hub + detail via route param), route entries in
   `App.tsx` (`/nori/projects`, `/nori/projects/:slug`), home-page card,
   nav link in `NoriLayout`.
+- `pages/remote.tsx`: the record bar (3b-bis) — renders only when the
+  LeLab capture endpoints report the feeds reachable; honors `?project=`.
 - `pages/training.tsx`: project picker + status-driven CTA (advanced raw
   input kept).
-- Legacy `pages/Recording.tsx`: honor `repo_id`/`task`/`return` query
-  params (prefill + lock + redirect back). Small, additive.
 
 LeLab (`lelab/`):
+- **`capture.py` (new)** — the recording engine: ZMQ camera + telemetry
+  subscriber building a `LeRobotDataset` in the local cache (ported from
+  the `9_phase2_vr_record.py` pattern; same module style as `record.py`:
+  module globals + `handle_*` functions). Endpoints: reachability probe,
+  start/end session, start/save/discard episode.
 - `utils/config.py`: `projects.json` read/write helpers.
 - `server.py` endpoints: `GET /projects`, `POST /projects` (create ledger
   entry; repo created lazily on first push), `POST /projects/{slug}/adopt`,
-  `POST /projects/{slug}/session` (called by the recording return-flow),
-  plus stamping hooks in the existing upload/push handlers.
+  session stamping via capture's end-session handler, plus stamping hooks
+  in the existing upload/push handlers.
 - Proxy passthroughs are NOT needed — these are LeLab-local endpoints.
 
 ### Phase B — backend deltas (aligns with the S3-input training pipeline)
@@ -166,16 +219,23 @@ LeLab (`lelab/`):
 
 ### Out of scope (recorded so they're not silently dropped)
 
-- Nori-styled embedded recording panel (v2 of 3b.1).
+- Robot-side (Pi) recording for WAN sessions — v2 of 2a; needs a protocol
+  command + a dataset-shipping path off the Pi.
 - Multi-dataset browsing of the org-side `hf_dataset_repo` contents.
 - Project sharing/collaboration; project deletion UX (v1: remove from
   ledger only, never deletes data).
 
 ## 5. Risks / verify-first items
 
-- **`resume=true` on a dataset whose schema drifted** (cameras changed
-  between sessions) — LeRobot will refuse; surface its error verbatim in
-  the recording page rather than pre-validating in v1.
+- **Action source for captured episodes**: leader positions vs. commanded
+  targets from the bridge — confirm against the protocol before building
+  `capture.py`; a dataset with wrong/laggy actions trains garbage.
+- **Capture FPS vs. ZMQ latest-wins semantics**: the feeds drop frames for
+  slow consumers by design; the engine must timestamp what it actually
+  received, not assume a fixed FPS.
+- **Appending to a dataset whose schema drifted** (cameras changed between
+  sessions) — LeRobot will refuse; surface its error verbatim in the
+  record bar rather than pre-validating in v1.
 - **Slug collisions** with existing personal repos: create form checks the
   merged dataset listing and blocks duplicates.
 - **HF token absent** (never logged in): create/backup actions gate on

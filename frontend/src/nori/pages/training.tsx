@@ -9,7 +9,6 @@ import { ArrowLeft, Loader2, Play, Square } from "lucide-react";
 
 import { useApi } from "@/contexts/ApiContext";
 import { useToast } from "@/hooks/use-toast";
-import { useNori } from "@/nori/NoriContext";
 import { Button } from "@/components/ui/button";
 import Panel from "@/nori/components/Panel";
 
@@ -37,43 +36,26 @@ const MAX_LOG_LINES = 5000;
 
 const ConfigurationMode = () => {
   const { baseUrl, fetchWithHeaders } = useApi();
-  const { customer } = useNori();
   const { toast } = useToast();
   const navigate = useNavigate();
 
   const [config, setConfig] = useState<NoriTrainingFormState>(DEFAULT_TRAINING_CONFIG);
   const [starting, setStarting] = useState(false);
-  const datasetTouched = useRef(false);
 
-  // Prefill the dataset from the customer's Nori dataset once it loads, unless
-  // the user has already typed their own.
-  useEffect(() => {
-    if (!datasetTouched.current && customer?.hf_dataset_repo) {
-      setConfig((prev) =>
-        prev.dataset_repo_id
-          ? prev
-          : { ...prev, dataset_repo_id: customer.hf_dataset_repo },
-      );
-    }
-  }, [customer?.hf_dataset_repo]);
+  // Dataset is chosen via dataset_ref (a promoted upload), defaulting to the
+  // customer's latest upload server-side — no repo to prefill. The dropdown is
+  // populated from the customer's uploads (TODO: wire listMyDatasets once the
+  // backend list endpoint lands; empty => the "Latest upload" default).
+  const datasets: { ref: string; label: string }[] = [];
 
   const updateConfig = <T extends keyof NoriTrainingFormState>(
     key: T,
     value: NoriTrainingFormState[T],
   ) => {
-    if (key === "dataset_repo_id") datasetTouched.current = true;
     setConfig((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleStart = async () => {
-    if (!config.dataset_repo_id.trim()) {
-      toast({
-        title: "Dataset required",
-        description: "Enter a dataset repository to train on.",
-        variant: "destructive",
-      });
-      return;
-    }
     setStarting(true);
     try {
       const { timeout_seconds, ...trainingConfig } = config;
@@ -114,7 +96,7 @@ const ConfigurationMode = () => {
         </Button>
       </div>
 
-      <ConfigForm config={config} updateConfig={updateConfig} />
+      <ConfigForm config={config} updateConfig={updateConfig} datasets={datasets} />
 
       <div className="flex justify-end">
         <Button

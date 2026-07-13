@@ -113,19 +113,36 @@ const PolicyCard = ({
   policy,
   state,
   installed,
+  listingStatus,
+  isMine,
   onInstall,
   onOpen,
 }: {
   policy: PolicyListEntry;
   state: InstallState;
   installed: boolean;
+  /** Latest community-submission state for OWN policies (in review / public /
+   * rejected / taken down) — at-a-glance sharing status on the card. */
+  listingStatus?: string | null;
+  /** True for the caller's own listing surfaced in the Community view. */
+  isMine?: boolean;
   onInstall: () => void;
   onOpen: () => void;
 }) => (
   <div className="group flex h-full flex-col rounded-[24px] border border-border bg-background p-5 shadow-soft transition-[transform,box-shadow] duration-200 ease-bounce hover:-translate-y-1 hover:shadow-pop md:p-6">
     <div className="flex items-center justify-between gap-2">
-      <SourceChip source={policy.source} />
       <div className="flex items-center gap-2">
+        <SourceChip source={policy.source} />
+        {isMine && (
+          <span className="inline-flex items-center rounded-full bg-sticker px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink">
+            yours
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        {listingStatus && listingStatus !== "taken_down" && (
+          <ListingStatusChip status={listingStatus} />
+        )}
         {installed && (
           <span className="inline-flex items-center rounded-full bg-leaf px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink">
             installed
@@ -643,17 +660,43 @@ const Marketplace = () => {
     [baseUrl, fetchWithHeaders]
   );
 
+  // The backend catalog excludes the caller's OWN community listings (owners
+  // read state via /my-listings). For the Community view that read as "I
+  // published it but it's not there" — so surface the caller's PUBLIC
+  // submissions here as community cards with a "yours" badge. They're real
+  // listings (installable via the listing ref) — only the exclusion is
+  // frontend-reversed.
+  const myPublicAsCommunity = useMemo<PolicyListEntry[]>(
+    () =>
+      myListings
+        .filter((l) => l.is_public)
+        .map((l) => ({
+          ref: l.listing_id,
+          source: "community",
+          title: l.title,
+          description: l.description,
+          policy_class: null,
+          price_usd: null,
+          created_at: l.created_at,
+        })),
+    [myListings]
+  );
+  const minePublicRefs = useMemo(
+    () => new Set(myPublicAsCommunity.map((p) => p.ref)),
+    [myPublicAsCommunity]
+  );
+
   const filtered = useMemo(() => {
     if (!policies) return [];
     const q = query.trim().toLowerCase();
-    return policies.filter((p) => {
+    return [...policies, ...myPublicAsCommunity].filter((p) => {
       if (source !== "all" && p.source !== source) return false;
       if (!q) return true;
       return (
         p.title.toLowerCase().includes(q) || (p.description ?? "").toLowerCase().includes(q)
       );
     });
-  }, [policies, source, query]);
+  }, [policies, myPublicAsCommunity, source, query]);
 
   return (
     <section>
@@ -754,6 +797,8 @@ const Marketplace = () => {
                 policy={p}
                 state={installs[p.ref] ?? { status: "idle" }}
                 installed={installedRefs.has(p.ref)}
+                listingStatus={p.source === "own" ? myListingByJob[p.ref]?.status : null}
+                isMine={minePublicRefs.has(p.ref)}
                 onInstall={() => install(p)}
                 onOpen={() => openDrawer(p)}
               />

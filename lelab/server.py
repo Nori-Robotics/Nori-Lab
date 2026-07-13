@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -1207,6 +1208,24 @@ def nori_acquire_policy(listing_id: str, request: Request):
     return _nori_proxy(lambda: client.acquire_policy(listing_id))
 
 
+@app.get("/nori/marketplace/policies/{ref}/details")
+def nori_policy_details(ref: str, request: Request):
+    """Full detail view for one policy (class, provenance, file manifest)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.get_policy_details(ref))
+
+
+class NoriRenameBody(BaseModel):
+    title: str | None = None
+
+
+@app.patch("/nori/marketplace/policies/{ref}")
+def nori_rename_policy(ref: str, body: NoriRenameBody, request: Request):
+    """Rename an own trained policy (backend PII-scans + ownership-checks)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.rename_policy(ref, body.title))
+
+
 @app.post("/nori/marketplace/policies/{ref}/download")
 def nori_download_policy(ref: str, request: Request):
     """Install the policy's FULL runnable bundle through LeLab into the local
@@ -1220,6 +1239,55 @@ def nori_download_policy(ref: str, request: Request):
     client = _nori_client(request)
     dest = config.nori_policy_dir(ref)
     return _nori_proxy(lambda: client.download_policy_bundle(ref, dest))
+
+
+# NORI: local policy cache management. These are LOCAL operations (they read /
+# delete the on-disk nori_policies cache), NOT proxied to Nori-Backend — so
+# they need no JWT and stay usable offline. The cache is what makes the
+# "installed" state survive a page refresh (it's disk, not React state) and
+# what `rollout.py._resolve_policy_path` loads a marketplace policy from.
+@app.get("/nori/policies/local")
+def nori_list_local_policies():
+    """List installed marketplace policies (one dir per ref in the Nori cache).
+    Returns [{ref, path, files: [{name, size_bytes}], size_bytes, runnable}].
+    `runnable` = has model.safetensors (rollout can load it)."""
+    root = Path(config.NORI_POLICY_CACHE)
+    out: list[dict[str, Any]] = []
+    if not root.is_dir():
+        return out
+    for d in sorted(root.iterdir()):
+        if not d.is_dir():
+            continue
+        files = []
+        total = 0
+        for f in sorted(d.iterdir()):
+            if f.is_file():
+                sz = f.stat().st_size
+                files.append({"name": f.name, "size_bytes": sz})
+                total += sz
+        out.append({
+            "ref": d.name,
+            "path": str(d),
+            "files": files,
+            "size_bytes": total,
+            "runnable": (d / "model.safetensors").is_file(),
+        })
+    return out
+
+
+@app.delete("/nori/policies/local/{ref}")
+def nori_delete_local_policy(ref: str):
+    """Remove one installed policy from the local cache. Idempotent (404 only
+    if the ref escapes the cache dir; a missing ref returns deleted=false)."""
+    root = Path(config.NORI_POLICY_CACHE).resolve()
+    target = Path(config.nori_policy_dir(ref)).resolve()
+    # Path-safety: nori_policy_dir sanitizes the ref, but confirm containment.
+    if root not in target.parents:
+        raise HTTPException(status_code=400, detail="invalid policy ref")
+    if not target.is_dir():
+        return {"ref": ref, "deleted": False}
+    shutil.rmtree(target, ignore_errors=True)
+    return {"ref": ref, "deleted": True}
 
 
 # NORI: dataset upload (Phase 4). Reroutes the HF-direct push to the backend-mediated

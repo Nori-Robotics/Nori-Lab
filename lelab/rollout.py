@@ -113,6 +113,11 @@ def _resolve_policy_path(policy_ref: str) -> str:
     """Turn a checkpoints API ref into a local path that lerobot accepts.
 
     Local refs are already absolute paths to a pretrained_model dir.
+    NORI marketplace refs are opaque UUIDs whose bundle was installed to the
+    Nori policy cache (`nori_policy_dir(ref)`) by the marketplace download —
+    if that dir exists and holds a model, it IS the pretrained_model dir. This
+    is what makes a marketplace-installed policy runnable (the download half
+    landed the files; this closes the loop to inference).
     Hub refs look like 'user/repo@checkpoints/<step_dir>' where
     <step_dir> is lerobot's zero-padded directory name (e.g. 000050) — we
     forward it verbatim into snapshot_download's allow_patterns and the
@@ -122,6 +127,16 @@ def _resolve_policy_path(policy_ref: str) -> str:
     snapshot_download and its root is returned directly."""
     if Path(policy_ref).is_dir():
         return policy_ref
+
+    # NORI: marketplace-installed policy — bundle cached at nori_policy_dir(ref).
+    # Guard against path-junk in the ref: only treat it as a cache ref when the
+    # directory actually exists and contains model weights.
+    from .utils.config import nori_policy_dir
+
+    cache_dir = Path(nori_policy_dir(policy_ref))
+    if cache_dir.is_dir() and (cache_dir / "model.safetensors").is_file():
+        return str(cache_dir)
+
     from huggingface_hub import snapshot_download
 
     m = _HUB_REF_RE.match(policy_ref)

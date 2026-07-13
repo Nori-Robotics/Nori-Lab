@@ -122,23 +122,16 @@ const PolicyCard = ({
   state: InstallState;
   installed: boolean;
   /** Latest community-submission state for OWN policies (in review / public /
-   * rejected / taken down) — at-a-glance sharing status on the card. */
+   * rejected / taken down) — at-a-glance sharing status on the card. A
+   * "public" chip means the policy is live in other customers' Community tab
+   * (own listings are deliberately not shown in the owner's own catalog). */
   listingStatus?: string | null;
-  /** True for the caller's own listing surfaced in the Community view. */
-  isMine?: boolean;
   onInstall: () => void;
   onOpen: () => void;
 }) => (
   <div className="group flex h-full flex-col rounded-[24px] border border-border bg-background p-5 shadow-soft transition-[transform,box-shadow] duration-200 ease-bounce hover:-translate-y-1 hover:shadow-pop md:p-6">
     <div className="flex items-center justify-between gap-2">
-      <div className="flex items-center gap-2">
-        <SourceChip source={policy.source} />
-        {isMine && (
-          <span className="inline-flex items-center rounded-full bg-sticker px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink">
-            yours
-          </span>
-        )}
-      </div>
+      <SourceChip source={policy.source} />
       <div className="flex items-center gap-2">
         {listingStatus && listingStatus !== "taken_down" && (
           <ListingStatusChip status={listingStatus} />
@@ -660,43 +653,22 @@ const Marketplace = () => {
     [baseUrl, fetchWithHeaders]
   );
 
-  // The backend catalog excludes the caller's OWN community listings (owners
-  // read state via /my-listings). For the Community view that read as "I
-  // published it but it's not there" — so surface the caller's PUBLIC
-  // submissions here as community cards with a "yours" badge. They're real
-  // listings (installable via the listing ref) — only the exclusion is
-  // frontend-reversed.
-  const myPublicAsCommunity = useMemo<PolicyListEntry[]>(
-    () =>
-      myListings
-        .filter((l) => l.is_public)
-        .map((l) => ({
-          ref: l.listing_id,
-          source: "community",
-          title: l.title,
-          description: l.description,
-          policy_class: null,
-          price_usd: null,
-          created_at: l.created_at,
-        })),
-    [myListings]
-  );
-  const minePublicRefs = useMemo(
-    () => new Set(myPublicAsCommunity.map((p) => p.ref)),
-    [myPublicAsCommunity]
-  );
-
+  // NOTE: the backend catalog intentionally excludes the caller's OWN
+  // community listings from their public view — owners track theirs via
+  // /my-listings and the status chip on their Own card (a "public" chip means
+  // it's live in everyone else's Community tab). Decision 2026-07-13: keep
+  // that exclusion in the UI too, rather than double-listing own policies.
   const filtered = useMemo(() => {
     if (!policies) return [];
     const q = query.trim().toLowerCase();
-    return [...policies, ...myPublicAsCommunity].filter((p) => {
+    return policies.filter((p) => {
       if (source !== "all" && p.source !== source) return false;
       if (!q) return true;
       return (
         p.title.toLowerCase().includes(q) || (p.description ?? "").toLowerCase().includes(q)
       );
     });
-  }, [policies, myPublicAsCommunity, source, query]);
+  }, [policies, source, query]);
 
   return (
     <section>
@@ -798,7 +770,6 @@ const Marketplace = () => {
                 state={installs[p.ref] ?? { status: "idle" }}
                 installed={installedRefs.has(p.ref)}
                 listingStatus={p.source === "own" ? myListingByJob[p.ref]?.status : null}
-                isMine={minePublicRefs.has(p.ref)}
                 onInstall={() => install(p)}
                 onOpen={() => openDrawer(p)}
               />

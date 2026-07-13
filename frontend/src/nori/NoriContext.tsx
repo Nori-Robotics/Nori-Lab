@@ -19,7 +19,7 @@ import {
   type CustomerProfile,
   type NoriPublicConfig,
 } from "@/nori/api/client";
-import { initSupabase } from "@/nori/auth/supabase";
+import { initSupabase, settleSupabaseGate } from "@/nori/auth/supabase";
 import { getSession, onAuthStateChange } from "@/nori/auth/session";
 
 interface NoriContextType {
@@ -114,16 +114,26 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setLeLabAvailable(leLab);
         if (cfg.configured) {
           initSupabase(cfg);
+          // Open the auth gate only AFTER init: token lookups racing this
+          // bootstrap (hard refresh straight onto an authenticated page) wait
+          // on the gate instead of sending header-less requests. Settled on
+          // every terminal path below too — but never on the cancelled path,
+          // so a StrictMode-aborted first mount can't open the gate early.
+          settleSupabaseGate();
           setSession(await getSession());
           unsubscribe = onAuthStateChange(setSession);
         } else {
+          settleSupabaseGate();
           setError(
             "Nori auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY on the " +
               "LeLab server, or VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY at build time."
           );
         }
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) {
+          settleSupabaseGate();
+          setError(e instanceof Error ? e.message : String(e));
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }

@@ -5,14 +5,21 @@
 // header), sign-in/sign-out, and a subscription to auth changes.
 
 import type { Session } from "@supabase/supabase-js";
-import { getSupabase, isSupabaseReady } from "./supabase";
+import { getSupabase, isSupabaseReady, whenSupabaseSettled } from "./supabase";
 
 /**
  * Current Supabase access token (JWT), or null if signed out / not configured.
  * The SDK refreshes the token transparently, so reading it per-request is cheap and
  * always returns a valid (unexpired) token when a session exists.
+ *
+ * Waits for the auth bootstrap gate first: on a hard refresh, pages fire
+ * authenticated fetches concurrently with NoriProvider's async init, and
+ * answering `null` during that window sends requests without an auth header
+ * (backend 401 "Missing or malformed Authorization header") despite a valid
+ * persisted session. Waiting turns the race into a few-ms delay.
  */
 export async function getAccessToken(): Promise<string | null> {
+  await whenSupabaseSettled();
   if (!isSupabaseReady()) return null;
   const { data } = await getSupabase().auth.getSession();
   return data.session?.access_token ?? null;

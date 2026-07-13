@@ -41,3 +41,43 @@ export function getSupabase(): SupabaseClient {
 export function isSupabaseReady(): boolean {
   return client !== null;
 }
+
+// ---------------------------------------------------------------------------
+// Init gate — lets token lookups WAIT for bootstrap instead of failing.
+//
+// On a hard refresh, page components mount (and fire authenticated fetches)
+// concurrently with NoriProvider's async bootstrap (fetch /nori/config →
+// initSupabase). Without a gate, getAccessToken() sees an uninitialized
+// client, returns null, and the request goes out with no auth header — the
+// backend 401s ("Missing or malformed Authorization header") even though a
+// valid session sits in localStorage. In-app navigation never hits this
+// (client long since initialized), which is why it only shows on refresh.
+//
+// NoriProvider calls settleSupabaseGate() when bootstrap finishes EITHER way
+// (initialized, unconfigured, or LeLab unreachable), so waiters never hang on
+// the hosted/no-config paths. The timeout is a safety net only (e.g. a page
+// rendered outside NoriProvider in a test).
+// ---------------------------------------------------------------------------
+let gateSettled = false;
+let settleGate: () => void = () => {};
+const gate = new Promise<void>((resolve) => {
+  settleGate = () => {
+    gateSettled = true;
+    resolve();
+  };
+});
+
+/** Mark auth bootstrap finished (successfully or not). Idempotent. */
+export function settleSupabaseGate(): void {
+  settleGate();
+}
+
+/** Resolves once auth bootstrap has finished (or after `timeoutMs`, as a
+ * safety net so a missing provider degrades to today's behavior). */
+export function whenSupabaseSettled(timeoutMs = 6000): Promise<void> {
+  if (gateSettled) return Promise.resolve();
+  return Promise.race([
+    gate,
+    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+}

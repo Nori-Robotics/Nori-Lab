@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useApi } from "@/contexts/ApiContext";
+import { ApiError } from "@/lib/apiClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -77,7 +78,18 @@ const Pairing = () => {
       if (!robots || robots.length === 0) setActiveRobotSerial(next);
       await loadRobots();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // A 409 means the serial belongs to someone else's account. The backend says so literally
+      // ("already paired to another customer"), which tells the far more likely case — a typo —
+      // that they've stumbled onto a stranger's robot, and confirms the serial is real and
+      // claimed. Lead with the typo instead.
+      if (err instanceof ApiError && err.status === 409) {
+        setError(
+          `Pair robot failed: '${next}' is not available. Please check you typed your ` +
+            `serial number correctly. Each robot can only be paired to one account.`
+        );
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -206,11 +218,18 @@ const Pairing = () => {
           <form onSubmit={onPair} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="serial">Robot serial number</Label>
+              {/* Serials are canonically UPPERCASE, and the serial becomes the room name — an
+                  exact-match Supabase realtime channel. A lowercase entry pairs fine and then
+                  fails to connect with "your robot isn't answering", which is a miserable trail
+                  to follow. Normalize as typed so the field can't hold a serial that won't work. */}
               <Input
                 id="serial"
                 value={serial}
-                onChange={(e) => setSerial(e.target.value)}
+                onChange={(e) => setSerial(e.target.value.toUpperCase())}
                 placeholder="e.g. NORI-L0-1234"
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
                 required
               />
             </div>

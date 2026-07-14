@@ -21,6 +21,7 @@ import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import LeaderSetup from "@/nori/pages/leader-setup";
 import { playAudioFile, type ClipHandle } from "@/nori/remote/audioClip";
+import { DatasetCaptureCard } from "@/nori/remote/DatasetCaptureCard";
 import { isM6VideoEnabled } from "@/nori/remote/flags";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 
@@ -729,6 +730,10 @@ const Remote = () => {
             />
           </div>
         )}
+
+        {/* Dataset capture (browser catcher) — records this session into a LeRobot dataset.
+            Renders only when a local lelab spool answers (hidden on the hosted app). */}
+        <DatasetCaptureCard />
 
         {/* Keyboard legend only shows for its own mode, like the VR and leader cards. */}
         {controlMode === "keyboard" && (

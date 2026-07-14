@@ -91,6 +91,10 @@ export interface TeleopSessionValue {
   toggleControlMode: () => void;
   // Pages that want gripper-current haptics (VR) register a listener; only one at a time.
   setCurrentsListener: (fn: ((c: Record<string, number>) => void) | null) => void;
+  // Dataset capture (browser catcher) taps: full-rate telemetry rows and every outbound
+  // control frame. One listener each, same single-consumer contract as currents above.
+  setTelemetryListener: (fn: ((t: TelemetryView) => void) | null) => void;
+  setControlSentListener: (fn: ((frame: Record<string, unknown>, tWallMs: number) => void) | null) => void;
   // The pasted/generated script text, persisted so it survives navigation + reload.
   scriptSource: string;
   setScriptSource: (s: string) => void;
@@ -156,10 +160,21 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     currentsListenerRef.current = fn;
   }, []);
 
+  const telemetryListenerRef = useRef<((t: TelemetryView) => void) | null>(null);
+  const setTelemetryListener = useCallback((fn: ((t: TelemetryView) => void) | null) => {
+    telemetryListenerRef.current = fn;
+  }, []);
+  const controlSentListenerRef = useRef<((frame: Record<string, unknown>, tWallMs: number) => void) | null>(null);
+  const setControlSentListener = useCallback(
+    (fn: ((frame: Record<string, unknown>, tWallMs: number) => void) | null) => {
+      controlSentListenerRef.current = fn;
+    }, []);
+
   const onTelemetry = useCallback((t: TelemetryView) => {
     lastTelRef.current = Date.now();
     setStale(false);
     setTel(t);
+    telemetryListenerRef.current?.(t);
   }, []);
 
   // Telemetry can dry up while control still reads "active"; flag it stale (matches old page logic).
@@ -222,6 +237,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
       onMode: setMode,
       onControlActive: setControlActive,
       onCurrents: (c) => currentsListenerRef.current?.(c),
+      onControlSent: (f, t) => controlSentListenerRef.current?.(f, t),
       onCall: setCall,
       // Note which cameras the composite is showing, once, on connect. (Per-move completion is
       // surfaced by moveTo itself in the script output, so action_status isn't logged here.)
@@ -285,12 +301,12 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
     connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
-    setCurrentsListener, scriptSource, setScriptSource,
+    setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
   }), [
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
     connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
-    setCurrentsListener, scriptSource, setScriptSource,
+    setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
   ]);
 
   return <TeleopSessionContext.Provider value={value}>{children}</TeleopSessionContext.Provider>;

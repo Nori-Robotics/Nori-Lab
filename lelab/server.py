@@ -157,6 +157,12 @@ _FLAVOR_CACHE_TTL_SECONDS = 300.0
 
 app = FastAPI()
 
+# NORI: browser-catcher spool (remote-session dataset capture). Router-based —
+# the module owns its /nori/capture/* surface; see lelab/browser_capture.py.
+from .browser_capture import router as _capture_router  # noqa: E402
+
+app.include_router(_capture_router)
+
 # In dev mode the React app runs on :8080 while the API runs on :8000; in
 # prod they share an origin and CORS is unnecessary. allow_credentials with
 # a wildcard origin is rejected by browsers, so we drop it.

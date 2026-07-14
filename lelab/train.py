@@ -40,6 +40,11 @@ class TrainingRequest(BaseModel):
     # POST /training/dispatch by the nori_cloud runner; unused for local runs.
     dataset_ref: str | None = None
 
+    # NORI: train on one of Nori's published open datasets instead of an own
+    # upload (id from GET /marketplace/datasets/public). Mutually exclusive
+    # with dataset_ref; nori_cloud runner only.
+    open_dataset_id: str | None = None
+
     # Core training parameters
     steps: int = 10000
     batch_size: int = 8

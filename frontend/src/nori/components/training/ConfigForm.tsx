@@ -26,57 +26,22 @@ const LABEL = "text-[#14131a]/70";
 const SUBHEAD =
   "font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]";
 
-const LATEST = "__latest__"; // sentinel for "use my latest promoted upload"
-
-export interface DatasetOption {
-  ref: string; // backend dataset_ref (promoted upload prefix)
-  label: string;
-}
-
 export interface ConfigFormProps {
   config: NoriTrainingFormState;
   updateConfig: <T extends keyof NoriTrainingFormState>(
     key: T,
     value: NoriTrainingFormState[T],
   ) => void;
-  /** The customer's promoted datasets, for the dataset_ref dropdown. */
-  datasets?: DatasetOption[];
 }
 
-const ConfigForm = ({ config, updateConfig, datasets = [] }: ConfigFormProps) => {
+const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   return (
     <div className="space-y-4">
       {/* Essentials */}
-      <Panel eyebrow="dataset & policy" title="Run configuration">
+      <Panel eyebrow="policy" title="Run configuration">
         <div className="space-y-5">
-          <div>
-            <Label className={LABEL}>Dataset</Label>
-            <Select
-              value={config.dataset_ref ?? LATEST}
-              onValueChange={(v) =>
-                updateConfig("dataset_ref", v === LATEST ? undefined : v)
-              }
-            >
-              <SelectTrigger className={`mt-1 ${FIELD}`}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={LATEST}>Latest upload (default)</SelectItem>
-                {datasets.map((d) => (
-                  <SelectItem key={d.ref} value={d.ref}>
-                    {d.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="mt-1 text-xs text-[#14131a]/50">
-              Training runs on one of your uploaded Nori datasets. Defaults to
-              your most recent upload.
-            </p>
-          </div>
-
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
               <Label className={LABEL}>Policy</Label>

@@ -88,6 +88,9 @@ class NoriCloudJobRunner:
         dataset_ref = getattr(config, "dataset_ref", None)
         if dataset_ref:
             body["dataset_ref"] = dataset_ref
+        open_dataset_id = getattr(config, "open_dataset_id", None)
+        if open_dataset_id:
+            body["open_dataset_id"] = open_dataset_id
         return body
 
     def start(self, job_id: str, config: TrainingRequest, output_dir: str) -> None:

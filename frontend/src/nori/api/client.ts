@@ -483,6 +483,21 @@ export function listJobs(baseUrl: string, fetcher: Fetcher): Promise<TrainingJob
   });
 }
 
+/** One of Nori's published open datasets (GET /nori/marketplace/datasets/public). */
+export interface PublicDataset {
+  id: string;
+  title: string;
+  description: string | null;
+  hf_repo: string;
+  license: string | null;
+}
+
+export function listPublicDatasets(baseUrl: string, fetcher: Fetcher): Promise<PublicDataset[]> {
+  return noriRequest<PublicDataset[]>(baseUrl, fetcher, "/nori/marketplace/datasets/public", {
+    action: "Load open datasets",
+  });
+}
+
 /** One of the customer's promoted datasets (training dataset_ref picker). */
 export interface MyDataset {
   dataset_ref: string;

@@ -213,6 +213,19 @@ class NoriClient:
             "PATCH", f"{API}/marketplace/policies/{ref}", json={"title": title}
         )
 
+    def create_delivery_grant(self, ref: str) -> dict[str, Any]:
+        """POST /marketplace/policies/{ref}/delivery-grant — mint short-lived
+        signed URLs the user's robot can download this bundle with. The
+        backend returns origin-relative URLs; absolutize them here (this
+        client knows the backend origin, the browser behind the proxy may
+        not) so the frontend can hand them to the robot as-is."""
+        grant = self._request("POST", f"{API}/marketplace/policies/{ref}/delivery-grant")
+        for f in grant.get("files", []):
+            url = f.get("url", "")
+            if url.startswith("/"):
+                f["url"] = f"{self.base_url}{url}"
+        return grant
+
     def publish_policy(self, ref: str, title: str, description: str | None = None) -> dict[str, Any]:
         """POST /marketplace/policies/{ref}/publish — request community
         publication of an OWN policy. Creates a pending_review listing (NOT

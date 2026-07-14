@@ -13,6 +13,7 @@ import { ApiError } from "@/lib/apiClient";
 import { Pill } from "@/components/ui/pill";
 import {
   acquirePolicy,
+  createDeliveryGrant,
   deleteLocalPolicy,
   downloadPolicy,
   getPolicyDetails,
@@ -28,6 +29,7 @@ import {
   type PolicyDetails,
   type PolicyListEntry,
 } from "@/nori/api/client";
+import { useTeleopSession } from "@/nori/TeleopSessionContext";
 
 /**
  * PREVIEW-ONLY stand-in for GET .../details while the backend endpoint is
@@ -109,11 +111,21 @@ const SourceChip = ({ source }: { source: string }) => (
   </span>
 );
 
+/** The "install onto the connected robot" affordance (delivery-grant flow).
+ * null = no live robot session; the row isn't rendered at all. */
+type RobotAction = {
+  label: string;
+  busy: boolean;
+  error: boolean;
+  onClick: () => void;
+};
+
 const PolicyCard = ({
   policy,
   state,
   installed,
   listingStatus,
+  robotAction,
   onInstall,
   onOpen,
 }: {
@@ -125,6 +137,7 @@ const PolicyCard = ({
    * "public" chip means the policy is live in other customers' Community tab
    * (own listings are deliberately not shown in the owner's own catalog). */
   listingStatus?: string | null;
+  robotAction?: RobotAction | null;
   onInstall: () => void;
   onOpen: () => void;
 }) => (
@@ -191,6 +204,26 @@ const PolicyCard = ({
         {state.status === "working" ? "…" : installed ? "reinstall →" : "install →"}
       </span>
     </button>
+
+    {robotAction && (
+      <button
+        type="button"
+        onClick={robotAction.onClick}
+        disabled={robotAction.busy}
+        className="mt-2 flex w-full items-center justify-between gap-3 rounded-xl border border-border bg-background px-3 py-2 text-left transition-colors hover:bg-accent disabled:cursor-wait disabled:opacity-70"
+      >
+        <code
+          className={`truncate font-mono text-[12px] ${
+            robotAction.error ? "text-destructive" : "text-foreground"
+          }`}
+        >
+          {robotAction.label}
+        </code>
+        <span className="eyebrow shrink-0 text-foreground" aria-hidden>
+          {robotAction.busy ? "…" : "⇥ robot"}
+        </span>
+      </button>
+    )}
   </div>
 );
 
@@ -608,6 +641,77 @@ const Marketplace = () => {
     };
   }, [baseUrl, fetchWithHeaders, refreshLocal, refreshMyListings]);
 
+  // Live robot session (survives navigation): drives the "send to robot" row
+  // on every card. installStatus is the robot's own progress reporting.
+  const { teleop, running, installStatus } = useTeleopSession();
+  const [robotInstalls, setRobotInstalls] = useState<Record<string, InstallState>>({});
+
+  const installToRobot = useCallback(
+    async (policy: PolicyListEntry) => {
+      setRobotInstalls((s) => ({ ...s, [policy.ref]: { status: "working", message: "robot: preparing…" } }));
+      try {
+        if (policy.source === "first_party" || policy.source === "community") {
+          await acquirePolicy(baseUrl, fetchWithHeaders, policy.ref);
+        }
+        const grant = await createDeliveryGrant(baseUrl, fetchWithHeaders, policy.ref);
+        const sent = teleop?.installPolicy(
+          policy.ref,
+          grant.files.map((f) => ({
+            name: f.name,
+            url: f.url,
+            sha256: f.sha256 ?? undefined,
+            size_bytes: f.size_bytes ?? undefined,
+          }))
+        );
+        if (!sent) throw new Error("robot connection dropped — reconnect and retry");
+        // From here the robot reports progress itself (installStatus frames).
+        setRobotInstalls((s) => ({ ...s, [policy.ref]: { status: "working", message: "robot: sending…" } }));
+      } catch (e) {
+        setRobotInstalls((s) => ({
+          ...s,
+          [policy.ref]: { status: "error", message: e instanceof Error ? e.message : String(e) },
+        }));
+      }
+    },
+    [baseUrl, fetchWithHeaders, teleop]
+  );
+
+  // Fold the robot's install_status frames (session context) over the local
+  // request state — the robot's word wins once it starts reporting.
+  const robotActionFor = useCallback(
+    (policy: PolicyListEntry): RobotAction | null => {
+      if (!running || !teleop) return null;
+      const local = robotInstalls[policy.ref];
+      const live = installStatus?.ref === policy.ref ? installStatus : null;
+      if (live) {
+        if (live.phase === "done") {
+          return { label: "on robot ✓ — send again", busy: false, error: false, onClick: () => installToRobot(policy) };
+        }
+        if (live.phase === "error") {
+          return {
+            label: `robot: ${live.error ?? "install failed"} — retry`,
+            busy: false,
+            error: true,
+            onClick: () => installToRobot(policy),
+          };
+        }
+        const pct =
+          live.total_bytes && live.received_bytes !== undefined
+            ? ` ${Math.min(100, Math.round((live.received_bytes / live.total_bytes) * 100))}%`
+            : "";
+        return { label: `robot: ${live.phase}${pct}`, busy: true, error: false, onClick: () => {} };
+      }
+      if (local?.status === "working") {
+        return { label: local.message ?? "robot: working…", busy: true, error: false, onClick: () => {} };
+      }
+      if (local?.status === "error") {
+        return { label: `${local.message ?? "failed"} — retry`, busy: false, error: true, onClick: () => installToRobot(policy) };
+      }
+      return { label: "send to robot", busy: false, error: false, onClick: () => installToRobot(policy) };
+    },
+    [running, teleop, robotInstalls, installStatus, installToRobot]
+  );
+
   const install = useCallback(
     async (policy: PolicyListEntry) => {
       setInstalls((s) => ({ ...s, [policy.ref]: { status: "working" } }));
@@ -769,6 +873,7 @@ const Marketplace = () => {
                 state={installs[p.ref] ?? { status: "idle" }}
                 installed={installedRefs.has(p.ref)}
                 listingStatus={p.source === "own" ? myListingByJob[p.ref]?.status : null}
+                robotAction={robotActionFor(p)}
                 onInstall={() => install(p)}
                 onOpen={() => openDrawer(p)}
               />

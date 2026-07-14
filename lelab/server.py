@@ -1208,6 +1208,15 @@ class NoriPublishBody(BaseModel):
     description: str | None = None
 
 
+@app.post("/nori/marketplace/policies/{ref}/delivery-grant")
+def nori_create_delivery_grant(ref: str, request: Request):
+    """Mint short-lived download URLs for installing this policy ONTO THE
+    ROBOT. Absolutized by nori_client (the robot never talks to this LeLab
+    process, so relative URLs would be useless to it)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.create_delivery_grant(ref))
+
+
 @app.post("/nori/marketplace/policies/{ref}/publish")
 def nori_publish_policy(ref: str, body: NoriPublishBody, request: Request):
     client = _nori_client(request)

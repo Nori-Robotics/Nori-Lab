@@ -433,15 +433,23 @@ class NoriClient:
     # -- dataset upload: 4-step presigned-S3 flow (Phase 4) ------------------------
 
     def start_dataset_upload(
-        self, manifest: list[dict[str, Any]], commit_message: str | None = None
+        self,
+        manifest: list[dict[str, Any]],
+        commit_message: str | None = None,
+        label: str | None = None,
     ) -> dict[str, Any]:
         """POST /datasets/upload/start — manifest [{path, size}, ...].
+
+        `label` is the human-readable dataset name shown in the training
+        picker (backend migration 017; older backends ignore the field).
 
         Returns {session_id, uploads: [{path, put_url}], expires_at}.
         """
         body: dict[str, Any] = {"manifest": manifest}
         if commit_message is not None:
             body["commit_message"] = commit_message
+        if label is not None:
+            body["label"] = label[:120]
         return self._request("POST", f"{API}/datasets/upload/start", json=body)
 
     def finalize_dataset_upload(
@@ -491,6 +499,7 @@ class NoriClient:
         commit_message: str | None = None,
         poll_interval: float = 5.0,
         poll_timeout: float = 1800.0,
+        label: str | None = None,
     ) -> dict[str, Any]:
         """Full 4-step upload: build+validate manifest -> start -> PUT each file to S3 ->
         finalize (retry HEAD-miss) -> poll until terminal. Returns the final SessionRow.
@@ -500,7 +509,12 @@ class NoriClient:
         manifest = build_manifest(local_path)
         validate_manifest(manifest)
 
-        start = self.start_dataset_upload(manifest, commit_message=commit_message)
+        # Default the cloud-side name to the local dataset's directory name —
+        # the name given at record time / via rename, so the training picker
+        # shows "pick_place_mugs", not "Upload <date>".
+        if label is None:
+            label = Path(local_path).name
+        start = self.start_dataset_upload(manifest, commit_message=commit_message, label=label)
         session_id = start["session_id"]
         # path -> presigned PUT URL
         put_urls = {u["path"]: u["put_url"] for u in start.get("uploads", [])}

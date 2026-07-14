@@ -419,6 +419,25 @@ export function dispatchTraining(
  * `target.timeout_seconds` and decides what to train from the customer's data + consents.
  * The extra fields have no training effect until Nori-Backend honors them.
  */
+/** Constants for client-side training-time estimates — same numbers the
+ * backend's dispatch fit-gate uses, so UI estimate and server verdict can
+ * never disagree. `resumable` flips server-side when safe pause/resume ships. */
+export interface TrainingEstimateParams {
+  step_rates: Record<string, { floor: number; typical: number }>;
+  setup_seconds: number;
+  max_timeout_seconds: number;
+  resumable: boolean;
+}
+
+export function getTrainingEstimateParams(
+  baseUrl: string,
+  fetcher: Fetcher
+): Promise<TrainingEstimateParams> {
+  return noriRequest<TrainingEstimateParams>(baseUrl, fetcher, "/nori/training/estimate-params", {
+    action: "Load training estimate params",
+  });
+}
+
 export function startNoriTraining(
   baseUrl: string,
   fetcher: Fetcher,

@@ -1353,6 +1353,15 @@ def nori_dispatch_training(body: NoriDispatchBody, request: Request):
     return _nori_proxy(lambda: client.dispatch_training({"timeout_seconds": body.timeout_seconds}))
 
 
+@app.get("/nori/training/estimate-params")
+def nori_training_estimate_params(request: Request):
+    """Constants for the training form's live time estimate (steps/s rates,
+    setup allowance, tier max duration, pause/resume capability flag)."""
+    client = _nori_client(request)
+    return _nori_proxy(client.get_estimate_params)
+
+
+
 @app.get("/nori/training/jobs")
 def nori_list_jobs(request: Request):
     client = _nori_client(request)

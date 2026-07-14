@@ -35,7 +35,10 @@ export const DEFAULT_TRAINING_CONFIG: NoriTrainingFormState = {
 
   // ---- feasible: shown in the form AND wired to the backend DispatchRequest ----
   policy_type: "act",
-  steps: 10000,
+  // Must FIT the default 900s duration under the backend fit-gate (floor
+  // 8 steps/s => max 7200); 10000 was born-rejected. Mirrors the backend
+  // DispatchRequest default.
+  steps: 5000,
   batch_size: 8,
   num_workers: 4,
   seed: 1000,

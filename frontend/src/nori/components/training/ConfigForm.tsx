@@ -4,7 +4,7 @@
 // knobs). Everything the backend forces or doesn't consume yet is parked in
 // ./parkedConfig.ts and omitted here — see that file to re-surface a field.
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import Panel from "@/nori/components/Panel";
 import { NumberInput } from "@/components/ui/number-input";
@@ -17,6 +17,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useApi } from "@/contexts/ApiContext";
+import {
+  getTrainingEstimateParams,
+  type TrainingEstimateParams,
+} from "@/nori/api/client";
 import type { NoriTrainingFormState } from "./types";
 import { FEASIBLE_POLICY_OPTIONS, DURATION_OPTIONS } from "./types";
 
@@ -36,6 +41,37 @@ export interface ConfigFormProps {
 
 const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
   const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  // Live training-time estimate. The constants come from the backend (same
+  // table the dispatch fit-gate reads) so this panel can never promise what
+  // dispatch would reject. Best-effort: on fetch failure the estimate simply
+  // doesn't render — the form still works.
+  const { baseUrl, fetchWithHeaders } = useApi();
+  const [estParams, setEstParams] = useState<TrainingEstimateParams | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getTrainingEstimateParams(baseUrl, fetchWithHeaders)
+      .then((p) => alive && setEstParams(p))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [baseUrl, fetchWithHeaders]);
+
+  const estimate = useMemo(() => {
+    const rates = estParams?.step_rates[config.policy_type];
+    if (!rates || !config.steps) return null;
+    const fastMin = Math.ceil(config.steps / rates.typical / 60);
+    const slowMin = Math.ceil(config.steps / rates.floor / 60);
+    const requiredSeconds = Math.ceil(config.steps / rates.floor);
+    return {
+      fastMin,
+      slowMin,
+      setupMin: Math.round((estParams?.setup_seconds ?? 0) / 60),
+      fits: requiredSeconds <= config.timeout_seconds,
+      maxFittingSteps: config.timeout_seconds * rates.floor,
+    };
+  }, [estParams, config.policy_type, config.steps, config.timeout_seconds]);
 
   return (
     <div className="space-y-4">
@@ -68,6 +104,14 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
                 onChange={(v) => v !== undefined && updateConfig("steps", v)}
                 className={`mt-1 ${FIELD}`}
               />
+              {estimate && (
+                <p className="mt-1 text-xs text-[#14131a]/50">
+                  Estimated training ≈ {estimate.fastMin}–{estimate.slowMin} min
+                  {estimate.setupMin > 0 && (
+                    <> (+ ~{estimate.setupMin} min setup, not billed to you)</>
+                  )}
+                </p>
+              )}
             </div>
             <div>
               <Label className={LABEL}>Batch size</Label>
@@ -109,6 +153,23 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
             <p className="mt-1 text-xs text-[#14131a]/50">
               Free tier includes 15-minute runs. Longer runs need a Pro plan.
             </p>
+            {estimate && !estimate.fits && (
+              estParams?.resumable ? (
+                <p className="mt-2 rounded bg-[#3d6ea5]/10 px-2 py-1.5 text-xs text-[#2c5282]">
+                  This training is longer than the selected duration (≈
+                  {estimate.slowMin} min needed). It will pause safely when the
+                  duration runs out and can be resumed later from where it left
+                  off.
+                </p>
+              ) : (
+                <p className="mt-2 rounded bg-[#b06a1c]/15 px-2 py-1.5 text-xs text-[#7a4a13]">
+                  Won't finish in this duration: ≈{estimate.slowMin} min needed.
+                  Dispatch will reject this — reduce steps to at most{" "}
+                  {estimate.maxFittingSteps.toLocaleString()} or pick a longer
+                  duration.
+                </p>
+              )
+            )}
           </div>
         </div>
       </Panel>

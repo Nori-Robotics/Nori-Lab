@@ -45,6 +45,33 @@ def _dir_mtime_iso(path: Path) -> str | None:
         return None
 
 
+def ensure_local_dataset(repo_id: str) -> Path:
+    """Return the local LeRobot-cache path for `repo_id`, downloading it from
+    the HF Hub first if it isn't already on disk.
+
+    Lets a user push one of *their own HF datasets* to Nori, not only datasets
+    recorded locally — the "upload from HF" path. Uses the laptop's HF login
+    (via snapshot_download's default token resolution), so the user's private
+    datasets work too. Raises ValueError if the repo is missing/inaccessible or
+    isn't a LeRobot dataset.
+    """
+    local = _lerobot_cache_root() / repo_id
+    if _is_dataset_dir(local):
+        return local
+    from huggingface_hub import snapshot_download
+    try:
+        snapshot_download(repo_id=repo_id, repo_type="dataset", local_dir=str(local))
+    except HfHubHTTPError as exc:
+        raise ValueError(
+            f"HF dataset '{repo_id}' not found or not accessible with your HF login."
+        ) from exc
+    if not _is_dataset_dir(local):
+        raise ValueError(
+            f"HF repo '{repo_id}' is not a LeRobot dataset (no meta/info.json)."
+        )
+    return local
+
+
 def list_local_datasets() -> list[dict[str, Any]]:
     """Scan the LeRobot cache for local datasets (dirs containing meta/info.json).
 

@@ -10,6 +10,7 @@ import { ArrowLeft, Loader2, Play, Square, UploadCloud } from "lucide-react";
 import { useApi } from "@/contexts/ApiContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -63,16 +64,18 @@ const ConfigurationMode = () => {
   }, [baseUrl, fetchWithHeaders]);
   useEffect(() => refreshMyDatasets(), [refreshMyDatasets]);
 
-  // Local (on-disk) datasets available to upload to Nori (record → upload → train).
-  const [localDatasets, setLocalDatasets] = useState<string[]>([]);
+  // Datasets available to upload to Nori: local-on-disk AND the user's HF
+  // datasets (source "local" | "hub" | "both"). Hub-only ones are downloaded
+  // by LeLab before upload, so they're all selectable here.
+  const [uploadable, setUploadable] = useState<{ repo: string; source: string }[]>([]);
   const [selectedLocal, setSelectedLocal] = useState<string>("");
+  const [hfRepoInput, setHfRepoInput] = useState<string>(""); // paste any HF dataset repo id
   const [uploading, setUploading] = useState(false);
   useEffect(() => {
     let cancelled = false;
     listDatasets(baseUrl, fetchWithHeaders)
       .then((rows) => {
-        // Only local-on-disk datasets can be uploaded (source "local" or "both").
-        if (!cancelled) setLocalDatasets(rows.filter((d) => d.source !== "hub").map((d) => d.repo_id));
+        if (!cancelled) setUploadable(rows.map((d) => ({ repo: d.repo_id, source: d.source })));
       })
       .catch(() => {});
     return () => {
@@ -81,12 +84,15 @@ const ConfigurationMode = () => {
   }, [baseUrl, fetchWithHeaders]);
 
   const handleUpload = async () => {
-    if (!selectedLocal) return;
+    // A pasted HF repo id wins over the dropdown selection.
+    const repo = hfRepoInput.trim() || selectedLocal;
+    if (!repo) return;
     setUploading(true);
     try {
-      const session = await uploadDataset(baseUrl, fetchWithHeaders, selectedLocal);
+      const session = await uploadDataset(baseUrl, fetchWithHeaders, repo);
       if (session.status === "PROMOTED") {
-        toast({ title: "Dataset uploaded", description: selectedLocal });
+        toast({ title: "Dataset uploaded", description: repo });
+        setHfRepoInput("");
         refreshMyDatasets(); // the new dataset appears in the training picker
       } else {
         toast({ title: "Upload finished", description: `status: ${session.status}` });
@@ -150,30 +156,51 @@ const ConfigurationMode = () => {
         </Button>
       </div>
 
-      {/* Upload a recorded dataset to Nori so it can be trained on. */}
+      {/* Upload a dataset to Nori (recorded locally OR one of your HF datasets). */}
       <Panel eyebrow="datasets" title="Upload a dataset">
         <div className="space-y-3">
           <p className="text-sm text-[#14131a]/70">
-            Push a dataset you recorded locally to your Nori account. Once
-            uploaded it appears in the dataset picker above.
+            Push a dataset to your Nori account — one you recorded locally or one
+            of your HuggingFace datasets. Once uploaded it appears in the dataset
+            picker above.
           </p>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <div className="flex-1">
-              <Label className="text-[#14131a]/70">Local dataset</Label>
-              <Select value={selectedLocal} onValueChange={setSelectedLocal}>
+              <Label className="text-[#14131a]/70">Your datasets</Label>
+              <Select
+                value={selectedLocal}
+                onValueChange={(v) => {
+                  setSelectedLocal(v);
+                  setHfRepoInput(""); // dropdown pick clears any pasted repo
+                }}
+              >
                 <SelectTrigger className="mt-1 border-[#14131a]/15 bg-white text-[#14131a] rounded-md">
-                  <SelectValue placeholder={localDatasets.length ? "Choose a local dataset" : "No local datasets found"} />
+                  <SelectValue placeholder={uploadable.length ? "Choose a dataset" : "No datasets found"} />
                 </SelectTrigger>
                 <SelectContent>
-                  {localDatasets.map((repo) => (
-                    <SelectItem key={repo} value={repo}>
-                      {repo}
+                  {uploadable.map((d) => (
+                    <SelectItem key={d.repo} value={d.repo}>
+                      {d.repo}
+                      {d.source === "hub" ? " · HF" : d.source === "both" ? " · local + HF" : " · local"}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <Button variant="outline" onClick={handleUpload} disabled={uploading || !selectedLocal}>
+            <div className="flex-1">
+              <Label className="text-[#14131a]/70">or an HF dataset repo id</Label>
+              <Input
+                value={hfRepoInput}
+                onChange={(e) => setHfRepoInput(e.target.value)}
+                placeholder="username/dataset"
+                className="mt-1 border-[#14131a]/15 bg-white text-[#14131a] rounded-md"
+              />
+            </div>
+            <Button
+              variant="outline"
+              onClick={handleUpload}
+              disabled={uploading || (!hfRepoInput.trim() && !selectedLocal)}
+            >
               {uploading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Uploading…

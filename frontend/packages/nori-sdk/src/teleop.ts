@@ -124,25 +124,6 @@ export interface ActionStatus {
 // The states that end an action's lifecycle (awaitAction resolves on these).
 const TERMINAL_ACTION_STATES = new Set<ActionState>(["done", "clamped", "blocked", "timeout"]);
 
-// Policy delivery to the robot ({type:"install"} — bridge-consumed like {type:"call"}/{type:"video"},
-// no nori-protocol change). The browser mints delivery-grant URLs from Nori-Backend (customer JWT)
-// and hands them to the robot over this channel; the robot downloads over HTTPS, sha256-verifies,
-// and reports progress back as install_status frames.
-export interface InstallFile {
-  name: string;        // exact filename to place in the policy dir (from the bundle manifest)
-  url: string;         // ABSOLUTE grant URL — short-lived bearer credential, treat as secret
-  sha256?: string;     // promotion-time hash; robot verifies when present
-  size_bytes?: number;
-}
-export type InstallPhase = "starting" | "downloading" | "verifying" | "done" | "error";
-export interface InstallStatus {
-  ref: string;
-  phase: InstallPhase;
-  file?: string;           // which bundle file the progress refers to (downloading/verifying)
-  received_bytes?: number; // cumulative across the bundle
-  total_bytes?: number;
-  error?: string;          // set when phase === "error"
-}
 
 // Robot-daemon health as observed by the Pi's media bridge (nori_protocol_schema §5b). The bridge —
 // not the daemon — knows when the daemon is down/restarting/refusing sessions, so it publishes this
@@ -391,8 +372,6 @@ export interface RemoteTeleopOptions {
   // Optional: every action_status transition (Phase E / G1). For logging/telemetry; the executor
   // uses awaitAction() instead of subscribing.
   onActionStatus?: (s: ActionStatus) => void;
-  // Optional: progress of a policy install on the robot (install_status frames from the bridge).
-  onInstallStatus?: (s: InstallStatus) => void;
   // Optional: the composite camera layout (bridge-derived), when it arrives. A consumer usually
   // reads cameraLayout() at use-time instead of subscribing.
   onCameraLayout?: (layout: CameraLayout) => void;
@@ -768,21 +747,6 @@ export class RemoteTeleop {
     this.dcSend({ type: "video", quality });
   }
 
-  // DEPRECATED / UNUSED by the app: policies are no longer installed onto the robot — per the
-  // NoriTeleop architecture the laptop runs inference and the robot receives only control
-  // frames (see the app's nori/remote/policyRun.ts). Left in place for external SDK consumers
-  // with their own robot-side handler; the app never calls it.
-  //
-  // Ask the robot to download a policy bundle onto its own disk. `files` carry short-lived
-  // delivery-grant URLs minted from Nori-Backend by the CUSTOMER's session — the robot never
-  // holds a long-lived credential. Intercepted by webrtc_robot.py like {type:"call"}/{type:"video"}
-  // (never reaches the daemon; no protocol version bump). Progress arrives via onInstallStatus.
-  // Returns false when the control channel isn't open (caller should tell the user to connect).
-  installPolicy(ref: string, files: InstallFile[]): boolean {
-    if (this.controlCh?.readyState !== "open") return false;
-    this.dcSend({ type: "install", ref, files });
-    return true;
-  }
 
   // Pause/resume the robot's video ENCODER (not just the DOM sink). "pause" gates frames before
   // the software x264 encoder so it goes idle — the real Pi CPU/power saving; "resume" re-opens it
@@ -1447,8 +1411,6 @@ export class RemoteTeleop {
       this.ingestPerception(m);
     } else if (m.type === "action_status") {
       this.ingestActionStatus(m);
-    } else if (m.type === "install_status") {
-      this.ingestInstallStatus(m);
     } else if (m.type === "camera_layout") {
       this.ingestCameraLayout(m);
     } else if (m.type === "daemon_status") {
@@ -1486,20 +1448,6 @@ export class RemoteTeleop {
 
   // Coerce a wire `action_status` frame, cache it as the latest for its id, notify, and resolve a
   // pending awaitAction() on a terminal state (Phase E / G1).
-  // Wire install_status -> InstallStatus. Tolerant of partial frames; frames without a ref are
-  // dropped (nothing to correlate them to).
-  private ingestInstallStatus(m: Record<string, unknown>) {
-    const ref = typeof m.ref === "string" ? m.ref : "";
-    if (!ref) return;
-    this.o.onInstallStatus?.({
-      ref,
-      phase: (typeof m.phase === "string" ? m.phase : "error") as InstallPhase,
-      file: typeof m.file === "string" ? m.file : undefined,
-      received_bytes: typeof m.received_bytes === "number" ? m.received_bytes : undefined,
-      total_bytes: typeof m.total_bytes === "number" ? m.total_bytes : undefined,
-      error: typeof m.error === "string" ? m.error : undefined,
-    });
-  }
 
   private ingestActionStatus(m: Record<string, unknown>) {
     const st: ActionStatus = {

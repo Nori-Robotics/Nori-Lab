@@ -303,54 +303,6 @@ export interface MyListing {
   created_at: string;
 }
 
-/** One file of a robot-delivery grant. `url` is ABSOLUTE (a short-lived
- * bearer credential minted for the caller's entitlement) — hand it only to
- * the user's own robot over the teleop data channel. */
-export interface DeliveryGrantFile {
-  name: string;
-  size_bytes: number | null;
-  sha256: string | null;
-  url: string;
-}
-
-export interface DeliveryGrant {
-  ref: string;
-  files: DeliveryGrantFile[];
-  expires_at: number;
-}
-
-/** @deprecated UNUSED — policies are no longer delivered to the robot. Per
- * the NoriTeleop architecture (full_nori_plan §Robot push) inference runs in
- * the local lelab process (see nori/remote/policyRun.ts) and the robot only
- * receives {type:"control", action} frames. Kept because the backend surface
- * still exists; remove together with it.
- *
- * POST .../delivery-grant — mint short-lived URLs the connected robot can
- * download this policy bundle with. The backend returns origin-relative
- * URLs; this absolutizes them (direct mode prepends the known backend
- * origin; the LeLab proxy absolutizes server-side). */
-export async function createDeliveryGrant(
-  baseUrl: string,
-  fetcher: Fetcher,
-  ref: string
-): Promise<DeliveryGrant> {
-  const grant = await noriRequest<DeliveryGrant>(
-    baseUrl,
-    fetcher,
-    `/nori/marketplace/policies/${encodeURIComponent(ref)}/delivery-grant`,
-    { method: "POST", action: "Prepare install to robot" }
-  );
-  if (directBackendUrl) {
-    return {
-      ...grant,
-      files: grant.files.map((f) => ({
-        ...f,
-        url: f.url.startsWith("/") ? `${directBackendUrl}${f.url}` : f.url,
-      })),
-    };
-  }
-  return grant;
-}
 
 /**
  * POST .../publish — request community publication of an OWN policy. Creates a

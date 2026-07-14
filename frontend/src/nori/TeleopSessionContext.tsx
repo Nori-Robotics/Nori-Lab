@@ -18,7 +18,7 @@ import React, {
 import {
   RemoteTeleop,
   type ArmSide, type CallState, type ConnectStatus, type ControlMode, type DaemonStatus,
-  type InstallStatus, type TelemetryView,
+  type TelemetryView,
 } from "@nori/sdk";
 import { SupabaseSignaling } from "@nori/sdk/supabase";
 import { getSupabase } from "@/nori/auth/supabase";
@@ -76,9 +76,6 @@ export interface TeleopSessionValue {
   // Distinguishes "robot online but daemon down/restarting/refusing" from a healthy session —
   // connState alone cannot (the media bridge stays connected while the daemon is dead).
   daemonStatus: DaemonStatus | null;
-  // Progress of the most recent policy install on the robot (install_status frames), null until
-  // one arrives. Session-scoped like everything here — survives navigating away mid-download.
-  installStatus: InstallStatus | null;
   // What the connect attempt is doing, and why it failed if it did (see ConnectStatus in the SDK).
   // connState is the raw WebRTC state and is "idle" for the whole waiting-for-the-robot window,
   // so it cannot answer "what is wrong" — this can.
@@ -119,7 +116,6 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
   const [stale, setStale] = useState(false);
   const [call, setCall] = useState<CallState>(EMPTY_CALL);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
-  const [installStatus, setInstallStatus] = useState<InstallStatus | null>(null);
   const [connectStatus, setConnectStatus] = useState<ConnectStatus>({ phase: "idle" });
   const [logLines, setLogLines] = useState<string[]>([]);
   const [settings, setSettings] = useState<Settings>(loadSettings);
@@ -249,9 +245,6 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
       // Daemon health transitions (the SDK already appends them to the log; this drives the
       // banner/chip so "daemon down/restarting" never reads as random dead control).
       onDaemonStatus: setDaemonStatus,
-      // Policy-install progress from the robot; lives here (not the page) so a download keeps
-      // reporting after the user navigates away from the marketplace.
-      onInstallStatus: setInstallStatus,
       // The connect-phase machine — drives the connection banner.
       onConnectStatus: setConnectStatus,
       // The handshake ack. It was never wired, so a robot that REFUSED the session (accepted:false)
@@ -306,13 +299,11 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
 
   const value = useMemo<TeleopSessionValue>(() => ({
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
-    installStatus,
     connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
   }), [
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
-    installStatus,
     connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,

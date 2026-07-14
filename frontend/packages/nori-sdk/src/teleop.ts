@@ -768,6 +768,11 @@ export class RemoteTeleop {
     this.dcSend({ type: "video", quality });
   }
 
+  // DEPRECATED / UNUSED by the app: policies are no longer installed onto the robot — per the
+  // NoriTeleop architecture the laptop runs inference and the robot receives only control
+  // frames (see the app's nori/remote/policyRun.ts). Left in place for external SDK consumers
+  // with their own robot-side handler; the app never calls it.
+  //
   // Ask the robot to download a policy bundle onto its own disk. `files` carry short-lived
   // delivery-grant URLs minted from Nori-Backend by the CUSTOMER's session — the robot never
   // holds a long-lived credential. Intercepted by webrtc_robot.py like {type:"call"}/{type:"video"}

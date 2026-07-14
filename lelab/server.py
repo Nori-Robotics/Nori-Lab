@@ -163,6 +163,13 @@ from .browser_capture import router as _capture_router  # noqa: E402
 
 app.include_router(_capture_router)
 
+# NORI: laptop-side policy execution for remote robots (/nori/rollout/*).
+# Policies run HERE; only {type:"control", action} frames reach the robot —
+# the Pi is a safety daemon, not a compute host (full_nori_plan §Robot push).
+from .nori_rollout import router as _rollout_router  # noqa: E402
+
+app.include_router(_rollout_router)
+
 # In dev mode the React app runs on :8080 while the API runs on :8000; in
 # prod they share an origin and CORS is unnecessary. allow_credentials with
 # a wildcard origin is rejected by browsers, so we drop it.

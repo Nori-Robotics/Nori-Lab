@@ -319,7 +319,13 @@ export interface DeliveryGrant {
   expires_at: number;
 }
 
-/** POST .../delivery-grant — mint short-lived URLs the connected robot can
+/** @deprecated UNUSED — policies are no longer delivered to the robot. Per
+ * the NoriTeleop architecture (full_nori_plan §Robot push) inference runs in
+ * the local lelab process (see nori/remote/policyRun.ts) and the robot only
+ * receives {type:"control", action} frames. Kept because the backend surface
+ * still exists; remove together with it.
+ *
+ * POST .../delivery-grant — mint short-lived URLs the connected robot can
  * download this policy bundle with. The backend returns origin-relative
  * URLs; this absolutizes them (direct mode prepends the known backend
  * origin; the LeLab proxy absolutizes server-side). */

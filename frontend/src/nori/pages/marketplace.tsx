@@ -7,13 +7,12 @@
 // Visual language ported from NoriSkillHub: paper/ink outlines, sticker tints,
 // display headlines, pill chips, bounce-hover cards.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApi } from "@/contexts/ApiContext";
 import { ApiError } from "@/lib/apiClient";
 import { Pill } from "@/components/ui/pill";
 import {
   acquirePolicy,
-  createDeliveryGrant,
   deleteLocalPolicy,
   downloadPolicy,
   getPolicyDetails,
@@ -30,6 +29,7 @@ import {
   type PolicyListEntry,
 } from "@/nori/api/client";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
+import { PolicyRunner, type PolicyRunPhase } from "@/nori/remote/policyRun";
 
 /**
  * PREVIEW-ONLY stand-in for GET .../details while the backend endpoint is
@@ -111,8 +111,9 @@ const SourceChip = ({ source }: { source: string }) => (
   </span>
 );
 
-/** The "install onto the connected robot" affordance (delivery-grant flow).
- * null = no live robot session; the row isn't rendered at all. */
+/** The "run on the connected robot" affordance. The policy executes in the
+ * LOCAL lelab process (lelab/nori_rollout.py); only {type:"control", action}
+ * frames reach the robot. null = no live robot session; row not rendered. */
 type RobotAction = {
   label: string;
   busy: boolean;
@@ -220,7 +221,7 @@ const PolicyCard = ({
           {robotAction.label}
         </code>
         <span className="eyebrow shrink-0 text-foreground" aria-hidden>
-          {robotAction.busy ? "…" : "⇥ robot"}
+          {robotAction.busy ? "…" : "▶ robot"}
         </span>
       </button>
     )}
@@ -641,76 +642,52 @@ const Marketplace = () => {
     };
   }, [baseUrl, fetchWithHeaders, refreshLocal, refreshMyListings]);
 
-  // Live robot session (survives navigation): drives the "send to robot" row
-  // on every card. installStatus is the robot's own progress reporting.
-  const { teleop, running, installStatus } = useTeleopSession();
-  const [robotInstalls, setRobotInstalls] = useState<Record<string, InstallState>>({});
+  // Live robot session (survives navigation): drives the "run on robot" row
+  // on every card. ARCHITECTURE (full_nori_plan §Robot push): the policy runs
+  // in the LOCAL lelab process; the robot only ever receives standard
+  // {type:"control", action} frames. Nothing is sent to or executed on the
+  // Pi — the previous delivery-grant install-onto-the-robot flow is removed.
+  const { teleop, running, tel } = useTeleopSession();
+  const telRef = useRef(tel);
+  useEffect(() => {
+    telRef.current = tel;
+  }, [tel]);
 
-  const installToRobot = useCallback(
+  const runnerRef = useRef<PolicyRunner | null>(null);
+  const [runState, setRunState] = useState<{ ref: string | null; phase: PolicyRunPhase }>({
+    ref: null,
+    phase: { kind: "idle" },
+  });
+
+  // Leaving the page stops the policy: the robot must never keep moving
+  // under a controller whose UI (and stop button) is no longer on screen.
+  useEffect(
+    () => () => {
+      void runnerRef.current?.stop("left the marketplace page");
+    },
+    []
+  );
+
+  const runOnRobot = useCallback(
     async (policy: PolicyListEntry) => {
-      setRobotInstalls((s) => ({ ...s, [policy.ref]: { status: "working", message: "robot: preparing…" } }));
+      if (!teleop) return;
+      if (!runnerRef.current) {
+        runnerRef.current = new PolicyRunner(baseUrl, () => telRef.current);
+      }
+      const runner = runnerRef.current;
+      runner.onPhase = (phase) => setRunState({ ref: policy.ref, phase });
       try {
-        if (policy.source === "first_party" || policy.source === "community") {
-          await acquirePolicy(baseUrl, fetchWithHeaders, policy.ref);
-        }
-        const grant = await createDeliveryGrant(baseUrl, fetchWithHeaders, policy.ref);
-        const sent = teleop?.installPolicy(
-          policy.ref,
-          grant.files.map((f) => ({
-            name: f.name,
-            url: f.url,
-            sha256: f.sha256 ?? undefined,
-            size_bytes: f.size_bytes ?? undefined,
-          }))
-        );
-        if (!sent) throw new Error("robot connection dropped — reconnect and retry");
-        // From here the robot reports progress itself (installStatus frames).
-        setRobotInstalls((s) => ({ ...s, [policy.ref]: { status: "working", message: "robot: sending…" } }));
-      } catch (e) {
-        setRobotInstalls((s) => ({
-          ...s,
-          [policy.ref]: { status: "error", message: e instanceof Error ? e.message : String(e) },
-        }));
+        await runner.start(teleop, policy.ref);
+      } catch {
+        // phase already reflects the error via onPhase
       }
     },
-    [baseUrl, fetchWithHeaders, teleop]
+    [baseUrl, teleop]
   );
 
-  // Fold the robot's install_status frames (session context) over the local
-  // request state — the robot's word wins once it starts reporting.
-  const robotActionFor = useCallback(
-    (policy: PolicyListEntry): RobotAction | null => {
-      if (!running || !teleop) return null;
-      const local = robotInstalls[policy.ref];
-      const live = installStatus?.ref === policy.ref ? installStatus : null;
-      if (live) {
-        if (live.phase === "done") {
-          return { label: "on robot ✓ — send again", busy: false, error: false, onClick: () => installToRobot(policy) };
-        }
-        if (live.phase === "error") {
-          return {
-            label: `robot: ${live.error ?? "install failed"} — retry`,
-            busy: false,
-            error: true,
-            onClick: () => installToRobot(policy),
-          };
-        }
-        const pct =
-          live.total_bytes && live.received_bytes !== undefined
-            ? ` ${Math.min(100, Math.round((live.received_bytes / live.total_bytes) * 100))}%`
-            : "";
-        return { label: `robot: ${live.phase}${pct}`, busy: true, error: false, onClick: () => {} };
-      }
-      if (local?.status === "working") {
-        return { label: local.message ?? "robot: working…", busy: true, error: false, onClick: () => {} };
-      }
-      if (local?.status === "error") {
-        return { label: `${local.message ?? "failed"} — retry`, busy: false, error: true, onClick: () => installToRobot(policy) };
-      }
-      return { label: "send to robot", busy: false, error: false, onClick: () => installToRobot(policy) };
-    },
-    [running, teleop, robotInstalls, installStatus, installToRobot]
-  );
+  const stopRun = useCallback(() => {
+    void runnerRef.current?.stop();
+  }, []);
 
   const install = useCallback(
     async (policy: PolicyListEntry) => {
@@ -733,6 +710,34 @@ const Marketplace = () => {
       }
     },
     [baseUrl, fetchWithHeaders, refreshLocal]
+  );
+
+  const robotActionFor = useCallback(
+    (policy: PolicyListEntry): RobotAction | null => {
+      if (!running || !teleop) return null;
+      const mine = runState.ref === policy.ref ? runState.phase : null;
+      if (mine?.kind === "loading") {
+        return { label: "loading policy…", busy: true, error: false, onClick: () => {} };
+      }
+      if (mine?.kind === "running") {
+        return { label: `driving the robot — stop`, busy: false, error: false, onClick: stopRun };
+      }
+      if (mine?.kind === "error") {
+        return { label: `${mine.message} — retry`, busy: false, error: true, onClick: () => runOnRobot(policy) };
+      }
+      if (mine?.kind === "stopped") {
+        return { label: `stopped (${mine.reason}) — run again`, busy: false, error: false, onClick: () => runOnRobot(policy) };
+      }
+      if (runState.phase.kind === "running" || runState.phase.kind === "loading") {
+        return { label: "another policy is driving", busy: true, error: false, onClick: () => {} };
+      }
+      const installedLocally = local.some((l) => l.ref === policy.ref && l.runnable);
+      if (!installedLocally) {
+        return { label: "install first, then run from here", busy: false, error: false, onClick: () => install(policy) };
+      }
+      return { label: "run on robot (policy runs here)", busy: false, error: false, onClick: () => runOnRobot(policy) };
+    },
+    [running, teleop, runState, stopRun, runOnRobot, local, install]
   );
 
   const openDrawer = useCallback(

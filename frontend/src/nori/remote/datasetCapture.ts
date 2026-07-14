@@ -28,6 +28,18 @@ export interface CaptureExportResult {
   repoId: string;
 }
 
+/** One local lerobot-cache dataset (GET /nori/capture/datasets). */
+export interface CaptureDatasetEntry {
+  repo_id: string;
+  episodes: number;
+  frames: number;
+  fps: number | null;
+  robot_type: string | null;
+  modified_at: string;
+  /** Capture-shaped (has the remote view) — offerable as an append target. */
+  appendable: boolean;
+}
+
 type Row = Record<string, unknown>;
 
 // Chunk cadence for MediaRecorder. 1 s keeps POST bodies small (~100-300 KB at the
@@ -81,6 +93,27 @@ export class DatasetCapture {
     } catch {
       return false;
     }
+  }
+
+  /** Local cache datasets, newest first (for the append picker + the list). */
+  static async listDatasets(baseUrl: string): Promise<CaptureDatasetEntry[]> {
+    const r = await fetch(`${baseUrl.replace(/\/$/, "")}/nori/capture/datasets`);
+    if (!r.ok) throw new Error(`list datasets: HTTP ${r.status}`);
+    return ((await r.json()) as { datasets: CaptureDatasetEntry[] }).datasets;
+  }
+
+  /** Rename a local cache dataset (409 on collision, 422 on a bad name). */
+  static async renameDataset(baseUrl: string, repoId: string, newRepoId: string): Promise<string> {
+    const r = await fetch(`${baseUrl.replace(/\/$/, "")}/nori/capture/datasets/rename`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo_id: repoId, new_repo_id: newRepoId }),
+    });
+    if (!r.ok) {
+      const detail = (await r.json().catch(() => null)) as { detail?: string } | null;
+      throw new Error(detail?.detail || `rename: HTTP ${r.status}`);
+    }
+    return ((await r.json()) as { repo_id: string }).repo_id;
   }
 
   get active(): boolean {
@@ -185,9 +218,11 @@ export class DatasetCapture {
 
   // ---- finish --------------------------------------------------------------
 
-  /** Stop capturing, run the export, resolve with the created dataset repo_id.
+  /** Stop capturing, run the export, resolve with the dataset repo_id. Pass
+   *  `appendTo` to add this session's episodes to an existing dataset, or
+   *  `name` to create a new one with that exact name (default: timestamped).
    *  Poll cadence 2 s; export is CPU-bound on the laptop (video decode + encode). */
-  async finish(fps = 15, name = ""): Promise<CaptureExportResult> {
+  async finish(fps = 15, name = "", appendTo = ""): Promise<CaptureExportResult> {
     if (!this.captureId) throw new Error("capture not started");
     if (this.episodeActive) await this.episodeStop();
     if (this.flushTimer) {
@@ -198,7 +233,7 @@ export class DatasetCapture {
     await this.chunkChain; // every video byte on disk before export starts
     const id = this.captureId;
 
-    await this.post(`/nori/capture/${id}/finish`, { fps, name });
+    await this.post(`/nori/capture/${id}/finish`, { fps, name, append_to: appendTo });
     for (;;) {
       await new Promise((r) => setTimeout(r, 2000));
       const st = (await (await fetch(`${this.baseUrl}/nori/capture/${id}`)).json()) as {

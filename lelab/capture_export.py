@@ -31,6 +31,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .datasets import _lerobot_cache_root as _cache_root
+
 logger = logging.getLogger(__name__)
 
 # Lift keys are startup-relative mm and may be absent per-tick ("height
@@ -89,10 +91,24 @@ def _state_vector(state: dict, joints: list[str]) -> np.ndarray:
     return np.array([float(state.get(j, 0.0)) for j in joints], dtype=np.float32)
 
 
-def export_capture(capture_dir: Path, fps: int = 15, name: str | None = None) -> str:
+def export_capture(
+    capture_dir: Path,
+    fps: int = 15,
+    name: str | None = None,
+    append_to: str | None = None,
+) -> str:
     """Assemble the spool at `capture_dir` into a LeRobotDataset in the
-    lerobot cache. Returns the created repo_id (cache-relative name the
-    existing /nori/datasets/upload endpoint accepts)."""
+    lerobot cache. Returns the repo_id (cache-relative name the existing
+    /nori/datasets/upload endpoint accepts).
+
+    Three destinations:
+      * append_to  — append episodes to that existing dataset (resume). The
+        grid runs at ITS fps and its joint list is the contract; a capture
+        whose joints differ fails loudly rather than silently zero-filling.
+      * name       — create a new dataset with exactly this name (fails if
+        taken — the caller should append instead).
+      * neither    — create a new timestamp-suffixed nori_remote_capture_*.
+    """
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     meta = json.loads((capture_dir / "meta.json").read_text())
@@ -123,29 +139,65 @@ def export_capture(capture_dir: Path, fps: int = 15, name: str | None = None) ->
         raise ValueError("could not decode any video frame from first episode")
     h, w, _ = probe[1].shape
 
-    stem = name or "nori_remote_capture"
-    stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)
-    repo_id = f"{stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    if append_to:
+        # resume() demands an explicit root (root=None means the revision-safe
+        # Hub snapshot cache, which a writer would corrupt). Our datasets live
+        # at the cache root under their repo_id — same place create() puts them.
+        dataset = LeRobotDataset.resume(append_to, root=_cache_root() / append_to)
+        # The existing dataset owns the contract; this capture must match it.
+        existing = dataset.features.get("observation.state", {})
+        existing_joints = list(existing.get("names") or [])
+        if existing_joints != joints:
+            missing = sorted(set(existing_joints) - set(joints))
+            extra = sorted(set(joints) - set(existing_joints))
+            raise ValueError(
+                f"capture joints don't match dataset {append_to!r}"
+                + (f" (dataset-only: {missing})" if missing else "")
+                + (f" (capture-only: {extra})" if extra else "")
+                + " — record it into a new dataset instead"
+            )
+        if int(dataset.fps) != int(fps):
+            logger.info(
+                "[EXPORT] appending at dataset fps %s (requested %s)", dataset.fps, fps
+            )
+            fps = int(dataset.fps)
+        # Frame geometry contract comes from the dataset, not this capture's
+        # probe — the resize path below normalizes any drift.
+        vid = dataset.features.get("observation.images.remote")
+        if vid is None:
+            raise ValueError(f"dataset {append_to!r} has no remote view — not a capture dataset")
+        h, w = int(vid["shape"][0]), int(vid["shape"][1])
+        repo_id = append_to
+    else:
+        if name:
+            repo_id = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+            if (_cache_root() / repo_id).exists():
+                raise ValueError(
+                    f"a dataset named {repo_id!r} already exists — append to it, or pick another name"
+                )
+        else:
+            stem = "nori_remote_capture"
+            repo_id = f"{stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    features = {
-        "observation.state": {"dtype": "float32", "shape": (len(joints),), "names": joints},
-        "action": {"dtype": "float32", "shape": (len(joints),), "names": joints},
-        # One composite view (the robot's single H.264 mosaic). Per-tile crops
-        # are a follow-up — meta.json carries the layout for it.
-        "observation.images.remote": {
-            "dtype": "video",
-            "shape": (h, w, 3),
-            "names": ["height", "width", "channels"],
-        },
-    }
+        features = {
+            "observation.state": {"dtype": "float32", "shape": (len(joints),), "names": joints},
+            "action": {"dtype": "float32", "shape": (len(joints),), "names": joints},
+            # One composite view (the robot's single H.264 mosaic). Per-tile crops
+            # are a follow-up — meta.json carries the layout for it.
+            "observation.images.remote": {
+                "dtype": "video",
+                "shape": (h, w, 3),
+                "names": ["height", "width", "channels"],
+            },
+        }
 
-    dataset = LeRobotDataset.create(
-        repo_id,
-        fps,
-        features=features,
-        robot_type=meta.get("room") or "nori_remote",
-        use_videos=True,
-    )
+        dataset = LeRobotDataset.create(
+            repo_id,
+            fps,
+            features=features,
+            robot_type=meta.get("room") or "nori_remote",
+            use_videos=True,
+        )
 
     tick_ms = 1000.0 / fps
     total_frames = 0

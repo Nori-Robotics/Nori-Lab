@@ -1308,12 +1308,13 @@ class NoriDatasetUploadBody(BaseModel):
 
 @app.post("/nori/datasets/upload")
 def nori_upload_dataset(body: NoriDatasetUploadBody, request: Request):
-    local_path = dataset_browser._lerobot_cache_root() / body.repo_id
-    if not dataset_browser._is_dataset_dir(local_path):
-        raise HTTPException(
-            status_code=404,
-            detail=f"No local dataset at {local_path} (expected meta/info.json).",
-        )
+    # Accept a local (on-disk) dataset OR one of the user's HF datasets — the
+    # latter is downloaded to the local cache first (their HF login is used, so
+    # private repos work), then uploaded through the same backend-mediated flow.
+    try:
+        local_path = dataset_browser.ensure_local_dataset(body.repo_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     client = _nori_client(request)
 
     def run():

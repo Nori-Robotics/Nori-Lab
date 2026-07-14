@@ -94,8 +94,15 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // is exactly "did `/nori/config` answer" — independent of whether Supabase is
         // configured. Only the fallback (catch) path means no local server is present.
         let leLab = true;
+        // PLAIN fetch, deliberately not fetchWithHeaders: /nori/config is public,
+        // and fetchWithHeaders awaits the Supabase gate — which THIS bootstrap is
+        // what settles. That circular wait stalled the config request ~6 s (the
+        // gate's safety timeout), by which point its own 4 s AbortSignal.timeout
+        // had already expired: every fresh load failed with "signal timed out"
+        // (live incident 2026-07-14). Auth adds nothing here; never gate on it.
+        const plainFetch: typeof fetchWithHeaders = (url, init) => fetch(url, init);
         try {
-          cfg = await getNoriConfig(baseUrl, fetchWithHeaders);
+          cfg = await getNoriConfig(baseUrl, plainFetch);
           if (!cfg.configured) cfg = getBuildTimeConfig() ?? cfg;
         } catch (e) {
           // `/nori/config` didn't answer on the CONFIGURED base URL. That URL comes
@@ -108,7 +115,7 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           const origin = typeof window !== "undefined" ? window.location.origin : "";
           if (origin && origin !== baseUrl.replace(/\/$/, "")) {
             try {
-              const originCfg = await getNoriConfig(origin, fetchWithHeaders);
+              const originCfg = await getNoriConfig(origin, plainFetch);
               if (originCfg.configured) {
                 console.warn(
                   `stored API base URL ${baseUrl} is unreachable — switching to this page's origin ${origin}`

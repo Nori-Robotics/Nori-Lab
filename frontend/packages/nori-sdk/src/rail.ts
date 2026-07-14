@@ -13,13 +13,27 @@ export const RAIL_TRAVEL_MM = 950;
 
 // Shared reading. `depthMm` = distance below the top (>=0), `frac` = fraction of full travel
 // descended (0 = at top/home, 1 = at bottom).
+//
+// The Pi publishes <lift>.pos ALREADY in this frame — 0 at the top of the rail, positive
+// downward (nori_protocol_schema.md). We take it at face value and CLAMP a negative reading
+// to 0 rather than folding it with Math.abs().
+//
+// This used to be `Math.abs(h)`, on the reasoning that the rail starts at the top so the only
+// possible direction is down, making the magnitude unambiguous. That was defensive against
+// the Pi's lift direction being unverified — but it also meant a robot with its rail
+// direction configured BACKWARDS still rendered a perfectly plausible gauge, which removed
+// the last place a human might have noticed. As of 2026-07-14 direction is a calibrated,
+// verified per-unit value on the Pi (lift.hpp), so a negative depth is now a real signal —
+// the carriage is above its zero, i.e. the axis desynced or was zeroed mid-travel — and it
+// should read as a pinned, obviously-wrong 0 instead of being quietly mirrored into a
+// believable number.
 export function railReading(
   state: Record<string, number>,
   key: string
 ): { known: boolean; depthMm: number; frac: number } {
   const h = state[key];
   if (typeof h !== "number") return { known: false, depthMm: 0, frac: 0 };
-  const depthMm = Math.min(RAIL_TRAVEL_MM, Math.abs(h));
+  const depthMm = Math.min(RAIL_TRAVEL_MM, Math.max(0, h));
   return { known: true, depthMm, frac: depthMm / RAIL_TRAVEL_MM };
 }
 

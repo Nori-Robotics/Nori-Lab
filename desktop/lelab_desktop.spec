@@ -57,6 +57,11 @@ hiddenimports += ["websockets", "httptools", "watchfiles"]
 # Ship the built React app so lelab.server can StaticFiles-mount it at /.
 datas += [("../frontend/dist", "frontend/dist")]
 
+# Ship the generated robot tool schemas — server.py loads NORI_AGENT_TOOLS from this at import
+# (frozen path: sys._MEIPASS/nori-sdk/robot-tools.json). Generated from @nori/sdk robot-ops.ts via
+# `npm run gen:robot-tools`; the agent's tool list comes from here, so the bundle MUST include it.
+datas += [("../frontend/packages/nori-sdk/robot-tools.json", "nori-sdk")]
+
 # --- Excludes: not reachable from teleop / calibrate / record / local-inference.
 #   rerun*  -> dataset visualization only (lerobot.utils.visualization_utils)
 #   wandb   -> training experiment tracking; desktop training is cloud-dispatched

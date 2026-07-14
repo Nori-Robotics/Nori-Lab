@@ -691,154 +691,37 @@ SAFETY (you cannot bypass these, but work WITH them): a human supervises with li
 Work step by step. One or a few tool calls per turn, then look and reassess. When the goal is achieved, call `done`."""
 
 
-# Tool schemas handed to Claude each turn. Mirror docs/agentic_vision_loop.md; the browser dispatcher
-# maps each name -> a ScriptDriver op (or snapshot()/state). additionalProperties:false everywhere so
-# the model can't smuggle unvalidated fields.
-NORI_AGENT_TOOLS = [
-    {
-        "name": "look",
-        "description": (
-            "Capture a fresh still from the robot camera. Use before and after acting to verify the "
-            "effect. Your only visual input. With no arguments you get the full COMPOSITE (all camera "
-            "tiles) — best for scene-level judgement (robot left vs right, where things are). Pass "
-            '`camera` (a role name from the "Camera layout" context, e.g. "overhead" or "left_wrist") '
-            "to get just that camera's tile — best for a close look at one arm/view. An unknown role "
-            "returns an error naming the valid roles, not an image."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "camera": {
-                    "type": "string",
-                    "description": "optional camera role from the layout; omit for the full composite",
-                },
-            },
-            "additionalProperties": False,
-        },
-    },
-    {
-        "name": "get_state",
-        "description": "Current joint positions + lift + base (proprioception, normalized). No image.",
-        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    {
-        "name": "move_to",
-        "description": "Move one arm's joints to ABSOLUTE normalized targets and WAIT for arrival. Returns done|blocked|clamped|timeout. Best for 'go to pose X'.",
-        "input_schema": {
-            "type": "object",
-            "required": ["side", "targets"],
-            "additionalProperties": False,
-            "properties": {
-                "side": {"enum": ["left", "right"]},
-                "targets": {
-                    "type": "object",
-                    "additionalProperties": {"type": "number"},
-                    "description": 'subset of {shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper} -> target, e.g. {"shoulder_pan": 30, "gripper": 0}',
-                },
-                "slew": {"type": "number", "description": "optional units/sec, capped"},
-            },
-        },
-    },
-    {
-        "name": "reach",
-        "description": "Task-space (cylindrical) jog held for ms, then stopped. Timed and open-loop — use short pulses and re-look.",
-        "input_schema": {
-            "type": "object",
-            "required": ["side", "dofs", "ms"],
-            "additionalProperties": False,
-            "properties": {
-                "side": {"enum": ["left", "right"]},
-                "dofs": {
-                    "type": "object",
-                    "additionalProperties": {"type": "number"},
-                    "description": "subset of {x, y, pitch, shoulder_pan, wrist_roll, gripper}, each a rate in [-1,1]; +x forward, +y left",
-                },
-                "ms": {"type": "number"},
-            },
-        },
-    },
-    {
-        "name": "grip",
-        "description": "Open or close the gripper on one arm.",
-        "input_schema": {
-            "type": "object",
-            "required": ["side", "action"],
-            "additionalProperties": False,
-            "properties": {
-                "side": {"enum": ["left", "right"]},
-                "action": {"enum": ["open", "close"]},
-            },
-        },
-    },
-    {
-        "name": "base",
-        "description": "Drive the mobile base for ms. linear (+forward) and angular (+turn left), rates in [-1,1]. Open-loop, timed — drive only briefly.",
-        "input_schema": {
-            "type": "object",
-            "required": ["ms"],
-            "additionalProperties": False,
-            "properties": {
-                "linear": {"type": "number"},
-                "angular": {"type": "number"},
-                "ms": {"type": "number"},
-            },
-        },
-    },
-    {
-        "name": "lift",
-        "description": "Raise/lower one arm's vertical rail for ms. dir in [-1,1], + = up. Open-loop, timed.",
-        "input_schema": {
-            "type": "object",
-            "required": ["side", "dir", "ms"],
-            "additionalProperties": False,
-            "properties": {
-                "side": {"enum": ["left", "right"]},
-                "dir": {"type": "number"},
-                "ms": {"type": "number"},
-            },
-        },
-    },
-    {
-        "name": "wait",
-        "description": "Hold position for ms.",
-        "input_schema": {
-            "type": "object",
-            "required": ["ms"],
-            "additionalProperties": False,
-            "properties": {"ms": {"type": "number"}},
-        },
-    },
-    {
-        "name": "play_audio",
-        "description": "Play a short audio clip on the robot's speaker from a URL (CORS-enabled https:// or a data: URL to an audio file; clips only, not live streams). Returns ok or an error.",
-        "input_schema": {
-            "type": "object",
-            "required": ["url"],
-            "additionalProperties": False,
-            "properties": {"url": {"type": "string", "description": "https:// (CORS-enabled) or data: URL to an audio file"}},
-        },
-    },
-    {
-        "name": "done",
-        "description": "The goal is achieved. Ends the run.",
-        "input_schema": {
-            "type": "object",
-            "required": ["summary"],
-            "additionalProperties": False,
-            "properties": {"summary": {"type": "string"}},
-        },
-    },
-    {
-        "name": "give_up",
-        "description": "The goal can't be done safely or at all. Ends the run.",
-        "input_schema": {
-            "type": "object",
-            "required": ["reason"],
-            "additionalProperties": False,
-            "properties": {"reason": {"type": "string"}},
-        },
-    },
-]
+# The agent tool schemas are GENERATED from the SDK single-source-of-truth manifest
+# (frontend/packages/nori-sdk/src/robot-ops.ts) into robot-tools.json, then loaded here — so the tools
+# the model can call can never drift from what ScriptDriver/AgentSession actually dispatch. Edit the
+# manifest, run `npm run gen:robot-tools`, and the change flows here with no server-side edit. The
+# drift guard (frontend/src/nori/remote/robot-ops.drift.test.ts) fails CI if they diverge.
+def _load_robot_tools_bundle() -> dict:
+    """Locate + parse robot-tools.json. Works both from source (repo tree) and in the frozen desktop
+    bundle (PyInstaller unpacks datas under sys._MEIPASS -> "nori-sdk/robot-tools.json"; see
+    lelab_desktop.spec). Fails LOUD with a fix hint rather than silently shipping an empty tool list —
+    an agent with no tools is a broken agent."""
+    candidates = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / "nori-sdk" / "robot-tools.json")
+    candidates.append(
+        Path(__file__).resolve().parents[1] / "frontend" / "packages" / "nori-sdk" / "robot-tools.json"
+    )
+    for cand in candidates:
+        if cand.is_file():
+            return json.loads(cand.read_text(encoding="utf-8"))
+    raise RuntimeError(
+        "robot-tools.json not found (looked in: "
+        + ", ".join(str(c) for c in candidates)
+        + "). Generate it with `npm run gen:robot-tools` in frontend/, and make sure the desktop "
+        "bundle ships it (lelab_desktop.spec datas)."
+    )
+
+
+# The tool SCHEMAS come from the manifest; the surrounding agent PEDAGOGY (NORI_AGENT_SYSTEM) stays
+# hand-written on purpose. The browser dispatcher (AgentSession) implements each name.
+NORI_AGENT_TOOLS = _load_robot_tools_bundle()["tools"]
 
 
 class NoriLlmAgentBody(BaseModel):

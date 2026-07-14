@@ -270,16 +270,21 @@ export function GripForce({ currents }: { currents: Record<string, number> }) {
 }
 
 // Rail (lift) height per arm, from telemetry `state` `left_lift.pos`/`right_lift.pos` —
-// real millimeters (28.455 mm/rev, Pi-side multi-turn tracker, m3_m5 §5.5). Zero is the
-// pose at DAEMON START (startup-relative until stall-homing lands). The Pi OMITS the key
-// whenever its tracker isn't valid (pre-first-read / desynced) — render as "unknown".
+// real millimeters (~115.6 mm per encoder rev, Pi-side multi-turn tracker, m3_m5 §5.5). Zero
+// is the pose at DAEMON START (startup-relative until stall-homing lands). The Pi OMITS the
+// key whenever its tracker isn't valid (pre-first-read / desynced / that rail's direction
+// never calibrated) — render as "unknown".
 //
 // SETUP ASSUMPTION (2026-07-03): the arms are ALWAYS parked at the TOP of the rails at
 // daemon start, so boot pose (h≈0) IS the top and the carriage can only ever travel DOWN.
 // That makes the old center-zero bar wrong (it reserved half the bar for "up", which never
-// happens). We now render a TOP-ANCHORED descent gauge: empty at the top (home), filling as
-// the rail dives. depth-below-top = |h| (sign-agnostic: NORI_LIFT_SIGN is still pending a HW
-// test, and from the top the only direction is down, so magnitude is unambiguous).
+// happens). We render a TOP-ANCHORED descent gauge: empty at the top (home), filling as the
+// rail dives.
+//
+// This used to take |h| because the Pi's lift direction was unverified. It no longer is —
+// direction is calibrated per unit (lift.hpp) and the Pi publishes depth-below-top directly —
+// so railReading() clamps instead of mirroring, and a backwards rail now shows up as an
+// obviously-pinned gauge rather than a plausible wrong number. See rail.ts.
 //
 // railReading() + RAIL_TRAVEL_MM moved to the SDK (packages/nori-sdk/src/rail.ts) when the 3D
 // robot became shared with the headset: this gauge, the desktop 3D card and the in-VR model all
@@ -438,10 +443,13 @@ export function CallBar({
         {call.robotMicMuted && (
           <Badge
             variant="outline"
-            className="text-[10px]"
+            // whitespace-nowrap so the long copy can't wrap INSIDE the badge — that's what made it
+            // balloon to two/three lines once a call filled the row. The short label fits on one
+            // line; the full explanation moved to the tooltip.
+            className="whitespace-nowrap text-[10px]"
             title="The robot's microphone is muted on the robot itself. Only a person at the robot can unmute it — from the robot's screen or its mute button."
           >
-            <MicOff className="mr-1 h-3 w-3" /> robot is muted — ask someone at the robot to unmute
+            <MicOff className="mr-1 h-3 w-3" /> Robot muted: unmute on the robot
           </Badge>
         )}
       </div>

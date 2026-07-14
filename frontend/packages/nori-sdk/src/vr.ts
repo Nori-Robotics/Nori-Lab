@@ -275,7 +275,11 @@ function baseFromThumb(f: VrControllerFrame | null | undefined): Record<string, 
   return { linear: capRate(linear), angular: capRate(angular) };
 }
 
-// lift from a resolved up/down button pair. +1 up / -1 down (verify sign on hardware).
+// lift from a resolved up/down button pair. +1 = UP, -1 = DOWN — and the robot now honours
+// that on every unit: the Pi applies each rail's calibrated assembly direction to the jog
+// (lift_jog_to_raw), so +1 raises the carriage regardless of how the lift is built. This
+// comment used to say "verify sign on hardware"; that verification is now a bench step
+// (manual_calibrate.py --lift) rather than a thing each client guesses at.
 function liftFromControls(up?: boolean, down?: boolean): number {
   if (up && !down) return 1;
   if (down && !up) return -1;

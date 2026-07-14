@@ -294,11 +294,13 @@ const Remote = () => {
 
   // ---- clip audio (laptop file -> robot speaker; reuses the M3b downlink) ----
   const clipRef = useRef<ClipHandle | null>(null);
-  const [clipPlaying, setClipPlaying] = useState(false);
+  // The name of the clip currently streaming to the robot speaker, or null when none is. Doubles
+  // as the "is a clip playing?" flag it used to be, and feeds the "Clip … playing" label.
+  const [clipName, setClipName] = useState<string | null>(null);
   const stopClip = useCallback(() => {
     clipRef.current?.stop();
     clipRef.current = null;
-    setClipPlaying(false);
+    setClipName(null);
     teleop?.setVideoQuality("normal"); // restore camera bitrate
   }, [teleop]);
   const playClipFile = async (file: File) => {
@@ -308,13 +310,13 @@ const Remote = () => {
     try {
       const handle = await playAudioFile(t, file);
       clipRef.current = handle;
-      setClipPlaying(true);
+      setClipName(file.name);
       t.setVideoQuality("low"); // free Pi headroom while the clip streams
       appendLog(`clip: streaming "${file.name}" to robot speaker`);
       handle.done.then(() => { // clears when the clip ends naturally or is stopped
         if (clipRef.current === handle) {
           clipRef.current = null;
-          setClipPlaying(false);
+          setClipName(null);
           teleop?.setVideoQuality("normal"); // covers natural end (stopClip not called)
         }
       });
@@ -326,8 +328,8 @@ const Remote = () => {
   // NATURAL end, so a mid-clip disconnect would otherwise leak the AudioContext + track and
   // leave the SDK re-attaching a stale track on every reconnect.
   useEffect(() => {
-    if (clipPlaying && connState !== "connected") stopClip();
-  }, [clipPlaying, connState, stopClip]);
+    if (clipName && connState !== "connected") stopClip();
+  }, [clipName, connState, stopClip]);
   const toggleCamera = async () => {
     const t = teleop;
     if (!t) return;
@@ -566,10 +568,21 @@ const Remote = () => {
                   }}
                 />
               </label>
-              {clipPlaying && (
-                <Button size="sm" variant="secondary" onClick={stopClip}>
-                  Stop clip
-                </Button>
+              {clipName && (
+                <>
+                  {/* Name the clip that's streaming, truncated with the full name on hover so a
+                      long filename can't push the Stop button off the row. */}
+                  <span
+                    className="flex min-w-0 items-center gap-1 text-xs text-[#4d6a1e]"
+                    title={clipName}
+                  >
+                    <span className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-[#8ab135]" />
+                    Clip <span className="max-w-[9rem] truncate font-medium">{clipName}</span> playing
+                  </span>
+                  <Button size="sm" variant="secondary" onClick={stopClip}>
+                    Stop clip
+                  </Button>
+                </>
               )}
             </div>
           </div>

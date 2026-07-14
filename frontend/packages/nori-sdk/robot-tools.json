@@ -1,0 +1,260 @@
+{
+  "tools": [
+    {
+      "name": "look",
+      "description": "Capture a fresh still from the robot camera. Use before and after acting to verify the effect. Your only visual input. With no arguments you get the full COMPOSITE (all camera tiles) — best for scene-level judgement (robot left vs right, where things are). Pass `camera` (a role name from the \"Camera layout\" context, e.g. \"overhead\" or \"left_wrist\") to get just that camera's tile — best for a close look at one arm/view. An unknown role returns an error naming the valid roles, not an image.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "camera": {
+            "type": "string",
+            "description": "optional camera role from the layout; omit for the full composite"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_state",
+      "description": "Current joint positions + lift + base (proprioception, normalized). No image.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "move_to",
+      "description": "Move one arm's joints to ABSOLUTE normalized targets and WAIT for arrival. Returns done|blocked|clamped|timeout. Best for 'go to pose X'.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "side",
+          "targets"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "side": {
+            "enum": [
+              "left",
+              "right"
+            ]
+          },
+          "targets": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "subset of {shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper} -> target, e.g. {\"shoulder_pan\": 30, \"gripper\": 0}"
+          },
+          "slew": {
+            "type": "number",
+            "description": "optional units/sec, capped"
+          }
+        }
+      }
+    },
+    {
+      "name": "reach",
+      "description": "Task-space (cylindrical) jog held for ms, then stopped. Timed and open-loop — use short pulses and re-look.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "side",
+          "dofs",
+          "ms"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "side": {
+            "enum": [
+              "left",
+              "right"
+            ]
+          },
+          "dofs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "subset of {x, y, pitch, shoulder_pan, wrist_roll, gripper}, each a rate in [-1,1]; +x forward, +y left"
+          },
+          "ms": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "name": "grip",
+      "description": "Open or close the gripper on one arm.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "side",
+          "action"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "side": {
+            "enum": [
+              "left",
+              "right"
+            ]
+          },
+          "action": {
+            "enum": [
+              "open",
+              "close"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "base",
+      "description": "Drive the mobile base for ms. linear (+forward) and angular (+turn left), rates in [-1,1]. Open-loop, timed — drive only briefly.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "ms"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "linear": {
+            "type": "number"
+          },
+          "angular": {
+            "type": "number"
+          },
+          "ms": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "name": "lift",
+      "description": "Raise/lower one arm's vertical rail for ms. dir in [-1,1], + = up. Open-loop, timed.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "side",
+          "dir",
+          "ms"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "side": {
+            "enum": [
+              "left",
+              "right"
+            ]
+          },
+          "dir": {
+            "type": "number"
+          },
+          "ms": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "name": "wait",
+      "description": "Hold position for ms.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "ms"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "ms": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "name": "play_audio",
+      "description": "Play a short audio clip on the robot's speaker from a URL (CORS-enabled https:// or a data: URL to an audio file; clips only, not live streams). Returns ok or an error.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "https:// (CORS-enabled) or data: URL to an audio file"
+          }
+        }
+      }
+    },
+    {
+      "name": "done",
+      "description": "The goal is achieved. Ends the run.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "summary"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "summary": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "give_up",
+      "description": "The goal can't be done safely or at all. Ends the run.",
+      "input_schema": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ],
+  "motionTools": [
+    "move_to",
+    "reach",
+    "grip",
+    "base",
+    "lift"
+  ],
+  "dofs": {
+    "reach": [
+      "shoulder_pan",
+      "x",
+      "y",
+      "pitch",
+      "wrist_roll",
+      "gripper"
+    ],
+    "joint": [
+      "shoulder_pan",
+      "shoulder_lift",
+      "elbow_flex",
+      "wrist_flex",
+      "wrist_roll",
+      "gripper"
+    ],
+    "base": [
+      "linear",
+      "angular"
+    ]
+  },
+  "agentToolsRef": "  look       Capture a fresh still from the robot camera. Use before and after acting to verify the effect. Your only visual input. With no arguments you get the full COMPOSITE (all camera tiles) — best for scene-level judgement (robot left vs right, where things are). Pass `camera` (a role name from the \"Camera layout\" context, e.g. \"overhead\" or \"left_wrist\") to get just that camera's tile — best for a close look at one arm/view. An unknown role returns an error naming the valid roles, not an image.\n  get_state  Current joint positions + lift + base (proprioception, normalized). No image.\n  move_to    Move one arm's joints to ABSOLUTE normalized targets and WAIT for arrival. Returns done|blocked|clamped|timeout. Best for 'go to pose X'.\n  reach      Task-space (cylindrical) jog held for ms, then stopped. Timed and open-loop — use short pulses and re-look.\n  grip       Open or close the gripper on one arm.\n  base       Drive the mobile base for ms. linear (+forward) and angular (+turn left), rates in [-1,1]. Open-loop, timed — drive only briefly.\n  lift       Raise/lower one arm's vertical rail for ms. dir in [-1,1], + = up. Open-loop, timed.\n  wait       Hold position for ms.\n  play_audio Play a short audio clip on the robot's speaker from a URL (CORS-enabled https:// or a data: URL to an audio file; clips only, not live streams). Returns ok or an error.\n  done       The goal is achieved. Ends the run.\n  give_up    The goal can't be done safely or at all. Ends the run.",
+  "codegenApiRef": "  robot.moveTo(side, targets, opts?)  Absolute joint move: go to a pose and HOLD it (not timed). Returns 'done' | 'blocked' | 'timeout'. Best tool for 'go to pose X'.\n  robot.reach(side, dofs, ms)  Task-space (cylindrical) jog via IK. dofs subset of {x, y, pitch, shoulder_pan, wrist_roll, gripper}, each a rate in [-1,1]. Held ms, then zeroed.\n  robot.joint(side, dofs, ms)  Per-motor jog (no IK). dofs subset of {shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper}, each a rate in [-1,1].\n  robot.grip(side, \"open\"|\"close\")  Convenience gripper open/close.\n  robot.base(vec, ms)  Mobile base. vec: { linear, angular } in [-1,1]. +linear = forward, +angular = turn left.\n  robot.lift(side, dir, ms)  Raise/lower that arm's vertical rail. dir in [-1,1], + = up.\n  robot.wait(ms)  Hold position (the 50 Hz keep-alive continues).\n  robot.playAudio(url)  Stream an audio clip (blob/data/https) to the robot speaker; resolves when playback ends.\n  robot.telemetry()  -> { loopHz, safety, tempC, state:{...}, currents:{...} } or null. Proprioceptive only (joint positions + currents). NO camera/vision.\n  robot.perceive()  -> structured world-state from the on-Pi detector (or null if none). Lets a script react to what the robot sees.\n  robot.reset()  Re-sync the IK task cursor to current joint positions. Call before a reach() that follows any joint() move.\n  robot.estop()  Emergency latch (the on-screen button is the primary path).\n  robot.log(...args)  Print to the operator's run-output panel.\n  robot.home(side)  Move the arm to a neutral straight pose and hold.\n  robot.stow(side)  Move the arm to a compact parked pose and hold.\n  robot.gripSequence(side)  Open, pause, then close the gripper (a simple pick).\n  robot.wave(side, times=3)  Wave the wrist."
+}

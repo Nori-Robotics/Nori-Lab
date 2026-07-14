@@ -17,6 +17,20 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useNori } from "@/nori/NoriContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
+import { ConnectionBanner } from "@/nori/remote/TeleopStatus";
+
+/**
+ * The connect-failure banner, on the page that owns the settings it tells you to fix.
+ *
+ * Remote renders the same banner, but a failed connect is usually a settings problem (wrong
+ * access code, wrong room), and the settings only exist here — telling someone on Remote to
+ * "open your call settings" when the fields live on Home is a dead end. Renders nothing while
+ * idle or connected, so it costs no space in the common case.
+ */
+export function ConnectionStatus() {
+  const { connectStatus } = useTeleopSession();
+  return <ConnectionBanner status={connectStatus} />;
+}
 
 export function ConnectionControls({
   showSettings, onToggleSettings,
@@ -65,7 +79,7 @@ export function ConnectionSettings() {
   return (
     <div className="mt-4 space-y-3 border-t border-[#14131a]/10 pt-4">
       <div className="space-y-1.5">
-        <Label htmlFor="room">Room (NORI_ROOM — must match the Pi)</Label>
+        <Label htmlFor="room">Room (your Nori serial number)</Label>
         <Input id="room" value={settings.room} onChange={(e) => set("room", e.target.value)}
           placeholder={serial || "nori-dev"} />
         {serial ? (
@@ -87,10 +101,10 @@ export function ConnectionSettings() {
         )}
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="token">Room token (your Nori serial number)</Label>
+        <Label htmlFor="token">Room token (your special password)</Label>
         <Input id="token" type="password" value={settings.token}
           onChange={(e) => set("token", e.target.value)}
-          placeholder={serial || "your Nori serial number"} />
+          placeholder="your special password" />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="stun">STUN</Label>

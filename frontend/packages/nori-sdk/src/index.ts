@@ -11,6 +11,9 @@
 
 // RemoteTeleop + its option/telemetry/keybind types + the control-key maps + keybindLegend.
 export * from "./teleop";
+// The robot command vocabulary (executor/codegen/agent surfaces) — the single source the LLM tool
+// schemas + API-reference prose are generated from. See robot-ops.ts / robot-tools.json.
+export * from "./robot-ops";
 // Z-lift (rail) telemetry reading — pure, shared by the 2D gauge and the 3D robot model.
 export * from "./rail";
 // The signaling transport contract (bring your own, or use @nori/sdk/supabase).

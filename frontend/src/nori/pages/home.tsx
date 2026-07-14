@@ -5,7 +5,7 @@
 import { useState, type SVGProps, type ReactElement } from "react";
 import { Link } from "react-router-dom";
 import { FadeIn } from "@/nori/components/FadeIn";
-import { ConnectionControls, ConnectionSettings } from "@/nori/components/ConnectionPanel";
+import { ConnectionControls, ConnectionSettings, ConnectionStatus } from "@/nori/components/ConnectionPanel";
 import { useNori } from "@/nori/NoriContext";
 
 // Brand glyphs for the dev card's social links. lucide dropped most brand icons, so these are
@@ -149,6 +149,11 @@ const Home = () => {
           alt="Nori L2 robot"
           className="relative z-10 mr-6 -mt-8 h-52 w-auto shrink-0 self-end object-contain object-bottom md:mr-12 md:-mt-14 md:h-60"
         />
+      </div>
+      {/* Connect progress / failure, full-width below the row. Sits directly above the settings
+          form because that's what a failure usually sends you to fix. Self-hiding when idle. */}
+      <div className="px-6 pb-6 empty:hidden md:px-8">
+        <ConnectionStatus />
       </div>
       {showSettings && (
         <div className="px-6 pb-6 md:px-8">

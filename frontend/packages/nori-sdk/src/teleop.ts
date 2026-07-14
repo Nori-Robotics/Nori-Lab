@@ -396,6 +396,12 @@ export interface RemoteTeleopOptions {
   // Optional: the composite camera layout (bridge-derived), when it arrives. A consumer usually
   // reads cameraLayout() at use-time instead of subscribing.
   onCameraLayout?: (layout: CameraLayout) => void;
+  // Optional: observer for every OUTBOUND control frame ({type:"control", jog|action|
+  // leader_action_deg|reset...}) at the moment it is written to the data channel, with the
+  // send wall-clock (Date.now()). The dataset catcher records these as ground-truth action
+  // provenance — the operator side is the only place the commands exist (the daemon never
+  // echoes them). Observer only: throwing here is swallowed; it can never affect control.
+  onControlSent?: (frame: Record<string, unknown>, tWallMs: number) => void;
   // Optional: robot-daemon health transitions (bridge-derived daemon_status frames). Fires on
   // every state/reason change (the bridge's 3 s while-offline repeats are deduped). This is how
   // a UI distinguishes "robot online but daemon down/restarting" from a healthy session — the
@@ -1632,6 +1638,14 @@ export class RemoteTeleop {
   private dcSend(obj: unknown) {
     if (this.controlCh && this.controlCh.readyState === "open") {
       this.controlCh.send(JSON.stringify(obj));
+      const rec = obj as Record<string, unknown>;
+      if (rec && rec.type === "control" && this.o.onControlSent) {
+        try {
+          this.o.onControlSent(rec, Date.now());
+        } catch {
+          // observer must never break the control path
+        }
+      }
     }
   }
 

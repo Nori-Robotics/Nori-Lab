@@ -151,6 +151,132 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/marketplace/policies/{ref}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Full detail view for a policy the customer owns or can install */
+        get: operations["policy_details_api_v1_marketplace_policies__ref__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Rename your own trained policy (own policies only)
+         * @description Set or clear the display title of an own-trained policy. The title is
+         *     customer-visible once the policy is published to the community, so it is
+         *     PII-scanned at write time with the same scanner the listing-creation tool
+         *     uses (rejects absolute paths, emails, credentials, URLs, hub repo ids,
+         *     robot serials). 404 if the ref isn't the caller's own renameable policy.
+         */
+        patch: operations["rename_policy_api_v1_marketplace_policies__ref__patch"];
+        trace?: never;
+    };
+    "/api/v1/marketplace/policies/{ref}/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the files that make up a policy (weights + configs + normalizers)
+         * @description A policy is only runnable as a bundle (model.safetensors + config.json
+         *     + pre/post-processor files). This returns the file list so the laptop can
+         *     fetch each via /files/{name} and reconstruct the pretrained_model/ dir —
+         *     the download-direction mirror of the dataset-upload manifest flow.
+         *     HF locations stay internal — only names/sizes/hashes are exposed.
+         */
+        get: operations["get_policy_manifest_api_v1_marketplace_policies__ref__manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/marketplace/policies/{ref}/files/{file_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download one file of a policy bundle by its manifest name
+         * @description Same entitlement rules as /download. `file_name` must be a name from
+         *     /manifest (anything else 404s — there is no path interpretation). Bytes
+         *     are verified against the promotion-time sha256 when one was recorded
+         *     (pins the exact sanitized bytes); legacy files without a hash fall back
+         *     to the same structural re-validation /download uses.
+         */
+        get: operations["download_policy_file_api_v1_marketplace_policies__ref__files__file_name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/marketplace/policies/{ref}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request community publication of your own trained policy
+         * @description Creates a `community` listing in `pending_review` and queues the
+         *     privacy re-homing copy (worker surface). NOT public yet — a human review
+         *     approves after re-homing; poll GET /marketplace/my-listings for the
+         *     outcome. 403 without an active `publish_public` consent; 409 for an
+         *     already-active listing, an in-flight deletion, or a pre-bundle legacy
+         *     policy; 404 if the ref isn't the caller's own promoted job.
+         */
+        post: operations["publish_policy_api_v1_marketplace_policies__ref__publish_post"];
+        /**
+         * Unpublish / retract your community listing for this policy
+         * @description Instant, idempotent takedown: flips the active listing to `taken_down`
+         *     (kept for audit) and revokes derived acquisitions. Empty `taken_down`
+         *     means there was nothing active — still a success (idempotency).
+         */
+        delete: operations["unpublish_policy_api_v1_marketplace_policies__ref__publish_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/marketplace/my-listings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Your community submissions and their review state
+         * @description Every community listing the caller has submitted, all lifecycle states
+         *     (pending_review / public / rejected / taken_down) — the owner-only view;
+         *     the public catalog never shows non-public rows.
+         */
+        get: operations["my_listings_api_v1_marketplace_my_listings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/marketplace/datasets/public": {
         parameters: {
             query?: never;
@@ -183,7 +309,7 @@ export interface paths {
          *       * customers row (auth_user_id, email, NULL robot_serial_number)
          *       * usage row (default allowance)
          *       * retention_policies row (schema defaults)
-         *       * private HF dataset repo `Nori-Test-Org/customer-<short_uuid>`
+         *       * private HF dataset repo `NoriRobotics/customer-<short_uuid>`
          *
          *     Idempotent: re-calling for an already-provisioned auth user returns
          *     the existing customer's profile without modification (or re-create
@@ -207,14 +333,84 @@ export interface paths {
         put?: never;
         /**
          * Attach a robot serial number to the authenticated customer
-         * @description Attach a robot serial to an already-provisioned customer. Separate from
-         *     /provision so that beta customers can sign in before their robots ship.
+         * @description Pair a robot to an already-provisioned customer (multi-robot).
          *
-         *     Idempotent if the serial matches the existing one. Fails 409 if the
-         *     customer is already paired to a DIFFERENT serial (explicit re-pair must
-         *     use a separate flow — not in v1).
+         *     Inserts a `robots` row. The customer's FIRST robot becomes active;
+         *     subsequent robots are added inactive (use /robots/{serial}/select to
+         *     switch). Idempotent if this customer already owns the serial. 409 only
+         *     when the serial is already owned by ANOTHER customer (global UNIQUE).
+         *
+         *     The customers.robot_serial_number mirror tracks the ACTIVE robot, so
+         *     is_paired / the laptop room key keep meaning "active robot".
          */
         post: operations["pair_robot_api_v1_customers_me_pair_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/customers/me/unpair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unpair a robot (specific serial, or the active one if omitted)
+         * @description Remove a robot from the customer. Pass a serial to unpair that specific
+         *     robot; omit the body (or the serial) to unpair the active one. Idempotent:
+         *     unpairing a serial the customer doesn't own is a no-op. If the removed
+         *     robot was active, the most-recently-paired remaining robot is promoted so
+         *     the customer keeps a usable default.
+         */
+        post: operations["unpair_robot_api_v1_customers_me_unpair_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/customers/me/robots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the customer's paired robots (active first)
+         * @description Return all robots paired to the customer, active first then
+         *     most-recently-paired.
+         */
+        get: operations["list_robots_api_v1_customers_me_robots_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/customers/me/robots/{serial}/select": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set the customer's active robot
+         * @description Make `serial` the customer's active robot (clears the previous active and
+         *     updates the mirror). 404 if the customer doesn't own that serial
+         *     (ownership-404 convention — don't reveal other customers' robots).
+         */
+        post: operations["select_robot_api_v1_customers_me_robots__serial__select_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -309,6 +505,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/datasets/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the authenticated customer's promoted datasets (newest first)
+         * @description Promoted upload sessions, newest first — the choices for the training
+         *     form's dataset dropdown (`dataset_ref`). Only PROMOTED sessions have a
+         *     trainable `hf_path_prefix`; PENDING/FAILED/CANCELLED are excluded.
+         */
+        get: operations["list_my_datasets_api_v1_datasets_upload_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/datasets/upload/start": {
         parameters: {
             query?: never;
@@ -335,7 +553,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Validate uploaded payload + commit to the customer's HF dataset repo */
+        /** Verify uploads (synchronous) + kick off the async commit to HF */
         post: operations["finalize_upload_api_v1_datasets_upload__session_id__finalize_post"];
         delete?: never;
         options?: never;
@@ -407,6 +625,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agent/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the customer's current daily agent-token budget
+         * @description Cheap, non-mutating budget read for the pre-turn gate and account UI.
+         *     `hard_capped` true means no budget remains — the caller must not start a new
+         *     turn. `soft_warning` true means past the soft threshold (still allowed).
+         *     `hard_capped` also trips when the MONTHLY backstop is exhausted (013).
+         */
+        get: operations["get_agent_usage_api_v1_agent_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/usage/charge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record one turn's actual agent-token usage
+         * @description Record a completed turn's real token counts and return the updated
+         *     budget. Send a per-turn `turn_key` UUID for idempotent retries: the first
+         *     charge with a key wins, replays return the current budget without
+         *     double-counting. Without a key this is additive per call (legacy: one call
+         *     == one turn, retry double-counts). The pre-turn gate (GET /agent/usage) is
+         *     what enforces the cap; this endpoint always records, so a turn that
+         *     overruns the cap is still billed (bounded to one turn).
+         */
+        post: operations["charge_agent_usage_api_v1_agent_usage_charge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/llm/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Gated, metered Anthropic Messages proxy (non-streaming)
+         * @description Gate → call Anthropic → charge → return the raw assistant turn. The response mirrors
+         *     what LeLab returned before it forwarded: {stop_reason, content[], usage, budget}.
+         */
+        post: operations["llm_messages_api_v1_agent_llm_messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/llm/messages/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Gated, metered Anthropic Messages proxy (streaming text)
+         * @description Same gate, but streams the model's TEXT as `text/plain` chunks (what the codegen
+         *     editor pipes to its buffer). We charge AFTER the stream completes, from the final
+         *     message's usage — so a client that disconnects mid-stream simply isn't charged for
+         *     that turn (bounded, fail-open). Errors before the stream opens (429/503) still raise
+         *     normally; an Anthropic error mid-stream is emitted as a trailing comment because the
+         *     200 headers are already sent.
+         */
+        post: operations["llm_messages_stream_api_v1_agent_llm_messages_stream_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The customer's tier, monthly compute usage, and agent-token budgets */
+        get: operations["billing_summary_api_v1_billing_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -423,6 +753,89 @@ export interface components {
             listing_id: string;
             /** Acquired At */
             acquired_at: string;
+        };
+        /** AgentBudget */
+        AgentBudget: {
+            /** Used Today */
+            used_today: number;
+            /** Allowed Today */
+            allowed_today: number;
+            /** Remaining Today */
+            remaining_today: number;
+            /** All Time Tokens */
+            all_time_tokens: number;
+            /** Soft Warn Threshold */
+            soft_warn_threshold: number;
+            /** Soft Warning */
+            soft_warning: boolean;
+            /** Hard Capped */
+            hard_capped: boolean;
+            /** Used Month */
+            used_month?: number | null;
+            /** Allowed Month */
+            allowed_month?: number | null;
+        };
+        /** AgentChargeRequest */
+        AgentChargeRequest: {
+            /** Model */
+            model: string;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /**
+             * Cache Read Tokens
+             * @default 0
+             */
+            cache_read_tokens: number;
+            /**
+             * Cache Write Tokens
+             * @default 0
+             */
+            cache_write_tokens: number;
+            /**
+             * New Run
+             * @default false
+             */
+            new_run: boolean;
+            /** Turn Key */
+            turn_key?: string | null;
+        };
+        /** AgentTokensSummary */
+        AgentTokensSummary: {
+            /** Used Today */
+            used_today: number;
+            /** Allowed Today */
+            allowed_today: number;
+            /** Soft Warn Threshold */
+            soft_warn_threshold: number;
+            /** Used This Month */
+            used_this_month?: number | null;
+            /** Allowed Per Month */
+            allowed_per_month?: number | null;
+            /** Hard Capped */
+            hard_capped: boolean;
+        };
+        /** BillingSummary */
+        BillingSummary: {
+            /** Billing Tier */
+            billing_tier: string;
+            /** Tier Price Usd Per Month */
+            tier_price_usd_per_month: number | null;
+            compute: components["schemas"]["ComputeSummary"];
+            agent_tokens: components["schemas"]["AgentTokensSummary"];
+            limits: components["schemas"]["TierLimitsSummary"] | null;
+        };
+        /** ComputeSummary */
+        ComputeSummary: {
+            /** Allowed Seconds Per Month */
+            allowed_seconds_per_month: number;
+            /** Consumed Seconds This Month */
+            consumed_seconds_this_month: number;
+            /** Reserved Seconds This Month */
+            reserved_seconds_this_month: number;
+            /** Remaining Seconds This Month */
+            remaining_seconds_this_month: number;
         };
         /** Consent */
         Consent: {
@@ -489,6 +902,22 @@ export interface components {
             /** Has Active Deletion */
             has_active_deletion: boolean;
         };
+        /**
+         * DatasetEntry
+         * @description One of the caller's promoted datasets, for the training dataset picker.
+         *     `dataset_ref` is the promoted upload prefix passed back to
+         *     POST /training/dispatch.
+         */
+        DatasetEntry: {
+            /** Dataset Ref */
+            dataset_ref: string;
+            /** Label */
+            label: string;
+            /** Created At */
+            created_at: string;
+            /** Session Id */
+            session_id: string;
+        };
         /** DeletionRequest */
         DeletionRequest: {
             /** Id */
@@ -518,14 +947,58 @@ export interface components {
             /** Notes */
             notes?: string | null;
         };
-        /** DispatchRequest */
+        /**
+         * DispatchRequest
+         * @description Laptop-forwarded training config. All fields optional with server
+         *     defaults, so a bare `{}` (or a legacy `{timeout_seconds}`-only) body still
+         *     dispatches. Security-critical flags (`push_to_hub`, cuda device, wandb) are
+         *     NOT fields — they're forced server-side in the container script (§2).
+         */
         DispatchRequest: {
             /**
+             * Policy Type
+             * @description Policy architecture to train. Whitelisted to detect.py classes.
+             * @default act
+             */
+            policy_type: string;
+            /**
+             * Steps
+             * @default 20000
+             */
+            steps: number;
+            /**
+             * Batch Size
+             * @default 8
+             */
+            batch_size: number;
+            /**
+             * Num Workers
+             * @default 4
+             */
+            num_workers: number;
+            /** Seed */
+            seed?: number | null;
+            /**
+             * Policy Use Amp
+             * @default true
+             */
+            policy_use_amp: boolean;
+            /**
+             * Log Freq
+             * @default 200
+             */
+            log_freq: number;
+            /**
              * Timeout Seconds
-             * @description Bounded per-job timeout. Production: clamp by billing_tier.
+             * @description Bounded per-job timeout. Clamped down by billing_tier.
              * @default 900
              */
             timeout_seconds: number;
+            /**
+             * Dataset Ref
+             * @description A specific promoted upload prefix (uploads/<ts>/) in the caller's own repo. Default: the latest promoted upload.
+             */
+            dataset_ref?: string | null;
         };
         /** DispatchResponse */
         DispatchResponse: {
@@ -548,6 +1021,32 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /**
+         * LlmMessagesRequest
+         * @description A near-passthrough of the Anthropic Messages API. LeLab owns all prompt content;
+         *     we add nothing but auth, budget, and the key.
+         */
+        LlmMessagesRequest: {
+            /** Model */
+            model: string;
+            /** Max Tokens */
+            max_tokens: number;
+            /** Messages */
+            messages: {
+                [key: string]: unknown;
+            }[];
+            /** System */
+            system?: string | null;
+            /** Tools */
+            tools?: {
+                [key: string]: unknown;
+            }[] | null;
+            /**
+             * New Run
+             * @default false
+             */
+            new_run: boolean;
+        };
         /** ManifestEntry */
         ManifestEntry: {
             /** Path */
@@ -555,10 +1054,94 @@ export interface components {
             /** Size */
             size: number;
         };
+        /** MyListing */
+        MyListing: {
+            /** Listing Id */
+            listing_id: string;
+            /** Source Job Id */
+            source_job_id?: string | null;
+            /** Title */
+            title: string;
+            /** Description */
+            description?: string | null;
+            /** Status */
+            status: string;
+            /** Review Reason */
+            review_reason?: string | null;
+            /** In Review */
+            in_review: boolean;
+            /** Is Public */
+            is_public: boolean;
+            /** Created At */
+            created_at: string;
+        };
         /** PairRequest */
         PairRequest: {
             /** Robot Serial Number */
             robot_serial_number: string;
+            /** Nickname */
+            nickname?: string | null;
+        };
+        /**
+         * PolicyDetails
+         * @description Full detail view — superset of the catalog list entry. `editable` is
+         *     true only for the caller's own policies (they may PATCH the title).
+         *     Provenance fields (dataset_repo, final_cost_usd, timeout_seconds,
+         *     promoted_at) are populated for own policies, null for listings.
+         */
+        PolicyDetails: {
+            /** Ref */
+            ref: string;
+            /** Source */
+            source: string;
+            /** Title */
+            title: string;
+            /** Is Renamed */
+            is_renamed: boolean;
+            /** Description */
+            description?: string | null;
+            /** Policy Class */
+            policy_class?: string | null;
+            /** Price Usd */
+            price_usd?: number | null;
+            /** Created At */
+            created_at: string;
+            /** Dataset Repo */
+            dataset_repo?: string | null;
+            /** Promoted At */
+            promoted_at?: string | null;
+            /** Final Cost Usd */
+            final_cost_usd?: number | null;
+            /** Timeout Seconds */
+            timeout_seconds?: number | null;
+            /** Editable */
+            editable: boolean;
+            /** Files */
+            files: components["schemas"]["PolicyFileSummary"][];
+        };
+        /**
+         * PolicyFileEntry
+         * @description One file of a policy bundle. `name` is the exact filename to place in
+         *     a local pretrained_model/ directory; fetch its bytes from
+         *     GET /policies/{ref}/files/{name}. size/sha256 are null on legacy
+         *     single-file promotions (no manifest recorded).
+         */
+        PolicyFileEntry: {
+            /** Name */
+            name: string;
+            /** Size Bytes */
+            size_bytes?: number | null;
+            /** Sha256 */
+            sha256?: string | null;
+        };
+        /** PolicyFileSummary */
+        PolicyFileSummary: {
+            /** Name */
+            name: string;
+            /** Size Bytes */
+            size_bytes?: number | null;
+            /** Sha256 */
+            sha256?: string | null;
         };
         /**
          * PolicyListEntry
@@ -582,6 +1165,11 @@ export interface components {
             /** Created At */
             created_at: string;
         };
+        /** PolicyManifest */
+        PolicyManifest: {
+            /** Files */
+            files: components["schemas"]["PolicyFileEntry"][];
+        };
         /** ProvisionRequest */
         ProvisionRequest: Record<string, never>;
         /** PublicDatasetEntry */
@@ -596,6 +1184,37 @@ export interface components {
             hf_repo: string;
             /** License */
             license?: string | null;
+        };
+        /**
+         * PublishRequest
+         * @description Publish-request text — customer-visible on the public catalog once
+         *     approved, so PII-scanned at write time (same scanner as rename/listing
+         *     creation).
+         */
+        PublishRequest: {
+            /** Title */
+            title: string;
+            /** Description */
+            description?: string | null;
+        };
+        /** RenameRequest */
+        RenameRequest: {
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * Robot
+         * @description One paired robot. Returned by GET /customers/me/robots.
+         */
+        Robot: {
+            /** Robot Serial Number */
+            robot_serial_number: string;
+            /** Nickname */
+            nickname?: string | null;
+            /** Is Active */
+            is_active: boolean;
+            /** Paired At */
+            paired_at: string;
         };
         /**
          * SessionRow
@@ -645,6 +1264,15 @@ export interface components {
             /** Expires At */
             expires_at: string;
         };
+        /** TierLimitsSummary */
+        TierLimitsSummary: {
+            /** Max Job Timeout Seconds */
+            max_job_timeout_seconds: number;
+            /** Max Concurrent Jobs */
+            max_concurrent_jobs: number;
+            /** Max Robots */
+            max_robots: number;
+        };
         /** TrainingJob */
         TrainingJob: {
             /** Id */
@@ -688,6 +1316,16 @@ export interface components {
             job_status: string;
             /** Is Terminal */
             is_terminal: boolean;
+        };
+        /** UnpairRequest */
+        UnpairRequest: {
+            /** Robot Serial Number */
+            robot_serial_number?: string | null;
+        };
+        /** UnpublishResponse */
+        UnpublishResponse: {
+            /** Taken Down */
+            taken_down: string[];
         };
         /** UploadEntry */
         UploadEntry: {
@@ -969,6 +1607,244 @@ export interface operations {
             };
         };
     };
+    policy_details_api_v1_marketplace_policies__ref__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path: {
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_policy_api_v1_marketplace_policies__ref__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path: {
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_policy_manifest_api_v1_marketplace_policies__ref__manifest_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path: {
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyManifest"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_policy_file_api_v1_marketplace_policies__ref__files__file_name__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path: {
+                ref: string;
+                file_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_policy_api_v1_marketplace_policies__ref__publish_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path: {
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyListing"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unpublish_policy_api_v1_marketplace_policies__ref__publish_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path: {
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnpublishResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    my_listings_api_v1_marketplace_my_listings_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyListing"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_public_datasets_api_v1_marketplace_datasets_public_get: {
         parameters: {
             query?: never;
@@ -1049,6 +1925,105 @@ export interface operations {
                 "application/json": components["schemas"]["PairRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomerProfile"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unpair_robot_api_v1_customers_me_unpair_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["UnpairRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomerProfile"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_robots_api_v1_customers_me_robots_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Robot"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    select_robot_api_v1_customers_me_robots__serial__select_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path: {
+                serial: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -1191,6 +2166,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Consent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_my_datasets_api_v1_datasets_upload_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetEntry"][];
                 };
             };
             /** @description Validation Error */
@@ -1364,6 +2370,173 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeletionRequest"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_usage_api_v1_agent_usage_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentBudget"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    charge_agent_usage_api_v1_agent_usage_charge_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentChargeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentBudget"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    llm_messages_api_v1_agent_llm_messages_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LlmMessagesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    llm_messages_stream_api_v1_agent_llm_messages_stream_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LlmMessagesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    billing_summary_api_v1_billing_summary_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingSummary"];
                 };
             };
             /** @description Validation Error */

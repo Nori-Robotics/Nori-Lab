@@ -12,7 +12,7 @@
 // tauri-plugin-opener, which opens the user's real browser.
 
 export const DOCS_URL =
-  import.meta.env.VITE_DOCS_URL?.replace(/\/$/, "") ?? "https://docs.nori.com";
+  import.meta.env.VITE_DOCS_URL?.replace(/\/$/, "") ?? "https://docs.norirobotics.com";
 
 /** True when running inside the Tauri desktop shell rather than a browser tab. */
 const isDesktop = () =>

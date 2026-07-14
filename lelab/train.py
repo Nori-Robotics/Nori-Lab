@@ -35,6 +35,11 @@ class TrainingRequest(BaseModel):
     # Policy configuration
     policy_type: str = "act"
 
+    # NORI: which promoted upload to train on (backend `dataset_ref`). None =>
+    # backend picks the customer's latest promoted dataset. Forwarded to
+    # POST /training/dispatch by the nori_cloud runner; unused for local runs.
+    dataset_ref: str | None = None
+
     # Core training parameters
     steps: int = 10000
     batch_size: int = 8

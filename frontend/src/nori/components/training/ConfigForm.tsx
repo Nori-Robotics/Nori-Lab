@@ -1,12 +1,12 @@
-// NORI: Additive file. Nori-styled training config form. Rebuilds LeLab's
-// ConfigurationTab (Essentials / Compute / Advanced) with the warm Nori `Panel`
-// visual language instead of LeLab's dark cards. The field set + defaults mirror
-// lelab TrainingRequest so the whole config forwards cleanly to /jobs/training.
+// NORI: Nori-styled training config form. Shows ONLY the settings Nori-Backend's
+// DispatchRequest actually honors for a cloud run (policy is ACT-only, dataset is
+// one of your promoted uploads, plus steps/batch/duration and a few advanced
+// knobs). Everything the backend forces or doesn't consume yet is parked in
+// ./parkedConfig.ts and omitted here — see that file to re-surface a field.
 
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import Panel from "@/nori/components/Panel";
-import { Input } from "@/components/ui/input";
 import { NumberInput } from "@/components/ui/number-input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -18,24 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { NoriTrainingFormState } from "./types";
-
-const DURATION_OPTIONS: { label: string; seconds: number }[] = [
-  { label: "15 minutes", seconds: 900 },
-  { label: "30 minutes", seconds: 1800 },
-  { label: "60 minutes", seconds: 3600 },
-];
-
-const POLICY_OPTIONS: { value: string; label: string }[] = [
-  { value: "act", label: "ACT (Action Chunking Transformer)" },
-  { value: "diffusion", label: "Diffusion Policy" },
-  { value: "pi0", label: "PI0" },
-  { value: "smolvla", label: "SmolVLA" },
-  { value: "tdmpc", label: "TD-MPC" },
-  { value: "vqbet", label: "VQ-BeT" },
-  { value: "pi0_fast", label: "PI0 Fast" },
-  { value: "sac", label: "SAC" },
-  { value: "reward_classifier", label: "Reward Classifier" },
-];
+import { FEASIBLE_POLICY_OPTIONS, DURATION_OPTIONS } from "./types";
 
 // Warm-palette field styling, matching the Panel cream/ink language.
 const FIELD = "border-[#14131a]/15 bg-white text-[#14131a] rounded-md";
@@ -43,15 +26,24 @@ const LABEL = "text-[#14131a]/70";
 const SUBHEAD =
   "font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]";
 
+const LATEST = "__latest__"; // sentinel for "use my latest promoted upload"
+
+export interface DatasetOption {
+  ref: string; // backend dataset_ref (promoted upload prefix)
+  label: string;
+}
+
 export interface ConfigFormProps {
   config: NoriTrainingFormState;
   updateConfig: <T extends keyof NoriTrainingFormState>(
     key: T,
     value: NoriTrainingFormState[T],
   ) => void;
+  /** The customer's promoted datasets, for the dataset_ref dropdown. */
+  datasets?: DatasetOption[];
 }
 
-const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
+const ConfigForm = ({ config, updateConfig, datasets = [] }: ConfigFormProps) => {
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   return (
@@ -60,37 +52,49 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
       <Panel eyebrow="dataset & policy" title="Run configuration">
         <div className="space-y-5">
           <div>
-            <Label className={LABEL}>Dataset repository *</Label>
-            <Input
-              value={config.dataset_repo_id}
-              onChange={(e) => updateConfig("dataset_repo_id", e.target.value)}
-              placeholder="username/dataset"
-              className={`mt-1 ${FIELD}`}
-            />
+            <Label className={LABEL}>Dataset</Label>
+            <Select
+              value={config.dataset_ref ?? LATEST}
+              onValueChange={(v) =>
+                updateConfig("dataset_ref", v === LATEST ? undefined : v)
+              }
+            >
+              <SelectTrigger className={`mt-1 ${FIELD}`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={LATEST}>Latest upload (default)</SelectItem>
+                {datasets.map((d) => (
+                  <SelectItem key={d.ref} value={d.ref}>
+                    {d.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <p className="mt-1 text-xs text-[#14131a]/50">
-              Defaults to your Nori dataset. Change it to train on another
-              HuggingFace repo.
+              Training runs on one of your uploaded Nori datasets. Defaults to
+              your most recent upload.
             </p>
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
               <Label className={LABEL}>Policy</Label>
-              <Select
-                value={config.policy_type}
-                onValueChange={(v) => updateConfig("policy_type", v)}
-              >
-                <SelectTrigger className={`mt-1 ${FIELD}`}>
+              <Select value={config.policy_type} onValueChange={(v) => updateConfig("policy_type", v)}>
+                <SelectTrigger className={`mt-1 ${FIELD}`} disabled={FEASIBLE_POLICY_OPTIONS.length < 2}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {POLICY_OPTIONS.map((p) => (
+                  {FEASIBLE_POLICY_OPTIONS.map((p) => (
                     <SelectItem key={p.value} value={p.value}>
                       {p.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              <p className="mt-1 text-xs text-[#14131a]/50">
+                More architectures coming soon.
+              </p>
             </div>
             <div>
               <Label className={LABEL}>Training steps</Label>
@@ -123,26 +127,28 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
             <Label className={LABEL}>Max training duration</Label>
             <Select
               value={String(config.timeout_seconds)}
-              onValueChange={(v) =>
-                updateConfig("timeout_seconds", Number(v))
-              }
+              onValueChange={(v) => updateConfig("timeout_seconds", Number(v))}
             >
               <SelectTrigger className={`mt-1 ${FIELD}`}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {DURATION_OPTIONS.map((d) => (
-                  <SelectItem key={d.seconds} value={String(d.seconds)}>
+                  <SelectItem key={d.seconds} value={String(d.seconds)} disabled={d.pro}>
                     {d.label}
+                    {d.pro ? " · Pro" : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            <p className="mt-1 text-xs text-[#14131a]/50">
+              Free tier includes 15-minute runs. Longer runs need a Pro plan.
+            </p>
           </div>
         </div>
       </Panel>
 
-      {/* Advanced (collapsible) */}
+      {/* Advanced (collapsible) — only backend-honored knobs remain here */}
       <Panel className="p-0">
         <button
           type="button"
@@ -163,37 +169,6 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
 
         {advancedOpen && (
           <div className="space-y-8 border-t border-[#14131a]/10 p-4">
-            {/* Policy */}
-            <section className="space-y-4">
-              <h4 className={SUBHEAD}>Policy</h4>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div>
-                  <Label className={LABEL}>Device</Label>
-                  <Select
-                    value={config.policy_device || "cuda"}
-                    onValueChange={(v) => updateConfig("policy_device", v)}
-                  >
-                    <SelectTrigger className={`mt-1 ${FIELD}`}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="cuda">CUDA (GPU)</SelectItem>
-                      <SelectItem value="cpu">CPU</SelectItem>
-                      <SelectItem value="mps">MPS (Apple Silicon)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center space-x-3 pt-6">
-                  <Switch
-                    checked={config.policy_use_amp}
-                    onCheckedChange={(c) => updateConfig("policy_use_amp", c)}
-                  />
-                  <Label className={LABEL}>Automatic mixed precision</Label>
-                </div>
-              </div>
-            </section>
-
-            {/* Training */}
             <section className="space-y-4">
               <h4 className={SUBHEAD}>Training</h4>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -213,70 +188,13 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
                     className={`mt-1 ${FIELD}`}
                   />
                 </div>
-              </div>
-            </section>
-
-            {/* Optimizer */}
-            <section className="space-y-4">
-              <h4 className={SUBHEAD}>Optimizer</h4>
-              <div>
-                <Label className={LABEL}>Optimizer</Label>
-                <Select
-                  value={config.optimizer_type || "adam"}
-                  onValueChange={(v) => updateConfig("optimizer_type", v)}
-                >
-                  <SelectTrigger className={`mt-1 ${FIELD}`}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="adam">Adam</SelectItem>
-                    <SelectItem value="adamw">AdamW</SelectItem>
-                    <SelectItem value="sgd">SGD</SelectItem>
-                    <SelectItem value="multi_adam">Multi Adam</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <div>
-                  <Label className={LABEL}>Learning rate</Label>
-                  <NumberInput
-                    integer={false}
-                    step="0.0001"
-                    value={config.optimizer_lr}
-                    onChange={(v) => updateConfig("optimizer_lr", v)}
-                    placeholder="Policy default"
-                    className={`mt-1 ${FIELD}`}
+                <div className="flex items-center space-x-3 pt-6">
+                  <Switch
+                    checked={config.policy_use_amp}
+                    onCheckedChange={(c) => updateConfig("policy_use_amp", c)}
                   />
+                  <Label className={LABEL}>Automatic mixed precision</Label>
                 </div>
-                <div>
-                  <Label className={LABEL}>Weight decay</Label>
-                  <NumberInput
-                    integer={false}
-                    step="0.0001"
-                    value={config.optimizer_weight_decay}
-                    onChange={(v) => updateConfig("optimizer_weight_decay", v)}
-                    placeholder="Policy default"
-                    className={`mt-1 ${FIELD}`}
-                  />
-                </div>
-                <div>
-                  <Label className={LABEL}>Gradient clipping</Label>
-                  <NumberInput
-                    integer={false}
-                    step="0.0001"
-                    value={config.optimizer_grad_clip_norm}
-                    onChange={(v) => updateConfig("optimizer_grad_clip_norm", v)}
-                    placeholder="Policy default"
-                    className={`mt-1 ${FIELD}`}
-                  />
-                </div>
-              </div>
-            </section>
-
-            {/* Logging & checkpointing */}
-            <section className="space-y-4">
-              <h4 className={SUBHEAD}>Logging & checkpointing</h4>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
                   <Label className={LABEL}>Log frequency</Label>
                   <NumberInput
@@ -285,42 +203,6 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
                     className={`mt-1 ${FIELD}`}
                   />
                 </div>
-                <div>
-                  <Label className={LABEL}>Save frequency</Label>
-                  <NumberInput
-                    value={config.save_freq}
-                    onChange={(v) => v !== undefined && updateConfig("save_freq", v)}
-                    className={`mt-1 ${FIELD}`}
-                  />
-                </div>
-              </div>
-              <div className="flex items-center space-x-3">
-                <Switch
-                  checked={config.save_checkpoint}
-                  onCheckedChange={(c) => updateConfig("save_checkpoint", c)}
-                />
-                <Label className={LABEL}>Save checkpoints</Label>
-              </div>
-              <div className="flex items-center space-x-3">
-                <Switch
-                  checked={config.resume}
-                  onCheckedChange={(c) => updateConfig("resume", c)}
-                />
-                <Label className={LABEL}>Resume from checkpoint</Label>
-              </div>
-            </section>
-
-            {/* Misc */}
-            <section className="space-y-4">
-              <h4 className={SUBHEAD}>Misc</h4>
-              <div className="flex items-center space-x-3">
-                <Switch
-                  checked={config.use_policy_training_preset}
-                  onCheckedChange={(c) =>
-                    updateConfig("use_policy_training_preset", c)
-                  }
-                />
-                <Label className={LABEL}>Use policy training preset</Label>
               </div>
             </section>
           </div>

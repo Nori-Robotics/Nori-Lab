@@ -69,10 +69,10 @@ Its own Vercel project — **not** the same one as the app.
 | Framework preset | VitePress (or Other) |
 | Build command | `npm run build` |
 | Output directory | `.vitepress/dist` |
-| Domain | `docs.nori.com` (matching the `app.` / `vr.` subdomain pattern) |
+| Domain | `docs.norirobotics.com` (matching the `app.` / `vr.` subdomain pattern) |
 
 Then point the app at it by setting `VITE_DOCS_URL` in the **frontend** Vercel project and in
-`frontend/vercel.json`. It falls back to `https://docs.nori.com` if unset.
+`frontend/vercel.json`. It falls back to `https://docs.norirobotics.com` if unset.
 
 ## Source of truth
 

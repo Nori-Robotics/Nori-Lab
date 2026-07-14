@@ -48,7 +48,10 @@ REQUIRED_PATHS = {
 def test_app_exposes_required_endpoints() -> None:
     from lelab.server import app
 
-    paths = {route.path for route in app.routes}
+    # Routers mounted via include_router sit in app.routes as lazy
+    # _IncludedRouter entries (no .path) until startup — skip them; the
+    # required paths below are all direct @app routes.
+    paths = {route.path for route in app.routes if hasattr(route, "path")}
     missing = REQUIRED_PATHS - paths
     assert not missing, f"missing routes: {missing}"
 

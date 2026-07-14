@@ -157,6 +157,12 @@ _FLAVOR_CACHE_TTL_SECONDS = 300.0
 
 app = FastAPI()
 
+# NORI: browser-catcher spool (remote-session dataset capture). Router-based —
+# the module owns its /nori/capture/* surface; see lelab/browser_capture.py.
+from .browser_capture import router as _capture_router  # noqa: E402
+
+app.include_router(_capture_router)
+
 # In dev mode the React app runs on :8080 while the API runs on :8000; in
 # prod they share an origin and CORS is unnecessary. allow_credentials with
 # a wildcard origin is rejected by browsers, so we drop it.
@@ -1176,6 +1182,13 @@ def nori_list_public_datasets(request: Request):
     return _nori_proxy(client.list_public_datasets)
 
 
+@app.get("/nori/datasets/mine")
+def nori_list_my_datasets(request: Request):
+    """The caller's promoted datasets, for the training dataset picker."""
+    client = _nori_client(request)
+    return _nori_proxy(client.list_my_datasets)
+
+
 @app.post("/nori/marketplace/policies/{listing_id}/acquire")
 def nori_acquire_policy(listing_id: str, request: Request):
     client = _nori_client(request)
@@ -1310,12 +1323,13 @@ class NoriDatasetUploadBody(BaseModel):
 
 @app.post("/nori/datasets/upload")
 def nori_upload_dataset(body: NoriDatasetUploadBody, request: Request):
-    local_path = dataset_browser._lerobot_cache_root() / body.repo_id
-    if not dataset_browser._is_dataset_dir(local_path):
-        raise HTTPException(
-            status_code=404,
-            detail=f"No local dataset at {local_path} (expected meta/info.json).",
-        )
+    # Accept a local (on-disk) dataset OR one of the user's HF datasets — the
+    # latter is downloaded to the local cache first (their HF login is used, so
+    # private repos work), then uploaded through the same backend-mediated flow.
+    try:
+        local_path = dataset_browser.ensure_local_dataset(body.repo_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     client = _nori_client(request)
 
     def run():
@@ -1337,7 +1351,7 @@ class NoriDispatchBody(BaseModel):
 @app.post("/nori/training/dispatch")
 def nori_dispatch_training(body: NoriDispatchBody, request: Request):
     client = _nori_client(request)
-    return _nori_proxy(lambda: client.dispatch_training(body.timeout_seconds))
+    return _nori_proxy(lambda: client.dispatch_training({"timeout_seconds": body.timeout_seconds}))
 
 
 @app.get("/nori/training/jobs")

@@ -483,6 +483,21 @@ export function listJobs(baseUrl: string, fetcher: Fetcher): Promise<TrainingJob
   });
 }
 
+/** One of the customer's promoted datasets (training dataset_ref picker). */
+export interface MyDataset {
+  dataset_ref: string;
+  label: string;
+  created_at: string;
+  session_id: string;
+}
+
+/** GET /nori/datasets/mine — the caller's promoted datasets, newest first. */
+export function listMyDatasets(baseUrl: string, fetcher: Fetcher): Promise<MyDataset[]> {
+  return noriRequest<MyDataset[]>(baseUrl, fetcher, "/nori/datasets/mine", {
+    action: "Load datasets",
+  });
+}
+
 export function getJob(baseUrl: string, fetcher: Fetcher, jobId: string): Promise<TrainingJob> {
   return noriRequest<TrainingJob>(
     baseUrl,

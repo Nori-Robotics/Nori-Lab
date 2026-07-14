@@ -1,5 +1,5 @@
 # The upload driver forwards the local dataset name as the session label
-# (training-picker naming, backend migration 017).
+# (training-picker naming, backend migration 021).
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 

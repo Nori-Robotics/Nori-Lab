@@ -441,7 +441,7 @@ class NoriClient:
         """POST /datasets/upload/start — manifest [{path, size}, ...].
 
         `label` is the human-readable dataset name shown in the training
-        picker (backend migration 017; older backends ignore the field).
+        picker (backend migration 021; older backends ignore the field).
 
         Returns {session_id, uploads: [{path, put_url}], expires_at}.
         """

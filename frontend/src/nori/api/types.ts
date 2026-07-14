@@ -38,6 +38,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/training/jobs/{job_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request a safe pause of a running training job
+         * @description Writes the job's S3 stop-flag; the container polls it (~20s) and
+         *     pauses gracefully at the next poll + checkpoint. The job then lands in
+         *     PAUSED with a resumable bundle (or COMPLETED, if it finished first —
+         *     stop requests race the finish line by design).
+         */
+        post: operations["stop_training_job_api_v1_training_jobs__job_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/training/estimate-params": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Constants for client-side training-time estimates */
+        get: operations["estimate_params_api_v1_training_estimate_params_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/training/jobs": {
         parameters: {
             query?: never;
@@ -250,6 +290,31 @@ export interface paths {
          *     means there was nothing active — still a success (idempotency).
          */
         delete: operations["unpublish_policy_api_v1_marketplace_policies__ref__publish_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/marketplace/datasets/{upload_ref}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Publish one of your own datasets so others can train on it
+         * @description Create a `dataset` community listing in `pending_review` and queue the
+         *     re-homing copy (worker). Auto-publishes once re-homing + the format gate
+         *     pass — open platform, no manual review. Source is one of your PROMOTED
+         *     uploads (recorded locally, imported from HF, or captured onto Nori-cloud).
+         *     403 without active `publish_public` consent; 409 for an already-active
+         *     listing or in-flight deletion; 404 if the ref isn't your own promoted upload.
+         */
+        post: operations["publish_dataset_api_v1_marketplace_datasets__upload_ref__publish_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -963,7 +1028,7 @@ export interface components {
             policy_type: string;
             /**
              * Steps
-             * @default 20000
+             * @default 5000
              */
             steps: number;
             /**
@@ -999,6 +1064,16 @@ export interface components {
              * @description A specific promoted upload prefix (uploads/<ts>/) in the caller's own repo. Default: the latest promoted upload.
              */
             dataset_ref?: string | null;
+            /**
+             * Open Dataset Id
+             * @description Train on one of Nori's published open datasets instead of an own upload (id from GET /marketplace/datasets/public). Mutually exclusive with dataset_ref.
+             */
+            open_dataset_id?: string | null;
+            /**
+             * Resume From Job Id
+             * @description Resume a PAUSED job of the caller's from its checkpoint bundle. The training config and dataset are taken from the paused job (they must match for lerobot resume); only timeout_seconds is fresh — it reserves a new usage segment (402 when the monthly allowance can't cover it).
+             */
+            resume_from_job_id?: string | null;
         };
         /** DispatchResponse */
         DispatchResponse: {
@@ -1010,6 +1085,29 @@ export interface components {
             attribution_label: string;
             /** Reserved Seconds */
             reserved_seconds: number;
+        };
+        /**
+         * EstimateParams
+         * @description Constants the UI needs to show a live training-time estimate that can
+         *     never disagree with the dispatch fit-gate (same numbers, same formula:
+         *     seconds ≈ steps / rate, + setup_seconds on top, absorbed by the platform).
+         *     Authenticated like every non-bootstrap surface; the values are not
+         *     sensitive (derivable from any single job's logs) — the auth gate is just
+         *     the house invariant.
+         */
+        EstimateParams: {
+            /** Step Rates */
+            step_rates: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Setup Seconds */
+            setup_seconds: number;
+            /** Max Timeout Seconds */
+            max_timeout_seconds: number;
+            /** Resumable */
+            resumable: boolean;
         };
         /** FinalizeRequest */
         FinalizeRequest: {
@@ -1024,7 +1122,8 @@ export interface components {
         /**
          * LlmMessagesRequest
          * @description A near-passthrough of the Anthropic Messages API. LeLab owns all prompt content;
-         *     we add nothing but auth, budget, and the key.
+         *     we add nothing but auth, budget, the key, and cache_control breakpoints (a cost knob,
+         *     not content — see _add_cache_control).
          */
         LlmMessagesRequest: {
             /** Model */
@@ -1154,6 +1253,11 @@ export interface components {
             ref: string;
             /** Source */
             source: string;
+            /**
+             * Kind
+             * @default policy
+             */
+            kind: string;
             /** Title */
             title: string;
             /** Description */
@@ -1162,6 +1266,8 @@ export interface components {
             policy_class?: string | null;
             /** Price Usd */
             price_usd?: number | null;
+            /** Linked Dataset Listing Id */
+            linked_dataset_listing_id?: string | null;
             /** Created At */
             created_at: string;
         };
@@ -1264,6 +1370,13 @@ export interface components {
             /** Expires At */
             expires_at: string;
         };
+        /** StopResponse */
+        StopResponse: {
+            /** Stopping */
+            stopping: boolean;
+            /** Detail */
+            detail: string;
+        };
         /** TierLimitsSummary */
         TierLimitsSummary: {
             /** Max Job Timeout Seconds */
@@ -1293,6 +1406,14 @@ export interface components {
             resulting_checkpoint_url?: string | null;
             /** Artifact Promoted At */
             artifact_promoted_at?: string | null;
+            /** Applied Config */
+            applied_config?: {
+                [key: string]: unknown;
+            } | null;
+            /** Steps Done */
+            steps_done?: number | null;
+            /** Run Started At */
+            run_started_at?: string | null;
             /** Created At */
             created_at: string;
             /** Updated At */
@@ -1398,6 +1519,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DispatchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_training_job_api_v1_training_jobs__job_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StopResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    estimate_params_api_v1_training_estimate_params_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EstimateParams"];
                 };
             };
             /** @description Validation Error */
@@ -1801,6 +1986,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UnpublishResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_dataset_api_v1_marketplace_datasets__upload_ref__publish_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path: {
+                upload_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyListing"];
                 };
             };
             /** @description Validation Error */

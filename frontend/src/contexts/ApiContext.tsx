@@ -1,5 +1,7 @@
 import React, { createContext, useContext, ReactNode, useState, useCallback, useMemo } from "react";
 
+import { getAccessToken } from "../nori/auth/session";
+
 interface ApiContextType {
   baseUrl: string;
   wsBaseUrl: string;
@@ -38,10 +40,17 @@ export const ApiProvider: React.FC<{ children: ReactNode }> = ({
   const wsBaseUrl = httpToWs(baseUrl);
 
   const fetchWithHeaders = useCallback(async (url: string, options: RequestInit = {}): Promise<Response> => {
+    // Attach the Supabase JWT as X-Nori-JWT so LeLab can forward it to Nori-Backend
+    // (auth + per-customer metering). Every fetchWithHeaders call targets the LeLab
+    // backend, which ignores the header on routes that don't need it — so this is safe
+    // for all callers and only present when signed in. Without it, authed routes like
+    // the LLM proxy (/nori/llm/*) reach Nori-Backend with no Bearer token and 401.
+    const token = await getAccessToken();
     return fetch(url, {
       ...options,
       headers: {
         "Content-Type": "application/json",
+        ...(token ? { "X-Nori-JWT": token } : {}),
         ...options.headers,
       },
     });

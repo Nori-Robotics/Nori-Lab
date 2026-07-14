@@ -31,6 +31,13 @@ jobs:
       - name: Install
         working-directory: frontend
         run: npm ci
+      # Vite builds WITHOUT typechecking, so type errors ship silently unless
+      # someone runs tsc by hand (bit us twice on 2026-07-14: an unused-var
+      # leftover and pause/resume handlers pasted into the wrong component
+      # scope). Failing here blocks the dist rebuild for broken code.
+      - name: Typecheck
+        working-directory: frontend
+        run: npx tsc --noEmit
       - name: Build
         working-directory: frontend
         run: npm run build

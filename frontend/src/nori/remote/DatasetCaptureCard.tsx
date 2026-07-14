@@ -3,26 +3,130 @@
 // pipeline; lelab/browser_capture.py for the spool it feeds).
 //
 // Lifecycle the card walks the operator through:
-//   record session → [episode start … episode stop]×N → export → upload to cloud
+//   pick destination (new dataset [name] | add to existing) → record session →
+//   [episode start … episode stop]×N → export → upload to cloud
+//
+// Also the local dataset manager: lists the cache datasets (episodes/frames/
+// date) with inline rename — the operator's view of "what have I recorded".
 //
 // Renders nothing when the spool isn't reachable (hosted LeLab-free app) and
 // disables itself until a session is connected with video available.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Pill } from "@/components/ui/pill";
 import { useApi } from "@/contexts/ApiContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { uploadDataset } from "@/nori/api/client";
-import { DatasetCapture } from "@/nori/remote/datasetCapture";
+import { DatasetCapture, type CaptureDatasetEntry } from "@/nori/remote/datasetCapture";
 
 type Phase =
   | { kind: "idle" }
   | { kind: "capturing" }
   | { kind: "exporting" }
-  | { kind: "exported"; repoId: string }
+  | { kind: "exported"; repoId: string; appended: boolean }
   | { kind: "uploading"; repoId: string }
   | { kind: "uploaded"; repoId: string }
   | { kind: "error"; message: string };
+
+type Destination = { mode: "new"; name: string } | { mode: "append"; repoId: string };
+
+// One row of the "your datasets" list, with inline rename. Rename is a local
+// cache operation; failures (name taken, bad chars) surface inline.
+function DatasetRow({
+  entry,
+  disabled,
+  onRename,
+}: {
+  entry: CaptureDatasetEntry;
+  disabled: boolean;
+  onRename: (oldId: string, newId: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(entry.repo_id);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const commit = async () => {
+    const next = draft.trim();
+    if (!next || next === entry.repo_id) {
+      setEditing(false);
+      setErr(null);
+      return;
+    }
+    setBusy(true);
+    try {
+      await onRename(entry.repo_id, next);
+      setEditing(false);
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[#14131a]/10 py-1.5 first:border-t-0">
+      {editing ? (
+        <input
+          className="h-7 min-w-0 flex-1 rounded border border-[#14131a]/20 bg-white px-2 font-mono text-xs"
+          value={draft}
+          disabled={busy}
+          autoFocus
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void commit();
+            if (e.key === "Escape") {
+              setEditing(false);
+              setDraft(entry.repo_id);
+              setErr(null);
+            }
+          }}
+        />
+      ) : (
+        <span className="min-w-0 flex-1 truncate font-mono text-xs" title={entry.repo_id}>
+          {entry.repo_id}
+        </span>
+      )}
+      <span className="shrink-0 text-xs text-[#6f6858]">
+        {entry.episodes} ep · {entry.frames} frames
+        {entry.fps ? ` · ${entry.fps} fps` : ""} · {entry.modified_at.slice(0, 10)}
+      </span>
+      {editing ? (
+        <span className="flex shrink-0 gap-1">
+          <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => void commit()} disabled={busy}>
+            {busy ? "…" : "Save"}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs"
+            disabled={busy}
+            onClick={() => {
+              setEditing(false);
+              setDraft(entry.repo_id);
+              setErr(null);
+            }}
+          >
+            Cancel
+          </Button>
+        </span>
+      ) : (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 shrink-0 px-2 text-xs"
+          disabled={disabled}
+          onClick={() => setEditing(true)}
+        >
+          rename
+        </Button>
+      )}
+      {err && <span className="w-full text-xs text-red-700">{err}</span>}
+    </div>
+  );
+}
 
 export function DatasetCaptureCard() {
   const { baseUrl, fetchWithHeaders } = useApi();
@@ -39,13 +143,32 @@ export function DatasetCaptureCard() {
   // Collapsed by default, like Robot logs — recording is an occasional task and the card is tall.
   const [open, setOpen] = useState(false);
 
+  // Destination for this session's episodes, chosen up front. The dataset
+  // list doubles as the append picker's source and the rename manager.
+  const [dest, setDest] = useState<Destination>({ mode: "new", name: "" });
+  const [datasets, setDatasets] = useState<CaptureDatasetEntry[]>([]);
+  const [listOpen, setListOpen] = useState(false);
+
+  const refreshDatasets = useCallback(() => {
+    DatasetCapture.listDatasets(baseUrl)
+      .then(setDatasets)
+      .catch(() => setDatasets([]));
+  }, [baseUrl]);
+
   useEffect(() => {
     let alive = true;
-    void DatasetCapture.available(baseUrl).then((ok) => alive && setAvailable(ok));
+    void DatasetCapture.available(baseUrl).then((ok) => {
+      if (!alive) return;
+      setAvailable(ok);
+    });
     return () => {
       alive = false;
     };
   }, [baseUrl]);
+
+  useEffect(() => {
+    if (available) refreshDatasets();
+  }, [available, refreshDatasets]);
 
   // Tear down listeners (and any dangling capture) when the card unmounts.
   useEffect(
@@ -63,6 +186,10 @@ export function DatasetCaptureCard() {
   useEffect(() => {
     if (phase.kind !== "idle") setOpen(true);
   }, [phase.kind]);
+
+  const appendable = datasets.filter((d) => d.appendable);
+  const appendTarget =
+    dest.mode === "append" ? appendable.find((d) => d.repo_id === dest.repoId) : undefined;
 
   const beginCapture = useCallback(async () => {
     if (!teleop) return;
@@ -104,15 +231,21 @@ export function DatasetCaptureCard() {
     setTelemetryListener(null);
     setControlSentListener(null);
     setPhase({ kind: "exporting" });
+    const appended = dest.mode === "append";
     try {
-      const { repoId } = await capture.finish();
+      const { repoId } = await capture.finish(
+        15,
+        dest.mode === "new" ? dest.name.trim() : "",
+        dest.mode === "append" ? dest.repoId : ""
+      );
       captureRef.current = null;
-      setPhase({ kind: "exported", repoId });
+      setPhase({ kind: "exported", repoId, appended });
+      refreshDatasets();
     } catch (e) {
       captureRef.current = null;
       setPhase({ kind: "error", message: e instanceof Error ? e.message : String(e) });
     }
-  }, [setTelemetryListener, setControlSentListener]);
+  }, [dest, setTelemetryListener, setControlSentListener, refreshDatasets]);
 
   const abortCapture = useCallback(async () => {
     setTelemetryListener(null);
@@ -138,6 +271,16 @@ export function DatasetCaptureCard() {
       });
     }
   }, [phase, baseUrl, fetchWithHeaders]);
+
+  const renameDataset = useCallback(
+    async (oldId: string, newId: string) => {
+      await DatasetCapture.renameDataset(baseUrl, oldId, newId);
+      // Keep an append selection pointing at the renamed dataset.
+      setDest((d) => (d.mode === "append" && d.repoId === oldId ? { ...d, repoId: newId } : d));
+      refreshDatasets();
+    },
+    [baseUrl, refreshDatasets]
+  );
 
   if (!available) return null;
 
@@ -184,16 +327,62 @@ export function DatasetCaptureCard() {
           recording enough episodes, go to the Training page to start creating a policy.
         </p>
         {phase.kind === "idle" && (
-          <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={beginCapture} disabled={!running || !teleop}>
-              Record session
-            </Button>
-            <span className="text-sm text-[#6f6858]">
-              {running
-                ? "captures video + joint state from this session into a LeRobot dataset"
-                : "connect to the robot first"}
-            </span>
-          </div>
+          <>
+            {/* Destination: a brand-new dataset, or new episodes appended to a
+                previous session's dataset (same joints; exporter re-validates). */}
+            <div className="flex flex-wrap items-center gap-2">
+              <Pill size="sm" active={dest.mode === "new"} onClick={() => setDest({ mode: "new", name: "" })}>
+                New dataset
+              </Pill>
+              <Pill
+                size="sm"
+                active={dest.mode === "append"}
+                onClick={() =>
+                  setDest({ mode: "append", repoId: appendable[0]?.repo_id ?? "" })
+                }
+              >
+                Add to existing
+              </Pill>
+              {dest.mode === "new" ? (
+                <input
+                  className="h-9 min-w-48 flex-1 rounded-md border border-[#14131a]/15 bg-white/70 px-3 font-mono text-sm"
+                  placeholder="dataset name (optional — timestamped if empty)"
+                  maxLength={120}
+                  value={dest.name}
+                  onChange={(e) => setDest({ mode: "new", name: e.target.value })}
+                />
+              ) : appendable.length === 0 ? (
+                <span className="text-sm text-[#6f6858]">no capture datasets yet — record a new one first</span>
+              ) : (
+                <select
+                  className="h-9 min-w-48 flex-1 rounded-md border border-[#14131a]/15 bg-white/70 px-2 font-mono text-sm"
+                  value={dest.mode === "append" ? dest.repoId : ""}
+                  onChange={(e) => setDest({ mode: "append", repoId: e.target.value })}
+                >
+                  {appendable.map((d) => (
+                    <option key={d.repo_id} value={d.repo_id}>
+                      {d.repo_id} ({d.episodes} ep)
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                onClick={beginCapture}
+                disabled={!running || !teleop || (dest.mode === "append" && !appendTarget)}
+              >
+                Record session
+              </Button>
+              <span className="text-sm text-[#6f6858]">
+                {!running
+                  ? "connect to the robot first"
+                  : dest.mode === "append" && appendTarget
+                    ? `episodes will be added to ${appendTarget.repo_id}`
+                    : "captures video + joint state from this session into a LeRobot dataset"}
+              </span>
+            </div>
+          </>
         )}
 
         {capturing && (
@@ -213,7 +402,7 @@ export function DatasetCaptureCard() {
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <Button onClick={finishCapture} disabled={episodeOn || episodeCount === 0}>
-                Finish & export
+                {dest.mode === "append" ? "Finish & add episodes" : "Finish & export"}
               </Button>
               <Button onClick={abortCapture} variant="ghost" disabled={episodeOn}>
                 Discard
@@ -234,7 +423,8 @@ export function DatasetCaptureCard() {
         {(phase.kind === "exported" || phase.kind === "uploading" || phase.kind === "uploaded") && (
           <div className="space-y-2">
             <p className="text-sm">
-              Dataset <span className="font-mono text-xs">{phase.repoId}</span>{" "}
+              {phase.kind === "exported" && phase.appended ? "Episodes added to " : "Dataset "}
+              <span className="font-mono text-xs">{phase.repoId}</span>{" "}
               {phase.kind === "uploaded" ? "uploaded to your cloud repo ✓" : "saved locally."}
             </p>
             {phase.kind !== "uploaded" && (
@@ -254,7 +444,10 @@ export function DatasetCaptureCard() {
             )}
             <Button
               variant="ghost"
-              onClick={() => setPhase({ kind: "idle" })}
+              onClick={() => {
+                setPhase({ kind: "idle" });
+                refreshDatasets();
+              }}
               disabled={busy}
             >
               Record another
@@ -268,6 +461,27 @@ export function DatasetCaptureCard() {
             <Button variant="ghost" onClick={abortCapture}>
               Reset
             </Button>
+          </div>
+        )}
+
+        {/* Local dataset manager — visible while idle so renames can't race an
+            active export (the backend refuses those anyway). */}
+        {phase.kind === "idle" && datasets.length > 0 && (
+          <div className="pt-1">
+            <button
+              type="button"
+              className="text-xs font-medium text-[#6f6858] underline-offset-2 hover:underline"
+              onClick={() => setListOpen((v) => !v)}
+            >
+              {listOpen ? "▾" : "▸"} your datasets ({datasets.length})
+            </button>
+            {listOpen && (
+              <div className="mt-1">
+                {datasets.map((d) => (
+                  <DatasetRow key={d.repo_id} entry={d} disabled={busy} onRename={renameDataset} />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

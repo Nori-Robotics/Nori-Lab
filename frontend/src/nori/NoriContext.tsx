@@ -11,7 +11,7 @@ import React, {
   type ReactNode,
 } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { useApi } from "@/contexts/ApiContext";
+import { persistApiBaseUrl, useApi } from "@/contexts/ApiContext";
 import {
   getNoriConfig,
   enableDirectBackend,
@@ -94,20 +94,53 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // is exactly "did `/nori/config` answer" — independent of whether Supabase is
         // configured. Only the fallback (catch) path means no local server is present.
         let leLab = true;
+        // PLAIN fetch, deliberately not fetchWithHeaders: /nori/config is public,
+        // and fetchWithHeaders awaits the Supabase gate — which THIS bootstrap is
+        // what settles. That circular wait stalled the config request ~6 s (the
+        // gate's safety timeout), by which point its own 4 s AbortSignal.timeout
+        // had already expired: every fresh load failed with "signal timed out"
+        // (live incident 2026-07-14). Auth adds nothing here; never gate on it.
+        const plainFetch: typeof fetchWithHeaders = (url, init) => fetch(url, init);
         try {
-          cfg = await getNoriConfig(baseUrl, fetchWithHeaders);
+          cfg = await getNoriConfig(baseUrl, plainFetch);
           if (!cfg.configured) cfg = getBuildTimeConfig() ?? cfg;
         } catch (e) {
-          // `/nori/config` didn't answer -> no local LeLab, full stop. Record that even
-          // when there's no build-time fallback to continue with — otherwise a hosted
-          // build without baked VITE_SUPABASE_* rethrows with leLabAvailable stuck at
-          // its optimistic `true`, and local-hardware pages (leader-setup) render their
+          // `/nori/config` didn't answer on the CONFIGURED base URL. That URL comes
+          // from localStorage (`lelab.apiBaseUrl`, settable via ?api=) and can go
+          // stale — an old dev port, a LAN IP, a dead tunnel — in which case every
+          // load spends seconds timing out against a server that isn't there while
+          // a healthy LeLab sits at the page's own origin. Self-heal: if the origin
+          // differs and answers /nori/config, repair the stored value and reload
+          // (one-time; after the reload baseUrl === origin, so this can't loop).
+          const origin = typeof window !== "undefined" ? window.location.origin : "";
+          if (origin && origin !== baseUrl.replace(/\/$/, "")) {
+            try {
+              const originCfg = await getNoriConfig(origin, plainFetch);
+              if (originCfg.configured) {
+                console.warn(
+                  `stored API base URL ${baseUrl} is unreachable — switching to this page's origin ${origin}`
+                );
+                persistApiBaseUrl(origin);
+                window.location.reload();
+                return;
+              }
+            } catch {
+              /* origin isn't a LeLab either (e.g. hosted app) — fall through */
+            }
+          }
+          // No local LeLab reachable, full stop. Record that even when there's no
+          // build-time fallback to continue with — otherwise a hosted build without
+          // baked VITE_SUPABASE_* rethrows with leLabAvailable stuck at its
+          // optimistic `true`, and local-hardware pages (leader-setup) render their
           // full UI polling a dead localhost instead of the "unavailable on web" guard.
           leLab = false;
           const fallback = getBuildTimeConfig();
           if (!fallback) {
             if (!cancelled) setLeLabAvailable(false);
-            throw e;
+            throw new Error(
+              `Couldn't reach the laptop server at ${baseUrl} (${e instanceof Error ? e.message : String(e)}). ` +
+                `If LeLab runs elsewhere, open the app with ?api=<its URL>.`
+            );
           }
           cfg = fallback;
           // Hosted, LeLab-free build with a baked backend URL: send the

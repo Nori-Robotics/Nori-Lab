@@ -132,6 +132,87 @@ def capture_ping():
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- datasets
+# Local dataset management for the capture card: list what exists (so the
+# operator can append new episodes to a previous session's dataset) and
+# rename. Identity of a cache dataset IS its directory name — info.json
+# carries no repo_id — so rename is a directory move.
+
+_SAFE_REPO_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _dataset_info(d: Path) -> dict | None:
+    info_path = d / "meta" / "info.json"
+    if not info_path.is_file():
+        return None
+    try:
+        info = json.loads(info_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    features = info.get("features") or {}
+    return {
+        "repo_id": d.name,
+        "episodes": info.get("total_episodes", 0),
+        "frames": info.get("total_frames", 0),
+        "fps": info.get("fps"),
+        "robot_type": info.get("robot_type"),
+        "modified_at": time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(info_path.stat().st_mtime)
+        ),
+        # Appendable by THIS capture pipeline = same feature surface the
+        # exporter produces (the composite remote view). The exporter still
+        # re-validates joints/fps at append time; this just filters the picker.
+        "appendable": "observation.images.remote" in features,
+    }
+
+
+@router.get("/datasets")
+def capture_list_datasets():
+    """Local lerobot-cache datasets (anything with meta/info.json), newest
+    first. `appendable` marks capture-shaped ones for the append picker."""
+    root = _lerobot_cache_root()
+    out = []
+    if root.is_dir():
+        for d in sorted(root.iterdir()):
+            if d.is_dir() and not d.name.startswith("_"):
+                info = _dataset_info(d)
+                if info:
+                    out.append(info)
+    out.sort(key=lambda r: r["modified_at"], reverse=True)
+    return {"datasets": out}
+
+
+class RenameBody(BaseModel):
+    repo_id: str
+    new_repo_id: str
+
+
+@router.post("/datasets/rename")
+def capture_rename_dataset(body: RenameBody):
+    new_id = body.new_repo_id.strip()
+    if not _SAFE_REPO_ID.match(new_id):
+        raise HTTPException(
+            status_code=422,
+            detail="name must be letters/digits/._- and not start with . or -",
+        )
+    root = _lerobot_cache_root()
+    src = root / body.repo_id
+    if not _SAFE_REPO_ID.match(body.repo_id) or not (src / "meta" / "info.json").is_file():
+        raise HTTPException(status_code=404, detail=f"no dataset named {body.repo_id!r}")
+    if new_id == body.repo_id:
+        return {"ok": True, "repo_id": new_id}
+    dst = root / new_id
+    if dst.exists():
+        raise HTTPException(status_code=409, detail=f"a dataset named {new_id!r} already exists")
+    with _exports_lock:
+        if any(st["status"] == "exporting" for st in _exports.values()):
+            # Coarse but safe: an export may be writing into src right now.
+            raise HTTPException(status_code=409, detail="an export is running — retry when it finishes")
+    src.rename(dst)
+    logger.info("[CAPTURE] renamed dataset %s -> %s", body.repo_id, new_id)
+    return {"ok": True, "repo_id": new_id}
+
+
 # ---------------------------------------------------------------- sidecars
 class RowsBody(BaseModel):
     rows: list[dict]
@@ -187,7 +268,10 @@ async def capture_video_chunk(capture_id: str, episode_index: int, request: Requ
 # ---------------------------------------------------------------- finish/export
 class FinishBody(BaseModel):
     fps: int = 15
-    name: str = ""  # dataset name stem; timestamp-stamped like record.py
+    name: str = ""       # NEW dataset: explicit name (used verbatim), or "" for
+                         # the timestamped default stem
+    append_to: str = ""  # or: append episodes to this existing cache dataset
+                         # (mutually exclusive with name; grid runs at ITS fps)
 
 
 @router.post("/{capture_id}/finish")
@@ -200,6 +284,12 @@ def capture_finish(capture_id: str, body: FinishBody):
         raise HTTPException(status_code=422, detail="no episodes recorded")
     if not 1 <= body.fps <= 60:
         raise HTTPException(status_code=422, detail="fps must be 1..60")
+    if body.append_to:
+        if body.name:
+            raise HTTPException(status_code=422, detail="name and append_to are mutually exclusive")
+        target = _lerobot_cache_root() / body.append_to
+        if not _SAFE_REPO_ID.match(body.append_to) or not (target / "meta" / "info.json").is_file():
+            raise HTTPException(status_code=422, detail=f"no dataset named {body.append_to!r} to append to")
 
     with _exports_lock:
         st = _exports.get(capture_id)
@@ -211,7 +301,9 @@ def capture_finish(capture_id: str, body: FinishBody):
         from .capture_export import export_capture
 
         try:
-            repo_id = export_capture(d, fps=body.fps, name=body.name or None)
+            repo_id = export_capture(
+                d, fps=body.fps, name=body.name or None, append_to=body.append_to or None
+            )
             with _exports_lock:
                 _exports[capture_id] = {"status": "done", "repo_id": repo_id, "error": None}
             logger.info("[CAPTURE] %s exported -> %s", capture_id, repo_id)

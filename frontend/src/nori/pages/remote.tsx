@@ -51,7 +51,7 @@ const ArmPills = ({
 );
 
 const Remote = () => {
-  const { ready } = useNori();
+  const { ready, error: noriError } = useNori();
   const { baseUrl, fetchWithHeaders } = useApi();
   // The session now lives in TeleopSessionProvider so it survives navigation (Remote <-> Coding).
   // This page is a consumer: it renders video/telemetry/settings and drives VR/leader/clip, but
@@ -421,7 +421,8 @@ const Remote = () => {
     <section className="space-y-4">
       {!ready && (
         <p className="text-sm text-destructive">
-          Nori auth/config not ready — sign in first (Supabase config comes from the laptop server).
+          Nori auth/config not ready{noriError ? ` — ${noriError}` : " — sign in first (Supabase config comes from the laptop server)."}{" "}
+          <span className="text-[#6f6858]">(laptop server: {baseUrl})</span>
         </p>
       )}
 

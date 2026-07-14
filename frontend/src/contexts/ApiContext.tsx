@@ -13,6 +13,16 @@ const ApiContext = createContext<ApiContextType | undefined>(undefined);
 const STORAGE_KEY = "lelab.apiBaseUrl";
 const DEFAULT_LOCALHOST = "http://localhost:8000";
 
+/** Overwrite the persisted API base URL (used by the bootstrap self-heal when
+ *  the stored value points at a dead server — see NoriContext). */
+export const persistApiBaseUrl = (url: string): void => {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, url.replace(/\/$/, ""));
+  } catch {
+    /* storage unavailable — the ?api= param still works */
+  }
+};
+
 const httpToWs = (url: string): string => url.replace(/^http(s?):/, "ws$1:");
 
 const resolveInitialBaseUrl = (): string => {

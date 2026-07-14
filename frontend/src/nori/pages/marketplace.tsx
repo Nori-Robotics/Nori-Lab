@@ -39,7 +39,8 @@ import { PolicyRunner, type PolicyRunPhase } from "@/nori/remote/policyRun";
  * them for real stats. Delete once the endpoint is deployed everywhere.
  */
 function mockDetailsFor(p: PolicyListEntry): PolicyDetails {
-  const withRepo = p as PolicyListEntry & { dataset_repo?: string | null };
+  const withRepo = p as PolicyListEntry & { dataset_repo?: string | null; kind?: string };
+  const isDataset = withRepo.kind === "dataset";
   return {
     ref: p.ref,
     source: p.source,
@@ -47,30 +48,42 @@ function mockDetailsFor(p: PolicyListEntry): PolicyDetails {
     is_renamed: false,
     description:
       `${p.description ?? ""}\n\n` +
-      "⚠ preview data — the policy-details endpoint isn't deployed yet; " +
-      "the file list and stats below are placeholders.",
-    policy_class: p.policy_class ?? "act",
+      (isDataset
+        ? "⚠ preview data — the dataset-details endpoint isn't deployed yet; the " +
+          "file list below is a placeholder for the LeRobot layout (meta/data/videos)."
+        : "⚠ preview data — the policy-details endpoint isn't deployed yet; " +
+          "the file list and stats below are placeholders."),
+    policy_class: isDataset ? null : (p.policy_class ?? "act"),
     price_usd: p.price_usd ?? null,
     created_at: p.created_at,
-    dataset_repo: withRepo.dataset_repo ?? (p.source === "own" ? "NoriRobotics/customer-preview" : null),
+    dataset_repo: isDataset
+      ? "NoriRobotics/community-datasets"
+      : withRepo.dataset_repo ?? (p.source === "own" ? "NoriRobotics/customer-preview" : null),
     promoted_at: p.created_at,
-    final_cost_usd: p.source === "own" ? 0.0751 : null,
-    timeout_seconds: p.source === "own" ? 900 : null,
-    editable: p.source === "own",
-    files: [
-      {
-        name: "model.safetensors",
-        size_bytes: 206766560,
-        sha256: "42772891cb6eba1e7bc36ad8e12c0fa0723c61f036fa235c725ce6026e6e81df",
-      },
-      {
-        name: "config.json",
-        size_bytes: 198,
-        sha256: "d2ef3c412258b5daf89205d2a651e53c2631ce3adea78cd2d08df698cc58334c",
-      },
-      { name: "policy_preprocessor.safetensors", size_bytes: 1184, sha256: null },
-      { name: "policy_postprocessor.safetensors", size_bytes: 1088, sha256: null },
-    ],
+    final_cost_usd: !isDataset && p.source === "own" ? 0.0751 : null,
+    timeout_seconds: !isDataset && p.source === "own" ? 900 : null,
+    editable: !isDataset && p.source === "own",
+    files: isDataset
+      ? [
+          { name: "meta/info.json", size_bytes: 1024, sha256: null },
+          { name: "meta/episodes.jsonl", size_bytes: 4096, sha256: null },
+          { name: "data/chunk-000/episode_000000.parquet", size_bytes: 5242880, sha256: null },
+          { name: "videos/chunk-000/observation.images.cam/episode_000000.mp4", size_bytes: 12582912, sha256: null },
+        ]
+      : [
+          {
+            name: "model.safetensors",
+            size_bytes: 206766560,
+            sha256: "42772891cb6eba1e7bc36ad8e12c0fa0723c61f036fa235c725ce6026e6e81df",
+          },
+          {
+            name: "config.json",
+            size_bytes: 198,
+            sha256: "d2ef3c412258b5daf89205d2a651e53c2631ce3adea78cd2d08df698cc58334c",
+          },
+          { name: "policy_preprocessor.safetensors", size_bytes: 1184, sha256: null },
+          { name: "policy_postprocessor.safetensors", size_bytes: 1088, sha256: null },
+        ],
   };
 }
 
@@ -141,7 +154,11 @@ const PolicyCard = ({
   robotAction?: RobotAction | null;
   onInstall: () => void;
   onOpen: () => void;
-}) => (
+}) => {
+  // Datasets and policies share the grid but render differently: a dataset is
+  // acquired + trained on, not installed onto a robot.
+  const isDataset = (policy as PolicyListEntry & { kind?: string }).kind === "dataset";
+  return (
   <div className="group flex h-full flex-col rounded-[24px] border border-border bg-background p-5 shadow-soft transition-[transform,box-shadow] duration-200 ease-bounce hover:-translate-y-1 hover:shadow-pop md:p-6">
     <div className="flex items-center justify-between gap-2">
       <SourceChip source={policy.source} />
@@ -154,7 +171,13 @@ const PolicyCard = ({
             installed
           </span>
         )}
-        {policy.policy_class && <span className="eyebrow">{policy.policy_class}</span>}
+        {isDataset ? (
+          <span className="inline-flex items-center rounded-full bg-leaf px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink">
+            dataset
+          </span>
+        ) : (
+          policy.policy_class && <span className="eyebrow">{policy.policy_class}</span>
+        )}
       </div>
     </div>
 
@@ -183,6 +206,18 @@ const PolicyCard = ({
       </button>
     </div>
 
+    {isDataset ? (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="mt-4 flex w-full items-center justify-between gap-3 rounded-xl border border-border bg-secondary px-3 py-2 text-left transition-colors hover:bg-accent"
+    >
+      <code className="truncate font-mono text-[12px] text-foreground">
+        view dataset · {policy.title}
+      </code>
+      <span className="eyebrow shrink-0 text-foreground">open →</span>
+    </button>
+    ) : (
     <button
       type="button"
       onClick={onInstall}
@@ -205,8 +240,9 @@ const PolicyCard = ({
         {state.status === "working" ? "…" : installed ? "reinstall →" : "install →"}
       </span>
     </button>
+    )}
 
-    {robotAction && (
+    {!isDataset && robotAction && (
       <button
         type="button"
         onClick={robotAction.onClick}
@@ -226,7 +262,8 @@ const PolicyCard = ({
       </button>
     )}
   </div>
-);
+  );
+};
 
 const DetailRow = ({ label, value }: { label: string; value: string }) => (
   <div className="flex items-baseline justify-between gap-4 border-b border-border/60 py-2">

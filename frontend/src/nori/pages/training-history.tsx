@@ -60,56 +60,6 @@ const JobLogs = ({ jobId }: { jobId: string }) => {
     };
   }, [jobId, baseUrl, fetchWithHeaders]);
 
-  const refreshJobs = async () => {
-    try {
-      setJobs(await listJobs(baseUrl, fetchWithHeaders));
-    } catch {
-      /* list refresh is best-effort */
-    }
-  };
-
-  const onStop = async (jobId: string) => {
-    setActionBusy(jobId);
-    try {
-      const res = await stopTrainingJob(baseUrl, fetchWithHeaders, jobId);
-      toast({ title: "Pausing training", description: res.detail });
-      setTimeout(refreshJobs, 5000);
-    } catch (e) {
-      toast({
-        title: "Couldn't pause",
-        description: e instanceof Error ? e.message : String(e),
-        variant: "destructive",
-      });
-    } finally {
-      setActionBusy(null);
-    }
-  };
-
-  const onResume = async (jobId: string, timeoutSeconds: number) => {
-    setActionBusy(jobId);
-    try {
-      const res = await resumeTrainingJob(baseUrl, fetchWithHeaders, jobId, timeoutSeconds);
-      toast({
-        title: "Training resumed",
-        description: `Continuing from the saved checkpoint (new segment ${res.internal_job_uuid.slice(0, 8)}…).`,
-      });
-      await refreshJobs();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      toast({
-        title: /402|allowance|insufficient/i.test(msg)
-          ? "Not enough compute allowance left"
-          : "Couldn't resume",
-        description: /402|allowance|insufficient/i.test(msg)
-          ? "This month's compute allowance can't cover another segment. Resume after it resets, or upgrade your plan."
-          : msg,
-        variant: "destructive",
-      });
-    } finally {
-      setActionBusy(null);
-    }
-  };
-
   return (
     <pre className="mt-2 max-h-64 overflow-auto rounded bg-background/60 p-2 text-xs text-muted-foreground">
       {lines.length ? lines.join("\n") : "Waiting for logs…"}
@@ -147,6 +97,49 @@ const TrainingHistory = () => {
       setLocalByUuid({});
     }
   }, [baseUrl, fetchWithHeaders]);
+
+  const onStop = async (jobId: string) => {
+    setActionBusy(jobId);
+    try {
+      const res = await stopTrainingJob(baseUrl, fetchWithHeaders, jobId);
+      toast({ title: "Pausing training", description: res.detail });
+      setTimeout(() => void reload(), 5000);
+    } catch (e) {
+      toast({
+        title: "Couldn't pause",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const onResume = async (jobId: string, timeoutSeconds: number) => {
+    setActionBusy(jobId);
+    try {
+      const res = await resumeTrainingJob(baseUrl, fetchWithHeaders, jobId, timeoutSeconds);
+      toast({
+        title: "Training resumed",
+        description: `Continuing from the saved checkpoint (new segment ${res.internal_job_uuid.slice(0, 8)}…).`,
+      });
+      await reload();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({
+        title: /402|allowance|insufficient/i.test(msg)
+          ? "Not enough compute allowance left"
+          : "Couldn't resume",
+        description: /402|allowance|insufficient/i.test(msg)
+          ? "This month's compute allowance can't cover another segment. Resume after it resets, or upgrade your plan."
+          : msg,
+        variant: "destructive",
+      });
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
 
   useEffect(() => {
     void reload();
@@ -194,8 +187,8 @@ const TrainingHistory = () => {
                       <span className={`text-xs ${statusTone(job.status)}`}>
                         {job.status === "PAUSED" &&
                         (job as { steps_done?: number | null }).steps_done != null &&
-                        job.applied_config?.steps
-                          ? `PAUSED · ${(job as { steps_done?: number | null }).steps_done}/${String(job.applied_config.steps)} steps`
+                        (job as { applied_config?: { steps?: number } | null }).applied_config?.steps
+                          ? `PAUSED · ${(job as { steps_done?: number | null }).steps_done}/${String((job as { applied_config?: { steps?: number } | null }).applied_config?.steps)} steps`
                           : job.status}
                       </span>
                       {STOPPABLE.has(job.status) && (

@@ -36,6 +36,9 @@ export function DatasetCaptureCard() {
   const [episodeCount, setEpisodeCount] = useState(0);
   const captureRef = useRef<DatasetCapture | null>(null);
 
+  // Collapsed by default, like Robot logs — recording is an occasional task and the card is tall.
+  const [open, setOpen] = useState(false);
+
   useEffect(() => {
     let alive = true;
     void DatasetCapture.available(baseUrl).then((ok) => alive && setAvailable(ok));
@@ -53,6 +56,13 @@ export function DatasetCaptureCard() {
     },
     [setTelemetryListener, setControlSentListener]
   );
+
+  // Anything other than idle means a capture, export or upload is live and the operator needs the
+  // controls (Stop episode, Finish & export) — never leave those buried behind a collapsed header.
+  // Only forces it open on the transition, so the card can still be collapsed again afterwards.
+  useEffect(() => {
+    if (phase.kind !== "idle") setOpen(true);
+  }, [phase.kind]);
 
   const beginCapture = useCallback(async () => {
     if (!teleop) return;
@@ -135,20 +145,44 @@ export function DatasetCaptureCard() {
   const busy = phase.kind === "exporting" || phase.kind === "uploading";
 
   return (
-    <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pb-4 pt-3 text-[#14131a] shadow-sm">
-      <div className="flex min-h-9 items-center justify-between">
+    <div className={`rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pt-3 text-[#14131a] shadow-sm ${open ? "pb-4" : "pb-3"}`}>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen((v) => !v);
+          }
+        }}
+        className="flex min-h-9 cursor-pointer items-center justify-between"
+      >
         <h3 className="text-base font-semibold leading-none tracking-tight">
-          Record dataset
+          Record training dataset
+          {/* The live dot and the episode count stay in the header while collapsed — a recording
+              in progress must never be invisible just because the card is shut. */}
           {capturing && (
             <span className="ml-2 inline-block h-2 w-2 animate-pulse rounded-full bg-red-500 align-middle" />
           )}
         </h3>
-        <span className="text-xs text-muted-foreground">
-          {capturing ? `${episodeCount} episode${episodeCount === 1 ? "" : "s"} saved` : "local → cloud"}
+        <span className="flex items-center gap-3 text-sm font-normal text-muted-foreground">
+          {capturing && (
+            <span className="text-xs">
+              {episodeCount} episode{episodeCount === 1 ? "" : "s"} saved
+            </span>
+          )}
+          {open ? "▲ hide" : "▼ show"}
         </span>
       </div>
 
+      {open && (
       <div className="mt-3 space-y-3">
+        <p className="text-sm leading-relaxed text-[#6f6858]">
+          Record sessions of teleoperation to train your Nori to do the task autonomously. After
+          recording enough episodes, go to the Training page to start creating a policy.
+        </p>
         {phase.kind === "idle" && (
           <div className="flex flex-wrap items-center gap-3">
             <Button onClick={beginCapture} disabled={!running || !teleop}>
@@ -237,6 +271,7 @@ export function DatasetCaptureCard() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

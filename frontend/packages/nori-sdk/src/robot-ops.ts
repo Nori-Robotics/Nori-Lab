@@ -89,7 +89,7 @@ export const ROBOT_OPS: RobotOp[] = [
         "tiles) — best for scene-level judgement (robot left vs right, where things are). Pass " +
         '`camera` (a role name from the "Camera layout" context, e.g. "overhead" or "left_wrist") ' +
         "to get just that camera's tile — best for a close look at one arm/view. An unknown role " +
-        "returns an error naming the valid roles, not an image.",
+        "returns an error naming the valid roles, not an image. Arms can be easily moved to get different view angles of the scene.",
       input_schema: {
         type: "object",
         properties: {
@@ -218,7 +218,7 @@ export const ROBOT_OPS: RobotOp[] = [
       motion: true,
       summary:
         "Drive the mobile base for ms. linear (+forward) and angular (+turn left), rates in " +
-        "[-1,1]. Open-loop, timed — drive only briefly.",
+        "[-1,1]. Open-loop, timed.",
       input_schema: {
         type: "object",
         required: ["ms"],

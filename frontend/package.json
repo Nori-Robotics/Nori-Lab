@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "gen:types": "openapi-typescript ${NORI_BACKEND_URL:-http://localhost:8001}/openapi.json -o src/nori/api/types.ts",
+    "gen:robot-tools": "UPDATE_ROBOT_TOOLS=1 vitest run robot-ops.drift",
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",

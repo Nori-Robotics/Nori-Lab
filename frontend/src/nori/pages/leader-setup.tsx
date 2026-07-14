@@ -484,7 +484,10 @@ const LeaderSetup = ({
             : "min-h-[calc(100vh-2rem)] rounded-md bg-[#fbfaf5] px-4 py-5 text-[#14131a] sm:px-5"
         }
       >
-        <Alert className="border-[#14131a]/12 bg-[#fffdf7] text-[#14131a]">
+        {/* Same translucent fill as the VR card's "On a headset?" sub-panel (VrHandoff): both are
+            a nested note inside the cream control card, so they should sit at the same depth
+            rather than one reading as near-white. */}
+        <Alert className="border-[#14131a]/10 bg-background/60 text-[#14131a]">
           <AlertTitle>Leader driving isn’t available on the web app</AlertTitle>
           <AlertDescription className="text-[#5c5344]">
             Leader arm connection and calibration are only available in the desktop

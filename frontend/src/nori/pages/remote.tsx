@@ -35,6 +35,9 @@ const ArmPills = ({
   value: ArmSide;
   onChange: (arm: ArmSide) => void;
 }) => (
+  // The ENTER binding that switches arms is advertised as a keycap in the Commands row of
+  // BaseCommandLegend (next to SPACE / E-STOP), which renders in both cards this appears in —
+  // so it isn't repeated here.
   <div className="flex items-center gap-1.5">
     <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
       arm
@@ -44,12 +47,6 @@ const ArmPills = ({
         {arm}
       </Pill>
     ))}
-    <span
-      className="font-mono text-[11px] text-muted-foreground"
-      title="Press Enter to switch arms"
-    >
-      ⏎
-    </span>
   </div>
 );
 
@@ -501,52 +498,11 @@ const Remote = () => {
           {/* Robot inbound audio — unmuted sink, no video element can play it (video is muted). */}
           <audio ref={audioRef} autoPlay className="hidden" />
 
-          {/* Audio: two-way call plus clip-to-robot-speaker (reuses the M3b downlink; needs the
-              robot's voice downlink on — --voice / NORI_SPEAKER). Always shown; disabled offline. */}
-          <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// audio</p>
-            <div className="mt-3 space-y-2">
-              <CallBar
-                call={call}
-                running={running}
-                connected={connState === "connected"}
-                m6={m6}
-                onJoin={joinCall}
-                onLeave={leaveCall}
-                onToggleMute={toggleMute}
-                onToggleCamera={toggleCamera}
-                volume={volume}
-                onVolumeChange={setVolume}
-              />
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                <span className="text-xs text-[#857b6b]">Play to robot speaker</span>
-                <label
-                  className={
-                    "rounded border border-[#14131a]/20 px-2 py-1 " +
-                    (connected ? "cursor-pointer hover:bg-[#14131a]/5" : "pointer-events-none opacity-50")
-                  }
-                >
-                  Choose audio file…
-                  <input
-                    type="file"
-                    accept="audio/*"
-                    className="hidden"
-                    disabled={!connected}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      e.target.value = ""; // allow re-picking the same file
-                      if (f) void playClipFile(f);
-                    }}
-                  />
-                </label>
-                {clipPlaying && (
-                  <Button size="sm" variant="secondary" onClick={stopClip}>
-                    Stop clip
-                  </Button>
-                )}
-              </div>
-            </div>
-          </div>
+          {/* Dataset capture (browser catcher) — records this session into a LeRobot dataset.
+              Sits under the video, where the operator is already looking while recording, rather
+              than in the right rail among the control-mode cards. Renders only when a local lelab
+              spool answers (hidden on the hosted app). */}
+          <DatasetCaptureCard />
 
           {/* Single combined telemetry card: link/loop chips, then rail height, then grip force. */}
           <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
@@ -578,6 +534,61 @@ const Remote = () => {
         </div>
 
         <div className="h-fit space-y-4">
+        {/* Audio: two-way call plus clip-to-robot-speaker (reuses the M3b downlink; needs the
+            robot's voice downlink on — --voice / NORI_SPEAKER). Always shown; disabled offline.
+            Kept tight: in this 400px rail an active call fits on two rows, so joining doesn't
+            shove the control cards down the page. */}
+        <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
+          {/* Clip-to-speaker rides on the "// audio" eyebrow line — it's a one-off action, not
+              part of the call, and parking it here keeps the call controls and the you/nori
+              indicators together on the rows below. */}
+          <div className="flex min-h-5 flex-wrap items-center gap-2">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// audio</p>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <span className="text-xs text-[#857b6b]">Play clip</span>
+              <label
+                className={
+                  "rounded border border-[#14131a]/20 px-2 py-0.5 text-xs " +
+                  (connected ? "cursor-pointer hover:bg-[#14131a]/5" : "pointer-events-none opacity-50")
+                }
+                title="Play an audio file out of the robot's speaker"
+              >
+                Choose file…
+                <input
+                  type="file"
+                  accept="audio/*"
+                  className="hidden"
+                  disabled={!connected}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = ""; // allow re-picking the same file
+                    if (f) void playClipFile(f);
+                  }}
+                />
+              </label>
+              {clipPlaying && (
+                <Button size="sm" variant="secondary" onClick={stopClip}>
+                  Stop clip
+                </Button>
+              )}
+            </div>
+          </div>
+          <div className="mt-3">
+            <CallBar
+              call={call}
+              running={running}
+              connected={connState === "connected"}
+              m6={m6}
+              onJoin={joinCall}
+              onLeave={leaveCall}
+              onToggleMute={toggleMute}
+              onToggleCamera={toggleCamera}
+              volume={volume}
+              onVolumeChange={setVolume}
+            />
+          </div>
+        </div>
+
         {/* Control-mode picker: which method drives the arms. All options are always shown
             (even when a headset / the leader arms aren't present); keyboard is the default. */}
         {/* min-h-16 = the collapsed control cards' 64px, so this strip lines up with them. */}
@@ -730,10 +741,6 @@ const Remote = () => {
             />
           </div>
         )}
-
-        {/* Dataset capture (browser catcher) — records this session into a LeRobot dataset.
-            Renders only when a local lelab spool answers (hidden on the hosted app). */}
-        <DatasetCaptureCard />
 
         {/* Keyboard legend only shows for its own mode, like the VR and leader cards. */}
         {controlMode === "keyboard" && (

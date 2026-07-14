@@ -8,6 +8,7 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Pill } from "@/components/ui/pill";
 import { HelpCircle, Mic, MicOff, Phone, PhoneOff, Video, VideoOff, Volume2, VolumeX } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -33,9 +34,13 @@ function Stat({
   value: React.ReactNode;
   tone?: "default" | "good" | "warn" | "bad";
 }) {
-  // Tinted chips in the leader-setup palette: neutral cream, green/amber/red badges.
+  // Tinted chips in the leader-setup palette: neutral tan, green/amber/red badges.
+  // The neutral fill is the darker #e5e1d2 (same tan as the rail-gauge track), NOT the card's own
+  // #f3f1e8 — chips in the default tone are the ones with no data yet (path / watchdog / temp
+  // before a connect), and cream-on-cream made them vanish exactly when the operator is looking
+  // for them. link + control never use this tone; they're always good/warn/bad.
   const toneClass = {
-    default: "border-[#14131a]/12 bg-[#f3f1e8] text-[#14131a]",
+    default: "border-[#14131a]/12 bg-[#e5e1d2] text-[#14131a]",
     good: "border-[#4e9d55]/35 bg-[#e4f3e2] text-[#2a6b33]",
     warn: "border-[#db9346]/35 bg-[#fdf1de] text-[#8a5a12]",
     bad: "border-[#d24a3d]/35 bg-[#fde7e4] text-[#a3271c]",
@@ -202,7 +207,10 @@ export function TelemetryPanel({
         value={tel.linkMode ? tel.linkMode.toUpperCase() : "—"}
         tone={tel.linkMode === "lan" ? "good" : tel.linkMode === "wan" ? "warn" : "default"}
       />
-      <Stat label="control" value={controlOk ? "connected" : "disconnected"}
+      {/* "offline", not "disconnected": this chip is false when ANY of the three signals above
+          fails (channel closed, telemetry stale, motors unhealthy), and only the first of those
+          is really a disconnection. The vaguer word is the more honest one here. */}
+      <Stat label="control" value={controlOk ? "online" : "offline"}
         tone={controlOk ? "good" : "bad"} />
       <Stat label="loop" value={`${tel.loopHz.toFixed(1)} Hz`} tone={hzTone} />
       <Stat label="safety" value={tel.safety} tone={safetyTone(tel.safety)} />
@@ -379,33 +387,14 @@ export function CallBar({
   // Speaker icon toggles a compact inline slider; opening it widens the group so the
   // you/nori indicators shift slightly left.
   const [volumeOpen, setVolumeOpen] = useState(false);
+  // In-call the three buttons + the you/nori indicators have to share a 400px rail, so once the
+  // call is up the labels shorten ("Leave call" -> "Leave") and the icon gap tightens. The
+  // pre-call state has only one button and keeps its full label. Titles carry the long form.
   return (
-    <div className="flex flex-wrap items-center gap-3 text-[#14131a]">
-      {!call.active ? (
-        <Button size="sm" onClick={onJoin} disabled={!running || !connected}
-          title="Capture your mic and join the two-way audio call">
-          <Phone className="mr-2 h-4 w-4" /> Join call
-        </Button>
-      ) : (
-        <>
-          <Button size="sm" variant="destructive" onClick={onLeave}>
-            <PhoneOff className="mr-2 h-4 w-4" /> Leave call
-          </Button>
-          <Button size="sm" variant={call.micMuted ? "secondary" : "default"} onClick={onToggleMute}>
-            {call.micMuted
-              ? <><MicOff className="mr-2 h-4 w-4" /> Unmute mic</>
-              : <><Mic className="mr-2 h-4 w-4" /> Mute mic</>}
-          </Button>
-          {m6 && (
-            <Button size="sm" variant={call.cameraOn ? "default" : "secondary"} onClick={onToggleCamera}>
-              {call.cameraOn
-                ? <><VideoOff className="mr-2 h-4 w-4" /> Camera off</>
-                : <><Video className="mr-2 h-4 w-4" /> Camera on</>}
-            </Button>
-          )}
-        </>
-      )}
-      <div className="ml-auto flex items-center gap-4">
+    <div className="flex flex-wrap items-center gap-2 text-[#14131a]">
+      {/* Status on the left, actions on the right — same hand as the // controls strip, where the
+          mode pills sit right-aligned. */}
+      <div className="flex flex-wrap items-center gap-3">
         {/* "you" = your mic is hot (unmuted); the badge below says whether it reaches the robot.
             The mic glyph mirrors the outbound mic state at a glance. */}
         <span className="flex items-center gap-1.5">
@@ -456,6 +445,42 @@ export function CallBar({
           </Badge>
         )}
       </div>
+
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        {!call.active ? (
+          // Same Pill as the Keyboard / Leader arm / VR mode strip below — this is the audio
+          // card's one action, and it sits in the same right-hand column, so it should read as
+          // the same kind of control rather than a differently-shaped button.
+          <Pill
+            onClick={onJoin}
+            disabled={!running || !connected}
+            title="Capture your mic and join the two-way audio call"
+            className="inline-flex items-center"
+          >
+            <Phone className="mr-2 h-4 w-4" /> Join call
+          </Pill>
+        ) : (
+          <>
+            <Button size="sm" variant="destructive" onClick={onLeave} title="Leave the audio call">
+              <PhoneOff className="mr-1.5 h-4 w-4" /> Leave
+            </Button>
+            <Button size="sm" variant={call.micMuted ? "secondary" : "default"} onClick={onToggleMute}
+              title={call.micMuted ? "Unmute your mic" : "Mute your mic"}>
+              {call.micMuted
+                ? <><MicOff className="mr-1.5 h-4 w-4" /> Unmute</>
+                : <><Mic className="mr-1.5 h-4 w-4" /> Mute</>}
+            </Button>
+            {m6 && (
+              <Button size="sm" variant={call.cameraOn ? "default" : "secondary"} onClick={onToggleCamera}
+                title={call.cameraOn ? "Turn your camera off" : "Turn your camera on"}>
+                {call.cameraOn
+                  ? <><VideoOff className="mr-1.5 h-4 w-4" /> Camera</>
+                  : <><Video className="mr-1.5 h-4 w-4" /> Camera</>}
+              </Button>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -469,10 +494,14 @@ function Key({ children }: { children: React.ReactNode }) {
   );
 }
 
+// DOF names arrive straight from the SDK's axis maps, which are code identifiers
+// ("shoulder_pan"). Underscores are for the wire, not the operator.
+const dofLabel = (dof: string) => dof.replace(/_/g, " ");
+
 export function ControlLegend({ mode }: { mode: ControlMode }) {
   const legend = keybindLegend(mode);
   return (
-    <div className="space-y-3 text-sm">
+    <div className="space-y-3 text-xs">
       <div className="flex items-center gap-2">
         <span className="font-medium">Arm</span>
         <span className="whitespace-nowrap text-muted-foreground">press <Key>M</Key> to toggle mode</span>
@@ -487,11 +516,14 @@ export function ControlLegend({ mode }: { mode: ControlMode }) {
           </TooltipContent>
         </Tooltip>
       </div>
+      {/* No whitespace-nowrap here: the DOF names come from the SDK's axis maps and the long ones
+          ("shoulder_pan") overflowed their grid cell and ran under the next cell's keycaps.
+          Letting the label wrap inside its own cell keeps it legible instead of hidden. */}
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3">
         {legend.arm.map((r) => (
-          <div key={r.dof} className="flex items-center gap-1.5 whitespace-nowrap">
+          <div key={r.dof} className="flex min-w-0 items-center gap-1.5">
             <Key>{r.posKey.toUpperCase()}</Key><Key>{r.negKey.toUpperCase()}</Key>
-            <span className="text-muted-foreground">{r.dof}</span>
+            <span className="text-muted-foreground">{dofLabel(r.dof)}</span>
           </div>
         ))}
       </div>
@@ -527,7 +559,7 @@ export function BaseCommandLegend({ hint, wasd }: { hint?: string; wasd?: boolea
   const legend = keybindLegend("cylindrical");
   const clusters = wasd ? baseKeyClusters() : baseKeyClusters().slice(0, 1);
   return (
-    <div className="space-y-3 text-sm">
+    <div className="space-y-3 text-xs">
       <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1">
         <span className="w-full font-medium">Base</span>
         {clusters.map((c, i) => (
@@ -537,9 +569,9 @@ export function BaseCommandLegend({ hint, wasd }: { hint?: string; wasd?: boolea
           </div>
         ))}
         <span className="text-muted-foreground">forward / reverse, turn left / right</span>
-        <div className="flex items-center gap-1.5 whitespace-nowrap">
+        <div className="flex items-center gap-1.5">
           <Key>{legend.lift.posKey.toUpperCase()}</Key><Key>{legend.lift.negKey.toUpperCase()}</Key>
-          <span className="text-muted-foreground">{legend.lift.dof}</span>
+          <span className="text-muted-foreground">{dofLabel(legend.lift.dof)}</span>
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -549,6 +581,12 @@ export function BaseCommandLegend({ hint, wasd }: { hint?: string; wasd?: boolea
             <Key>{c.key}</Key><span className="text-muted-foreground">{c.label}</span>
           </div>
         ))}
+        {/* ENTER switches the active follower arm. It's a UI selection, not a robot command, so
+            it isn't in the SDK's keybind legend — but the operator doesn't care about that
+            distinction, and it belongs with the other keys they can press. */}
+        <div className="flex items-center gap-1.5 whitespace-nowrap">
+          <Key>ENTER</Key><span className="text-muted-foreground">switch arm</span>
+        </div>
       </div>
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>

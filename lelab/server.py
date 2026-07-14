@@ -1345,12 +1345,27 @@ def nori_upload_dataset(body: NoriDatasetUploadBody, request: Request):
 # training-history UI.
 class NoriDispatchBody(BaseModel):
     timeout_seconds: int = 900
+    # Resume a PAUSED backend job (training plan step 9). Forwarded verbatim;
+    # the backend re-reserves usage for the fresh segment (402 when the
+    # monthly allowance can't cover it -> surfaced to the UI as the alert).
+    resume_from_job_id: str | None = None
 
 
 @app.post("/nori/training/dispatch")
 def nori_dispatch_training(body: NoriDispatchBody, request: Request):
     client = _nori_client(request)
-    return _nori_proxy(lambda: client.dispatch_training({"timeout_seconds": body.timeout_seconds}))
+    payload: dict = {"timeout_seconds": body.timeout_seconds}
+    if body.resume_from_job_id:
+        payload["resume_from_job_id"] = body.resume_from_job_id
+    return _nori_proxy(lambda: client.dispatch_training(payload))
+
+
+@app.post("/nori/training/jobs/{job_id}/stop")
+def nori_stop_training_job(job_id: str, request: Request):
+    """Safe pause: backend writes the job's S3 stop-flag; the trainer
+    checkpoints and lands PAUSED within ~a minute."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.stop_job(job_id))
 
 
 @app.get("/nori/training/estimate-params")

@@ -402,6 +402,11 @@ class NoriClient:
         """
         return self._request("POST", f"{API}/training/dispatch", json=body)
 
+    def stop_job(self, job_id: str) -> dict[str, Any]:
+        """POST /training/jobs/{id}/stop — request a safe pause (the
+        container checkpoints and the job lands PAUSED, resumable later)."""
+        return self._request("POST", f"{API}/training/jobs/{job_id}/stop")
+
     def get_estimate_params(self) -> dict[str, Any]:
         """GET /training/estimate-params — per-policy steps/s + setup seconds +
         tier max duration + the pause/resume capability flag. Constants for

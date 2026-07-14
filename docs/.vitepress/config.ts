@@ -118,6 +118,7 @@ export default defineConfig({
           items: [
             { text: "Safety states", link: "/troubleshooting/safety-states" },
             { text: "Getting help", link: "/troubleshooting/getting-help" },
+            { text: "Licenses & attribution", link: "/licenses" },
           ],
         },
       ],

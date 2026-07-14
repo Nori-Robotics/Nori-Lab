@@ -87,22 +87,23 @@ export type FinishReason =
 // they never trip the confirm-before-first-motion gate. Keep in sync with the tool list in the doc.
 const MOTION_TOOLS = new Set(["move_to", "reach", "grip", "base", "lift"]);
 
-// Per-run caps. These bound a SINGLE run; the per-day cost ceiling is enforced server-side (the
-// daily token budget), so these can be generous — they exist to stop a run that's wandering, not to
-// control cost. Raised from 20/5min once the daily budget became the real spend guard.
-const DEFAULT_MAX_STEPS = 40;
+// Per-run bounds. Cost is enforced server-side (the per-day token budget → 429), so a run needs no
+// step cap to control spend; the wall-clock cap is what stops a SINGLE run that's wandering. The
+// step cap is therefore OFF by default (Infinity) — a caller may still pass maxSteps as a
+// belt-and-braces runaway guard. Was 80; before that 20 (the daily budget is now the real guard).
+const DEFAULT_MAX_STEPS = Infinity;
 const DEFAULT_WALL_CLOCK_MS = 10 * 60_000;
 // How many of the most recent `look` frames to keep verbatim in the conversation; older image blocks
 // are replaced with a text placeholder so a long run doesn't blow up context/upload/cost (the model
-// still sees it looked, just not the pixels). 3 keeps "before/after + the current view" live.
-const KEEP_LAST_IMAGES = 3;
+// still sees it looked, just not the pixels). 2 keeps "the last look + the current view" live.
+const KEEP_LAST_IMAGES = 2;
 
 export interface AgentSessionOptions {
   teleop: RemoteTeleop;
   postTurn: PostTurn;
   capRate?: number; // half-speed session cap, forwarded to ScriptDriver (default 0.5)
-  maxSteps?: number; // hard step cap; loop aborts when reached (default 20)
-  wallClockMs?: number; // hard wall-clock cap; loop aborts when reached (default 5 min)
+  maxSteps?: number; // optional runaway guard; omitted → no step cap (Infinity), budget/wall-clock bound the run
+  wallClockMs?: number; // hard wall-clock cap; loop aborts when reached (default 10 min)
   keepLastImages?: number; // image-pruning window (default 3)
   // Confirm-before-first-motion (ON by default). Called once, before the run's FIRST motion tool
   // executes; resolve false to abort the run. The operator can pass a resolver that auto-approves to

@@ -402,6 +402,12 @@ class NoriClient:
         """
         return self._request("POST", f"{API}/training/dispatch", json=body)
 
+    def get_estimate_params(self) -> dict[str, Any]:
+        """GET /training/estimate-params — per-policy steps/s + setup seconds +
+        tier max duration + the pause/resume capability flag. Constants for
+        client-side time estimates; same numbers the dispatch fit-gate uses."""
+        return self._request("GET", f"{API}/training/estimate-params")
+
     def list_jobs(self) -> Any:
         """GET /training/jobs."""
         return self._request("GET", f"{API}/training/jobs")

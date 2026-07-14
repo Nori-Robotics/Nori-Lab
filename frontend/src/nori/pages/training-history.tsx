@@ -8,10 +8,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApi } from "@/contexts/ApiContext";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   getJobLogs,
   listJobs,
+  resumeTrainingJob,
+  stopTrainingJob,
   type TrainingJob,
 } from "@/nori/api/client";
 import { listJobs as listLeLabJobs } from "@/lib/jobsApi";
@@ -19,9 +22,12 @@ import { listJobs as listLeLabJobs } from "@/lib/jobsApi";
 const statusTone = (s: string) => {
   const low = s.toLowerCase();
   if (/(succeed|success|complete|promot|done)/.test(low)) return "text-green-600";
+  if (/paused/.test(low)) return "text-[#b06a1c] font-semibold";
   if (/(fail|error|cancel)/.test(low)) return "text-destructive";
   return "text-muted-foreground";
 };
+
+const STOPPABLE = new Set(["PENDING", "SCHEDULING", "RUNNING"]);
 
 const JobLogs = ({ jobId }: { jobId: string }) => {
   const { baseUrl, fetchWithHeaders } = useApi();
@@ -54,6 +60,56 @@ const JobLogs = ({ jobId }: { jobId: string }) => {
     };
   }, [jobId, baseUrl, fetchWithHeaders]);
 
+  const refreshJobs = async () => {
+    try {
+      setJobs(await listJobs(baseUrl, fetchWithHeaders));
+    } catch {
+      /* list refresh is best-effort */
+    }
+  };
+
+  const onStop = async (jobId: string) => {
+    setActionBusy(jobId);
+    try {
+      const res = await stopTrainingJob(baseUrl, fetchWithHeaders, jobId);
+      toast({ title: "Pausing training", description: res.detail });
+      setTimeout(refreshJobs, 5000);
+    } catch (e) {
+      toast({
+        title: "Couldn't pause",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const onResume = async (jobId: string, timeoutSeconds: number) => {
+    setActionBusy(jobId);
+    try {
+      const res = await resumeTrainingJob(baseUrl, fetchWithHeaders, jobId, timeoutSeconds);
+      toast({
+        title: "Training resumed",
+        description: `Continuing from the saved checkpoint (new segment ${res.internal_job_uuid.slice(0, 8)}…).`,
+      });
+      await refreshJobs();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({
+        title: /402|allowance|insufficient/i.test(msg)
+          ? "Not enough compute allowance left"
+          : "Couldn't resume",
+        description: /402|allowance|insufficient/i.test(msg)
+          ? "This month's compute allowance can't cover another segment. Resume after it resets, or upgrade your plan."
+          : msg,
+        variant: "destructive",
+      });
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
   return (
     <pre className="mt-2 max-h-64 overflow-auto rounded bg-background/60 p-2 text-xs text-muted-foreground">
       {lines.length ? lines.join("\n") : "Waiting for logs…"}
@@ -63,6 +119,8 @@ const JobLogs = ({ jobId }: { jobId: string }) => {
 };
 
 const TrainingHistory = () => {
+  const { toast } = useToast();
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
   const { baseUrl, fetchWithHeaders } = useApi();
   const navigate = useNavigate();
   const [jobs, setJobs] = useState<TrainingJob[] | null>(null);
@@ -132,7 +190,40 @@ const TrainingHistory = () => {
                         </span>
                       )}
                     </CardTitle>
-                    <span className={`text-xs ${statusTone(job.status)}`}>{job.status}</span>
+                    <span className="flex items-center gap-2">
+                      <span className={`text-xs ${statusTone(job.status)}`}>
+                        {job.status === "PAUSED" &&
+                        (job as { steps_done?: number | null }).steps_done != null &&
+                        job.applied_config?.steps
+                          ? `PAUSED · ${(job as { steps_done?: number | null }).steps_done}/${String(job.applied_config.steps)} steps`
+                          : job.status}
+                      </span>
+                      {STOPPABLE.has(job.status) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={actionBusy === job.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void onStop(job.id);
+                          }}
+                        >
+                          {actionBusy === job.id ? "…" : "Pause"}
+                        </Button>
+                      )}
+                      {job.status === "PAUSED" && (
+                        <Button
+                          size="sm"
+                          disabled={actionBusy === job.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void onResume(job.id, job.timeout_duration_seconds || 900);
+                          }}
+                        >
+                          {actionBusy === job.id ? "…" : "Resume"}
+                        </Button>
+                      )}
+                    </span>
                   </div>
                 </CardHeader>
                 {openId === job.id && !localId && (

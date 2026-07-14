@@ -25,6 +25,7 @@ import Account from "@/nori/pages/account";
 import NoriHome from "@/nori/pages/home";
 import Pairing from "@/nori/pages/pairing";
 import Marketplace from "@/nori/pages/marketplace";
+import MarketplaceDetail from "@/nori/pages/marketplace-detail";
 import TrainingHistory from "@/nori/pages/training-history";
 import Remote from "@/nori/pages/remote";
 import VrLanding from "@/nori/pages/vr";
@@ -98,6 +99,7 @@ function App() {
                           <Route path="leader-setup" element={<LeaderSetup />} />
                           <Route path="pairing" element={<Pairing />} />
                           <Route path="marketplace" element={<Marketplace />} />
+                          <Route path="marketplace/:ref" element={<MarketplaceDetail />} />
                           <Route path="training-history" element={<TrainingHistory />} />
                         </Route>
 

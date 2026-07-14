@@ -2,26 +2,25 @@
 // Lists policies (GET /nori/marketplace/policies), filters by source client-side,
 // installs = acquire (first-party) + download the runnable bundle to the local Nori
 // cache. Install state now comes from the LOCAL cache (GET /nori/policies/local) so it
-// survives refresh; a card opens a detail drawer (GET .../details) that shows provenance
-// + file manifest and lets you rename (PATCH) or uninstall (DELETE) own policies.
+// survives refresh; a card navigates to a dedicated detail page
+// (/nori/marketplace/:ref, marketplace-detail.tsx) that shows provenance + file
+// manifest and lets you rename (PATCH) or uninstall (DELETE) own policies, or
+// acquire a dataset to train on.
 // Visual language ported from NoriSkillHub: paper/ink outlines, sticker tints,
 // display headlines, pill chips, bounce-hover cards.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useApi } from "@/contexts/ApiContext";
-import { ApiError } from "@/lib/apiClient";
 import { Pill } from "@/components/ui/pill";
 import {
   acquirePolicy,
-  deleteLocalPolicy,
   downloadPolicy,
-  getPolicyDetails,
   grantConsent,
   listLocalPolicies,
   listMyListings,
   listPolicies,
   publishPolicy,
-  renamePolicy,
   unpublishPolicy,
   type LocalPolicy,
   type MyListing,
@@ -38,7 +37,7 @@ import { PolicyRunner, type PolicyRunPhase } from "@/nori/remote/policyRun";
  * description carries an explicit preview-data banner so nobody mistakes
  * them for real stats. Delete once the endpoint is deployed everywhere.
  */
-function mockDetailsFor(p: PolicyListEntry): PolicyDetails {
+export function mockDetailsFor(p: PolicyListEntry): PolicyDetails {
   const withRepo = p as PolicyListEntry & { dataset_repo?: string | null; kind?: string };
   const isDataset = withRepo.kind === "dataset";
   return {
@@ -110,10 +109,10 @@ const SOURCE_LABEL: Record<string, string> = {
 
 type InstallState = { status: "idle" | "working" | "done" | "error"; message?: string };
 
-const fmtBytes = (n: number) =>
+export const fmtBytes = (n: number) =>
   n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
 
-const SourceChip = ({ source }: { source: string }) => (
+export const SourceChip = ({ source }: { source: string }) => (
   <span
     className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink ${
       SOURCE_TINT[source] ?? "bg-paper-3"
@@ -265,7 +264,7 @@ const PolicyCard = ({
   );
 };
 
-const DetailRow = ({ label, value }: { label: string; value: string }) => (
+export const DetailRow = ({ label, value }: { label: string; value: string }) => (
   <div className="flex items-baseline justify-between gap-4 border-b border-border/60 py-2">
     <span className="eyebrow">{label}</span>
     <span className="text-right font-mono text-[12.5px] text-foreground">{value}</span>
@@ -285,7 +284,7 @@ const LISTING_STATUS_LABEL: Record<string, string> = {
   taken_down: "taken down",
 };
 
-const ListingStatusChip = ({ status }: { status: string }) => (
+export const ListingStatusChip = ({ status }: { status: string }) => (
   <span
     className={`inline-flex items-center rounded-full px-2.5 py-0.5 font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] ${
       LISTING_STATUS_TINT[status] ?? "bg-paper-3"
@@ -301,7 +300,7 @@ const ListingStatusChip = ({ status }: { status: string }) => (
  * server-side: a submission goes "in review" and only a human approval makes
  * it public. Unpublish is instant.
  */
-const PublishSection = ({
+export const PublishSection = ({
   details,
   myListing,
   baseUrl,
@@ -370,7 +369,7 @@ const PublishSection = ({
           <div className="flex items-center justify-between gap-3">
             <span className="text-[13.5px] text-muted-foreground">
               {myListing!.in_review
-                ? "Submitted — a human reviews every policy before it goes public."
+                ? "Submitted — being safety-scanned and copied to a neutral repo; goes public automatically on pass."
                 : "Live on the community marketplace."}
             </span>
             <ListingStatusChip status={myListing!.status} />
@@ -459,7 +458,8 @@ const PublishSection = ({
           </button>
           <p className="text-[11.5px] leading-relaxed text-muted-foreground">
             Shared policies are privacy-scrubbed, copied to a neutral location, and
-            human-reviewed before anyone can install them.
+            automatically safety-scanned (safetensors-only) before going public — no
+            manual review.
           </p>
         </div>
       )}
@@ -469,169 +469,15 @@ const PublishSection = ({
   );
 };
 
-const DetailDrawer = ({
-  details,
-  onClose,
-  onRenamed,
-  onUninstalled,
-  installed,
-  baseUrl,
-  fetcher,
-  myListing,
-  onListingChanged,
-}: {
-  details: PolicyDetails;
-  onClose: () => void;
-  onRenamed: (d: PolicyDetails) => void;
-  onUninstalled: () => void;
-  installed: boolean;
-  baseUrl: string;
-  fetcher: ReturnType<typeof useApi>["fetchWithHeaders"];
-  myListing: MyListing | null;
-  onListingChanged: () => void;
-}) => {
-  const [title, setTitle] = useState(details.title);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const save = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      const t = title.trim();
-      const updated = await renamePolicy(baseUrl, fetcher, details.ref, t || null);
-      onRenamed(updated);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const uninstall = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await deleteLocalPolicy(baseUrl, fetcher, details.ref);
-      onUninstalled();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
-      <div className="absolute inset-0 bg-ink/30 backdrop-blur-sm" onClick={onClose} aria-hidden />
-      <div className="relative flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-border bg-background p-6 shadow-pop">
-        <div className="flex items-center justify-between">
-          <SourceChip source={details.source} />
-          <button type="button" onClick={onClose} className="eyebrow hover:text-foreground">
-            close ✕
-          </button>
-        </div>
-
-        {details.editable ? (
-          <div className="mt-5">
-            <label className="eyebrow" htmlFor="policy-title">
-              {"// name"}
-            </label>
-            <div className="mt-2 flex gap-2">
-              <input
-                id="policy-title"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                maxLength={120}
-                className="min-w-0 flex-1 rounded-xl border border-input bg-background px-3 py-2 font-display text-[1.3rem] leading-tight focus:outline-none focus:shadow-[0_0_0_3px_#ffe9a8]"
-              />
-              <button
-                type="button"
-                onClick={save}
-                disabled={busy || title.trim() === details.title}
-                className="shrink-0 rounded-xl border border-border bg-secondary px-3 py-2 font-mono text-[12px] hover:bg-accent disabled:opacity-50"
-              >
-                save
-              </button>
-            </div>
-          </div>
-        ) : (
-          <h2 className="mt-5 font-display text-[1.9rem] font-normal leading-tight tracking-tight">
-            {details.title}
-          </h2>
-        )}
-
-        {details.description && (
-          <p className="mt-3 text-[14px] leading-relaxed text-muted-foreground">
-            {details.description}
-          </p>
-        )}
-
-        <div className="mt-6">
-          <div className="eyebrow mb-1">{"// about"}</div>
-          {details.policy_class && <DetailRow label="class" value={details.policy_class} />}
-          {details.dataset_repo && <DetailRow label="dataset" value={details.dataset_repo} />}
-          {details.final_cost_usd != null && (
-            <DetailRow label="train cost" value={`$${details.final_cost_usd}`} />
-          )}
-          {details.timeout_seconds != null && (
-            <DetailRow label="timeout" value={`${details.timeout_seconds}s`} />
-          )}
-          <DetailRow label="created" value={new Date(details.created_at).toLocaleString()} />
-          <DetailRow label="price" value={details.price_usd != null ? `$${details.price_usd}` : "free"} />
-        </div>
-
-        <div className="mt-6">
-          <div className="eyebrow mb-1">{"// files"}</div>
-          {details.files.map((f) => (
-            <div
-              key={f.name}
-              className="flex items-baseline justify-between gap-4 border-b border-border/60 py-2"
-            >
-              <span className="font-mono text-[12.5px]">{f.name}</span>
-              <span className="font-mono text-[11px] text-muted-foreground">
-                {f.size_bytes != null ? fmtBytes(f.size_bytes) : "—"}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {details.editable && (
-          <PublishSection
-            details={details}
-            myListing={myListing}
-            baseUrl={baseUrl}
-            fetcher={fetcher}
-            onChanged={onListingChanged}
-          />
-        )}
-
-        {err && <p className="mt-4 text-[13px] text-destructive">{err}</p>}
-
-        {installed && (
-          <button
-            type="button"
-            onClick={uninstall}
-            disabled={busy}
-            className="mt-6 w-full rounded-xl border border-destructive/40 bg-background px-3 py-2 font-mono text-[12px] text-destructive hover:bg-destructive/10 disabled:opacity-50"
-          >
-            uninstall from this machine
-          </button>
-        )}
-      </div>
-    </div>
-  );
-};
-
 const Marketplace = () => {
   const { baseUrl, fetchWithHeaders } = useApi();
+  const navigate = useNavigate();
   const [policies, setPolicies] = useState<PolicyListEntry[] | null>(null);
   const [local, setLocal] = useState<LocalPolicy[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<SourceFilter>("all");
   const [query, setQuery] = useState("");
   const [installs, setInstalls] = useState<Record<string, InstallState>>({});
-  const [openDetails, setOpenDetails] = useState<PolicyDetails | null>(null);
   const [myListings, setMyListings] = useState<MyListing[]>([]);
 
   const installedRefs = useMemo(() => new Set(local.map((p) => p.ref)), [local]);
@@ -777,26 +623,6 @@ const Marketplace = () => {
     [running, teleop, runState, stopRun, runOnRobot, local, install]
   );
 
-  const openDrawer = useCallback(
-    async (policy: PolicyListEntry) => {
-      try {
-        setOpenDetails(await getPolicyDetails(baseUrl, fetchWithHeaders, policy.ref));
-      } catch (e) {
-        // The details endpoint ships with the backend's marketplace-details
-        // branch (gated on migration 014). Until that deploys, a 404 here
-        // would dead-end the drawer — synthesize CLEARLY-MARKED preview
-        // details from the catalog entry instead so the drawer stays
-        // testable. Real responses take over automatically once the
-        // endpoint exists; every other error still surfaces.
-        if (e instanceof ApiError && e.status === 404) {
-          setOpenDetails(mockDetailsFor(policy));
-          return;
-        }
-        setError(e instanceof Error ? e.message : String(e));
-      }
-    },
-    [baseUrl, fetchWithHeaders]
-  );
 
   // NOTE: the backend catalog intentionally excludes the caller's OWN
   // community listings from their public view — owners track theirs via
@@ -917,7 +743,7 @@ const Marketplace = () => {
                 listingStatus={p.source === "own" ? myListingByJob[p.ref]?.status : null}
                 robotAction={robotActionFor(p)}
                 onInstall={() => install(p)}
-                onOpen={() => openDrawer(p)}
+                onOpen={() => navigate(`/nori/marketplace/${encodeURIComponent(p.ref)}`)}
               />
             </div>
           ))}
@@ -928,28 +754,6 @@ const Marketplace = () => {
         {"// installed policies are cached locally and load into rollout on the robot"}
       </p>
 
-      {openDetails && (
-        <DetailDrawer
-          details={openDetails}
-          installed={installedRefs.has(openDetails.ref)}
-          baseUrl={baseUrl}
-          fetcher={fetchWithHeaders}
-          myListing={myListingByJob[openDetails.ref] ?? null}
-          onListingChanged={refreshMyListings}
-          onClose={() => setOpenDetails(null)}
-          onRenamed={(d) => {
-            setOpenDetails(d);
-            // Reflect the new title in the catalog list without a full refetch.
-            setPolicies((ps) =>
-              ps ? ps.map((p) => (p.ref === d.ref ? { ...p, title: d.title } : p)) : ps
-            );
-          }}
-          onUninstalled={() => {
-            refreshLocal();
-            setOpenDetails(null);
-          }}
-        />
-      )}
     </section>
   );
 };

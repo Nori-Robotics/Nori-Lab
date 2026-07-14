@@ -504,12 +504,15 @@ export function listPublicDatasets(baseUrl: string, fetcher: Fetcher): Promise<P
   });
 }
 
-/** One of the customer's promoted datasets (training dataset_ref picker). */
+/** One of the customer's promoted datasets (training dataset_ref picker).
+ * `source` is "upload" for the customer's own promoted uploads, or "community"
+ * for a dataset acquired from the marketplace (dataset_ref = "community:<id>"). */
 export interface MyDataset {
   dataset_ref: string;
   label: string;
   created_at: string;
   session_id: string;
+  source?: string;
 }
 
 /** GET /nori/datasets/mine — the caller's promoted datasets, newest first. */

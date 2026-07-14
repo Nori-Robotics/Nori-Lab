@@ -86,10 +86,12 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
   };
 
   // -- Nori cloud: the customer's promoted uploads -------------------------------
-  const [myDatasets, setMyDatasets] = useState<{ ref: string; label: string }[]>([]);
+  const [myDatasets, setMyDatasets] = useState<{ ref: string; label: string; source?: string }[]>([]);
   const refreshMyDatasets = useCallback(() => {
     listMyDatasets(baseUrl, fetchWithHeaders)
-      .then((rows) => setMyDatasets(rows.map((d) => ({ ref: d.dataset_ref, label: d.label }))))
+      .then((rows) =>
+        setMyDatasets(rows.map((d) => ({ ref: d.dataset_ref, label: d.label, source: d.source }))),
+      )
       .catch(() => {
         // No uploads yet / transient — the "Latest" default still dispatches.
       });
@@ -180,13 +182,15 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
                 {myDatasets.map((d) => (
                   <SelectItem key={d.ref} value={d.ref}>
                     {d.label}
+                    {d.source === "community" ? " · acquired" : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <p className="mt-1 text-xs text-[#14131a]/50">
-              Datasets stored in your Nori account — uploaded from your robot, or
-              imported from Hugging Face on the next tab.
+              Datasets stored in your Nori account — uploaded from your robot,
+              imported from Hugging Face on the next tab, or acquired from the
+              marketplace (shown as “Community · …”).
             </p>
           </div>
         )}

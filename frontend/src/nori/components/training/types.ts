@@ -10,6 +10,9 @@ export type NoriTrainingFormState = NoriTrainingConfig & {
   /** Which promoted dataset upload to train on (backend `dataset_ref`).
    *  undefined => backend uses the customer's latest promoted upload. */
   dataset_ref?: string;
+  /** Train on one of Nori's published open datasets instead (backend
+   *  `open_dataset_id`). Mutually exclusive with dataset_ref. */
+  open_dataset_id?: string;
 };
 
 /** Feasible policy options shown in the form. Backend whitelists ONLY "act"
@@ -40,6 +43,7 @@ export const DEFAULT_TRAINING_CONFIG: NoriTrainingFormState = {
   log_freq: 250,
   timeout_seconds: 900,
   dataset_ref: undefined,
+  open_dataset_id: undefined,
 };
 
 /** The keys the backend `DispatchRequest` actually honors. Everything else in
@@ -55,6 +59,7 @@ export const HONORED_DISPATCH_KEYS = [
   "log_freq",
   "timeout_seconds",
   "dataset_ref",
+  "open_dataset_id",
 ] as const;
 
 /** Build the backend dispatch body from form state: only the honored fields,
@@ -70,6 +75,10 @@ export function toDispatchBody(c: NoriTrainingFormState): Record<string, unknown
     log_freq: c.log_freq,
     timeout_seconds: c.timeout_seconds,
   };
-  if (c.dataset_ref) body.dataset_ref = c.dataset_ref;
+  // Mutually exclusive sources: an open-dataset pick wins (the picker clears
+  // dataset_ref when selecting one, but guard here too — the backend 422s on
+  // both being present).
+  if (c.open_dataset_id) body.open_dataset_id = c.open_dataset_id;
+  else if (c.dataset_ref) body.dataset_ref = c.dataset_ref;
   return body;
 }

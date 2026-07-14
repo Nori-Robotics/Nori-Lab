@@ -162,11 +162,28 @@ same network as your robot" hint):
 - **End session** writes the ledger entry (episodes added, duration) and
   offers a one-click "Back to project →".
 
-### 3c. `/nori/training` — picker instead of free text
+### 3c. `/nori/training` — dataset-source picker  **[BUILT 2026-07-13]**
 
-Replace the raw `dataset_repo_id` input with a **project picker**
-(combobox listing ledger projects + unfiled datasets, newest first, with
-episode counts and sync chips). Below it, one status line drives the CTA:
+One panel, three sources the user toggles between (GitHub was considered
+and rejected as a dataset source: LeRobot datasets are HF-native
+parquet+video, GitHub/LFS is the wrong home; GitHub may return later for
+policy *code*, a different card):
+
+- **Nori cloud** (default) — datasets in the customer's Nori account
+  (promoted uploads → backend `dataset_ref`; "Latest upload" default).
+  Named so it's unambiguous these live Nori-hosted, not on HF.
+- **Your Hugging Face** — import a personal HF dataset into Nori via the
+  LeLab pull+upload path, auto-selected on promotion. Hosted app shows a
+  desktop-app hint (import is LeLab-only). v2: backend-side staging with
+  a transient read token for private repos, no LeLab required.
+- **Open datasets** — Nori's published public catalog
+  (`GET /marketplace/datasets/public` → dispatch `open_dataset_id`,
+  mutually exclusive with `dataset_ref`). Works before the user has
+  recorded anything; the `train_self` consent gate is skipped for these
+  (that consent is the legal basis for the CUSTOMER's data only).
+
+Built as `components/training/DatasetSourcePicker.tsx`; the projects-aware
+upgrade below layers ON TOP of the Nori-cloud tab once projects exist:
 
 - Selected project already uploaded to Nori and unchanged since →
   **[Start training]**.
@@ -174,9 +191,6 @@ episode counts and sync chips). Below it, one status line drives the CTA:
   "12 new episodes not yet on Nori" → **[Upload & start training]** (runs
   the 4-step upload, then dispatches — one click, sequential progress).
 - Nothing recorded yet → disabled CTA + "Record a session first →" link.
-
-An "advanced" disclosure keeps a raw repo-id input for power users
-(current behavior, unchanged).
 
 ## 4. Implementation plan
 

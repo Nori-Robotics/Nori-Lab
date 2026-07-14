@@ -438,6 +438,35 @@ export function getTrainingEstimateParams(
   });
 }
 
+/** Safe pause of a running training job — the trainer checkpoints and the
+ * job lands PAUSED (resumable) within ~a minute. 409 if already terminal. */
+export function stopTrainingJob(
+  baseUrl: string,
+  fetcher: Fetcher,
+  jobId: string
+): Promise<{ stopping: boolean; detail: string }> {
+  return noriRequest(baseUrl, fetcher, `/nori/training/jobs/${encodeURIComponent(jobId)}/stop`, {
+    method: "POST",
+    action: "Pause training",
+  });
+}
+
+/** Resume a PAUSED job from its checkpoint. Config + dataset come from the
+ * paused job; timeoutSeconds reserves the fresh segment's usage — a 402 here
+ * means the monthly allowance can't cover it (surface it as an alert). */
+export function resumeTrainingJob(
+  baseUrl: string,
+  fetcher: Fetcher,
+  jobId: string,
+  timeoutSeconds = 900
+): Promise<DispatchResponse> {
+  return noriRequest<DispatchResponse>(baseUrl, fetcher, "/nori/training/dispatch", {
+    method: "POST",
+    body: { resume_from_job_id: jobId, timeout_seconds: timeoutSeconds },
+    action: "Resume training",
+  });
+}
+
 export function startNoriTraining(
   baseUrl: string,
   fetcher: Fetcher,

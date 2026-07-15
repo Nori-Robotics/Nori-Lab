@@ -142,6 +142,43 @@ const TrainingHistory = () => {
     }
   };
 
+  // Continue-from-completed: extend a FINISHED policy with more steps. Prompts
+  // for a new TOTAL step target; the backend requires it to exceed what the run
+  // already trained and resumes from its saved checkpoint (optimizer preserved).
+  const onContinue = async (jobId: string, timeoutSeconds: number, trained?: number | null) => {
+    const input = window.prompt(
+      "Continue training to how many TOTAL steps?" +
+        (trained ? ` (already trained ${trained})` : ""),
+      "",
+    );
+    if (input === null) return;
+    const steps = parseInt(input, 10);
+    if (!Number.isFinite(steps) || steps <= 0) {
+      toast({ title: "Enter a valid total step count", variant: "destructive" });
+      return;
+    }
+    setActionBusy(jobId);
+    try {
+      const res = await resumeTrainingJob(baseUrl, fetchWithHeaders, jobId, timeoutSeconds, steps);
+      toast({
+        title: "Continuing training",
+        description: `Extending to ${steps} steps (new segment ${res.internal_job_uuid.slice(0, 8)}…).`,
+      });
+      await reload();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({
+        title: /402|allowance|insufficient/i.test(msg)
+          ? "Not enough compute allowance left"
+          : "Couldn't continue training",
+        description: msg, // backend gives clear 409 (no resume bundle) / 422 (steps too low) text
+        variant: "destructive",
+      });
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
 
   useEffect(() => {
     void reload();
@@ -187,11 +224,19 @@ const TrainingHistory = () => {
                     </CardTitle>
                     <span className="flex items-center gap-2">
                       <span className={`text-xs ${statusTone(job.status)}`}>
-                        {job.status === "PAUSED" &&
-                        (job as { steps_done?: number | null }).steps_done != null &&
-                        (job as { applied_config?: { steps?: number } | null }).applied_config?.steps
-                          ? `PAUSED · ${(job as { steps_done?: number | null }).steps_done}/${String((job as { applied_config?: { steps?: number } | null }).applied_config?.steps)} steps`
-                          : job.status}
+                        {(() => {
+                          // A completed run trained to its target, so the trained
+                          // step count == applied_config.steps (steps_done is only
+                          // stamped on pause). Derive it here so no backend change
+                          // is needed to show it.
+                          const ac = (job as { applied_config?: { steps?: number } | null }).applied_config;
+                          const done = (job as { steps_done?: number | null }).steps_done;
+                          if (job.status === "PAUSED" && done != null && ac?.steps)
+                            return `PAUSED · ${done.toLocaleString()}/${ac.steps.toLocaleString()} steps`;
+                          if (job.status === "COMPLETED" && ac?.steps)
+                            return `COMPLETED · ${ac.steps.toLocaleString()} steps`;
+                          return job.status;
+                        })()}
                       </span>
                       {STOPPABLE.has(job.status) && (
                         <Button
@@ -216,6 +261,27 @@ const TrainingHistory = () => {
                           }}
                         >
                           {actionBusy === job.id ? "…" : "Resume"}
+                        </Button>
+                      )}
+                      {job.status === "COMPLETED" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={actionBusy === job.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void onContinue(
+                              job.id,
+                              job.timeout_duration_seconds || 3600,
+                              // completed run trained to its target; steps_done is
+                              // only set on pause, so fall back to the target.
+                              job.steps_done ??
+                                (job as { applied_config?: { steps?: number } | null })
+                                  .applied_config?.steps,
+                            );
+                          }}
+                        >
+                          {actionBusy === job.id ? "…" : "Continue"}
                         </Button>
                       )}
                     </span>

@@ -543,12 +543,19 @@ export function resumeTrainingJob(
   baseUrl: string,
   fetcher: Fetcher,
   jobId: string,
-  timeoutSeconds = 900
+  timeoutSeconds = 900,
+  /** New TOTAL step target — only for CONTINUING a COMPLETED policy (must exceed
+   *  what it already trained). Omit to just finish a PAUSED job's original target. */
+  steps?: number
 ): Promise<DispatchResponse> {
   return noriRequest<DispatchResponse>(baseUrl, fetcher, "/nori/training/dispatch", {
     method: "POST",
-    body: { resume_from_job_id: jobId, timeout_seconds: timeoutSeconds },
-    action: "Resume training",
+    body: {
+      resume_from_job_id: jobId,
+      timeout_seconds: timeoutSeconds,
+      ...(steps !== undefined ? { steps } : {}),
+    },
+    action: steps !== undefined ? "Continue training" : "Resume training",
   });
 }
 

@@ -1253,6 +1253,10 @@ class NoriDispatchBody(BaseModel):
     # the backend re-reserves usage for the fresh segment (402 when the
     # monthly allowance can't cover it -> surfaced to the UI as the alert).
     resume_from_job_id: str | None = None
+    # CONTINUE a COMPLETED job to a NEW, higher step target (continue-from-
+    # completed). Only meaningful alongside resume_from_job_id; the backend
+    # requires it to exceed what the finished run already trained.
+    steps: int | None = None
 
 
 @app.post("/nori/training/dispatch")
@@ -1261,6 +1265,8 @@ def nori_dispatch_training(body: NoriDispatchBody, request: Request):
     payload: dict = {"timeout_seconds": body.timeout_seconds}
     if body.resume_from_job_id:
         payload["resume_from_job_id"] = body.resume_from_job_id
+    if body.steps is not None:
+        payload["steps"] = body.steps
     return _nori_proxy(lambda: client.dispatch_training(payload))
 
 
@@ -1287,6 +1293,15 @@ def nori_library(request: Request):
     """My Stuff: datasets + policies + lineage in one call."""
     client = _nori_client(request)
     return _nori_proxy(client.get_library)
+
+
+@app.get("/nori/library/datasets/{session_id}/episodes")
+def nori_dataset_episodes(session_id: str, request: Request):
+    """Phase 2 cloud viewer: list a promoted dataset's episodes (+ a signed clip
+    token) from the owner's HF repo. Clips are then fetched straight from the
+    backend using that token, so only this JSON listing needs proxying."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.list_dataset_episodes(session_id))
 
 
 @app.get("/nori/training/estimate-params")

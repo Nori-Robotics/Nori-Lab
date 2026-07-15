@@ -1,7 +1,15 @@
-// NORI: client for local dataset episode review — view + delete episodes on a
-// dataset in the lerobot cache, served by lelab (no HuggingFace, no login).
-// These hit the local /nori/capture/* surface directly (unauthenticated, like
-// the other capture endpoints), not the JWT-forwarding backend proxy.
+// NORI: client for dataset episode review — view (+ delete, local only) episodes.
+// Two sources:
+//   * LOCAL  — a dataset in the lerobot cache, served by lelab off /nori/capture/*
+//              (unauthenticated, like the other capture endpoints). View + delete.
+//   * CLOUD  — a promoted upload in the owner's Nori/HF repo, served by the
+//              backend's Phase 2 viewer. The episodes LISTING is JWT-authorized
+//              (noriRequest → direct backend on the hosted app, LeLab proxy on
+//              desktop); each CLIP is fetched straight from the backend with a
+//              signed token in the URL (a <video> media load needs no CORS).
+
+import { noriRequest } from "@/nori/api/client";
+import { type Fetcher } from "@/lib/apiClient";
 
 export interface DatasetEpisode {
   index: number;
@@ -45,4 +53,44 @@ export async function deleteEpisodes(
     throw new Error(d ?? `delete failed (HTTP ${r.status})`);
   }
   return r.json();
+}
+
+// -- Cloud source (Phase 2: promoted uploads, viewable anywhere) ---------------
+
+export interface CloudEpisodeListing extends EpisodeListing {
+  session_id: string;
+  /** Signed token appended to each clip URL (?t=). Valid until token_exp. */
+  token: string;
+  token_exp: number;
+}
+
+/** List a promoted dataset's episodes from the backend viewer (JWT-authorized). */
+export async function listCloudEpisodes(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string,
+): Promise<CloudEpisodeListing> {
+  return noriRequest<CloudEpisodeListing>(
+    baseUrl,
+    fetcher,
+    `/nori/library/datasets/${encodeURIComponent(sessionId)}/episodes`,
+    { action: "List dataset episodes" },
+  );
+}
+
+/** Clip URL served straight from the backend, authorized by the signed token in
+ * the query (no auth header, so a plain <video src> works cross-origin).
+ * `backendBase` is config.noriBackendUrl. */
+export function cloudEpisodeClipUrl(
+  backendBase: string,
+  sessionId: string,
+  index: number,
+  token: string,
+  camera?: string,
+): string {
+  const cam = camera ? `&camera=${encodeURIComponent(camera)}` : "";
+  return (
+    `${base(backendBase)}/api/v1/library/datasets/${encodeURIComponent(sessionId)}` +
+    `/episode/${index}/clip.mp4?t=${encodeURIComponent(token)}${cam}`
+  );
 }

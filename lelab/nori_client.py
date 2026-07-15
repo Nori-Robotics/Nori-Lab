@@ -425,6 +425,13 @@ class NoriClient:
         the policies trained from each, plus source-unknown policies."""
         return self._request("GET", f"{API}/library")
 
+    def list_dataset_episodes(self, session_id: str) -> dict[str, Any]:
+        """GET /library/datasets/{session_id}/episodes — Phase 2 cloud viewer:
+        cameras + episodes + a signed clip token, read from the owner's HF repo.
+        Clips themselves are fetched straight from the backend (token-authorized),
+        so only this listing is proxied."""
+        return self._request("GET", f"{API}/library/datasets/{session_id}/episodes")
+
     def get_estimate_params(self) -> dict[str, Any]:
         """GET /training/estimate-params — per-policy steps/s + setup seconds +
         tier max duration + the pause/resume capability flag. Constants for

@@ -29,11 +29,9 @@ import {
 } from "@/nori/components/training/types";
 import NoriTrainingStats from "@/nori/components/training/NoriTrainingStats";
 import NoriTrainingLogs from "@/nori/components/training/NoriTrainingLogs";
-import { startNoriTraining } from "@/nori/api/client";
+import { startNoriTraining, getJobLogs as getBackendJobLogs } from "@/nori/api/client";
 import {
   getJob,
-  getJobLogs,
-  getJobLogFile,
   stopJob,
   type JobRecord,
   type LogLine,
@@ -137,42 +135,48 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
   const [logs, setLogs] = useState<LogLine[]>([]);
   const logContainerRef = useRef<HTMLDivElement>(null);
 
-  const jobStateRef = useRef(job?.state);
-  jobStateRef.current = job?.state;
-
-  // Seed logs from the persistent on-disk file once on mount.
+  // Poll the job + logs. Logs are read from Nori-Backend DIRECTLY via the app's
+  // LIVE session (auto-refreshing token) with offset tracking — not the local
+  // LeLab mirror, whose background streamer thread exits when the token captured
+  // at dispatch expires (or after repeated poll failures). That death is what
+  // froze the log panel mid-run ("stuck at N%"). This only changes where the UI
+  // reads logs; the running HF job is untouched.
   useEffect(() => {
     let cancelled = false;
-    getJobLogFile(baseUrl, fetchWithHeaders, jobId)
-      .then((seeded) => {
-        if (!cancelled && seeded.length > 0) setLogs(seeded);
-      })
-      .catch(() => {
-        // 404 / transient — live polling fills in.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [baseUrl, fetchWithHeaders, jobId]);
-
-  // Poll the job + logs while running.
-  useEffect(() => {
-    let cancelled = false;
+    let offset = 0; // backend log cursor (next_offset); resets per jobId
+    let terminal = false;
+    // The route param `jobId` is the LOCAL LeLab job id; the backend logs
+    // endpoint needs the Nori-Backend UUID, which the job record carries as
+    // nori_job_uuid (captured at dispatch, persisted to disk → survives a
+    // lelab restart). Resolve it from getJob, then poll logs by UUID. (Passing
+    // the local id straight to the backend endpoint 500s — the bug this fixes.)
+    let backendUuid: string | null = null;
     const tick = async () => {
+      // 1. Job record first — carries nori_job_uuid + drives the header/stats.
       try {
         const next = await getJob(baseUrl, fetchWithHeaders, jobId);
         if (cancelled) return;
         setJob(next);
-        if (next.state === "running") {
-          const newLogs = await getJobLogs(baseUrl, fetchWithHeaders, jobId);
-          if (!cancelled && newLogs.length > 0) {
-            setLogs((prev) => {
-              const merged = [...prev, ...newLogs];
-              return merged.length > MAX_LOG_LINES
-                ? merged.slice(merged.length - MAX_LOG_LINES)
-                : merged;
-            });
-          }
+        if (next.nori_job_uuid) backendUuid = next.nori_job_uuid;
+      } catch {
+        /* keep last-known record + uuid */
+      }
+      // 2. Logs from Nori-Backend via the app's live session, keyed by the
+      //    backend UUID (not the local id). Independent of the local streamer.
+      if (!backendUuid) return;
+      try {
+        const res = await getBackendJobLogs(baseUrl, fetchWithHeaders, backendUuid, offset);
+        if (cancelled) return;
+        offset = res.next_offset ?? offset;
+        terminal = res.is_terminal;
+        if (res.lines.length > 0) {
+          const mapped: LogLine[] = res.lines.map((message) => ({ timestamp: 0, message }));
+          setLogs((prev) => {
+            const merged = [...prev, ...mapped];
+            return merged.length > MAX_LOG_LINES
+              ? merged.slice(merged.length - MAX_LOG_LINES)
+              : merged;
+          });
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -180,8 +184,7 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
     };
     tick();
     const id = setInterval(() => {
-      if (cancelled) return;
-      if (jobStateRef.current && jobStateRef.current !== "running") return;
+      if (cancelled || terminal) return;
       tick();
     }, POLL_INTERVAL_MS);
     return () => {

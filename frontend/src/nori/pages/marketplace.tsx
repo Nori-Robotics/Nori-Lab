@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApi } from "@/contexts/ApiContext";
+import { useToast } from "@/hooks/use-toast";
 import { Pill } from "@/components/ui/pill";
 import {
   acquirePolicy,
@@ -336,6 +337,7 @@ const ExecutionModeBar = ({
 const Marketplace = () => {
   const { baseUrl, fetchWithHeaders } = useApi();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [policies, setPolicies] = useState<PolicyListEntry[] | null>(null);
   const [local, setLocal] = useState<LocalPolicy[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -432,11 +434,18 @@ const Marketplace = () => {
       runner.onPhase = (phase) => setRunState({ ref: policy.ref, phase });
       try {
         await runner.start(teleop, policy.ref, EXECUTION_PRESETS[execModeRef.current]);
-      } catch {
-        // phase already reflects the error via onPhase
+      } catch (e) {
+        // The run-button label truncates the message; surface the FULL rollout
+        // error in a toast (wraps + persists until dismissed) so long details
+        // like the joint/camera-mismatch text are fully readable and copyable.
+        toast({
+          title: "Couldn't run on robot",
+          description: e instanceof Error ? e.message : String(e),
+          variant: "destructive",
+        });
       }
     },
-    [baseUrl, teleop]
+    [baseUrl, teleop, toast]
   );
 
   const stopRun = useCallback(() => {

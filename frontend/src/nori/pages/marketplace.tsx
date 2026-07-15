@@ -25,7 +25,13 @@ import {
   type PolicyListEntry,
 } from "@/nori/api/client";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
-import { PolicyRunner, type PolicyRunPhase } from "@/nori/remote/policyRun";
+import {
+  PolicyRunner,
+  EXECUTION_PRESETS,
+  EXECUTION_MODE_LABELS,
+  type PolicyRunPhase,
+  type ExecutionMode,
+} from "@/nori/remote/policyRun";
 import CommunityPublishCard from "@/nori/components/marketplace/CommunityPublishCard";
 
 /**
@@ -293,6 +299,40 @@ export const ListingStatusChip = ({ status }: { status: string }) => (
 );
 
 
+/** Robot execution mode — shown only while a live robot session is active
+ * (same gate as the run-on-robot buttons). Sets how a policy drives the arm
+ * (temporal ensembling vs open-loop chunk horizon); applies to the next run.
+ * Inference-only — no effect on training. */
+const ExecutionModeBar = ({
+  mode,
+  onMode,
+}: {
+  mode: ExecutionMode;
+  onMode: (m: ExecutionMode) => void;
+}) => (
+  <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[20px] border border-border bg-background px-4 py-3 shadow-soft">
+    <span className="eyebrow shrink-0">{"// robot execution"}</span>
+    <div className="flex flex-wrap items-center gap-1.5">
+      {(Object.keys(EXECUTION_PRESETS) as ExecutionMode[]).map((m) => (
+        <button
+          key={m}
+          type="button"
+          onClick={() => onMode(m)}
+          title={EXECUTION_MODE_LABELS[m].hint}
+          className={`rounded-full px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors ${
+            mode === m ? "bg-sticker text-ink" : "bg-paper-3 text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {EXECUTION_MODE_LABELS[m].label}
+        </button>
+      ))}
+    </div>
+    <span className="min-w-0 flex-1 text-[12px] leading-snug text-muted-foreground">
+      {EXECUTION_MODE_LABELS[mode].hint}
+    </span>
+  </div>
+);
+
 const Marketplace = () => {
   const { baseUrl, fetchWithHeaders } = useApi();
   const navigate = useNavigate();
@@ -303,6 +343,13 @@ const Marketplace = () => {
   const [query, setQuery] = useState("");
   const [installs, setInstalls] = useState<Record<string, InstallState>>({});
   const [myListings, setMyListings] = useState<MyListing[]>([]);
+  // How a policy drives the robot (inference-only; never affects training).
+  // Read through a ref in runOnRobot so changing it doesn't churn the callback.
+  const [execMode, setExecMode] = useState<ExecutionMode>("smooth");
+  const execModeRef = useRef(execMode);
+  useEffect(() => {
+    execModeRef.current = execMode;
+  }, [execMode]);
 
   const installedRefs = useMemo(() => new Set(local.map((p) => p.ref)), [local]);
 
@@ -384,7 +431,7 @@ const Marketplace = () => {
       const runner = runnerRef.current;
       runner.onPhase = (phase) => setRunState({ ref: policy.ref, phase });
       try {
-        await runner.start(teleop, policy.ref);
+        await runner.start(teleop, policy.ref, EXECUTION_PRESETS[execModeRef.current]);
       } catch {
         // phase already reflects the error via onPhase
       }
@@ -497,6 +544,9 @@ const Marketplace = () => {
 
       {/* PUBLISH (policy or dataset — the single publish surface) */}
       <CommunityPublishCard />
+
+      {/* ROBOT EXECUTION MODE — only while a live session can run policies */}
+      {running && teleop && <ExecutionModeBar mode={execMode} onMode={setExecMode} />}
 
       {/* SEARCH */}
       <div className="relative mt-8">

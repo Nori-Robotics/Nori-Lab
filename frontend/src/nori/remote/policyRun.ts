@@ -35,6 +35,31 @@ export type PolicyRunPhase =
   | { kind: "stopped"; reason: string }
   | { kind: "error"; message: string };
 
+// Inference-time execution knobs for an ACT rollout (never affect training).
+// Sent to /nori/rollout/load; applied in nori_rollout.py::_apply_act_execution.
+export interface ExecutionParams {
+  /** e.g. 0.01 → closed-loop temporal ensembling; null → disabled. */
+  temporal_ensemble_coeff: number | null;
+  /** Open-loop horizon (1..chunk_size) when not ensembling; null → checkpoint default. */
+  n_action_steps: number | null;
+}
+
+export type ExecutionMode = "smooth" | "balanced" | "fast";
+
+/** Friendly presets → raw ACT knobs. `smooth` (temporal ensembling, 0.01) is the
+ *  default — best for fine/bimanual tasks and low control rates. */
+export const EXECUTION_PRESETS: Record<ExecutionMode, ExecutionParams> = {
+  smooth: { temporal_ensemble_coeff: 0.01, n_action_steps: null },
+  balanced: { temporal_ensemble_coeff: null, n_action_steps: 25 },
+  fast: { temporal_ensemble_coeff: null, n_action_steps: 100 },
+};
+
+export const EXECUTION_MODE_LABELS: Record<ExecutionMode, { label: string; hint: string }> = {
+  smooth: { label: "Smooth", hint: "Closed-loop temporal ensembling — smoothest, best for fine/bimanual tasks & low fps" },
+  balanced: { label: "Balanced", hint: "Re-plan every ~25 steps — snappier, slight boundary jerk" },
+  fast: { label: "Fast", hint: "Full chunk open-loop — most reactive-feeling, can drift" },
+};
+
 interface FrameSource {
   featureKey: string;
   video: HTMLVideoElement;
@@ -64,7 +89,7 @@ export class PolicyRunner {
     return this.timer !== null;
   }
 
-  async start(teleop: RemoteTeleop, ref: string): Promise<void> {
+  async start(teleop: RemoteTeleop, ref: string, exec?: ExecutionParams): Promise<void> {
     if (this.timer) await this.stop("restarted");
     this.onPhase({ kind: "loading" });
 
@@ -78,7 +103,14 @@ export class PolicyRunner {
     const res = await fetch(`${this.baseUrl}/nori/rollout/load`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ref, joints }),
+      // Inference-time execution knobs (ACT); omitted keys fall back to the
+      // checkpoint's saved values. See executionMode.ts / nori_rollout.py.
+      body: JSON.stringify({
+        ref,
+        joints,
+        temporal_ensemble_coeff: exec?.temporal_ensemble_coeff ?? null,
+        n_action_steps: exec?.n_action_steps ?? null,
+      }),
     });
     if (!res.ok) {
       const detail = ((await res.json().catch(() => null)) as { detail?: string } | null)?.detail;

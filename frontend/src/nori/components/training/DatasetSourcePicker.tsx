@@ -3,8 +3,9 @@
 //
 //   · Nori cloud       — promoted uploads in the customer's Nori account (the
 //                        backend's dataset_ref; default source, zero config)
-//   · Your Hugging Face — a personal HF dataset, imported into Nori via the
-//                        LeLab pull+upload path, then trained as a Nori dataset
+//   · Import           — datasets LeLab can copy INTO the Nori account: ones
+//                        recorded on this laptop's disk AND ones in the user's
+//                        personal HF account (which Nori's servers can't reach)
 //   · Open datasets    — Nori's published public catalog (open_dataset_id);
 //                        works before the user has recorded/uploaded anything
 //
@@ -47,7 +48,7 @@ type SourceKind = "nori" | "hf" | "open";
 
 const SOURCES: { kind: SourceKind; label: string }[] = [
   { kind: "nori", label: "Nori cloud" },
-  { kind: "hf", label: "Your Hugging Face" },
+  { kind: "hf", label: "Import (laptop / HF)" },
   { kind: "open", label: "Open datasets" },
 ];
 
@@ -98,7 +99,7 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
   }, [baseUrl, fetchWithHeaders]);
   useEffect(() => refreshMyDatasets(), [refreshMyDatasets]);
 
-  // -- Your Hugging Face: local + hub datasets LeLab can import ------------------
+  // -- Import: local-disk + personal-HF datasets LeLab can copy into Nori --------
   const [uploadable, setUploadable] = useState<{ repo: string; source: string }[]>([]);
   const [selectedImport, setSelectedImport] = useState<string>("");
   const [hfRepoInput, setHfRepoInput] = useState<string>("");
@@ -189,7 +190,7 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
             </Select>
             <p className="mt-1 text-xs text-[#14131a]/50">
               Datasets stored in your Nori account — uploaded from your robot,
-              imported from Hugging Face on the next tab, or acquired from the
+              imported from this laptop or your HF account (Import tab), or acquired from the
               marketplace (shown as “Community · …”).
             </p>
           </div>
@@ -198,18 +199,22 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
         {source === "hf" && (
           <div className="space-y-3">
             <p className="text-sm text-[#14131a]/70">
-              Import one of your Hugging Face datasets into your Nori account, then
-              train on it. Imported datasets appear under Nori cloud.
+              Bring a dataset into your Nori account: one recorded on this laptop
+              (marked <span className="font-mono text-xs">local</span>) or one from your
+              personal Hugging Face account (marked <span className="font-mono text-xs">HF</span>).
+              Nori's servers can't reach your personal HF or your disk, so importing
+              copies it — it then appears under Nori cloud and trains from there.
             </p>
             {hosted ? (
               <p className="rounded-md border border-[#14131a]/10 bg-[#14131a]/[0.03] px-3 py-2 text-sm text-[#14131a]/60">
-                Importing datasets needs the desktop app (it pulls from your HF
-                account and pushes to Nori from your machine).
+                Importing needs the desktop app — the datasets live on your laptop's
+                disk or in your personal HF account, and only the desktop app can
+                read them to copy into Nori.
               </p>
             ) : (
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
                 <div className="flex-1">
-                  <Label className={LABEL}>Your datasets</Label>
+                  <Label className={LABEL}>On this laptop / your HF</Label>
                   <Select
                     value={selectedImport}
                     onValueChange={(v) => {

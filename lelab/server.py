@@ -1255,6 +1255,16 @@ def nori_stop_training_job(job_id: str, request: Request):
     return _nori_proxy(lambda: client.stop_job(job_id))
 
 
+class NoriRenameUploadBody(BaseModel):
+    label: str
+
+
+@app.patch("/nori/datasets/upload/{session_id}")
+def nori_rename_dataset_upload(session_id: str, body: NoriRenameUploadBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.rename_dataset_upload(session_id, body.label))
+
+
 @app.get("/nori/library")
 def nori_library(request: Request):
     """My Stuff: datasets + policies + lineage in one call."""

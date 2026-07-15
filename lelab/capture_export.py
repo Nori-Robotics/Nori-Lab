@@ -115,6 +115,59 @@ def _views_from_layout(meta, w, h):
     return [("observation.images.remote", (0, h, 0, w))]
 
 
+def _open_previews(preview_dir, ep_idx, views, fps):
+    """One low-bitrate H.264 writer per view -> previews/<role>/ep<idx>.mp4.
+    Phase 1 sidecar: a browser-playable preview made once at export, so cloud
+    viewing is a static serve (no per-view transcode). Best-effort; the caller
+    guards so a preview failure never breaks the dataset export."""
+    import av
+
+    ws = {}
+    for key, (y0, y1, x0, x1) in views:
+        role = key.rsplit(".", 1)[-1]
+        out = preview_dir / role
+        out.mkdir(parents=True, exist_ok=True)
+        tmp = out / f"ep{ep_idx}.part"
+        c = av.open(str(tmp), "w", format="mp4")
+        st = c.add_stream("libx264", rate=fps)
+        st.width, st.height, st.pix_fmt = (x1 - x0), (y1 - y0), "yuv420p"
+        st.options = {"crf": "30", "preset": "veryfast"}
+        ws[key] = {"c": c, "st": st, "tmp": tmp, "final": out / f"ep{ep_idx}.mp4", "n": 0}
+    return ws
+
+
+def _preview_add(ws, key, img, fps):
+    from fractions import Fraction
+    import av
+
+    w = ws.get(key)
+    if not w:
+        return
+    fr = av.VideoFrame.from_ndarray(np.ascontiguousarray(img), format="rgb24")
+    fr.pts = w["n"]
+    fr.time_base = Fraction(1, fps)
+    for pkt in w["st"].encode(fr):
+        w["c"].mux(pkt)
+    w["n"] += 1
+
+
+def _close_previews(ws, keep):
+    for w in ws.values():
+        try:
+            for pkt in w["st"].encode():
+                w["c"].mux(pkt)
+            w["c"].close()
+        except Exception:
+            pass
+        try:
+            if keep and w["n"] > 0:
+                w["tmp"].rename(w["final"])
+            else:
+                w["tmp"].unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def export_capture(
     capture_dir: Path,
     fps: int = 15,
@@ -241,6 +294,7 @@ def export_capture(
         )
 
     tick_ms = 1000.0 / fps
+    preview_dir = _cache_root() / repo_id / "previews"
     total_frames = 0
     try:
         for ep in episodes:
@@ -253,6 +307,15 @@ def export_capture(
             if n_ticks < 2:
                 logger.warning("[EXPORT] episode %d shorter than 2 ticks, skipping", ep["index"])
                 continue
+
+            # Preview sidecar clips for THIS episode (dataset index = episodes
+            # saved so far). Best-effort — disabled for the episode on any error.
+            ep_ds_idx = int(dataset.meta.total_episodes)
+            try:
+                previews = _open_previews(preview_dir, ep_ds_idx, views, fps)
+            except Exception as pe:
+                logger.warning("[EXPORT] preview writers failed for ep %d: %s", ep_ds_idx, pe)
+                previews = None
 
             # Zero-order-hold state per tick. Telemetry before the episode's
             # first sample holds the first sample (leading edge).
@@ -299,9 +362,19 @@ def export_capture(
                         else np.ascontiguousarray(img[_y0:_y1, _x0:_x1])
                     )
                 dataset.add_frame(frame_out)
+                if previews is not None:
+                    try:
+                        for _key, _ in views:
+                            _preview_add(previews, _key, frame_out[_key], fps)
+                    except Exception as pe:
+                        logger.warning("[EXPORT] preview frame failed: %s", pe)
+                        _close_previews(previews, keep=False)
+                        previews = None
                 added += 1
+            if previews is not None:
+                _close_previews(previews, keep=bool(added))
             if added:
-                dataset.save_episode()
+                dataset.save_episode(parallel_encoding=False)
                 total_frames += added
                 logger.info("[EXPORT] episode %d: %d frames @ %dfps", ep["index"], added, fps)
     finally:

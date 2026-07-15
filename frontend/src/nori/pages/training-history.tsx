@@ -5,7 +5,7 @@
 // back to the inline log expander. "Start training" jumps to the config form.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useApi } from "@/contexts/ApiContext";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -75,7 +75,9 @@ const TrainingHistory = () => {
   const navigate = useNavigate();
   const [jobs, setJobs] = useState<TrainingJob[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [openId, setOpenId] = useState<string | null>(null);
+  // ?open=<job id> deep-links from My Stuff straight to a job's live logs.
+  const [searchParams] = useSearchParams();
+  const [openId, setOpenId] = useState<string | null>(searchParams.get("open"));
   // Map Nori job uuid -> local LeLab job id, for jobs this process is watching.
   const [localByUuid, setLocalByUuid] = useState<Record<string, string>>({});
 

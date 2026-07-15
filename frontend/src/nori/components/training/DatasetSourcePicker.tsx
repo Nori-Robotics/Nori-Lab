@@ -35,6 +35,7 @@ import {
   listMyDatasets,
   listPublicDatasets,
   uploadDataset,
+  type MaybeDeduplicated,
   type PublicDataset,
 } from "@/nori/api/client";
 import { listDatasets } from "@/lib/replayApi";
@@ -124,7 +125,11 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
     try {
       const session = await uploadDataset(baseUrl, fetchWithHeaders, repo);
       if (session.status === "PROMOTED") {
-        toast({ title: "Dataset imported to Nori", description: repo });
+        const dup = !!(session as MaybeDeduplicated).deduplicated;
+        toast({
+          title: dup ? "Already in your Nori cloud" : "Dataset imported to Nori",
+          description: dup ? `${repo} is unchanged since its last upload` : repo,
+        });
         setHfRepoInput("");
         refreshMyDatasets();
         // Select the fresh upload and land the user on the tab that shows it.

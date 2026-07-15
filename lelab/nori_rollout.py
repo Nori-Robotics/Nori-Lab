@@ -53,7 +53,45 @@ _lock = threading.Lock()  # single-flight inference + load/unload mutex
 _session: dict[str, Any] = {}  # ref, policy, pre, post, device, joints, image_shapes
 
 
-def _load_bundle(ref: str, joints: list[str]) -> dict[str, Any]:
+def _apply_act_execution(cfg, temporal_ensemble_coeff, n_action_steps) -> dict[str, Any]:
+    """INFERENCE-ONLY execution overrides for ACT — how the trained policy is
+    *executed*, never how it was trained (see the training-vs-inference split:
+    only chunk_size is a training param; these two are read solely by
+    select_action). Mutating cfg before the policy is built reconfigures the
+    action queue / temporal ensembler with no retrain.
+
+    - temporal_ensemble_coeff set  → re-plan every step, blend overlapping chunk
+      predictions (smooth, closed-loop). lerobot REQUIRES n_action_steps == 1 here.
+    - else n_action_steps set       → fixed open-loop execution horizon (1..chunk_size).
+    - neither                       → leave the checkpoint's saved values as-is.
+
+    Returns the effective {temporal_ensemble_coeff, n_action_steps} for the client.
+    No-op for non-ACT policies (they don't expose these knobs today).
+    """
+    if getattr(cfg, "type", None) != "act":
+        return {
+            "temporal_ensemble_coeff": getattr(cfg, "temporal_ensemble_coeff", None),
+            "n_action_steps": getattr(cfg, "n_action_steps", None),
+        }
+    chunk = int(getattr(cfg, "chunk_size", 100))
+    if temporal_ensemble_coeff is not None:
+        cfg.temporal_ensemble_coeff = float(temporal_ensemble_coeff)
+        cfg.n_action_steps = 1  # enforced by ACTConfig.__post_init__
+    elif n_action_steps is not None:
+        cfg.temporal_ensemble_coeff = None
+        cfg.n_action_steps = max(1, min(int(n_action_steps), chunk))
+    return {
+        "temporal_ensemble_coeff": cfg.temporal_ensemble_coeff,
+        "n_action_steps": cfg.n_action_steps,
+    }
+
+
+def _load_bundle(
+    ref: str,
+    joints: list[str],
+    temporal_ensemble_coeff: float | None = None,
+    n_action_steps: int | None = None,
+) -> dict[str, Any]:
     import torch
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.policies.factory import get_policy_class, make_pre_post_processors
@@ -66,6 +104,9 @@ def _load_bundle(ref: str, joints: list[str]) -> dict[str, Any]:
         )
 
     cfg = PreTrainedConfig.from_pretrained(str(bundle))
+    # Apply inference-time execution overrides BEFORE building the policy so the
+    # action queue / temporal ensembler are constructed from the chosen values.
+    execution = _apply_act_execution(cfg, temporal_ensemble_coeff, n_action_steps)
     policy_cls = get_policy_class(cfg.type)
     policy = policy_cls.from_pretrained(str(bundle), config=cfg)
 
@@ -123,6 +164,7 @@ def _load_bundle(ref: str, joints: list[str]) -> dict[str, Any]:
         "device": device,
         "joints": list(joints),
         "image_shapes": image_shapes,
+        "execution": execution,
     }
 
 
@@ -153,6 +195,14 @@ class LoadBody(BaseModel):
     # Joint order for state/action vectors — derived by the CLIENT from live
     # telemetry with the same filter/sort the dataset exporter uses.
     joints: list[str]
+    # Inference-time execution controls for ACT (no effect on training):
+    #   temporal_ensemble_coeff — set (e.g. 0.01) for smooth closed-loop
+    #     execution (re-plan every step, blend chunks); None to disable.
+    #   n_action_steps — open-loop execution horizon (1..chunk_size) when NOT
+    #     ensembling. Ignored when temporal_ensemble_coeff is set (forced to 1).
+    # Both omitted → use the checkpoint's saved values.
+    temporal_ensemble_coeff: float | None = None
+    n_action_steps: int | None = None
 
 
 @router.post("/load")
@@ -161,16 +211,22 @@ def rollout_load(body: LoadBody):
         raise HTTPException(status_code=422, detail="joints list is empty — is telemetry flowing?")
     with _lock:
         _session.clear()
-        sess = _load_bundle(body.ref, body.joints)
+        sess = _load_bundle(
+            body.ref, body.joints,
+            temporal_ensemble_coeff=body.temporal_ensemble_coeff,
+            n_action_steps=body.n_action_steps,
+        )
         _session.update(sess)
-        logger.info("[ROLLOUT] loaded %s on %s (%d joints, images: %s)",
-                    body.ref, sess["device"], len(body.joints), list(sess["image_shapes"]))
+        logger.info("[ROLLOUT] loaded %s on %s (%d joints, images: %s, exec: %s)",
+                    body.ref, sess["device"], len(body.joints),
+                    list(sess["image_shapes"]), sess["execution"])
         return {
             "ref": body.ref,
             "device": sess["device"],
             "joints": sess["joints"],
             "image_keys": {k: list(v) for k, v in sess["image_shapes"].items()},
             "fps": DEFAULT_FPS,
+            "execution": sess["execution"],
         }
 
 

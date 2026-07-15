@@ -12,15 +12,22 @@ export interface DatasetEpisode {
 
 const base = (u: string) => u.replace(/\/$/, "");
 
-export async function listEpisodes(baseUrl: string, repoId: string): Promise<DatasetEpisode[]> {
+export interface EpisodeListing {
+  cameras: string[];
+  episodes: DatasetEpisode[];
+}
+
+export async function listEpisodes(baseUrl: string, repoId: string): Promise<EpisodeListing> {
   const r = await fetch(`${base(baseUrl)}/nori/capture/datasets/${encodeURIComponent(repoId)}/episodes`);
   if (!r.ok) throw new Error(`couldn't list episodes (HTTP ${r.status})`);
-  return ((await r.json()) as { episodes: DatasetEpisode[] }).episodes;
+  const j = (await r.json()) as { cameras?: string[]; episodes: DatasetEpisode[] };
+  return { cameras: j.cameras ?? [], episodes: j.episodes };
 }
 
 /** URL for one episode's clip (AV1→H.264, transcoded on demand + cached). */
-export function episodeClipUrl(baseUrl: string, repoId: string, index: number): string {
-  return `${base(baseUrl)}/nori/capture/datasets/${encodeURIComponent(repoId)}/episode/${index}/clip.mp4`;
+export function episodeClipUrl(baseUrl: string, repoId: string, index: number, camera?: string): string {
+  const q = camera ? `?camera=${encodeURIComponent(camera)}` : "";
+  return `${base(baseUrl)}/nori/capture/datasets/${encodeURIComponent(repoId)}/episode/${index}/clip.mp4${q}`;
 }
 
 export async function deleteEpisodes(

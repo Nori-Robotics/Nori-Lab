@@ -27,6 +27,9 @@ export type DispatchResponse = components["schemas"]["DispatchResponse"];
 export type TrainingJob = components["schemas"]["TrainingJob"];
 export type TrainingJobLogs = components["schemas"]["TrainingJobLogs"];
 export type SessionRow = components["schemas"]["SessionRow"];
+/** upload_dataset adds this when it skipped the transfer because an identical
+ *  promoted upload already exists (idempotent upload). */
+export type MaybeDeduplicated = { deduplicated?: boolean };
 export type Consent = components["schemas"]["Consent"];
 export type ConsentType = components["schemas"]["ConsentGrantRequest"]["consent_type"];
 export type DeletionRequest = components["schemas"]["DeletionRequest"];
@@ -461,6 +464,8 @@ export interface TrainingEstimateParams {
 /** One policy in the My Stuff library, with its UI state bucket and lineage. */
 export interface LibraryPolicy {
   job_id: string;
+  /** The customer's display title (set via rename), if any. */
+  title: string | null;
   status: string;
   state: "live" | "training" | "paused" | "failed";
   policy_class: string | null;
@@ -487,6 +492,21 @@ export interface Library {
   datasets: LibraryDataset[];
   /** Policies whose source dataset can't be resolved (shown as "source not recorded"). */
   unlinked_policies: LibraryPolicy[];
+}
+
+/** PATCH /nori/datasets/upload/{id} — rename an upload (owner-private label). */
+export function renameUploadLabel(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string,
+  label: string
+): Promise<SessionRow> {
+  return noriRequest<SessionRow>(
+    baseUrl,
+    fetcher,
+    `/nori/datasets/upload/${encodeURIComponent(sessionId)}`,
+    { method: "PATCH", body: { label }, action: "Rename dataset" }
+  );
 }
 
 /** GET /nori/library — the My Stuff aggregate (datasets ↔ policies, joined by lineage). */

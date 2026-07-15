@@ -12,6 +12,8 @@ import { useApi } from "@/contexts/ApiContext";
 import { useNori } from "@/nori/NoriContext";
 import {
   getLibrary,
+  renamePolicy,
+  renameUploadLabel,
   uploadDataset,
   type Library,
   type LibraryDataset,
@@ -56,6 +58,86 @@ const shortDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, {
 
 const cardCls =
   "rounded-[20px] border border-border bg-card p-4 shadow-soft transition-shadow hover:shadow-pop";
+
+// Inline-editable name: the card title with a pencil. Commit on Enter/blur-save,
+// Escape cancels; errors (name rules, PII scan on policies) surface inline.
+const EditableName = ({
+  value,
+  onRename,
+}: {
+  value: string;
+  onRename: (next: string) => Promise<void>;
+}) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const commit = async () => {
+    const next = draft.trim();
+    if (!next || next === value) {
+      setEditing(false);
+      setErr(null);
+      return;
+    }
+    setBusy(true);
+    try {
+      await onRename(next);
+      setEditing(false);
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <span className="group/name inline-flex items-center gap-1.5">
+        <p className="text-base font-bold text-[#14131a]">{value}</p>
+        <button
+          type="button"
+          aria-label="Rename"
+          title="Rename"
+          onClick={(e) => {
+            e.stopPropagation();
+            setDraft(value);
+            setEditing(true);
+          }}
+          className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/name:opacity-100 focus:opacity-100"
+        >
+          ✎
+        </button>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex w-full max-w-72 flex-col gap-1" onClick={(e) => e.stopPropagation()}>
+      <span className="flex items-center gap-1.5">
+        <input
+          className="h-8 min-w-0 flex-1 rounded border border-border bg-background px-2 text-sm font-bold"
+          value={draft}
+          disabled={busy}
+          autoFocus
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void commit();
+            if (e.key === "Escape") {
+              setEditing(false);
+              setDraft(value);
+              setErr(null);
+            }
+          }}
+        />
+        <Button size="sm" variant="outline" className="h-8 px-2 text-xs" disabled={busy} onClick={() => void commit()}>
+          {busy ? "…" : "Save"}
+        </Button>
+      </span>
+      {err && <span className="text-xs text-destructive">{err}</span>}
+    </span>
+  );
+};
 
 // ---- page ------------------------------------------------------------------
 
@@ -102,6 +184,30 @@ const MyStuff = () => {
     const unlinked = library.unlinked_policies.map((p) => ({ ...p, sourceRef: null, sourceLabel: null }));
     return [...linked, ...unlinked].sort((a, b) => b.created_at.localeCompare(a.created_at));
   }, [library]);
+
+  const onRenameLocal = useCallback(
+    async (oldId: string, next: string) => {
+      await DatasetCapture.renameDataset(baseUrl, oldId, next);
+      await load();
+    },
+    [baseUrl, load],
+  );
+
+  const onRenameUpload = useCallback(
+    async (sessionId: string, next: string) => {
+      await renameUploadLabel(baseUrl, fetchWithHeaders, sessionId, next);
+      await load();
+    },
+    [baseUrl, fetchWithHeaders, load],
+  );
+
+  const onRenamePolicy = useCallback(
+    async (jobId: string, next: string) => {
+      await renamePolicy(baseUrl, fetchWithHeaders, jobId, next);
+      await load();
+    },
+    [baseUrl, fetchWithHeaders, load],
+  );
 
   const onUpload = useCallback(
     async (repoId: string) => {
@@ -160,7 +266,7 @@ const MyStuff = () => {
             <article key={`local-${d.repo_id}`} className={cardCls}>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-base font-bold text-[#14131a]">{d.repo_id}</p>
+                  <EditableName value={d.repo_id} onRename={(next) => onRenameLocal(d.repo_id, next)} />
                   {d.robot_type && <p className="mt-0.5 text-sm text-muted-foreground">{d.robot_type}</p>}
                 </div>
                 <Pill tone="secondary">On this laptop</Pill>
@@ -195,7 +301,7 @@ const MyStuff = () => {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-base font-bold text-[#14131a]">{d.label}</p>
+                    <EditableName value={d.label} onRename={(next) => onRenameUpload(d.session_id, next)} />
                     <p className="mt-0.5 text-sm text-muted-foreground">Uploaded {shortDate(d.created_at)}</p>
                   </div>
                   <Pill tone="leaf">Uploaded</Pill>
@@ -242,10 +348,14 @@ const MyStuff = () => {
             </p>
           )}
 
-          {allPolicies.map((p) => (
+          {allPolicies.map((p) => {
+            const inFlight = p.state === "training";
+            const openProgress = () => navigate(`/nori/training-history?open=${encodeURIComponent(p.job_id)}`);
+            return (
             <article
               key={p.job_id}
-              className={cardCls}
+              className={`${cardCls} ${inFlight ? "cursor-pointer" : ""}`}
+              onClick={inFlight ? openProgress : undefined}
               onMouseEnter={() => setActiveRef(p.sourceRef)}
               onMouseLeave={() => setActiveRef(null)}
               onFocus={() => setActiveRef(p.sourceRef)}
@@ -253,9 +363,18 @@ const MyStuff = () => {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="space-y-1.5">
-                  <p className="text-base font-bold text-[#14131a]">
-                    {p.sourceLabel ?? "Policy"}
-                  </p>
+                  {p.state === "live" ? (
+                    // Rename is promotion-gated server-side, so only live
+                    // policies get the editor; in-flight/failed show plain text.
+                    <EditableName
+                      value={p.title ?? p.sourceLabel ?? "Policy"}
+                      onRename={(next) => onRenamePolicy(p.job_id, next)}
+                    />
+                  ) : (
+                    <p className="text-base font-bold text-[#14131a]">
+                      {p.title ?? p.sourceLabel ?? "Policy"}
+                    </p>
+                  )}
                   {p.policy_class && <Pill tone="accent">{p.policy_class.toUpperCase()}</Pill>}
                 </div>
                 <Pill tone={STATE_TONE[p.state]}>{STATE_LABEL[p.state]}</Pill>
@@ -281,10 +400,16 @@ const MyStuff = () => {
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 {p.state === "live" && <Button size="sm" onClick={() => navigate("/nori/marketplace")}>Run on robot</Button>}
-                {p.state === "paused" && <Button size="sm" onClick={() => navigate("/nori/training")}>Resume training</Button>}
+                {p.state === "training" && (
+                  <Button size="sm" onClick={(e) => { e.stopPropagation(); openProgress(); }}>
+                    View progress →
+                  </Button>
+                )}
+                {p.state === "paused" && <Button size="sm" onClick={openProgress}>Resume training</Button>}
               </div>
             </article>
-          ))}
+            );
+          })}
         </div>
       </div>
 

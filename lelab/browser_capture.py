@@ -166,6 +166,17 @@ def _dataset_info(d: Path) -> dict | None:
     }
 
 
+# Directories that are backups / temp copies of a dataset, not datasets a user
+# should see in the list or pick as an append target (e.g. "foo.bak125",
+# "foo.tmp", "foo~"). One canonical folder per dataset — a rename replaces the
+# folder, so backups only ever come from recovery/tooling, never normal use.
+_BACKUP_DIR = re.compile(r"(\.bak\d*|\.tmp|~)$", re.IGNORECASE)
+
+
+def _is_backup_dir(name: str) -> bool:
+    return bool(_BACKUP_DIR.search(name))
+
+
 @router.get("/datasets")
 def capture_list_datasets():
     """Local lerobot-cache datasets (anything with meta/info.json), newest
@@ -174,7 +185,7 @@ def capture_list_datasets():
     out = []
     if root.is_dir():
         for d in sorted(root.iterdir()):
-            if d.is_dir() and not d.name.startswith("_"):
+            if d.is_dir() and not d.name.startswith("_") and not _is_backup_dir(d.name):
                 info = _dataset_info(d)
                 if info:
                     out.append(info)

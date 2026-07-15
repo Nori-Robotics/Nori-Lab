@@ -18,6 +18,7 @@ import {
   type LibraryPolicy,
 } from "@/nori/api/client";
 import { DatasetCapture, type CaptureDatasetEntry } from "@/nori/remote/datasetCapture";
+import { EpisodeReviewModal } from "@/nori/components/EpisodeReviewModal";
 
 // ---- small presentational bits -------------------------------------------
 
@@ -69,6 +70,7 @@ const MyStuff = () => {
   const [error, setError] = useState<string | null>(null);
   const [activeRef, setActiveRef] = useState<string | null>(null); // hovered policy's source
   const [uploading, setUploading] = useState<string | null>(null);
+  const [reviewing, setReviewing] = useState<string | null>(null); // repo_id under review
 
   const load = useCallback(async () => {
     setError(null);
@@ -116,11 +118,6 @@ const MyStuff = () => {
     [baseUrl, fetchWithHeaders, load],
   );
 
-  const visualize = (datasetRef: string, repoId: string) => {
-    // Reuse LeLab's LeRobot dataset viewer (the HF Space), same as Upload.tsx.
-    const path = `/spaces/lerobot/visualize_dataset?path=${encodeURIComponent(`/${repoId}`)}`;
-    window.open(`https://huggingface.co/login?next=${encodeURIComponent(path)}`, "_blank", "noopener,noreferrer");
-  };
 
   if (loading) {
     return (
@@ -177,6 +174,9 @@ const MyStuff = () => {
                 Not uploaded yet — upload to train a policy on it.
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => setReviewing(d.repo_id)}>
+                  Review episodes
+                </Button>
                 <Button size="sm" onClick={() => onUpload(d.repo_id)} disabled={uploading === d.repo_id}>
                   {uploading === d.repo_id ? "Uploading…" : "Upload to cloud"}
                 </Button>
@@ -217,9 +217,6 @@ const MyStuff = () => {
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button size="sm" onClick={() => navigate("/nori/training")}>Train a policy</Button>
-                  <Button size="sm" variant="outline" onClick={() => visualize(d.dataset_ref, d.dataset_ref)}>
-                    Visualize episodes
-                  </Button>
                 </div>
               </article>
             );
@@ -290,6 +287,10 @@ const MyStuff = () => {
           ))}
         </div>
       </div>
+
+      {reviewing && (
+        <EpisodeReviewModal repoId={reviewing} onClose={() => setReviewing(null)} onChanged={load} />
+      )}
 
       {!leLabAvailable && (
         <p className="font-mono text-xs text-muted-foreground">

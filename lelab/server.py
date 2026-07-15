@@ -170,6 +170,11 @@ from .nori_rollout import router as _rollout_router  # noqa: E402
 
 app.include_router(_rollout_router)
 
+# NORI: local dataset episode review + curation (view/delete without HF).
+from .dataset_episodes import router as _episodes_router  # noqa: E402
+
+app.include_router(_episodes_router)
+
 # In dev mode the React app runs on :8080 while the API runs on :8000; in
 # prod they share an origin and CORS is unnecessary. allow_credentials with
 # a wildcard origin is rejected by browsers, so we drop it.

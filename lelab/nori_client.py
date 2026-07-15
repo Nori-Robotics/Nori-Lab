@@ -413,6 +413,13 @@ class NoriClient:
         container checkpoints and the job lands PAUSED, resumable later)."""
         return self._request("POST", f"{API}/training/jobs/{job_id}/stop")
 
+    def rename_dataset_upload(self, session_id: str, label: str) -> dict[str, Any]:
+        """PATCH /datasets/upload/{session_id} — set the owner-private label
+        shown in pickers and My Stuff. 404 on a non-own session."""
+        return self._request(
+            "PATCH", f"{API}/datasets/upload/{session_id}", json={"label": label}
+        )
+
     def get_library(self) -> dict[str, Any]:
         """GET /library — the My Stuff aggregate: promoted datasets joined to
         the policies trained from each, plus source-unknown policies."""

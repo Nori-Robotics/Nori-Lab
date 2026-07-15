@@ -47,6 +47,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
+from typing import Optional
 from pydantic import BaseModel
 
 from .datasets import _lerobot_cache_root
@@ -97,12 +98,18 @@ def _dir_bytes(d: Path) -> int:
 
 
 # ---------------------------------------------------------------- start
+class CameraLayoutModel(BaseModel):
+    cols: int
+    rows: int
+    tiles: list[str]
+
+
 class CaptureStartBody(BaseModel):
     room: str = ""
-    # tile roles of the composite feed, in layout order (SDK cameraLayoutInfo);
-    # empty when single-camera / layout unknown. Recorded for a future
-    # per-camera-crop exporter; v1 exports the composite as one view.
-    layout: list[str] = []
+    # Full camera grid ({cols,rows,tiles}) so the exporter can crop the composite
+    # into per-camera views. None on single-camera / layout-unknown sessions
+    # (exporter then keeps the whole frame as observation.images.remote).
+    layout: Optional[CameraLayoutModel] = None
     video_mime: str = ""
 
 
@@ -114,7 +121,7 @@ def capture_start(body: CaptureStartBody):
     meta = {
         "capture_id": capture_id,
         "room": body.room,
-        "layout": body.layout,
+        "layout": body.layout.model_dump() if body.layout else None,
         "video_mime": body.video_mime,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }

@@ -43,13 +43,34 @@ def _dataset_dir(repo_id: str) -> Path:
     return d
 
 
-def _first_video_key(d: Path) -> str | None:
+def _video_keys(d: Path) -> list[str]:
+    """All video feature keys, in info.json order (observation.images.<role>)."""
     import json
     info = json.loads((d / "meta" / "info.json").read_text())
-    for k, feat in (info.get("features") or {}).items():
-        if isinstance(feat, dict) and feat.get("dtype") == "video":
-            return k
-    return None
+    return [k for k, feat in (info.get("features") or {}).items()
+            if isinstance(feat, dict) and feat.get("dtype") == "video"]
+
+
+def _first_video_key(d: Path) -> str | None:
+    keys = _video_keys(d)
+    return keys[0] if keys else None
+
+
+def _role(vkey: str) -> str:
+    """'observation.images.left_wrist' -> 'left_wrist'."""
+    return vkey.rsplit(".", 1)[-1] if "." in vkey else vkey
+
+
+def _resolve_vkey(d: Path, camera: str | None) -> str:
+    keys = _video_keys(d)
+    if not keys:
+        raise HTTPException(status_code=422, detail="dataset has no video to view")
+    if camera:
+        for k in keys:
+            if _role(k) == camera or k == camera:
+                return k
+        raise HTTPException(status_code=404, detail=f"no camera {camera!r} in this dataset")
+    return keys[0]
 
 
 def _episodes_table(d: Path):
@@ -73,6 +94,7 @@ def list_episodes(repo_id: str):
     """Every episode with its length, task, and duration — the review list."""
     d = _dataset_dir(repo_id)
     t = _episodes_table(d)
+    cameras = [_role(k) for k in _video_keys(d)]
     vkey = _first_video_key(d)
     cols = t.column_names
     from_c = f"videos/{vkey}/from_timestamp" if vkey else None
@@ -88,16 +110,19 @@ def list_episodes(repo_id: str):
             dur = round(float(t.column(to_c)[i].as_py()) - float(t.column(from_c)[i].as_py()), 1)
         out.append(EpisodeInfo(index=int(idx), length=int(length), task=str(task), duration_s=dur))
     out.sort(key=lambda e: e.index)
-    return {"repo_id": repo_id, "episodes": out}
+    return {"repo_id": repo_id, "cameras": cameras, "episodes": out}
 
 
-def _extract_clip(d: Path, repo_id: str, idx: int) -> Path:
-    """Transcode episode `idx` (AV1) → H.264 mp4, cached by dataset mtime."""
+def _extract_clip(d: Path, repo_id: str, idx: int, camera: str | None = None) -> Path:
+    """Serve episode `idx` for `camera`: a preview sidecar clip if the exporter
+    made one (previews/<role>/ep<idx>.mp4, Phase 1 — no transcode), else
+    transcode the AV1 on demand (H.264, cached by dataset mtime)."""
     import av
 
-    vkey = _first_video_key(d)
-    if not vkey:
-        raise HTTPException(status_code=422, detail="dataset has no video to view")
+    vkey = _resolve_vkey(d, camera)
+    sidecar = d / "previews" / _role(vkey) / f"ep{idx}.mp4"
+    if sidecar.is_file():
+        return sidecar
     t = _episodes_table(d)
     cols = t.column_names
     row = None
@@ -119,7 +144,7 @@ def _extract_clip(d: Path, repo_id: str, idx: int) -> Path:
     mtime = int(src.stat().st_mtime)
     cache_dir = _CLIP_CACHE / repo_id
     cache_dir.mkdir(parents=True, exist_ok=True)
-    dst = cache_dir / f"ep{idx}_{mtime}.mp4"
+    dst = cache_dir / f"ep{idx}_{_role(vkey)}_{mtime}.mp4"
     if dst.exists():
         return dst
 
@@ -156,9 +181,9 @@ def _extract_clip(d: Path, repo_id: str, idx: int) -> Path:
 
 
 @router.get("/datasets/{repo_id}/episode/{idx}/clip.mp4")
-def episode_clip(repo_id: str, idx: int):
+def episode_clip(repo_id: str, idx: int, camera: str | None = None):
     d = _dataset_dir(repo_id)
-    clip = _extract_clip(d, repo_id, idx)
+    clip = _extract_clip(d, repo_id, idx, camera)
     return FileResponse(clip, media_type="video/mp4")
 
 

@@ -25,6 +25,8 @@ export function EpisodeReviewModal({
 }) {
   const { baseUrl } = useApi();
   const [episodes, setEpisodes] = useState<DatasetEpisode[] | null>(null);
+  const [cameras, setCameras] = useState<string[]>([]);
+  const [camera, setCamera] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [marked, setMarked] = useState<Set<number>>(new Set());
   const [playing, setPlaying] = useState<Set<number>>(new Set());
@@ -34,7 +36,10 @@ export function EpisodeReviewModal({
   const load = useCallback(async () => {
     setError(null);
     try {
-      setEpisodes(await listEpisodes(baseUrl, repoId));
+      const listing = await listEpisodes(baseUrl, repoId);
+      setEpisodes(listing.episodes);
+      setCameras(listing.cameras);
+      setCamera((c) => c ?? listing.cameras[0] ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -91,6 +96,21 @@ export function EpisodeReviewModal({
             <p className="eyebrow">Review episodes</p>
             <h2 className="text-xl font-bold text-[#14131a]">{repoId}</h2>
           </div>
+          {cameras.length > 1 && (
+            <div className="flex items-center gap-1 rounded-full bg-secondary p-1">
+              {cameras.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setCamera(c)}
+                  className={`rounded-full px-3 py-1 font-mono text-[11px] transition-colors ${
+                    camera === c ? "bg-card text-[#14131a] shadow-soft" : "text-muted-foreground hover:text-[#14131a]"
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          )}
           <button aria-label="Close" className="rounded-lg p-1.5 hover:bg-secondary" onClick={onClose}>
             <X className="h-5 w-5" />
           </button>
@@ -122,8 +142,9 @@ export function EpisodeReviewModal({
                       {playing.has(ep.index) ? (
                         // eslint-disable-next-line jsx-a11y/media-has-caption
                         <video
+                          key={`${ep.index}-${camera}`}
                           className="h-full w-full object-cover"
-                          src={episodeClipUrl(baseUrl, repoId, ep.index)}
+                          src={episodeClipUrl(baseUrl, repoId, ep.index, camera ?? undefined)}
                           controls
                           autoPlay
                           muted

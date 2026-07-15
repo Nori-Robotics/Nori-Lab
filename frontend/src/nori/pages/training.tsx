@@ -29,11 +29,9 @@ import {
 } from "@/nori/components/training/types";
 import NoriTrainingStats from "@/nori/components/training/NoriTrainingStats";
 import NoriTrainingLogs from "@/nori/components/training/NoriTrainingLogs";
-import { startNoriTraining } from "@/nori/api/client";
+import { startNoriTraining, getJobLogs as getBackendJobLogs } from "@/nori/api/client";
 import {
   getJob,
-  getJobLogs,
-  getJobLogFile,
   stopJob,
   type JobRecord,
   type LogLine,
@@ -137,51 +135,45 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
   const [logs, setLogs] = useState<LogLine[]>([]);
   const logContainerRef = useRef<HTMLDivElement>(null);
 
-  const jobStateRef = useRef(job?.state);
-  jobStateRef.current = job?.state;
-
-  // Seed logs from the persistent on-disk file once on mount.
+  // Poll the job + logs. Logs are read from Nori-Backend DIRECTLY via the app's
+  // LIVE session (auto-refreshing token) with offset tracking — not the local
+  // LeLab mirror, whose background streamer thread exits when the token captured
+  // at dispatch expires (or after repeated poll failures). That death is what
+  // froze the log panel mid-run ("stuck at N%"). This only changes where the UI
+  // reads logs; the running HF job is untouched.
   useEffect(() => {
     let cancelled = false;
-    getJobLogFile(baseUrl, fetchWithHeaders, jobId)
-      .then((seeded) => {
-        if (!cancelled && seeded.length > 0) setLogs(seeded);
-      })
-      .catch(() => {
-        // 404 / transient — live polling fills in.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [baseUrl, fetchWithHeaders, jobId]);
-
-  // Poll the job + logs while running.
-  useEffect(() => {
-    let cancelled = false;
+    let offset = 0; // backend log cursor (next_offset); resets per jobId
+    let terminal = false;
     const tick = async () => {
       try {
-        const next = await getJob(baseUrl, fetchWithHeaders, jobId);
+        const res = await getBackendJobLogs(baseUrl, fetchWithHeaders, jobId, offset);
         if (cancelled) return;
-        setJob(next);
-        if (next.state === "running") {
-          const newLogs = await getJobLogs(baseUrl, fetchWithHeaders, jobId);
-          if (!cancelled && newLogs.length > 0) {
-            setLogs((prev) => {
-              const merged = [...prev, ...newLogs];
-              return merged.length > MAX_LOG_LINES
-                ? merged.slice(merged.length - MAX_LOG_LINES)
-                : merged;
-            });
-          }
+        offset = res.next_offset ?? offset;
+        terminal = res.is_terminal;
+        if (res.lines.length > 0) {
+          const mapped: LogLine[] = res.lines.map((message) => ({ timestamp: 0, message }));
+          setLogs((prev) => {
+            const merged = [...prev, ...mapped];
+            return merged.length > MAX_LOG_LINES
+              ? merged.slice(merged.length - MAX_LOG_LINES)
+              : merged;
+          });
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       }
+      // Job record for the header/stats panel — best-effort, display only.
+      try {
+        const next = await getJob(baseUrl, fetchWithHeaders, jobId);
+        if (!cancelled) setJob(next);
+      } catch {
+        /* display-only; the backend log stream above is the source of truth */
+      }
     };
     tick();
     const id = setInterval(() => {
-      if (cancelled) return;
-      if (jobStateRef.current && jobStateRef.current !== "running") return;
+      if (cancelled || terminal) return;
       tick();
     }, POLL_INTERVAL_MS);
     return () => {

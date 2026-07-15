@@ -413,6 +413,11 @@ class NoriClient:
         container checkpoints and the job lands PAUSED, resumable later)."""
         return self._request("POST", f"{API}/training/jobs/{job_id}/stop")
 
+    def get_library(self) -> dict[str, Any]:
+        """GET /library — the My Stuff aggregate: promoted datasets joined to
+        the policies trained from each, plus source-unknown policies."""
+        return self._request("GET", f"{API}/library")
+
     def get_estimate_params(self) -> dict[str, Any]:
         """GET /training/estimate-params — per-policy steps/s + setup seconds +
         tier max duration + the pause/resume capability flag. Constants for

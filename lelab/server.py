@@ -1260,6 +1260,13 @@ def nori_stop_training_job(job_id: str, request: Request):
     return _nori_proxy(lambda: client.stop_job(job_id))
 
 
+@app.get("/nori/library")
+def nori_library(request: Request):
+    """My Stuff: datasets + policies + lineage in one call."""
+    client = _nori_client(request)
+    return _nori_proxy(client.get_library)
+
+
 @app.get("/nori/training/estimate-params")
 def nori_training_estimate_params(request: Request):
     """Constants for the training form's live time estimate (steps/s rates,

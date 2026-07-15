@@ -429,6 +429,42 @@ export interface TrainingEstimateParams {
   resumable: boolean;
 }
 
+/** One policy in the My Stuff library, with its UI state bucket and lineage. */
+export interface LibraryPolicy {
+  job_id: string;
+  status: string;
+  state: "live" | "training" | "paused" | "failed";
+  policy_class: string | null;
+  steps: number | null;
+  steps_done: number | null;
+  created_at: string;
+  promoted_at: string | null;
+  checkpoint_url: string | null;
+  final_cost_usd: number | null;
+}
+
+/** One uploaded dataset with the policies trained from it. */
+export interface LibraryDataset {
+  dataset_ref: string;
+  session_id: string;
+  label: string;
+  created_at: string;
+  episode_count: number | null;
+  frame_count: number | null;
+  policies: LibraryPolicy[];
+}
+
+export interface Library {
+  datasets: LibraryDataset[];
+  /** Policies whose source dataset can't be resolved (shown as "source not recorded"). */
+  unlinked_policies: LibraryPolicy[];
+}
+
+/** GET /nori/library — the My Stuff aggregate (datasets ↔ policies, joined by lineage). */
+export function getLibrary(baseUrl: string, fetcher: Fetcher): Promise<Library> {
+  return noriRequest<Library>(baseUrl, fetcher, "/nori/library", { action: "Load your library" });
+}
+
 export function getTrainingEstimateParams(
   baseUrl: string,
   fetcher: Fetcher

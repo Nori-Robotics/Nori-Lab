@@ -29,6 +29,7 @@ import {
 } from "@/nori/api/client";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { PolicyRunner, type PolicyRunPhase } from "@/nori/remote/policyRun";
+import DatasetPublishCard from "@/nori/components/marketplace/DatasetPublishCard";
 
 /**
  * PREVIEW-ONLY stand-in for GET .../details while the backend endpoint is
@@ -670,6 +671,9 @@ const Marketplace = () => {
           </p>
         </div>
       </div>
+
+      {/* SHARE A DATASET */}
+      <DatasetPublishCard />
 
       {/* SEARCH */}
       <div className="relative mt-8">

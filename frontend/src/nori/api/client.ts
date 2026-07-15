@@ -325,6 +325,25 @@ export function publishPolicy(
   );
 }
 
+/** POST /nori/marketplace/datasets/{uploadRef}/publish — publish one of your
+ * PROMOTED uploads as a community dataset (uploadRef = the upload session id).
+ * 202: created in pending_review, auto-publishes after re-homing + the format
+ * gate. 403 without publish_public consent; 409 if already published. */
+export function publishDataset(
+  baseUrl: string,
+  fetcher: Fetcher,
+  uploadRef: string,
+  title: string,
+  description: string | null
+): Promise<MyListing> {
+  return noriRequest<MyListing>(
+    baseUrl,
+    fetcher,
+    `/nori/marketplace/datasets/${encodeURIComponent(uploadRef)}/publish`,
+    { method: "POST", body: { title, description }, action: "Publish dataset" }
+  );
+}
+
 /** DELETE .../publish — instant, idempotent takedown of the active listing. */
 export function unpublishPolicy(
   baseUrl: string,

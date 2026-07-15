@@ -1,7 +1,7 @@
 // NORI: D2 primitive library (docs/llm_integration_plan.md). Small, named routines COMPOSED from
-// the base `robot` API — the "harvest": recurring op sequences promoted into reusable primitives
+// the base `nori` API — the "harvest": recurring op sequences promoted into reusable primitives
 // (and the seed for Tier-2 distilled behaviors). They run in the worker (installed onto the injected
-// `robot`), so pasted/generated scripts call e.g. `await nori.home("left")`. Each logs a `[lib]`
+// `nori`), so pasted/generated scripts call e.g. `await nori.home("left")`. Each logs a `[lib]`
 // marker so you can observe which primitives scripts actually use.
 //
 // Poses are ABSOLUTE normalized targets ([-100,100]) and go through nori.moveTo (client-slewed +
@@ -34,7 +34,7 @@ const HOME_POSE = { shoulder_pan: 0, shoulder_lift: 0, elbow_flex: 0, wrist_flex
 const STOW_POSE = { shoulder_pan: 0, shoulder_lift: -30, elbow_flex: 60, wrist_flex: 0, wrist_roll: 0 };
 
 export function installPrimitives(nori: ScriptRobot): void {
-  const r = robot as ScriptRobot & Primitives;
+  const r = nori as ScriptRobot & Primitives;
 
   r.home = (side) => {
     nori.log(`[lib] home(${side})`);

@@ -1253,6 +1253,10 @@ class NoriDispatchBody(BaseModel):
     # the backend re-reserves usage for the fresh segment (402 when the
     # monthly allowance can't cover it -> surfaced to the UI as the alert).
     resume_from_job_id: str | None = None
+    # CONTINUE a COMPLETED job to a NEW, higher step target (continue-from-
+    # completed). Only meaningful alongside resume_from_job_id; the backend
+    # requires it to exceed what the finished run already trained.
+    steps: int | None = None
 
 
 @app.post("/nori/training/dispatch")
@@ -1261,6 +1265,8 @@ def nori_dispatch_training(body: NoriDispatchBody, request: Request):
     payload: dict = {"timeout_seconds": body.timeout_seconds}
     if body.resume_from_job_id:
         payload["resume_from_job_id"] = body.resume_from_job_id
+    if body.steps is not None:
+        payload["steps"] = body.steps
     return _nori_proxy(lambda: client.dispatch_training(payload))
 
 

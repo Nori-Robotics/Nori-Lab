@@ -142,6 +142,43 @@ const TrainingHistory = () => {
     }
   };
 
+  // Continue-from-completed: extend a FINISHED policy with more steps. Prompts
+  // for a new TOTAL step target; the backend requires it to exceed what the run
+  // already trained and resumes from its saved checkpoint (optimizer preserved).
+  const onContinue = async (jobId: string, timeoutSeconds: number, trained?: number | null) => {
+    const input = window.prompt(
+      "Continue training to how many TOTAL steps?" +
+        (trained ? ` (already trained ${trained})` : ""),
+      "",
+    );
+    if (input === null) return;
+    const steps = parseInt(input, 10);
+    if (!Number.isFinite(steps) || steps <= 0) {
+      toast({ title: "Enter a valid total step count", variant: "destructive" });
+      return;
+    }
+    setActionBusy(jobId);
+    try {
+      const res = await resumeTrainingJob(baseUrl, fetchWithHeaders, jobId, timeoutSeconds, steps);
+      toast({
+        title: "Continuing training",
+        description: `Extending to ${steps} steps (new segment ${res.internal_job_uuid.slice(0, 8)}…).`,
+      });
+      await reload();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({
+        title: /402|allowance|insufficient/i.test(msg)
+          ? "Not enough compute allowance left"
+          : "Couldn't continue training",
+        description: msg, // backend gives clear 409 (no resume bundle) / 422 (steps too low) text
+        variant: "destructive",
+      });
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
 
   useEffect(() => {
     void reload();
@@ -216,6 +253,23 @@ const TrainingHistory = () => {
                           }}
                         >
                           {actionBusy === job.id ? "…" : "Resume"}
+                        </Button>
+                      )}
+                      {job.status === "COMPLETED" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={actionBusy === job.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void onContinue(
+                              job.id,
+                              job.timeout_duration_seconds || 3600,
+                              job.steps_done,
+                            );
+                          }}
+                        >
+                          {actionBusy === job.id ? "…" : "Continue"}
                         </Button>
                       )}
                     </span>

@@ -23,7 +23,7 @@ import {
   type TrainingEstimateParams,
 } from "@/nori/api/client";
 import type { NoriTrainingFormState } from "./types";
-import { FEASIBLE_POLICY_OPTIONS, DURATION_OPTIONS } from "./types";
+import { FEASIBLE_POLICY_OPTIONS, DURATION_OPTIONS, UNLIMITED_DURATION_SECONDS } from "./types";
 
 // Warm-palette field styling, matching the Panel cream/ink language.
 const FIELD = "border-[#14131a]/15 bg-white text-[#14131a] rounded-md";
@@ -72,6 +72,11 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
       maxFittingSteps: config.timeout_seconds * rates.floor,
     };
   }, [estParams, config.policy_type, config.steps, config.timeout_seconds]);
+
+  // Largest selectable "Max training duration" for this customer's tier (from
+  // the estimate endpoint: free 900s, pro 3600s, developer unlimited). Options
+  // above it are disabled. Conservative 900 until the estimate loads.
+  const maxDuration = estParams?.max_timeout_seconds ?? 900;
 
   return (
     <div className="space-y-4">
@@ -142,16 +147,21 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {DURATION_OPTIONS.map((d) => (
-                  <SelectItem key={d.seconds} value={String(d.seconds)} disabled={d.pro}>
-                    {d.label}
-                    {d.pro ? " · Pro" : ""}
-                  </SelectItem>
-                ))}
+                {DURATION_OPTIONS.map((d) => {
+                  const locked = d.seconds > maxDuration;
+                  return (
+                    <SelectItem key={d.seconds} value={String(d.seconds)} disabled={locked}>
+                      {d.label}
+                      {locked ? " · upgrade" : ""}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
             <p className="mt-1 text-xs text-[#14131a]/50">
-              Free tier includes 15-minute runs. Longer runs need a Pro plan.
+              {maxDuration >= UNLIMITED_DURATION_SECONDS
+                ? "Your plan includes unlimited training duration."
+                : "Longer runs unlock on higher plans — Developer tier is unlimited."}
             </p>
             {estimate && !estimate.fits && (
               estParams?.resumable ? (

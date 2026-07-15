@@ -21,12 +21,16 @@ export const FEASIBLE_POLICY_OPTIONS: { value: string; label: string }[] = [
   { value: "act", label: "ACT (Action Chunking Transformer)" },
 ];
 
-/** Duration options. Free tier is capped at 900s; 1800/3600 need a paid tier
- *  (backend returns 402/422 otherwise), so they're rendered Pro-gated. */
-export const DURATION_OPTIONS: { label: string; seconds: number; pro: boolean }[] = [
-  { label: "15 minutes", seconds: 900, pro: false },
-  { label: "30 minutes", seconds: 1800, pro: true },
-  { label: "60 minutes", seconds: 3600, pro: true },
+/** "Max training duration" options. Which are selectable is tier-driven: the
+ *  form disables any option above the caller's max_timeout_seconds (from
+ *  GET /training/estimate — free 900s, pro 3600s, developer unlimited). The
+ *  "Unlimited" seconds MUST equal the backend's UNLIMITED_JOB_TIMEOUT_SECONDS. */
+export const UNLIMITED_DURATION_SECONDS = 86400; // 24h — matches backend ceiling
+export const DURATION_OPTIONS: { label: string; seconds: number }[] = [
+  { label: "15 minutes", seconds: 900 },
+  { label: "30 minutes", seconds: 1800 },
+  { label: "60 minutes", seconds: 3600 },
+  { label: "Unlimited", seconds: UNLIMITED_DURATION_SECONDS },
 ];
 
 export const DEFAULT_TRAINING_CONFIG: NoriTrainingFormState = {

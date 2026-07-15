@@ -13,7 +13,7 @@
 // Control map (v1 — exactly the keyboard DOF, per §e "one canonical command set"):
 //   each hand:  grip = CLUTCH (squeeze to move)   trigger = that arm's gripper
 //               move/tilt/twist the controller -> that arm's x/y/pitch/roll + shoulder_pan
-//   each hand:  A/X = that arm's lift UP            B/Y = that arm's lift DOWN
+//   each hand:  B/Y = that arm's lift UP            A/X = that arm's lift DOWN
 //   right only: thumbstick = base drive             thumbstick-press (hold 1.5s) = reset latch
 //   left only:  thumbstick-press = E-STOP (latches + re-clutch) (R13: the operator is
 //               in-headset seeing live video, satisfying the confirmation gate)
@@ -122,16 +122,17 @@ export interface VrBindings {
 }
 
 // Dual-arm default: grip=clutch, trigger=gripper. Each controller's face buttons drive its
-// OWN arm's lift (left X/Y = left lift up/down; right A/B = right lift up/down). E-STOP and
+// OWN arm's lift (left Y/X = left lift up/down; right B/A = right lift up/down — the UPPER
+// face button raises, the LOWER one lowers, matching the physical layout). E-STOP and
 // reset moved onto the thumbstick PRESS (index 3) to free the face buttons for the lifts:
 // left stick-press = E-STOP; right stick-press (hold 1.5s) = reset.
 export const DEFAULT_BINDINGS: VrBindings = {
   clutch: { left: 1, right: 1 },
   gripper: { left: 0, right: 0 },
-  leftLiftUp: { hand: "left", index: 4 },    // X
-  leftLiftDown: { hand: "left", index: 5 },  // Y
-  rightLiftUp: { hand: "right", index: 4 },  // A
-  rightLiftDown: { hand: "right", index: 5 }, // B
+  leftLiftUp: { hand: "left", index: 5 },    // Y (upper button)
+  leftLiftDown: { hand: "left", index: 4 },  // X (lower button)
+  rightLiftUp: { hand: "right", index: 5 },  // B (upper button)
+  rightLiftDown: { hand: "right", index: 4 }, // A (lower button)
   estop: { hand: "left", index: 3 },   // left thumbstick press
   reset: { hand: "right", index: 3 },  // right thumbstick press (hold)
 };
@@ -389,7 +390,7 @@ export class VrSession {
     this.recenterPending = true;
     this.o.onLog(
       `${mode === "immersive-ar" ? "AR (passthrough)" : "VR"} session started — ` +
-        "grip to engage clutch, A/X & B/Y = that arm's lift up/down, "
+        "grip to engage clutch, B/Y & A/X = that arm's lift up/down, "
           + "right stick = drive the base, left stick = spin the 3D robot, "
           + "left stick-press = E-STOP, hold right stick-press = reset, "
           + "poke the Recenter button above your left hand to recenter the view"
@@ -707,7 +708,7 @@ export class VrSession {
     const rows: [string, string][] = [
       ["grip", "hold = clutch (move arm)"],
       ["trigger", "that arm's gripper"],
-      ["A/X · B/Y", "that arm's lift up / down"],
+      ["B/Y · A/X", "that arm's lift up / down"],
       ["right stick", "drive the base"],
       ["left stick", "spin the 3D robot"],
       ["left press", "E-STOP"],

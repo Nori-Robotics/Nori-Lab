@@ -266,7 +266,7 @@ export default function VrLanding() {
                   Disconnect
                 </Button>
                 <p className="text-center text-xs text-muted-foreground">
-                  Squeeze a grip trigger to move · left X = E-STOP · hold left Y to reset.
+                  Squeeze a grip to move · B/Y·A/X = lift up/down · left stick-press = E-STOP · hold right stick-press to reset.
                 </p>
               </div>
             )}

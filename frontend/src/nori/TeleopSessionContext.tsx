@@ -51,7 +51,11 @@ const LS_SCRIPT = "nori_script_source";
 function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(LS_SETTINGS);
-    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
+    // turnCred is memory-only: it's supplied per-session by minting (nori_turn_mint),
+    // or a stale static value the use-auth-secret relay rejects. Never rehydrate it from
+    // localStorage — drops any secret persisted by older builds. (Room token still
+    // persists until it becomes a minted JWT at signaling Phase 2.)
+    if (raw) return { ...DEFAULTS, ...JSON.parse(raw), turnCred: "" };
   } catch { /* ignore */ }
   return { ...DEFAULTS };
 }
@@ -150,7 +154,12 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
   const setSetting = useCallback(<K extends keyof Settings>(k: K, v: Settings[K]) => {
     setSettings((s) => {
       const next = { ...s, [k]: v };
-      try { localStorage.setItem(LS_SETTINGS, JSON.stringify(next)); } catch { /* ignore */ }
+      // Persist everything EXCEPT the TURN credential — it's minted per-session or dead,
+      // so it must not sit in localStorage in plaintext (retires the earlier finding).
+      try {
+        const { turnCred: _omit, ...persist } = next;
+        localStorage.setItem(LS_SETTINGS, JSON.stringify(persist));
+      } catch { /* ignore */ }
       return next;
     });
   }, []);

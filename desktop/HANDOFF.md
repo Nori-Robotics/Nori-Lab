@@ -60,6 +60,14 @@ Treat the `.spec`, `build.sh`, and Rust as first-draft-that-should-work, not pro
 
 ### 1. Produce a working backend bundle (½–1 day) — ✅ DONE on macOS arm64
 - [x] `cd frontend && npm run build` (backend serves `frontend/dist`).
+
+> **Build only from a committed, CI-green tree.** The spec bundles two generated artifacts that
+> must agree: `frontend/dist` (the executor — ScriptDriver/AgentSession) and
+> `frontend/packages/nori-sdk/robot-tools.json` (the agent's tool schemas, loaded by `server.py`).
+> Both are committed and the `robot-ops.drift` test guards that they match at commit time, so a
+> bundle from committed `main` is internally consistent by construction. Do NOT bundle from a dirty
+> tree where you edited the manifest but skipped `npm run gen:robot-tools` — you'd ship an agent
+> whose tool list disagrees with its own executor.
 - [x] Run `./desktop/build.sh` on macOS. **Invoke as `PYTHON=python3.13 ./desktop/build.sh`**
       — the script defaults to `python3.12`, which may be absent (3.13 satisfies
       requires-python; avoid 3.14 — no prebuilt torch/lerobot wheels yet).

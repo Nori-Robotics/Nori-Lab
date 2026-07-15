@@ -547,42 +547,46 @@ const Remote = () => {
               indicators together on the rows below. */}
           <div className="flex min-h-5 flex-wrap items-center gap-2">
             <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// audio</p>
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              <span className="text-xs text-[#857b6b]">Play clip</span>
-              <label
-                className={
-                  "rounded border border-[#14131a]/20 px-2 py-0.5 text-xs " +
-                  (connected ? "cursor-pointer hover:bg-[#14131a]/5" : "pointer-events-none opacity-50")
-                }
-                title="Play an audio file out of the robot's speaker"
-              >
-                Choose file…
-                <input
-                  type="file"
-                  accept="audio/*"
-                  className="hidden"
-                  disabled={!connected}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    e.target.value = ""; // allow re-picking the same file
-                    if (f) void playClipFile(f);
-                  }}
-                />
-              </label>
-              {clipName && (
+            <div className="ml-auto flex min-w-0 flex-nowrap items-center gap-2">
+              {clipName ? (
                 <>
-                  {/* Name the clip that's streaming, truncated with the full name on hover so a
-                      long filename can't push the Stop button off the row. */}
+                  {/* While a clip streams, the play controls give way to the playing indicator +
+                      Stop button in the same spot, so the whole row stays on one line. The name is
+                      truncated (full name on hover) so a long filename can't push Stop off the row. */}
                   <span
                     className="flex min-w-0 items-center gap-1 text-xs text-[#4d6a1e]"
                     title={clipName}
                   >
                     <span className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-[#8ab135]" />
-                    Clip <span className="max-w-[9rem] truncate font-medium">{clipName}</span> playing
+                    Clip <span className="max-w-[7rem] truncate font-medium">{clipName}</span> playing
                   </span>
                   <Button size="sm" variant="secondary" onClick={stopClip}>
                     Stop clip
                   </Button>
+                </>
+              ) : (
+                <>
+                  <span className="text-xs text-[#857b6b]">Play clip</span>
+                  <label
+                    className={
+                      "rounded border border-[#14131a]/20 px-2 py-0.5 text-xs " +
+                      (connected ? "cursor-pointer hover:bg-[#14131a]/5" : "pointer-events-none opacity-50")
+                    }
+                    title="Play an audio file out of the robot's speaker"
+                  >
+                    Choose file…
+                    <input
+                      type="file"
+                      accept="audio/*"
+                      className="hidden"
+                      disabled={!connected}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = ""; // allow re-picking the same file
+                        if (f) void playClipFile(f);
+                      }}
+                    />
+                  </label>
                 </>
               )}
             </div>

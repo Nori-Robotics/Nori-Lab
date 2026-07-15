@@ -55,21 +55,25 @@ export interface VrMapResult {
 }
 
 // --- ported gains (rpi4 8_xlerobot_2wheels_teleop_vr.py) ---------------------
-const POS_GAIN_X = 220;   // m-delta -> internal units, per axis
-const POS_GAIN_Y = 70;
-const POS_GAIN_Z = 70;
+// Position gains bumped 2026-07-15 (all axes ~+10%, reach +20% on top of that) — overall
+// feel was slightly too insensitive on hardware, forward/back reach most of all.
+const POS_GAIN_X = 265;   // m-delta -> internal units, per axis (was 220)
+const POS_GAIN_Y = 77;    // (was 70)
+const POS_GAIN_Z = 77;    // (was 70)
 const POS_SCALE = 0.01;
 const DELTA_LIMIT = 0.01; // max cartesian motion per frame (m)
 // Wrist scales/limits are PER-AXIS (verified on hardware 2026-06-25). Roll is deliberately
 // much gentler than pitch — matches NoriTeleopReference VR_WRIST_* defaults.
-const PITCH_SCALE = 6.0;  // VR_WRIST_PITCH_SCALE (reference default 4.0 felt too
-                          // insensitive on hardware — large controller tilt for little flex)
+const PITCH_SCALE = 6.6;  // VR_WRIST_PITCH_SCALE (reference default 4.0 felt too
+                          // insensitive on hardware — large controller tilt for little flex;
+                          // 6.0 -> 6.6 in the 2026-07-15 ~+10% sensitivity pass)
 const PITCH_LIMIT = 8.0;  // VR_WRIST_PITCH_LIMIT (also clamps the shoulder_pan delta)
-const ROLL_SCALE = 2.5;   // VR_WRIST_ROLL_SCALE (reference 1.0 ≈ half-speed tracking —
-                          // operators had to roll ~2× the wrist angle; hardware 2026-07-02)
+const ROLL_SCALE = 2.75;  // VR_WRIST_ROLL_SCALE (reference 1.0 ≈ half-speed tracking —
+                          // operators had to roll ~2× the wrist angle; hardware 2026-07-02.
+                          // 2.5 -> 2.75 in the 2026-07-15 pass)
 const ROLL_LIMIT = 5.0;   // VR_WRIST_ROLL_LIMIT (raised with the scale so it clamps at the
                           // same controller speed as before)
-const PAN_GAIN = 200.0;   // cartesian-x delta -> shoulder_pan deg
+const PAN_GAIN = 220.0;   // cartesian-x delta -> shoulder_pan deg (200 -> 220, 2026-07-15)
 const JUMP_POS = 50;      // reconnect guard on internal pos units
 const JUMP_ANGLE = 30;    // reconnect guard on wrist angles (deg)
 const THUMB_DEADZONE = 0.15;

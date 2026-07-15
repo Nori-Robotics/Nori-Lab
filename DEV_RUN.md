@@ -113,7 +113,7 @@ it in a relaunch loop if you want reconnect-friendly behavior.
 2. In the Quest browser open `http://localhost:8000/nori/remote`, sign in, **Connect**
    (same `nori-dev` room).
 3. **Enter VR** (enabled once the session is `connected`).
-   - Grip = clutch (squeeze to move), trigger = gripper, A/X & B/Y = that arm's lift,
+   - Grip = clutch (squeeze to move), trigger = gripper, B/Y & A/X = that arm's lift up/down,
      left stick-press = E-STOP, hold right stick-press = reset.
    - **Recenter (C4):** physically turn ~90°, then **double-tap the right thumbstick press**
      → the video panel snaps to your current facing (log: "recenter — video panel moved…").

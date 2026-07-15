@@ -47,6 +47,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
+from typing import Optional
 from pydantic import BaseModel
 
 from .datasets import _lerobot_cache_root
@@ -97,12 +98,18 @@ def _dir_bytes(d: Path) -> int:
 
 
 # ---------------------------------------------------------------- start
+class CameraLayoutModel(BaseModel):
+    cols: int
+    rows: int
+    tiles: list[str]
+
+
 class CaptureStartBody(BaseModel):
     room: str = ""
-    # tile roles of the composite feed, in layout order (SDK cameraLayoutInfo);
-    # empty when single-camera / layout unknown. Recorded for a future
-    # per-camera-crop exporter; v1 exports the composite as one view.
-    layout: list[str] = []
+    # Full camera grid ({cols,rows,tiles}) so the exporter can crop the composite
+    # into per-camera views. None on single-camera / layout-unknown sessions
+    # (exporter then keeps the whole frame as observation.images.remote).
+    layout: Optional[CameraLayoutModel] = None
     video_mime: str = ""
 
 
@@ -114,7 +121,7 @@ def capture_start(body: CaptureStartBody):
     meta = {
         "capture_id": capture_id,
         "room": body.room,
-        "layout": body.layout,
+        "layout": body.layout.model_dump() if body.layout else None,
         "video_mime": body.video_mime,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
@@ -166,6 +173,17 @@ def _dataset_info(d: Path) -> dict | None:
     }
 
 
+# Directories that are backups / temp copies of a dataset, not datasets a user
+# should see in the list or pick as an append target (e.g. "foo.bak125",
+# "foo.tmp", "foo~"). One canonical folder per dataset — a rename replaces the
+# folder, so backups only ever come from recovery/tooling, never normal use.
+_BACKUP_DIR = re.compile(r"(\.bak\d*|\.tmp|~)$", re.IGNORECASE)
+
+
+def _is_backup_dir(name: str) -> bool:
+    return bool(_BACKUP_DIR.search(name))
+
+
 @router.get("/datasets")
 def capture_list_datasets():
     """Local lerobot-cache datasets (anything with meta/info.json), newest
@@ -174,7 +192,7 @@ def capture_list_datasets():
     out = []
     if root.is_dir():
         for d in sorted(root.iterdir()):
-            if d.is_dir() and not d.name.startswith("_"):
+            if d.is_dir() and not d.name.startswith("_") and not _is_backup_dir(d.name):
                 info = _dataset_info(d)
                 if info:
                     out.append(info)

@@ -31,6 +31,7 @@ const NAV: { to: string; label: string }[] = [
   { to: "/nori/coding", label: "Coding" },
   { to: "/nori/agent", label: "Agent" },
   { to: "/nori/training", label: "Training" },
+  { to: "/nori/my-stuff", label: "My Stuff" },
   { to: "/nori/marketplace", label: "Marketplace" },
   { to: "/nori/pairing", label: "Pairing" },
   { to: "/nori/account", label: "Account" },

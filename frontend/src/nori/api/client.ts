@@ -239,10 +239,19 @@ export interface PolicyFileSummary {
   size_bytes: number | null;
   sha256: string | null;
 }
+/** LeRobot stats for a dataset listing (from meta/info.json); datasets only. */
+export interface DatasetStats {
+  total_episodes: number | null;
+  total_frames: number | null;
+  fps: number | null;
+  robot_type: string | null;
+  task: string | null;
+}
 /** Full detail view — superset of the catalog list entry. */
 export interface PolicyDetails {
   ref: string;
   source: string;
+  kind?: string; // "policy" | "dataset" | "bundle"
   title: string;
   is_renamed: boolean;
   description: string | null;
@@ -255,6 +264,7 @@ export interface PolicyDetails {
   timeout_seconds: number | null;
   editable: boolean;
   files: PolicyFileSummary[];
+  dataset_stats?: DatasetStats | null;
 }
 
 /** GET /nori/marketplace/policies/{ref}/details — full detail view. */
@@ -266,7 +276,7 @@ export function getPolicyDetails(
   return noriRequest<PolicyDetails>(
     baseUrl,
     fetcher,
-    `/nori/marketplace/policies/${encodeURIComponent(ref)}/details`,
+    `/nori/marketplace/policies/${encodeURIComponent(ref)}`,
     { action: "Load policy details" }
   );
 }
@@ -322,6 +332,25 @@ export function publishPolicy(
     fetcher,
     `/nori/marketplace/policies/${encodeURIComponent(ref)}/publish`,
     { method: "POST", body: { title, description }, action: "Publish policy" }
+  );
+}
+
+/** POST /nori/marketplace/datasets/{uploadRef}/publish — publish one of your
+ * PROMOTED uploads as a community dataset (uploadRef = the upload session id).
+ * 202: created in pending_review, auto-publishes after re-homing + the format
+ * gate. 403 without publish_public consent; 409 if already published. */
+export function publishDataset(
+  baseUrl: string,
+  fetcher: Fetcher,
+  uploadRef: string,
+  title: string,
+  description: string | null
+): Promise<MyListing> {
+  return noriRequest<MyListing>(
+    baseUrl,
+    fetcher,
+    `/nori/marketplace/datasets/${encodeURIComponent(uploadRef)}/publish`,
+    { method: "POST", body: { title, description }, action: "Publish dataset" }
   );
 }
 
@@ -427,6 +456,42 @@ export interface TrainingEstimateParams {
   setup_seconds: number;
   max_timeout_seconds: number;
   resumable: boolean;
+}
+
+/** One policy in the My Stuff library, with its UI state bucket and lineage. */
+export interface LibraryPolicy {
+  job_id: string;
+  status: string;
+  state: "live" | "training" | "paused" | "failed";
+  policy_class: string | null;
+  steps: number | null;
+  steps_done: number | null;
+  created_at: string;
+  promoted_at: string | null;
+  checkpoint_url: string | null;
+  final_cost_usd: number | null;
+}
+
+/** One uploaded dataset with the policies trained from it. */
+export interface LibraryDataset {
+  dataset_ref: string;
+  session_id: string;
+  label: string;
+  created_at: string;
+  episode_count: number | null;
+  frame_count: number | null;
+  policies: LibraryPolicy[];
+}
+
+export interface Library {
+  datasets: LibraryDataset[];
+  /** Policies whose source dataset can't be resolved (shown as "source not recorded"). */
+  unlinked_policies: LibraryPolicy[];
+}
+
+/** GET /nori/library — the My Stuff aggregate (datasets ↔ policies, joined by lineage). */
+export function getLibrary(baseUrl: string, fetcher: Fetcher): Promise<Library> {
+  return noriRequest<Library>(baseUrl, fetcher, "/nori/library", { action: "Load your library" });
 }
 
 export function getTrainingEstimateParams(

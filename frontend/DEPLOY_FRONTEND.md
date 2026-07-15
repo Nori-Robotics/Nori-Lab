@@ -13,9 +13,23 @@ The app has two halves with opposite hosting needs, so they ship as two things:
 | **Full NoriLeLab app** | The operator's main surface: setup, pairing, marketplace, training, keyboard teleop, leader-arm | **Tauri desktop app** (`desktop/`) — double-click, frozen LeLab backend inside | Yes — bundled |
 | **VR counterpart** | Easy headset access, no laptop | **Hosted static page** (Vercel / Cloudflare Pages), LeLab-free | No |
 
-Rationale: the full app genuinely needs the local server (hardware, config, the
-JWT proxy). The VR drive loop does **not** — so it gets to be a plain hosted page you
-open directly in the Quest browser. Don't force one vehicle to do both jobs.
+> **REVISED 2026-07-13 — the hosted page is no longer VR-only.** The Vercel
+> deploy (lab.norirobotics.com) now runs the FULL app in **direct-backend
+> mode**: when `/nori/config` is unreachable, the build-time fallback also
+> calls `enableDirectBackend(VITE_NORI_BACKEND_URL)` and account / billing /
+> marketplace / pairing / remote-teleop traffic goes straight to Nori-Backend
+> with the browser's JWT (`client.ts`: `withDirectAuth`, `LELAB_ONLY_PREFIXES`
+> guard local-hardware surfaces with a "needs the desktop app" hint; a routing
+> gate — `settleBackendRouting` — keeps mount-time fetches from racing the
+> decision). Two ops facts: `frontend/vercel.json` bakes
+> `VITE_NORI_BACKEND_URL`, and Railway's `NORI_CORS_ALLOW_ORIGINS` env var is
+> SET and REPLACES the in-code allowlist — hosted-origin CORS changes happen
+> in the Railway env, not in `src/config.py`.
+
+Rationale (original, still true for hardware): the desktop app genuinely needs
+the local server (hardware, config, the JWT proxy). Cloud-only surfaces do
+not — they run hosted in direct-backend mode; local-hardware surfaces show the
+desktop-app hint.
 
 `adb reverse` remains the **dev** path and is fine there — this doc is about shipping.
 

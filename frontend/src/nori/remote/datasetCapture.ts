@@ -125,7 +125,10 @@ export class DatasetCapture {
   async begin(teleop: RemoteTeleop, room: string): Promise<void> {
     if (this.captureId) return;
     this.mime = pickMimeType();
-    const layout = teleop.cameraLayoutInfo()?.tiles ?? [];
+    // Full grid ({cols,rows,tiles}) so the exporter can crop the composite into
+    // per-camera views; null on single-camera / layout-unknown sessions.
+    const info = teleop.cameraLayoutInfo();
+    const layout = info ? { cols: info.cols, rows: info.rows, tiles: info.tiles } : null;
     const res = await this.post("/nori/capture/start", {
       room,
       layout,

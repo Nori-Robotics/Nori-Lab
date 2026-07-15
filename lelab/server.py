@@ -170,6 +170,11 @@ from .nori_rollout import router as _rollout_router  # noqa: E402
 
 app.include_router(_rollout_router)
 
+# NORI: local dataset episode review + curation (view/delete without HF).
+from .dataset_episodes import router as _episodes_router  # noqa: E402
+
+app.include_router(_episodes_router)
+
 # In dev mode the React app runs on :8080 while the API runs on :8000; in
 # prod they share an origin and CORS is unnecessary. allow_credentials with
 # a wildcard origin is rejected by browsers, so we drop it.
@@ -1258,6 +1263,13 @@ def nori_stop_training_job(job_id: str, request: Request):
     checkpoints and lands PAUSED within ~a minute."""
     client = _nori_client(request)
     return _nori_proxy(lambda: client.stop_job(job_id))
+
+
+@app.get("/nori/library")
+def nori_library(request: Request):
+    """My Stuff: datasets + policies + lineage in one call."""
+    client = _nori_client(request)
+    return _nori_proxy(client.get_library)
 
 
 @app.get("/nori/training/estimate-params")

@@ -16,12 +16,9 @@ import { Pill } from "@/components/ui/pill";
 import {
   acquirePolicy,
   downloadPolicy,
-  grantConsent,
   listLocalPolicies,
   listMyListings,
   listPolicies,
-  publishPolicy,
-  unpublishPolicy,
   type LocalPolicy,
   type MyListing,
   type PolicyDetails,
@@ -29,6 +26,7 @@ import {
 } from "@/nori/api/client";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { PolicyRunner, type PolicyRunPhase } from "@/nori/remote/policyRun";
+import CommunityPublishCard from "@/nori/components/marketplace/CommunityPublishCard";
 
 /**
  * PREVIEW-ONLY stand-in for GET .../details while the backend endpoint is
@@ -294,180 +292,6 @@ export const ListingStatusChip = ({ status }: { status: string }) => (
   </span>
 );
 
-/**
- * The "// share" section of the drawer for OWN policies. Publishing is
- * consent-gated (403 → inline consent grant + retry) and review-gated
- * server-side: a submission goes "in review" and only a human approval makes
- * it public. Unpublish is instant.
- */
-export const PublishSection = ({
-  details,
-  myListing,
-  baseUrl,
-  fetcher,
-  onChanged,
-}: {
-  details: PolicyDetails;
-  myListing: MyListing | null;
-  baseUrl: string;
-  fetcher: ReturnType<typeof useApi>["fetchWithHeaders"];
-  onChanged: () => void;
-}) => {
-  const [form, setForm] = useState(false);
-  const [pubTitle, setPubTitle] = useState(details.title);
-  const [pubDesc, setPubDesc] = useState("");
-  const [needsConsent, setNeedsConsent] = useState(false);
-  const [consented, setConsented] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const active = myListing && (myListing.in_review || myListing.is_public);
-
-  const submit = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      if (needsConsent && consented) {
-        await grantConsent(baseUrl, fetcher, "publish_public");
-        setNeedsConsent(false);
-      }
-      await publishPolicy(baseUrl, fetcher, details.ref, pubTitle.trim(), pubDesc.trim() || null);
-      setForm(false);
-      onChanged();
-    } catch (e) {
-      const status = (e as { status?: number }).status;
-      if (status === 403) {
-        setNeedsConsent(true);
-        setErr("Publishing needs the 'share publicly' consent — tick the box to grant it and retry.");
-      } else {
-        setErr(e instanceof Error ? e.message : String(e));
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const retract = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await unpublishPolicy(baseUrl, fetcher, details.ref);
-      onChanged();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="mt-6">
-      <div className="eyebrow mb-1">{"// share"}</div>
-
-      {active ? (
-        <div className="space-y-3 py-2">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-[13.5px] text-muted-foreground">
-              {myListing!.in_review
-                ? "Submitted — being safety-scanned and copied to a neutral repo; goes public automatically on pass."
-                : "Live on the community marketplace."}
-            </span>
-            <ListingStatusChip status={myListing!.status} />
-          </div>
-          <button
-            type="button"
-            onClick={retract}
-            disabled={busy}
-            className="w-full rounded-xl border border-border bg-background px-3 py-2 font-mono text-[12px] hover:bg-accent disabled:opacity-50"
-          >
-            {myListing!.is_public ? "unpublish (instant)" : "withdraw submission"}
-          </button>
-        </div>
-      ) : form ? (
-        <div className="space-y-3 py-2">
-          {myListing?.status === "rejected" && myListing.review_reason && (
-            <p className="text-[12.5px] text-destructive">
-              Last submission rejected: {myListing.review_reason}
-            </p>
-          )}
-          <input
-            value={pubTitle}
-            onChange={(e) => setPubTitle(e.target.value)}
-            maxLength={120}
-            placeholder="Public title"
-            className="w-full rounded-xl border border-input bg-background px-3 py-2 text-[14px] focus:outline-none focus:shadow-[0_0_0_3px_#ffe9a8]"
-          />
-          <textarea
-            value={pubDesc}
-            onChange={(e) => setPubDesc(e.target.value)}
-            maxLength={2000}
-            rows={3}
-            placeholder="What does this policy do? (shown to other customers)"
-            className="w-full rounded-xl border border-input bg-background px-3 py-2 text-[13.5px] focus:outline-none focus:shadow-[0_0_0_3px_#ffe9a8]"
-          />
-          {needsConsent && (
-            <label className="flex items-start gap-2 text-[12.5px] text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={consented}
-                onChange={(e) => setConsented(e.target.checked)}
-                className="mt-0.5"
-              />
-              I consent to publishing this policy publicly (grants the
-              &lsquo;publish_public&rsquo; consent; revocable — revoking takes all my
-              shared policies down).
-            </label>
-          )}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={submit}
-              disabled={busy || pubTitle.trim().length < 3 || (needsConsent && !consented)}
-              className="flex-1 rounded-xl border border-border bg-secondary px-3 py-2 font-mono text-[12px] hover:bg-accent disabled:opacity-50"
-            >
-              {busy ? "submitting…" : "submit for review"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setForm(false)}
-              disabled={busy}
-              className="rounded-xl border border-border px-3 py-2 font-mono text-[12px] hover:bg-accent"
-            >
-              cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-2 py-2">
-          {myListing?.status === "rejected" && (
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-[12.5px] text-destructive">
-                {myListing.review_reason
-                  ? `Rejected: ${myListing.review_reason}`
-                  : "Last submission was rejected."}
-              </span>
-              <ListingStatusChip status="rejected" />
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => setForm(true)}
-            className="w-full rounded-xl border border-border bg-secondary px-3 py-2 font-mono text-[12px] hover:bg-accent"
-          >
-            {myListing?.status === "rejected" ? "revise & resubmit →" : "publish to community →"}
-          </button>
-          <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-            Shared policies are privacy-scrubbed, copied to a neutral location, and
-            automatically safety-scanned (safetensors-only) before going public — no
-            manual review.
-          </p>
-        </div>
-      )}
-
-      {err && <p className="mt-2 text-[12.5px] text-destructive">{err}</p>}
-    </div>
-  );
-};
 
 const Marketplace = () => {
   const { baseUrl, fetchWithHeaders } = useApi();
@@ -670,6 +494,9 @@ const Marketplace = () => {
           </p>
         </div>
       </div>
+
+      {/* PUBLISH (policy or dataset — the single publish surface) */}
+      <CommunityPublishCard />
 
       {/* SEARCH */}
       <div className="relative mt-8">

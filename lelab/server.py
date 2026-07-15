@@ -1289,6 +1289,15 @@ def nori_library(request: Request):
     return _nori_proxy(client.get_library)
 
 
+@app.get("/nori/library/datasets/{session_id}/episodes")
+def nori_dataset_episodes(session_id: str, request: Request):
+    """Phase 2 cloud viewer: list a promoted dataset's episodes (+ a signed clip
+    token) from the owner's HF repo. Clips are then fetched straight from the
+    backend using that token, so only this JSON listing needs proxying."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.list_dataset_episodes(session_id))
+
+
 @app.get("/nori/training/estimate-params")
 def nori_training_estimate_params(request: Request):
     """Constants for the training form's live time estimate (steps/s rates,

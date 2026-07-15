@@ -1,32 +1,55 @@
-// NORI: Episode review + curation modal. Play each episode of a LOCAL dataset
-// in the browser (lelab transcodes AV1→H.264 on demand — no HuggingFace login)
-// and delete the bad takes before training. Clips load lazily (only the ones
-// you play get transcoded).
+// NORI: Episode review + curation modal. Play each episode of a dataset in the
+// browser and (LOCAL datasets only) delete the bad takes before training.
+//
+// Two sources:
+//   * LOCAL — a dataset in this laptop's lerobot cache. lelab transcodes AV1→H.264
+//             on demand (no HuggingFace login). Supports view + delete.
+//   * CLOUD — a promoted upload in your Nori account, viewable from anywhere
+//             (hosted app included). The backend serves a preview clip if one
+//             exists, else transcodes on demand. View-only for now.
+//
+// Clips load lazily (only the ones you play are fetched/transcoded).
 
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, X, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useApi } from "@/contexts/ApiContext";
+import { useNori } from "@/nori/NoriContext";
 import {
   listEpisodes,
+  listCloudEpisodes,
   deleteEpisodes,
   episodeClipUrl,
+  cloudEpisodeClipUrl,
   type DatasetEpisode,
 } from "@/nori/remote/episodeReview";
 
+/** What the modal is reviewing: a local lerobot-cache dataset, or a promoted
+ * cloud upload (keyed by its upload session id). */
+export type ReviewSource =
+  | { kind: "local"; repoId: string }
+  | { kind: "cloud"; sessionId: string; title: string };
+
 export function EpisodeReviewModal({
-  repoId,
+  source,
   onClose,
   onChanged,
 }: {
-  repoId: string;
+  source: ReviewSource;
   onClose: () => void;
   onChanged: () => void;
 }) {
-  const { baseUrl } = useApi();
+  const { baseUrl, fetchWithHeaders } = useApi();
+  const { config } = useNori();
+  const backendBase = config?.noriBackendUrl ?? "";
+
+  const isCloud = source.kind === "cloud";
+  const title = source.kind === "local" ? source.repoId : source.title;
+
   const [episodes, setEpisodes] = useState<DatasetEpisode[] | null>(null);
   const [cameras, setCameras] = useState<string[]>([]);
   const [camera, setCamera] = useState<string | null>(null);
+  const [clipToken, setClipToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [marked, setMarked] = useState<Set<number>>(new Set());
   const [playing, setPlaying] = useState<Set<number>>(new Set());
@@ -36,14 +59,19 @@ export function EpisodeReviewModal({
   const load = useCallback(async () => {
     setError(null);
     try {
-      const listing = await listEpisodes(baseUrl, repoId);
+      const listing = isCloud
+        ? await listCloudEpisodes(baseUrl, fetchWithHeaders, source.sessionId)
+        : await listEpisodes(baseUrl, source.repoId);
       setEpisodes(listing.episodes);
       setCameras(listing.cameras);
       setCamera((c) => c ?? listing.cameras[0] ?? null);
+      if ("token" in listing) setClipToken(listing.token);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [baseUrl, repoId]);
+    // source is a stable object per open; deps cover the fields we read.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseUrl, fetchWithHeaders, isCloud, source]);
 
   useEffect(() => {
     void load();
@@ -56,6 +84,14 @@ export function EpisodeReviewModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const clipSrc = (index: number): string | undefined => {
+    if (isCloud) {
+      if (!clipToken || !backendBase) return undefined;
+      return cloudEpisodeClipUrl(backendBase, source.sessionId, index, clipToken, camera ?? undefined);
+    }
+    return episodeClipUrl(baseUrl, source.repoId, index, camera ?? undefined);
+  };
+
   const toggleMark = (i: number) =>
     setMarked((s) => {
       const n = new Set(s);
@@ -64,9 +100,10 @@ export function EpisodeReviewModal({
     });
 
   const doDelete = useCallback(async () => {
+    if (source.kind !== "local") return;
     setBusy(true);
     try {
-      const res = await deleteEpisodes(baseUrl, repoId, [...marked]);
+      const res = await deleteEpisodes(baseUrl, source.repoId, [...marked]);
       setMarked(new Set());
       setConfirm(false);
       onChanged();
@@ -80,7 +117,7 @@ export function EpisodeReviewModal({
     } finally {
       setBusy(false);
     }
-  }, [baseUrl, repoId, marked, onChanged, onClose, load]);
+  }, [baseUrl, source, marked, onChanged, onClose, load]);
 
   return (
     <div
@@ -93,8 +130,8 @@ export function EpisodeReviewModal({
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
-            <p className="eyebrow">Review episodes</p>
-            <h2 className="text-xl font-bold text-[#14131a]">{repoId}</h2>
+            <p className="eyebrow">Review episodes{isCloud ? " · cloud" : ""}</p>
+            <h2 className="text-xl font-bold text-[#14131a]">{title}</h2>
           </div>
           {cameras.length > 1 && (
             <div className="flex items-center gap-1 rounded-full bg-secondary p-1">
@@ -144,7 +181,7 @@ export function EpisodeReviewModal({
                         <video
                           key={`${ep.index}-${camera}`}
                           className="h-full w-full object-cover"
-                          src={episodeClipUrl(baseUrl, repoId, ep.index, camera ?? undefined)}
+                          src={clipSrc(ep.index)}
                           controls
                           autoPlay
                           muted
@@ -166,15 +203,17 @@ export function EpisodeReviewModal({
                           {ep.duration_s}s · {ep.length}fr
                         </p>
                       </div>
-                      <label className="flex shrink-0 cursor-pointer items-center gap-1 text-[11px] text-muted-foreground">
-                        <input
-                          type="checkbox"
-                          checked={isMarked}
-                          onChange={() => toggleMark(ep.index)}
-                          className="accent-[#b03a29]"
-                        />
-                        cut
-                      </label>
+                      {!isCloud && (
+                        <label className="flex shrink-0 cursor-pointer items-center gap-1 text-[11px] text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            checked={isMarked}
+                            onChange={() => toggleMark(ep.index)}
+                            className="accent-[#b03a29]"
+                          />
+                          cut
+                        </label>
+                      )}
                     </div>
                   </div>
                 );
@@ -186,23 +225,24 @@ export function EpisodeReviewModal({
         <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-4">
           <span className="text-sm text-muted-foreground">
             {episodes ? `${episodes.length} episodes` : ""}
-            {marked.size > 0 ? ` · ${marked.size} marked to cut` : ""}
+            {!isCloud && marked.size > 0 ? ` · ${marked.size} marked to cut` : ""}
           </span>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={onClose} disabled={busy}>Close</Button>
-            {confirm ? (
-              <Button className="bg-red-500 text-white hover:bg-red-600" onClick={doDelete} disabled={busy}>
-                {busy ? "Deleting…" : `Yes, delete ${marked.size}`}
-              </Button>
-            ) : (
-              <Button
-                className="bg-red-500 text-white hover:bg-red-600"
-                onClick={() => setConfirm(true)}
-                disabled={marked.size === 0 || busy}
-              >
-                Delete {marked.size || ""} episode{marked.size === 1 ? "" : "s"}
-              </Button>
-            )}
+            {!isCloud &&
+              (confirm ? (
+                <Button className="bg-red-500 text-white hover:bg-red-600" onClick={doDelete} disabled={busy}>
+                  {busy ? "Deleting…" : `Yes, delete ${marked.size}`}
+                </Button>
+              ) : (
+                <Button
+                  className="bg-red-500 text-white hover:bg-red-600"
+                  onClick={() => setConfirm(true)}
+                  disabled={marked.size === 0 || busy}
+                >
+                  Delete {marked.size || ""} episode{marked.size === 1 ? "" : "s"}
+                </Button>
+              ))}
           </div>
         </div>
       </div>

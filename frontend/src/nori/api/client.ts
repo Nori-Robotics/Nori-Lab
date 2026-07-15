@@ -519,6 +519,23 @@ export function listMyDatasets(baseUrl: string, fetcher: Fetcher): Promise<MyDat
   });
 }
 
+/** Short-lived coturn TURN credentials, minted per session (backend §2.4). Drop
+ * straight into RTCPeerConnection.iceServers; re-fetch after `ttl` seconds. */
+export interface TurnCredentials {
+  urls: string[];
+  username: string;
+  credential: string;
+  ttl: number;
+}
+
+/** GET /nori/turn/credentials — mint short-lived coturn creds for this session.
+ * Direct-backend mode maps to /api/v1/turn/credentials. Requires auth. */
+export function getTurnCredentials(baseUrl: string, fetcher: Fetcher): Promise<TurnCredentials> {
+  return noriRequest<TurnCredentials>(baseUrl, fetcher, "/nori/turn/credentials", {
+    action: "Fetch TURN credentials",
+  });
+}
+
 export function getJob(baseUrl: string, fetcher: Fetcher, jobId: string): Promise<TrainingJob> {
   return noriRequest<TrainingJob>(
     baseUrl,

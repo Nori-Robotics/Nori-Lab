@@ -1058,6 +1058,15 @@ def nori_get_customer(request: Request):
     return _nori_proxy(client.get_customer)
 
 
+# NORI: short-lived coturn TURN credentials (§2.4). Proxied to Nori-Backend with the
+# forwarded JWT; the operator app fetches these at session start instead of holding a
+# static secret. The static-auth-secret never touches LeLab or the browser.
+@app.get("/nori/turn/credentials")
+def nori_turn_credentials(request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(client.get_turn_credentials)
+
+
 # NORI: marketplace (Phase 3). Browse + acquire + download-to-local-cache. Running the
 # downloaded policy against the robot (rollout) is blocked on the Pi.
 @app.get("/nori/marketplace/policies")

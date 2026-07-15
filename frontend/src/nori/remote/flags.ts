@@ -16,3 +16,18 @@ export function isM6VideoEnabled(): boolean {
     return false;
   }
 }
+
+// TURN credential minting (rpi5_production_readiness §2.4 / signaling Phase 3): fetch
+// short-lived coturn credentials at session start instead of using the static typed/
+// persisted creds. Shipped DARK until the coturn relay is flipped to `use-auth-secret`
+// AND the backend NORI_TURN_STATIC_AUTH_SECRET is provisioned — until then a minted
+// credential would be rejected by a relay still on `lt-cred-mech`. The cutover is:
+// flip the relay + set the backend secret + enable this flag. Flip for dev/cutover via:
+//   localStorage.setItem("nori_turn_mint", "1"); location.reload();
+export function isTurnMintEnabled(): boolean {
+  try {
+    return localStorage.getItem("nori_turn_mint") === "1";
+  } catch {
+    return false;
+  }
+}

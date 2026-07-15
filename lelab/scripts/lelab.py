@@ -24,6 +24,7 @@ and starts uvicorn with --reload. Opens the browser to :8080.
 
 import argparse
 import atexit
+import contextlib
 import logging
 import os
 import signal
@@ -35,6 +36,7 @@ import time
 import webbrowser
 from pathlib import Path
 
+import psutil
 import uvicorn
 
 logging.basicConfig(level=logging.INFO)
@@ -45,6 +47,114 @@ FRONTEND_PATH = PROJECT_ROOT / "frontend"
 FRONTEND_DIST = FRONTEND_PATH / "dist"
 BACKEND_PORT = 8000
 FRONTEND_DEV_PORT = 8080
+
+# Substrings that mark a listener as a leftover from a previous LeLab run, so
+# _reclaim_port can reclaim it. Anything NOT matching one of these is treated as
+# an unrelated program and left alone (we refuse to kill a stranger's process).
+_OURS_MARKERS = ("uvicorn", "lelab", "vite", "esbuild")
+
+
+def _looks_ours(proc: "psutil.Process") -> bool:
+    """True if this process — or any ancestor — is a LeLab/Vite process. The
+    ancestry walk matters because a uvicorn --reload WORKER has a generic
+    `multiprocessing.spawn` cmdline; only its parent names uvicorn/lelab."""
+    depth = 0
+    cur: psutil.Process | None = proc
+    while cur is not None and depth < 12:
+        try:
+            cmdline = " ".join(cur.cmdline()).lower()
+            if any(m in cmdline for m in _OURS_MARKERS):
+                return True
+            cur = cur.parent()
+        except psutil.Error:
+            return False
+        depth += 1
+    return False
+
+
+def _pids_listening_on(port: int) -> list[int]:
+    """PIDs of processes with a LISTEN socket on `port`, among those this user
+    can inspect. macOS blocks a system-wide net_connections() without root, so
+    we scan per-process (our own children are always inspectable)."""
+    pids: list[int] = []
+    for proc in psutil.process_iter(["pid"]):
+        try:
+            for conn in proc.net_connections(kind="inet"):
+                if (
+                    conn.status == psutil.CONN_LISTEN
+                    and conn.laddr
+                    and conn.laddr.port == port
+                ):
+                    pids.append(proc.pid)
+                    break
+        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue
+    return pids
+
+
+def _reclaim_port(port: int, label: str) -> None:
+    """Ensure `port` is free before we try to bind it.
+
+    A previous run that was hard-killed (or a uvicorn --reload worker that
+    outlived its parent) can keep the port bound and make the next launch fail
+    with 'Address already in use'. We stop any leftover LeLab/Vite process
+    holding it — including child workers — then confirm the port is actually
+    free. An unrelated process on the port is reported, not killed."""
+    my_pid = os.getpid()
+    pids = [p for p in _pids_listening_on(port) if p != my_pid]
+    if not pids:
+        return
+
+    for pid in pids:
+        try:
+            proc = psutil.Process(pid)
+        except psutil.Error:
+            continue  # already gone (e.g. killed as a child of an earlier pid)
+
+        if not _looks_ours(proc):
+            try:
+                cmdline = " ".join(proc.cmdline()) or "<unknown>"
+            except psutil.Error:
+                cmdline = "<unknown>"
+            logger.error(
+                "❌ Port %d (%s) is held by PID %d, which does not look like a "
+                "previous LeLab run:\n     %s\n"
+                "   Refusing to kill it. Stop that process or free the port, then "
+                "retry (to inspect: `lsof -nP -iTCP:%d -sTCP:LISTEN`).",
+                port, label, pid, cmdline, port,
+            )
+            sys.exit(1)
+
+        logger.warning(
+            "♻️  Port %d (%s) still held by a previous run (PID %d) — stopping it...",
+            port, label, pid,
+        )
+        # Kill the whole tree: a uvicorn --reload parent's worker child is the
+        # one actually holding the socket, so terminating just the parent leaves
+        # the port bound.
+        try:
+            victims = [proc, *proc.children(recursive=True)]
+        except psutil.Error:
+            victims = [proc]
+        for v in victims:
+            with contextlib.suppress(psutil.Error):
+                v.terminate()
+        _gone, alive = psutil.wait_procs(victims, timeout=5)
+        for v in alive:
+            with contextlib.suppress(psutil.Error):
+                v.kill()
+
+    # Sockets can linger a beat after the process dies; poll briefly for release.
+    for _ in range(20):
+        if not [p for p in _pids_listening_on(port) if p != my_pid]:
+            return
+        time.sleep(0.25)
+    logger.error(
+        "❌ Port %d (%s) is still in use after cleanup — a process may be "
+        "respawning it. Inspect with `lsof -nP -iTCP:%d -sTCP:LISTEN`.",
+        port, label, port,
+    )
+    sys.exit(1)
 
 
 def _wait_for_port(port: int, timeout: int = 30) -> bool:
@@ -80,6 +190,9 @@ def _run_prod():
         logger.error("   Run `npm run build` in frontend/ first, or use `lelab --dev`.")
         sys.exit(1)
 
+    # Reclaim :8000 from any leftover run so this launch never dies on bind.
+    _reclaim_port(BACKEND_PORT, "backend")
+
     logger.info("🚀 Starting LeLab on http://localhost:%d ...", BACKEND_PORT)
 
     threading.Thread(target=_open_browser_when_ready, daemon=True).start()
@@ -101,6 +214,10 @@ def _run_dev():
     if not FRONTEND_PATH.exists():
         logger.error(f"❌ Frontend not found at {FRONTEND_PATH}")
         sys.exit(1)
+
+    # Reclaim both ports from any leftover run before we spawn anything.
+    _reclaim_port(FRONTEND_DEV_PORT, "frontend")
+    _reclaim_port(BACKEND_PORT, "backend")
 
     logger.info("📦 Installing frontend deps...")
     subprocess.run(["npm", "install"], check=True, cwd=FRONTEND_PATH)

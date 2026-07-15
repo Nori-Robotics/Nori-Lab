@@ -23,6 +23,9 @@ import {
 import { SupabaseSignaling } from "@nori/sdk/supabase";
 import { getSupabase } from "@/nori/auth/supabase";
 import { useNori } from "@/nori/NoriContext";
+import { useApi } from "@/contexts/ApiContext";
+import { getTurnCredentials } from "@/nori/api/client";
+import { isTurnMintEnabled } from "@/nori/remote/flags";
 
 const DEFAULT_STUN = "stun:stun.l.google.com:19302";
 
@@ -104,6 +107,7 @@ const TeleopSessionContext = createContext<TeleopSessionValue | undefined>(undef
 
 export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { activeRobotSerial, customer } = useNori();
+  const { baseUrl, fetchWithHeaders } = useApi();
 
   const teleopRef = useRef<RemoteTeleop | null>(null);
   const [teleop, setTeleop] = useState<RemoteTeleop | null>(null);
@@ -203,7 +207,25 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     setLogLines([]);
     setDaemonStatus(null);
     setConnectStatus({ phase: "joining" });
-    const turnUrls = settings.turn.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+    let turnUrls = settings.turn.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+    let turnUser = settings.turnUser.trim();
+    let turnCred = settings.turnCred.trim();
+    // §2.4 minted TURN creds: when enabled, fetch short-lived coturn credentials at
+    // session start instead of using the static typed/persisted ones. Shipped DARK
+    // (isTurnMintEnabled) until the relay is flipped to use-auth-secret — a minted cred
+    // would be rejected by a relay still on lt-cred-mech. ANY failure falls back to the
+    // configured creds, so this can never make connect worse than before.
+    if (isTurnMintEnabled()) {
+      try {
+        const c = await getTurnCredentials(baseUrl, fetchWithHeaders);
+        turnUrls = c.urls;
+        turnUser = c.username;
+        turnCred = c.credential;
+        appendLog(`TURN: using minted credentials (ttl ${c.ttl}s)`);
+      } catch (e) {
+        appendLog("TURN: mint failed, using configured creds — " + (e instanceof Error ? e.message : String(e)));
+      }
+    }
     const room = settings.room.trim() || serial || "nori-dev";
     // getSupabase() throws when the app never got its config. That throw used to happen OUTSIDE
     // the try below (it's an argument to the constructor), so `connecting` was never cleared and
@@ -224,8 +246,8 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
       token: settings.token.trim(),
       stun: settings.stun.trim() || DEFAULT_STUN,
       turnUrls,
-      turnUser: settings.turnUser.trim(),
-      turnCred: settings.turnCred.trim(),
+      turnUser,
+      turnCred,
       forceRelay: settings.forceRelay,
       arm: settings.arm,
       // Honor the CURRENT UI selection: a fresh RemoteTeleop defaults to cylindrical, which
@@ -272,7 +294,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     } finally {
       setConnecting(false);
     }
-  }, [settings, serial, appendLog, onTelemetry, mode]);
+  }, [settings, serial, appendLog, onTelemetry, mode, baseUrl, fetchWithHeaders]);
 
   const toggleControlMode = useCallback(() => {
     const t = teleopRef.current;

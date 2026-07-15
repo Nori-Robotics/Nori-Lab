@@ -1,0 +1,36 @@
+# What Vercel must NOT upload. A `vercel` deploy uploads from the filesystem, and
+# these dirs are huge, regenerable, and git-ignored — without this file a deploy
+# from the repo root sweeps ~140k dependency/build files and hits Vercel's
+# 15,000-file limit. Vercel installs its own deps at build time, so none of this
+# is needed in the upload.
+
+# Node deps (Vercel runs its own install)
+node_modules/
+**/node_modules/
+
+# Python virtualenvs
+.venv/
+venv/
+**/venv/
+desktop/.build-venv/
+
+# Desktop app (native Tauri + PyInstaller) — not part of any web deploy
+desktop/dist/
+desktop/build/
+desktop/tauri/target/
+desktop/tauri/resources/backend/
+
+# Python backend + packaging cruft (the web projects don't need it)
+build/
+dist/
+*.egg-info/
+__pycache__/
+**/__pycache__/
+.ruff_cache/
+.pytest_cache/
+
+# Sibling working checkout picked up in this tree
+norilelab/
+
+# Local tool state
+.claude/

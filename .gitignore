@@ -96,3 +96,5 @@ desktop/tauri/icons/android/
 desktop/tauri/icons/ios/
 desktop/tauri/icons/Square*Logo.png
 desktop/tauri/icons/StoreLogo.png
+.vercel
+.env*

@@ -178,6 +178,12 @@ class NoriClient:
         """
         return self._request("GET", f"{API}/customers/me/robots")
 
+    def get_turn_credentials(self) -> dict[str, Any]:
+        """GET /turn/credentials — mint short-lived coturn TURN credentials for the
+        operator session (backend §2.4). Forwards the JWT; the static-auth-secret
+        stays server-side, only the expiring HMAC credential comes back."""
+        return self._request("GET", f"{API}/turn/credentials")
+
     def select_robot(self, robot_serial_number: str) -> dict[str, Any]:
         """POST /customers/me/robots/{serial}/select — set the active robot.
 

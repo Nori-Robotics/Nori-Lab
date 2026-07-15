@@ -239,10 +239,19 @@ export interface PolicyFileSummary {
   size_bytes: number | null;
   sha256: string | null;
 }
+/** LeRobot stats for a dataset listing (from meta/info.json); datasets only. */
+export interface DatasetStats {
+  total_episodes: number | null;
+  total_frames: number | null;
+  fps: number | null;
+  robot_type: string | null;
+  task: string | null;
+}
 /** Full detail view — superset of the catalog list entry. */
 export interface PolicyDetails {
   ref: string;
   source: string;
+  kind?: string; // "policy" | "dataset" | "bundle"
   title: string;
   is_renamed: boolean;
   description: string | null;
@@ -255,6 +264,7 @@ export interface PolicyDetails {
   timeout_seconds: number | null;
   editable: boolean;
   files: PolicyFileSummary[];
+  dataset_stats?: DatasetStats | null;
 }
 
 /** GET /nori/marketplace/policies/{ref}/details — full detail view. */
@@ -266,7 +276,7 @@ export function getPolicyDetails(
   return noriRequest<PolicyDetails>(
     baseUrl,
     fetcher,
-    `/nori/marketplace/policies/${encodeURIComponent(ref)}/details`,
+    `/nori/marketplace/policies/${encodeURIComponent(ref)}`,
     { action: "Load policy details" }
   );
 }

@@ -105,8 +105,9 @@ const MarketplaceDetail = () => {
   }, [load, refreshLocal, refreshMyListings]);
 
   const isDataset =
+    loaded?.details.kind === "dataset" ||
     (loaded?.entry as (PolicyListEntry & { kind?: string }) | null | undefined)?.kind ===
-    "dataset";
+      "dataset";
   const installed = loaded ? installedRefs.has(loaded.details.ref) : false;
   const myListing = useMemo(
     () => myListings.find((l) => l.source_job_id === ref) ?? null,
@@ -268,6 +269,25 @@ const MarketplaceDetail = () => {
       <div className="mt-8 grid gap-8 md:grid-cols-[1fr_1fr]">
         <div>
           <div className="eyebrow mb-1">{"// about"}</div>
+          {isDataset && details.dataset_stats && (
+            <>
+              {details.dataset_stats.task && (
+                <DetailRow label="task" value={details.dataset_stats.task} />
+              )}
+              {details.dataset_stats.robot_type && (
+                <DetailRow label="robot" value={details.dataset_stats.robot_type} />
+              )}
+              {details.dataset_stats.total_episodes != null && (
+                <DetailRow label="episodes" value={String(details.dataset_stats.total_episodes)} />
+              )}
+              {details.dataset_stats.total_frames != null && (
+                <DetailRow label="frames" value={details.dataset_stats.total_frames.toLocaleString()} />
+              )}
+              {details.dataset_stats.fps != null && (
+                <DetailRow label="fps" value={String(details.dataset_stats.fps)} />
+              )}
+            </>
+          )}
           {details.policy_class && <DetailRow label="class" value={details.policy_class} />}
           {details.dataset_repo && (
             <DetailRow label={isDataset ? "repo" : "dataset"} value={details.dataset_repo} />

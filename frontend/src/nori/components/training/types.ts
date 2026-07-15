@@ -15,10 +15,13 @@ export type NoriTrainingFormState = NoriTrainingConfig & {
   open_dataset_id?: string;
 };
 
-/** Feasible policy options shown in the form. Backend whitelists ONLY "act"
- *  today (see parkedConfig.FULL_POLICY_OPTIONS for the parked remainder). */
+/** Feasible policy options shown in the form — classes VERIFIED end-to-end in
+ *  the training container (whitelisted ≠ verified: the backend accepts
+ *  everything detect.py recognizes, but only these have proven container
+ *  runs + POLICY_STEP_RATES rows). Parked remainder: parkedConfig. */
 export const FEASIBLE_POLICY_OPTIONS: { value: string; label: string }[] = [
   { value: "act", label: "ACT (Action Chunking Transformer)" },
+  { value: "diffusion", label: "Diffusion Policy" },
 ];
 
 /** "Max training duration" options. Which are selectable is tier-driven: the

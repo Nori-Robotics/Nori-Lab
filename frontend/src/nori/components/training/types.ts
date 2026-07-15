@@ -42,7 +42,11 @@ export const DEFAULT_TRAINING_CONFIG: NoriTrainingFormState = {
   batch_size: 8,
   num_workers: 4,
   seed: 1000,
-  policy_use_amp: false,
+  // AMP on by default — a near-free ~1.5-2x speedup + lower GPU memory on the
+  // GPUs HF Jobs runs, and ACT is numerically robust to it. Especially helps
+  // multi-camera datasets (e.g. the 3-cam move_red_cup_split), whose activation
+  // memory is ~Ncam x a single-camera run.
+  policy_use_amp: true,
   log_freq: 250,
   timeout_seconds: 900,
   dataset_ref: undefined,

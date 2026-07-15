@@ -137,11 +137,10 @@ export function ConnectionSettings() {
           checked={settings.forceRelay}
           onCheckedChange={(c) => set("forceRelay", c === true)}
         />
-        force relay (TURN-only — Step 6 test)
+        force relay (TURN-only)
       </label>
       <p className="text-xs text-muted-foreground">
-        Settings persist locally and must match the Pi's <span className="font-mono">.env</span>.
-        Change while connected to apply on the next session (Disconnect → Connect).
+        Settings persist, disconnect then reconnect to see changes.
       </p>
     </div>
   );

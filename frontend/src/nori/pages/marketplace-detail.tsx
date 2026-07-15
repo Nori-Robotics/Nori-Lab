@@ -18,13 +18,14 @@ import {
   listMyListings,
   listPolicies,
   renamePolicy,
+  unpublishPolicy,
   type MyListing,
   type PolicyDetails,
   type PolicyListEntry,
 } from "@/nori/api/client";
 import {
   DetailRow,
-  PublishSection,
+  ListingStatusChip,
   SourceChip,
   fmtBytes,
   mockDetailsFor,
@@ -109,6 +110,20 @@ const MarketplaceDetail = () => {
     (loaded?.entry as (PolicyListEntry & { kind?: string }) | null | undefined)?.kind ===
       "dataset";
   const installed = loaded ? installedRefs.has(loaded.details.ref) : false;
+  const withdrawListing = useCallback(async () => {
+    if (!ref) return;
+    setBusy(true);
+    setActionErr(null);
+    try {
+      await unpublishPolicy(baseUrl, fetchWithHeaders, ref);
+      await refreshMyListings();
+    } catch (e) {
+      setActionErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [ref, baseUrl, fetchWithHeaders, refreshMyListings]);
+
   const myListing = useMemo(
     () => myListings.find((l) => l.source_job_id === ref) ?? null,
     [myListings, ref]
@@ -358,14 +373,26 @@ const MarketplaceDetail = () => {
         )}
       </div>
 
-      {details.editable && (
-        <PublishSection
-          details={details}
-          myListing={myListing}
-          baseUrl={baseUrl}
-          fetcher={fetchWithHeaders}
-          onChanged={refreshMyListings}
-        />
+      {/* Community status (publishing itself moved to the marketplace page's
+          "Publish something to the community" card — the single publish
+          surface). Owners keep status visibility + instant withdraw here. */}
+      {details.editable && myListing && (myListing.in_review || myListing.is_public) && (
+        <div className="mt-6 flex items-center justify-between gap-3 rounded-xl border border-border bg-secondary/60 px-3 py-2">
+          <span className="flex items-center gap-2 text-[13px]">
+            <ListingStatusChip status={myListing.status} />
+            <span className="text-muted-foreground">
+              {myListing.is_public ? "live in the community" : "being copied + scanned"}
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={withdrawListing}
+            disabled={busy}
+            className="shrink-0 rounded-xl border border-destructive/40 bg-background px-3 py-1.5 font-mono text-[12px] text-destructive hover:bg-destructive/10 disabled:opacity-50"
+          >
+            {myListing.is_public ? "unpublish (instant)" : "withdraw submission"}
+          </button>
+        </div>
       )}
 
       {actionErr && <p className="mt-4 text-[13px] text-destructive">{actionErr}</p>}

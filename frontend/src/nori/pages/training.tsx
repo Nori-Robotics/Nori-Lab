@@ -145,9 +145,27 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
     let cancelled = false;
     let offset = 0; // backend log cursor (next_offset); resets per jobId
     let terminal = false;
+    // The route param `jobId` is the LOCAL LeLab job id; the backend logs
+    // endpoint needs the Nori-Backend UUID, which the job record carries as
+    // nori_job_uuid (captured at dispatch, persisted to disk → survives a
+    // lelab restart). Resolve it from getJob, then poll logs by UUID. (Passing
+    // the local id straight to the backend endpoint 500s — the bug this fixes.)
+    let backendUuid: string | null = null;
     const tick = async () => {
+      // 1. Job record first — carries nori_job_uuid + drives the header/stats.
       try {
-        const res = await getBackendJobLogs(baseUrl, fetchWithHeaders, jobId, offset);
+        const next = await getJob(baseUrl, fetchWithHeaders, jobId);
+        if (cancelled) return;
+        setJob(next);
+        if (next.nori_job_uuid) backendUuid = next.nori_job_uuid;
+      } catch {
+        /* keep last-known record + uuid */
+      }
+      // 2. Logs from Nori-Backend via the app's live session, keyed by the
+      //    backend UUID (not the local id). Independent of the local streamer.
+      if (!backendUuid) return;
+      try {
+        const res = await getBackendJobLogs(baseUrl, fetchWithHeaders, backendUuid, offset);
         if (cancelled) return;
         offset = res.next_offset ?? offset;
         terminal = res.is_terminal;
@@ -162,13 +180,6 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      }
-      // Job record for the header/stats panel — best-effort, display only.
-      try {
-        const next = await getJob(baseUrl, fetchWithHeaders, jobId);
-        if (!cancelled) setJob(next);
-      } catch {
-        /* display-only; the backend log stream above is the source of truth */
       }
     };
     tick();

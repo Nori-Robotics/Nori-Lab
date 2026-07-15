@@ -31,6 +31,7 @@
 # serial-bus cleanup, which doesn't apply here — no bus is opened.
 
 import base64
+import json
 import logging
 import threading
 from pathlib import Path
@@ -86,11 +87,32 @@ def _apply_act_execution(cfg, temporal_ensemble_coeff, n_action_steps) -> dict[s
     }
 
 
+def _resolve_fps(bundle: Path, override: int | None) -> int:
+    """Control-loop rate for the rollout. Priority: explicit override → the
+    training fps stamped into the bundle (nori_meta.json, written at promotion)
+    → the conservative default. Running the loop at the TRAINING fps matters for
+    ACT — especially temporal ensembling — which assumes execution at the rate
+    the policy was trained on (e.g. 15 Hz for move_red_cup_split, not 10)."""
+    if override and override > 0:
+        return int(override)
+    meta = bundle / "nori_meta.json"
+    if meta.is_file():
+        try:
+            with open(meta) as f:
+                fps = json.load(f).get("fps")
+            if isinstance(fps, (int, float)) and fps > 0:
+                return int(round(fps))
+        except Exception:
+            logger.warning("[ROLLOUT] unreadable nori_meta.json in %s — using default fps", bundle)
+    return DEFAULT_FPS
+
+
 def _load_bundle(
     ref: str,
     joints: list[str],
     temporal_ensemble_coeff: float | None = None,
     n_action_steps: int | None = None,
+    fps: int | None = None,
 ) -> dict[str, Any]:
     import torch
     from lerobot.configs.policies import PreTrainedConfig
@@ -103,6 +125,7 @@ def _load_bundle(
             detail=f"policy {ref!r} is not installed locally — install it from the marketplace first.",
         )
 
+    resolved_fps = _resolve_fps(bundle, fps)
     cfg = PreTrainedConfig.from_pretrained(str(bundle))
     # Apply inference-time execution overrides BEFORE building the policy so the
     # action queue / temporal ensembler are constructed from the chosen values.
@@ -165,6 +188,7 @@ def _load_bundle(
         "joints": list(joints),
         "image_shapes": image_shapes,
         "execution": execution,
+        "fps": resolved_fps,
     }
 
 
@@ -203,6 +227,10 @@ class LoadBody(BaseModel):
     # Both omitted → use the checkpoint's saved values.
     temporal_ensemble_coeff: float | None = None
     n_action_steps: int | None = None
+    # Control-loop rate override (Hz). Omit to use the bundle's stamped training
+    # fps (nori_meta.json), falling back to DEFAULT_FPS. ACT should execute at
+    # the fps it was trained on.
+    fps: int | None = None
 
 
 @router.post("/load")
@@ -215,6 +243,7 @@ def rollout_load(body: LoadBody):
             body.ref, body.joints,
             temporal_ensemble_coeff=body.temporal_ensemble_coeff,
             n_action_steps=body.n_action_steps,
+            fps=body.fps,
         )
         _session.update(sess)
         logger.info("[ROLLOUT] loaded %s on %s (%d joints, images: %s, exec: %s)",
@@ -225,7 +254,7 @@ def rollout_load(body: LoadBody):
             "device": sess["device"],
             "joints": sess["joints"],
             "image_keys": {k: list(v) for k, v in sess["image_shapes"].items()},
-            "fps": DEFAULT_FPS,
+            "fps": sess["fps"],
             "execution": sess["execution"],
         }
 

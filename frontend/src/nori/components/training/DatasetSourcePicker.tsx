@@ -88,11 +88,28 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
   };
 
   // -- Nori cloud: the customer's promoted uploads -------------------------------
-  const [myDatasets, setMyDatasets] = useState<{ ref: string; label: string; source?: string }[]>([]);
+  type MyRow = {
+    ref: string;
+    label: string;
+    source?: string;
+    createdAt: string;
+    episodeCount?: number | null;
+    frameCount?: number | null;
+  };
+  const [myDatasets, setMyDatasets] = useState<MyRow[]>([]);
   const refreshMyDatasets = useCallback(() => {
     listMyDatasets(baseUrl, fetchWithHeaders)
       .then((rows) =>
-        setMyDatasets(rows.map((d) => ({ ref: d.dataset_ref, label: d.label, source: d.source }))),
+        setMyDatasets(
+          rows.map((d) => ({
+            ref: d.dataset_ref,
+            label: d.label,
+            source: d.source,
+            createdAt: d.created_at,
+            episodeCount: d.episode_count,
+            frameCount: d.frame_count,
+          })),
+        ),
       )
       .catch(() => {
         // No uploads yet / transient — the "Latest" default still dispatches.
@@ -162,6 +179,15 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
       .catch(() => setOpenLoaded(true));
   }, [source, openLoaded, baseUrl, fetchWithHeaders]);
 
+  // The dataset whose summary to show under the Nori-cloud picker. An undefined
+  // dataset_ref means "Latest upload (default)" → the newest row (backend orders
+  // desc), so the card still reflects what will actually train.
+  const selectedNori =
+    config.dataset_ref === undefined
+      ? myDatasets[0]
+      : myDatasets.find((d) => d.ref === config.dataset_ref);
+  const isLatest = config.dataset_ref === undefined;
+
   return (
     <Panel eyebrow="dataset" title="Choose training data">
       <div className="space-y-4">
@@ -193,7 +219,57 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
                 ))}
               </SelectContent>
             </Select>
-            <p className="mt-1 text-xs text-[#14131a]/50">
+
+            {selectedNori && (
+              <div className="mt-3 rounded-xl border border-[#14131a]/12 bg-[#14131a]/[0.02] px-3.5 py-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold text-[#14131a]">
+                    {selectedNori.label}
+                  </span>
+                  {isLatest && (
+                    <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#b06a1c]">
+                      latest
+                    </span>
+                  )}
+                </div>
+                {selectedNori.source === "community" ? (
+                  <p className="mt-1 text-xs text-[#14131a]/55">
+                    Acquired from the marketplace.
+                  </p>
+                ) : selectedNori.episodeCount != null || selectedNori.frameCount != null ? (
+                  <p className="mt-1 text-xs tabular-nums text-[#14131a]/60">
+                    {selectedNori.episodeCount != null && (
+                      <>
+                        <b className="font-semibold text-[#14131a]">
+                          {selectedNori.episodeCount.toLocaleString()}
+                        </b>{" "}
+                        {selectedNori.episodeCount === 1 ? "episode" : "episodes"}
+                      </>
+                    )}
+                    {selectedNori.episodeCount != null &&
+                      selectedNori.frameCount != null &&
+                      " · "}
+                    {selectedNori.frameCount != null && (
+                      <>
+                        <b className="font-semibold text-[#14131a]">
+                          {selectedNori.frameCount.toLocaleString()}
+                        </b>{" "}
+                        frames
+                      </>
+                    )}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-[#14131a]/45">
+                    Episode counts weren't recorded for this upload.
+                  </p>
+                )}
+                <p className="mt-0.5 text-[11px] text-[#14131a]/40">
+                  Uploaded {new Date(selectedNori.createdAt).toLocaleDateString()}
+                </p>
+              </div>
+            )}
+
+            <p className="mt-2 text-xs text-[#14131a]/50">
               Datasets stored in your Nori account — uploaded from your robot,
               imported from this laptop or your HF account (Import tab), or acquired from the
               marketplace (shown as “Community · …”).

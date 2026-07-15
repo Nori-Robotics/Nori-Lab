@@ -598,6 +598,10 @@ export interface MyDataset {
   created_at: string;
   session_id: string;
   source?: string;
+  /** Summary shown under the training dataset picker. Null for community
+   * datasets and for uploads promoted before count capture landed. */
+  episode_count?: number | null;
+  frame_count?: number | null;
 }
 
 /** GET /nori/datasets/mine — the caller's promoted datasets, newest first. */

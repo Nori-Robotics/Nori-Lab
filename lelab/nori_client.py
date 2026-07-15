@@ -504,6 +504,53 @@ class NoriClient:
                 status_code=resp.status_code,
             )
 
+    def _find_duplicate_upload(
+        self, local_path: str, manifest: list[dict[str, Any]], label: str
+    ) -> dict[str, Any] | None:
+        """Idempotency check: is this exact dataset already promoted?
+
+        A promoted session is a duplicate when its stored manifest equals ours
+        as a set of (path, size) pairs AND no local file has been modified
+        since that session finalized (the mtime guard catches the rare
+        same-size content edit that path+size alone would miss). Same-label
+        sessions are checked first — the overwhelmingly common repeat — then
+        the most recent few others. Any error here degrades to uploading
+        (never the reverse: a false "duplicate" would silently drop data).
+        """
+        try:
+            sessions = self.list_my_datasets()
+            if not isinstance(sessions, list):
+                return None
+            own = [s for s in sessions if s.get("source") != "community"]
+            own.sort(key=lambda s: s.get("created_at", ""), reverse=True)
+            own.sort(key=lambda s: s.get("label") != label)  # stable: same-label first
+            ours = sorted((e["path"], int(e["size"])) for e in manifest)
+            root = Path(local_path)
+            newest_mtime = max(
+                (p.stat().st_mtime for p in root.rglob("*") if p.is_file()), default=0.0
+            )
+            for s in own[:8]:  # bounded: one GET per candidate
+                row = self.get_dataset_upload(s["session_id"])
+                if row.get("status") != "PROMOTED":
+                    continue
+                theirs = sorted(
+                    (e["path"], int(e["size"])) for e in (row.get("manifest") or [])
+                )
+                if theirs != ours:
+                    continue
+                finalized = row.get("finalized_at") or row.get("created_at") or ""
+                try:
+                    from datetime import datetime
+
+                    cutoff = datetime.fromisoformat(finalized.replace("Z", "+00:00")).timestamp()
+                except (ValueError, AttributeError):
+                    continue
+                if newest_mtime <= cutoff:
+                    return row
+        except Exception:
+            logger.debug("duplicate-upload check failed; uploading normally", exc_info=True)
+        return None
+
     def upload_dataset(
         self,
         local_path: str,
@@ -511,9 +558,16 @@ class NoriClient:
         poll_interval: float = 5.0,
         poll_timeout: float = 1800.0,
         label: str | None = None,
+        force: bool = False,
     ) -> dict[str, Any]:
         """Full 4-step upload: build+validate manifest -> start -> PUT each file to S3 ->
         finalize (retry HEAD-miss) -> poll until terminal. Returns the final SessionRow.
+
+        IDEMPOTENT unless the dataset changed: when an already-PROMOTED session
+        has the identical manifest and the local files are untouched since it
+        finalized, that session is returned (with `"deduplicated": True` added)
+        instead of re-transferring gigabytes into a duplicate. `force=True`
+        skips the check.
 
         Raises ManifestError on a bad dataset dir, NoriBackendError on backend/S3/timeout.
         """
@@ -525,6 +579,16 @@ class NoriClient:
         # shows "pick_place_mugs", not "Upload <date>".
         if label is None:
             label = Path(local_path).name
+
+        if not force:
+            existing = self._find_duplicate_upload(local_path, manifest, label)
+            if existing is not None:
+                logger.info(
+                    "upload of %s skipped — identical to promoted session %s",
+                    local_path, existing.get("id"),
+                )
+                return {**existing, "deduplicated": True}
+
         start = self.start_dataset_upload(manifest, commit_message=commit_message, label=label)
         session_id = start["session_id"]
         # path -> presigned PUT URL

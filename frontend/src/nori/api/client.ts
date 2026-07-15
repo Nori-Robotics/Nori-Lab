@@ -27,6 +27,9 @@ export type DispatchResponse = components["schemas"]["DispatchResponse"];
 export type TrainingJob = components["schemas"]["TrainingJob"];
 export type TrainingJobLogs = components["schemas"]["TrainingJobLogs"];
 export type SessionRow = components["schemas"]["SessionRow"];
+/** upload_dataset adds this when it skipped the transfer because an identical
+ *  promoted upload already exists (idempotent upload). */
+export type MaybeDeduplicated = { deduplicated?: boolean };
 export type Consent = components["schemas"]["Consent"];
 export type ConsentType = components["schemas"]["ConsentGrantRequest"]["consent_type"];
 export type DeletionRequest = components["schemas"]["DeletionRequest"];

@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
 import { useApi } from "@/contexts/ApiContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
-import { uploadDataset } from "@/nori/api/client";
+import { uploadDataset, type MaybeDeduplicated } from "@/nori/api/client";
 import { DatasetCapture, type CaptureDatasetEntry } from "@/nori/remote/datasetCapture";
 
 type Phase =
@@ -26,7 +26,7 @@ type Phase =
   | { kind: "exporting" }
   | { kind: "exported"; repoId: string; appended: boolean }
   | { kind: "uploading"; repoId: string }
-  | { kind: "uploaded"; repoId: string }
+  | { kind: "uploaded"; repoId: string; wasDuplicate: boolean }
   | { kind: "error"; message: string };
 
 type Destination = { mode: "new"; name: string } | { mode: "append"; repoId: string };
@@ -262,8 +262,12 @@ export function DatasetCaptureCard() {
     const repoId = phase.repoId;
     setPhase({ kind: "uploading", repoId });
     try {
-      await uploadDataset(baseUrl, fetchWithHeaders, repoId, "Remote-session browser capture");
-      setPhase({ kind: "uploaded", repoId });
+      const session = await uploadDataset(baseUrl, fetchWithHeaders, repoId, "Remote-session browser capture");
+      setPhase({
+        kind: "uploaded",
+        repoId,
+        wasDuplicate: !!(session as MaybeDeduplicated).deduplicated,
+      });
     } catch (e) {
       setPhase({
         kind: "error",
@@ -425,7 +429,11 @@ export function DatasetCaptureCard() {
             <p className="text-sm">
               {phase.kind === "exported" && phase.appended ? "Episodes added to " : "Dataset "}
               <span className="font-mono text-xs">{phase.repoId}</span>{" "}
-              {phase.kind === "uploaded" ? "uploaded to your cloud repo ✓" : "saved locally."}
+              {phase.kind === "uploaded"
+                ? phase.wasDuplicate
+                  ? "already in your cloud (unchanged since last upload) ✓"
+                  : "uploaded to your cloud repo ✓"
+                : "saved locally."}
             </p>
             {phase.kind !== "uploaded" && (
               <div className="flex items-center gap-3">

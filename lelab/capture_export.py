@@ -91,6 +91,30 @@ def _state_vector(state: dict, joints: list[str]) -> np.ndarray:
     return np.array([float(state.get(j, 0.0)) for j in joints], dtype=np.float32)
 
 
+def _views_from_layout(meta, w, h):
+    """[(feature_key, (y0,y1,x0,x1))] slicing a composite into per-camera views.
+    A grid layout {cols,rows,tiles} -> one observation.images.<role> per named
+    tile (empty cells skipped, row-major to match the SDK's cameraTileRect). No
+    usable layout -> the whole frame as observation.images.remote (legacy)."""
+    layout = meta.get("layout")
+    if isinstance(layout, dict):
+        cols = int(layout.get("cols") or 0)
+        rows = int(layout.get("rows") or 0)
+        tiles = list(layout.get("tiles") or [])
+        if cols >= 1 and rows >= 1 and tiles:
+            tw, th = w // cols, h // rows
+            views = []
+            for i, role in enumerate(tiles):
+                if not role:
+                    continue
+                key = "observation.images." + (re.sub(r"[^a-z0-9_]+", "_", str(role).lower()).strip("_") or f"cam{i}")
+                x0, y0 = (i % cols) * tw, (i // cols) * th
+                views.append((key, (y0, y0 + th, x0, x0 + tw)))
+            if views:
+                return views
+    return [("observation.images.remote", (0, h, 0, w))]
+
+
 def export_capture(
     capture_dir: Path,
     fps: int = 15,
@@ -163,10 +187,24 @@ def export_capture(
             fps = int(dataset.fps)
         # Frame geometry contract comes from the dataset, not this capture's
         # probe — the resize path below normalizes any drift.
-        vid = dataset.features.get("observation.images.remote")
-        if vid is None:
-            raise ValueError(f"dataset {append_to!r} has no remote view — not a capture dataset")
-        h, w = int(vid["shape"][0]), int(vid["shape"][1])
+        img_keys = sorted(k for k in dataset.features if k.startswith("observation.images."))
+        if not img_keys:
+            raise ValueError(f"dataset {append_to!r} has no camera views — not a capture dataset")
+        if img_keys == ["observation.images.remote"]:
+            vid = dataset.features["observation.images.remote"]
+            h, w = int(vid["shape"][0]), int(vid["shape"][1])
+            views = [("observation.images.remote", (0, h, 0, w))]
+        else:
+            cap_keys = sorted(k for k, _ in _views_from_layout(meta, 2, 2))
+            if cap_keys != img_keys:
+                raise ValueError(
+                    f"capture cameras {cap_keys} don't match dataset {append_to!r} cameras {img_keys}"
+                )
+            lay = meta.get("layout") or {}
+            th = int(dataset.features[img_keys[0]]["shape"][0])
+            tw = int(dataset.features[img_keys[0]]["shape"][1])
+            h, w = int(lay.get("rows") or 1) * th, int(lay.get("cols") or 1) * tw
+            views = _views_from_layout(meta, w, h)
         repo_id = append_to
     else:
         if name:
@@ -179,17 +217,20 @@ def export_capture(
             stem = "nori_remote_capture"
             repo_id = f"{stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
+        # Per-camera views cropped from the composite when the layout is a grid
+        # (else a single observation.images.remote). Feeds a policy real per-cam
+        # images instead of one mosaic it must sub-attend to.
+        views = _views_from_layout(meta, w, h)
         features = {
             "observation.state": {"dtype": "float32", "shape": (len(joints),), "names": joints},
             "action": {"dtype": "float32", "shape": (len(joints),), "names": joints},
-            # One composite view (the robot's single H.264 mosaic). Per-tile crops
-            # are a follow-up — meta.json carries the layout for it.
-            "observation.images.remote": {
-                "dtype": "video",
-                "shape": (h, w, 3),
-                "names": ["height", "width", "channels"],
-            },
         }
+        for _key, (_y0, _y1, _x0, _x1) in views:
+            features[_key] = {
+                "dtype": "video",
+                "shape": (_y1 - _y0, _x1 - _x0, 3),
+                "names": ["height", "width", "channels"],
+            }
 
         dataset = LeRobotDataset.create(
             repo_id,
@@ -247,12 +288,17 @@ def export_capture(
                     import cv2
 
                     img = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
-                dataset.add_frame({
-                    "observation.images.remote": img,
+                frame_out = {
                     "observation.state": states[i],
                     "action": states[i + 1],
                     "task": ep["task"],
-                })
+                }
+                for _key, (_y0, _y1, _x0, _x1) in views:
+                    frame_out[_key] = (
+                        img if len(views) == 1
+                        else np.ascontiguousarray(img[_y0:_y1, _x0:_x1])
+                    )
+                dataset.add_frame(frame_out)
                 added += 1
             if added:
                 dataset.save_episode()

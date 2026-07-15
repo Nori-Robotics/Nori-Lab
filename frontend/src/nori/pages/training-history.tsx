@@ -224,11 +224,19 @@ const TrainingHistory = () => {
                     </CardTitle>
                     <span className="flex items-center gap-2">
                       <span className={`text-xs ${statusTone(job.status)}`}>
-                        {job.status === "PAUSED" &&
-                        (job as { steps_done?: number | null }).steps_done != null &&
-                        (job as { applied_config?: { steps?: number } | null }).applied_config?.steps
-                          ? `PAUSED · ${(job as { steps_done?: number | null }).steps_done}/${String((job as { applied_config?: { steps?: number } | null }).applied_config?.steps)} steps`
-                          : job.status}
+                        {(() => {
+                          // A completed run trained to its target, so the trained
+                          // step count == applied_config.steps (steps_done is only
+                          // stamped on pause). Derive it here so no backend change
+                          // is needed to show it.
+                          const ac = (job as { applied_config?: { steps?: number } | null }).applied_config;
+                          const done = (job as { steps_done?: number | null }).steps_done;
+                          if (job.status === "PAUSED" && done != null && ac?.steps)
+                            return `PAUSED · ${done.toLocaleString()}/${ac.steps.toLocaleString()} steps`;
+                          if (job.status === "COMPLETED" && ac?.steps)
+                            return `COMPLETED · ${ac.steps.toLocaleString()} steps`;
+                          return job.status;
+                        })()}
                       </span>
                       {STOPPABLE.has(job.status) && (
                         <Button
@@ -265,7 +273,11 @@ const TrainingHistory = () => {
                             void onContinue(
                               job.id,
                               job.timeout_duration_seconds || 3600,
-                              job.steps_done,
+                              // completed run trained to its target; steps_done is
+                              // only set on pause, so fall back to the target.
+                              job.steps_done ??
+                                (job as { applied_config?: { steps?: number } | null })
+                                  .applied_config?.steps,
                             );
                           }}
                         >

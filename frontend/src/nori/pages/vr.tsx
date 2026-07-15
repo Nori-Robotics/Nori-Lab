@@ -209,24 +209,12 @@ export default function VrLanding() {
                       <Input id="stun" value={settings.stun}
                         onChange={(e) => set("stun", e.target.value)} />
                     </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="turn">TURN URL(s) (blank = STUN-only)</Label>
-                      <Input id="turn" value={settings.turn}
-                        onChange={(e) => set("turn", e.target.value)}
-                        placeholder="turn:turn.example.com:3478?transport=udp" />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="turnUser">TURN user</Label>
-                        <Input id="turnUser" value={settings.turnUser}
-                          onChange={(e) => set("turnUser", e.target.value)} />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="turnCred">TURN cred</Label>
-                        <Input id="turnCred" type="password" value={settings.turnCred}
-                          onChange={(e) => set("turnCred", e.target.value)} />
-                      </div>
-                    </div>
+                    {/* TURN URL/user/cred inputs intentionally removed (§2.4 minted creds), same
+                        as Home's ConnectionSettings: the backend mints per-session coturn
+                        credentials at connect and overrides these settings, so a hand-typed
+                        static cred could only make a working session fail. The underlying
+                        settings + connect() fallback are unchanged (a dev can still inject
+                        via localStorage). */}
                     <label className="flex items-center gap-2 text-sm">
                       <input type="checkbox" checked={settings.forceRelay}
                         onChange={(e) => set("forceRelay", e.target.checked)} />

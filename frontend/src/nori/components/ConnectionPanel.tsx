@@ -23,9 +23,10 @@ import { ConnectionBanner } from "@/nori/remote/TeleopStatus";
  * The connect-failure banner, on the page that owns the settings it tells you to fix.
  *
  * Remote renders the same banner, but a failed connect is usually a settings problem (wrong
- * access code, wrong room), and the settings only exist here — telling someone on Remote to
- * "open your call settings" when the fields live on Home is a dead end. Renders nothing while
- * idle or connected, so it costs no space in the common case.
+ * access code, wrong room), and the settings only exist here — so Remote passes `settingsTo`
+ * and its banner links back to this page; here the settings sit directly below the banner and
+ * no link is needed. Renders nothing while idle or connected, so it costs no space in the
+ * common case.
  */
 export function ConnectionStatus() {
   const { connectStatus } = useTeleopSession();
@@ -125,23 +126,12 @@ export function ConnectionSettings() {
         <Label htmlFor="stun">STUN</Label>
         <Input id="stun" value={settings.stun} onChange={(e) => set("stun", e.target.value)} />
       </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="turn">TURN URL(s) (blank = STUN-only)</Label>
-        <Input id="turn" value={settings.turn} onChange={(e) => set("turn", e.target.value)}
-          placeholder="turn:turn.example.com:3478?transport=udp" />
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div className="space-y-1.5">
-          <Label htmlFor="turnUser">TURN user</Label>
-          <Input id="turnUser" value={settings.turnUser}
-            onChange={(e) => set("turnUser", e.target.value)} />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="turnCred">TURN cred</Label>
-          <Input id="turnCred" type="password" value={settings.turnCred}
-            onChange={(e) => set("turnCred", e.target.value)} />
-        </div>
-      </div>
+      {/* TURN URL/user/cred inputs intentionally removed (§2.4 minted creds). The backend now
+          mints per-session coturn credentials at connect and TeleopSessionContext overrides
+          turnUrls/turnUser/turnCred with them; the relay is on use-auth-secret, so a hand-typed
+          STATIC cred would be REJECTED — the field could only make a working session fail. The
+          Settings fields + connect() fallback are kept (a dev can still inject via localStorage);
+          full retirement lands with Surface 3 (robot per-session fetch). */}
       <label className="flex items-center gap-2 text-sm">
         <Checkbox
           checked={settings.forceRelay}

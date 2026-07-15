@@ -111,7 +111,7 @@ export class ScriptDriver {
   // The in-flight cancellable sleep, so stop() can cut a held jog short.
   private activeTimer: ReturnType<typeof setTimeout> | null = null;
   private activeReject: ((e: Error) => void) | null = null;
-  // Latest telemetry snapshot, fed by the page's onTelemetry; robot.telemetry() reads it.
+  // Latest telemetry snapshot, fed by the page's onTelemetry; nori.telemetry() reads it.
   private lastTelemetry: TelemetryView | null = null;
   // A running audio clip (bypasses the motion queue — audio rides a separate transceiver and
   // composes freely with motion). Tracked so stop()/E-STOP kills it alongside motion.

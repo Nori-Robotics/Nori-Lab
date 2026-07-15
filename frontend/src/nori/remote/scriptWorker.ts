@@ -1,7 +1,8 @@
 // NORI: Additive file. The script sandbox (docs/llm_integration_plan.md, Phase B).
 //
 // A module Web Worker that runs pasted / LLM-generated TS-transpiled-to-JS against an injected
-// async `robot` API. Two structural safety properties, both load-bearing:
+// async `nori` API (`robot` is kept as a legacy alias — see runUserCode). Two structural safety
+// properties, both load-bearing:
 //   1. This worker CANNOT reach the RTCDataChannel — it lives on the main thread. The only way
 //      script code moves the robot is by posting an op that the main-thread ScriptDriver
 //      validates. That is what enforces "SDK-or-nothing"; the neutering below is defense in depth.
@@ -26,7 +27,7 @@ declare const self: DedicatedWorkerGlobalScope;
 // try to fetch/open a socket. The logic lives in sandbox.ts so it can be unit-tested (sandbox.test.ts).
 neuterGlobals(self as unknown as Record<string, unknown>);
 
-// ---- the op bridge: each robot.* call round-trips to the main thread --------------------------
+// ---- the op bridge: each nori.* call round-trips to the main thread ---------------------------
 let nextId = 1;
 const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 
@@ -40,7 +41,7 @@ function callOp(op: string, args: unknown[]): Promise<unknown> {
 
 // The injected vocabulary — the SDK-or-nothing surface (docs plan §"The robot API"). Every motion
 // method is open-loop timed until protocol G1; the panel copy says so.
-const robot = {
+const nori = {
   reach: (side: "left" | "right", dofs: Record<string, number>, ms: number) =>
     callOp("reach", [side, dofs, ms]),
   joint: (side: "left" | "right", dofs: Record<string, number>, ms: number) =>
@@ -56,7 +57,7 @@ const robot = {
   wait: (ms: number) => callOp("wait", [ms]),
   telemetry: () => callOp("telemetry", []),
   // Phase F: latest world-state from the on-Pi detector (or null if none). Lets a script REACT to
-  // what the robot sees: `const w = await robot.perceive(); if (w?.objects.find(o=>o.label==="cup"))…`
+  // what the robot sees: `const w = await nori.perceive(); if (w?.objects.find(o=>o.label==="cup"))…`
   perceive: () => callOp("perceive", []),
   playAudio: (url: string) => callOp("playAudio", [url]),
   reset: () => callOp("reset", []), // re-sync the IK cursor (call before reach() after joint())
@@ -66,20 +67,21 @@ const robot = {
   },
 };
 
-// D2: add the composed primitive library (robot.home / stow / gripSequence / wave) onto `robot`.
-installPrimitives(robot);
+// D2: add the composed primitive library (nori.home / stow / gripSequence / wave) onto `nori`.
+installPrimitives(nori);
 
 // Capture the AsyncFunction constructor BEFORE user code so we can build the runner even if the
-// script tampers with globals. `robot` is the only injected name; everything else is whatever the
-// worker global still exposes (minus the blocked hatches).
+// script tampers with globals. `nori` is the documented injected name; `robot` is a legacy alias
+// bound to the SAME object so scripts saved before the rename keep running. Everything else is
+// whatever the worker global still exposes (minus the blocked hatches).
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (
   ...args: string[]
-) => (robot: typeof robotApi) => Promise<void>;
-const robotApi = robot;
+) => (nori: typeof noriApi, robot: typeof noriApi) => Promise<void>;
+const noriApi = nori;
 
 async function runUserCode(source: string): Promise<void> {
-  const fn = new AsyncFunction("robot", source);
-  await fn(robot);
+  const fn = new AsyncFunction("nori", "robot", source);
+  await fn(nori, nori);
 }
 
 self.onmessage = (e: MessageEvent) => {

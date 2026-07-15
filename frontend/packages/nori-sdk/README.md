@@ -370,7 +370,7 @@ const status = await teleop.awaitAction(id, { timeoutMs: 5000 });
 `actionStatus(id)` returns the latest status seen (any state) — the executor uses it to detect whether
 the daemon is participating. `awaitAction` self-resolves to a synthetic `timeout` if the daemon
 predates Phase E, so it never hangs; `onActionStatus` streams every transition for logging. The
-executor's `robot.moveTo(...)` uses all of this internally and returns the daemon's verdict.
+executor's `nori.moveTo(...)` uses all of this internally and returns the daemon's verdict.
 
 > **Verification status (v0):** SDK + executor implemented and unit-tested. The daemon that emits
 > `action_status` is built + selftest-covered but **must be deployed to the robot**, and the tolerances

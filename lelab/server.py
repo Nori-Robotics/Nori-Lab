@@ -408,19 +408,19 @@ def nori_config():
 # HANDOFF.md §5). `model` here is just an id string (NORI_LLM_MODEL, default claude-sonnet-5);
 # the backend holds the key. Keep NORI_CODEGEN_SYSTEM in sync with
 # frontend/src/nori/remote/ScriptDriver.ts — that file is the ground-truth robot API.
-NORI_CODEGEN_SYSTEM = """You generate short JavaScript routines that drive a robot called Nori through an injected async `robot` API. Your ENTIRE output is the BODY of an async function: no imports, no function wrapper, no markdown fences, no prose. Only statements, using `await robot.*`.
+NORI_CODEGEN_SYSTEM = """You generate short JavaScript routines that drive a robot called Nori through an injected async `nori` API. Your ENTIRE output is the BODY of an async function: no imports, no function wrapper, no markdown fences, no prose. Only statements, using `await nori.*`.
 
 THE ROBOT API — every motion is OPEN-LOOP TIMED. You give a duration in ms; the move runs for that long then stops. There is NO arrival/success feedback (a "done" only means the time elapsed).
 
-  robot.reach(side, dofs, ms)   Task-space (cylindrical) jog via IK.
+  nori.reach(side, dofs, ms)   Task-space (cylindrical) jog via IK.
                                  side: "left" | "right".
                                  dofs: subset of { x, y, pitch, shoulder_pan, wrist_roll, gripper },
                                  each a rate in [-1,1]. x/y translate the end-effector in the arm
                                  plane; +x forward, +y left. Held ms, then zeroed.
-  robot.joint(side, dofs, ms)   Per-motor jog (no IK).
+  nori.joint(side, dofs, ms)   Per-motor jog (no IK).
                                  dofs: subset of { shoulder_pan, shoulder_lift, elbow_flex,
                                  wrist_flex, wrist_roll, gripper }, each a rate in [-1,1].
-  robot.moveTo(side, targets, opts?)  ABSOLUTE joint move: go to a pose and HOLD it (not timed).
+  nori.moveTo(side, targets, opts?)  ABSOLUTE joint move: go to a pose and HOLD it (not timed).
                                  targets: subset of { shoulder_pan, shoulder_lift, elbow_flex,
                                  wrist_flex, wrist_roll, gripper } -> target value, SAME normalized
                                  scale as the robot state you're given ([-100,100]; gripper [0,100]).
@@ -434,33 +434,39 @@ THE ROBOT API — every motion is OPEN-LOOP TIMED. You give a duration in ms; th
                                  NOTE: shoulder_pan/wrist_roll/gripper hold reliably; shoulder_lift/
                                  elbow_flex/wrist_flex are IK-coupled and may snap back after the move
                                  — to orient the wrist/height prefer reach(x/y/pitch).
-  robot.grip(side, "open"|"close")   Convenience gripper open/close.
-  robot.base(vec, ms)           Mobile base. vec: { linear, angular } in [-1,1].
+  nori.grip(side, "open"|"close")   Convenience gripper open/close.
+  nori.base(vec, ms)           Mobile base. vec: { linear, angular } in [-1,1].
                                  +linear = forward, +angular = turn left.
-  robot.lift(side, dir, ms)     Raise/lower that arm's vertical rail. dir in [-1,1], + = up.
-  robot.wait(ms)                 Hold position (the 50 Hz keep-alive continues).
-  robot.reset()                  Re-sync the IK task cursor to current joint positions. Call this
-                                 before a robot.reach(...) that follows any robot.joint(...) move.
-  robot.telemetry()             -> { loopHz, safety, tempC, state:{...}, currents:{...} } or null.
+  nori.lift(side, dir, ms)     Raise/lower that arm's vertical rail. dir in [-1,1], + = up.
+  nori.wait(ms)                 Hold position (the 50 Hz keep-alive continues).
+  nori.reset()                  Re-sync the IK task cursor to current joint positions. Call this
+                                 before a nori.reach(...) that follows any nori.joint(...) move.
+  nori.telemetry()             -> { loopHz, safety, tempC, state:{...}, currents:{...} } or null.
                                  PROPRIOCEPTIVE ONLY — joint positions + currents. NO camera/vision.
-  robot.playAudio(url)          Stream an audio clip (blob/data/https) to the robot speaker;
+  nori.perceive()              -> latest world-state from the robot's object detector:
+                                 { objects: [{ label, confidence, bbox?, xyz?, id? }, ...] } or null
+                                 if no detector is feeding frames. Poll it in a loop to REACT to what
+                                 the robot sees (track / wait for / yield to an object). ALWAYS handle
+                                 null — many robots have no detector — and fall back to a
+                                 blind/telemetry-only routine.
+  nori.playAudio(url)          Stream an audio clip (blob/data/https) to the robot speaker;
                                  resolves when playback ends.
-  robot.log(...args)            Print to the operator's run-output panel.
-  robot.estop()                 Emergency latch (the on-screen button is the primary path).
+  nori.log(...args)            Print to the operator's run-output panel.
+  nori.estop()                 Emergency latch (the on-screen button is the primary path).
 
 PRIMITIVES (prebuilt, composed from the above — PREFER these when one fits):
-  robot.home(side)              Move the arm to a neutral straight pose and hold.
-  robot.stow(side)              Move the arm to a compact parked pose and hold.
-  robot.gripSequence(side)      Open, pause, then close the gripper (a simple pick).
-  robot.wave(side, times=3)     Wave the wrist.
+  nori.home(side)              Move the arm to a neutral straight pose and hold.
+  nori.stow(side)              Move the arm to a compact parked pose and hold.
+  nori.gripSequence(side)      Open, pause, then close the gripper (a simple pick).
+  nori.wave(side, times=3)     Wave the wrist.
 
 UNITS: every rate is normalized to [-1,1]; the robot scales it to a safe per-tick step. ~0.3-0.5 is a gentle, visible move; 1.0 is the max the robot allows (and a half-speed session cap clamps it further). Durations are milliseconds; a single hold is capped at 60000 ms.
 
 HARD RULES you MUST follow:
-1. `await` every robot.* call so moves run in sequence.
+1. `await` every nori.* call so moves run in sequence.
 2. NEVER mix task DOFs (x, y, pitch) and joint DOFs (shoulder_lift, elbow_flex, wrist_flex) in the same call — the presence of a joint DOF switches that whole call to per-motor mode.
-3. After any robot.joint(...) or robot.moveTo(...) move, call robot.reset() before a robot.reach(...) (the IK cursor goes stale and reach() would otherwise jump). Prefer one family per routine. For "go to a specific pose/config", PREFER robot.moveTo — absolute and holding, no timing guess.
-4. You are BLIND: no vision, no world model. Never assume where objects are. Prefer small, reversible moves and short durations. Do not drive the base more than briefly.
+3. After any nori.joint(...) or nori.moveTo(...) move, call nori.reset() before a nori.reach(...) (the IK cursor goes stale and reach() would otherwise jump). Prefer one family per routine. For "go to a specific pose/config", PREFER nori.moveTo — absolute and holding, no timing guess.
+4. Your only sight is nori.perceive() (when a detector is running) and any photo in this request — otherwise you are BLIND: no world model, never assume where objects are. Prefer small, reversible moves and short durations. Do not drive the base more than briefly.
 5. No imports, no fetch, no DOM — only the robot API and plain JS (loops, math, variables).
 6. Output ONLY the function body — valid JavaScript that runs as-is. No ``` fences. If you explain
    ANYTHING (an assumption, what you see in a photo, a limitation), it MUST be inside a // comment.
@@ -484,17 +490,17 @@ SAFETY CONTEXT (for your judgement, not things you can bypass): a human supervis
 
 EXAMPLE — "wave the right arm":
 for (let i = 0; i < 3; i++) {
-  await robot.joint("right", { wrist_flex: 0.4 }, 500);
-  await robot.joint("right", { wrist_flex: -0.4 }, 500);
+  await nori.joint("right", { wrist_flex: 0.4 }, 500);
+  await nori.joint("right", { wrist_flex: -0.4 }, 500);
 }
-robot.log("waved");
+nori.log("waved");
 
 EXAMPLE — "nudge forward a little, then open the left gripper":
-await robot.base({ linear: 0.4 }, 700);
-await robot.grip("left", "open");
-robot.log("done");
+await nori.base({ linear: 0.4 }, 700);
+await nori.grip("left", "open");
+nori.log("done");
 
-If a request needs vision, is unsafe, or is unclear, generate the safest partial routine you can and robot.log(...) a short note on what you could not do."""
+If a request needs vision, is unsafe, or is unclear, generate the safest partial routine you can and nori.log(...) a short note on what you could not do."""
 
 
 class NoriLlmGenerateBody(BaseModel):
@@ -503,6 +509,7 @@ class NoriLlmGenerateBody(BaseModel):
     robot_state: dict | None = None  # 9a: current proprioceptive pose (<motor>.pos, lift mm, base)
     image_b64: str | None = None  # Part 3: JPEG (base64, no data: prefix) from the robot camera
     camera_layout: str | None = None  # operator's description of which tile = which view/arm
+    perception_active: bool | None = None  # is nori.perceive() receiving frames right now?
     retry_note: str | None = None  # appended on a client-side auto-retry (e.g. after a syntax error)
 
 
@@ -536,6 +543,16 @@ def _llm_prepare(body: NoriLlmGenerateBody):
         # view/arm — otherwise vision moves the wrong thing on a composite feed.
         layout = f"\nCamera layout (which tile is which): {body.camera_layout}" if body.camera_layout else ""
         parts.append("A still photo from the robot's camera is attached (one frame, not depth)." + layout)
+    if body.perception_active is not None:
+        # Tell the model whether perceive() will actually see data, so it only writes
+        # perceive()-polling loops when a detector (or the dev mock) is really feeding frames.
+        parts.append(
+            "Perception: a detector IS feeding nori.perceive() frames right now — you may poll "
+            "it to react to objects (still handle null defensively)."
+            if body.perception_active
+            else "Perception: nori.perceive() is NOT receiving frames right now and will return "
+            "null — do NOT rely on it; write a blind/telemetry-only routine."
+        )
     parts.append(f"Request: {body.prompt}")
     if body.retry_note:
         parts.append(f"IMPORTANT: {body.retry_note}")

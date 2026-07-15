@@ -2,9 +2,9 @@
 //
 // Phase F's real perception frames come from an on-Pi detector that doesn't exist yet. This feeds
 // synthetic `perception` frames through the SAME path a real one takes (teleop.injectPerception),
-// so the team can write + test reactive scripts (robot.perceive()) against a moving target today.
-// It is NOT wired on by default — the Coding page exposes a clearly-labelled "mock perception (dev)"
-// toggle that starts/stops this. Nothing here ships in a real robot session.
+// so the team can write + test reactive scripts (nori.perceive()) against a moving target today.
+// It is NOT wired on by default — the Coding page exposes a "provide perception" toggle that
+// starts/stops this. Nothing here ships in a real robot session.
 //
 // The scene: a "cup" that drifts left<->right across the frame at ~0.1 Hz, plus a "hand" that
 // blinks in for a couple seconds every ~8 s (so a script can practice yielding when a hand appears).

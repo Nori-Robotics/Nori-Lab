@@ -46,9 +46,9 @@ export interface AgentSurface {
   motion: boolean;
 }
 
-/** How a capability is exposed on the codegen `robot.*` JS API. */
+/** How a capability is exposed on the codegen `nori.*` JS API (`robot` is a legacy alias). */
 export interface CodegenSurface {
-  /** Method name: `robot.<js>`. */
+  /** Method name: `nori.<js>`. */
   js: string;
   /** Human signature for the API reference, e.g. "(side, targets, opts?)". */
   signature: string;
@@ -427,7 +427,7 @@ export function renderAgentToolsRef(): string {
 /** Render the "THE ROBOT API" reference block for the codegen system prompt. */
 export function renderCodegenApiRef(): string {
   return ROBOT_OPS.filter((o) => o.codegen)
-    .map((o) => `  robot.${o.codegen!.js}${o.codegen!.signature}  ${o.codegen!.summary}`)
+    .map((o) => `  nori.${o.codegen!.js}${o.codegen!.signature}  ${o.codegen!.summary}`)
     .join("\n");
 }
 

@@ -102,7 +102,7 @@ export interface PerceivedObject {
 
 // A structured world-state snapshot from the daemon's perception process (Phase F / G3).
 // DISTINCT from telemetry (proprioception — the robot's own joints) and the video track (human
-// eyes): this is what a *running script* reacts to via robot.perceive(). Low-rate (~2-10 Hz),
+// eyes): this is what a *running script* reacts to via nori.perceive(). Low-rate (~2-10 Hz),
 // decoupled from the 50 Hz control loop. `objects: []` is a real "nothing seen", not "no data".
 export interface PerceptionView {
   ts_ns: number;             // Pi capture time (same clock as telemetry.ts_ns)

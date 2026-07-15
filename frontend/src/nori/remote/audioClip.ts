@@ -1,6 +1,6 @@
 // NORI: Additive file. App-side helper for laptop -> robot-speaker CLIP audio (M3b downlink
 // with a non-mic source). Turns a URL/File into a MediaStreamTrack and streams it through a
-// live RemoteTeleop via sendClipAudio(). This is the concrete `robot.playAudio(url)` the
+// live RemoteTeleop via sendClipAudio(). This is the concrete `nori.playAudio(url)` the
 // script API (docs/llm_integration_plan.md) calls into — it lives in the app, not the SDK,
 // because loading a URL is a network/DOM concern (the SDK core stays dep-free + transport-only).
 //

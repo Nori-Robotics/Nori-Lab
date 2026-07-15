@@ -18,7 +18,7 @@ export interface ScriptSessionOptions {
   teleop: RemoteTeleop;
   capRate?: number;
   wallClockMs?: number;
-  onLog?: (line: string) => void; // robot.log() + driver status
+  onLog?: (line: string) => void; // nori.log() + driver status
   onDone?: () => void; // script finished (or was stopped)
   onError?: (message: string) => void; // uncaught script error / cap exceeded
 }
@@ -46,7 +46,7 @@ export class ScriptSession {
     });
   }
 
-  // Feed telemetry through to the driver so robot.telemetry() returns the latest frame.
+  // Feed telemetry through to the driver so nori.telemetry() returns the latest frame.
   setTelemetry(t: TelemetryView): void {
     this.driver.setTelemetry(t);
   }

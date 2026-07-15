@@ -43,7 +43,9 @@ function stripFences(s: string): string {
 // AsyncFunction constructor throws SyntaxError on bad code WITHOUT executing it — a pure parse check.
 const AsyncFunctionCtor = Object.getPrototypeOf(async () => {}).constructor as new (...a: string[]) => unknown;
 function isValidScript(src: string): boolean {
-  try { new AsyncFunctionCtor("robot", src); return true; } catch { return false; }
+  // Same parameter list as the worker's runner ("nori" + legacy "robot" alias), so the parse
+  // check compiles exactly what will run.
+  try { new AsyncFunctionCtor("nori", "robot", src); return true; } catch { return false; }
 }
 
 // Blob -> bare base64 (no "data:image/jpeg;base64," prefix) for the LLM image block.
@@ -57,13 +59,13 @@ function blobToBase64(blob: Blob): Promise<string> {
 }
 
 // Shown when the editor is empty, so a first-time user has something runnable.
-const STARTER = `// Drive the robot with the injected \`robot\` API. Timed jogs; moveTo waits for arrival.
+const STARTER = `// Drive the robot with the injected \`nori\` API. Timed jogs; moveTo waits for arrival.
 // The robot moves only while a script runs; you are the supervisor (E-STOP below).
 
-await robot.joint("left", { elbow_flex: 0.3 }, 800);   // per-joint jog, held 800ms
-await robot.wait(300);
-await robot.grip("left", "open");
-robot.log("done");
+await nori.joint("left", { elbow_flex: 0.3 }, 800);   // per-joint jog, held 800ms
+await nori.wait(300);
+await nori.grip("left", "open");
+nori.log("done");
 `;
 
 const Coding = () => {
@@ -82,7 +84,7 @@ const Coding = () => {
     try { return localStorage.getItem("nori_camera_layout") ?? ""; } catch { return ""; }
   });
   const [lastFrame, setLastFrame] = useState<string | null>(null); // data URL of the last attached frame
-  const [mockPerception, setMockPerception] = useState(false); // dev: feed synthetic robot.perceive() frames
+  const [mockPerception, setMockPerception] = useState(false); // dev: feed synthetic nori.perceive() frames
   const sessionRef = useRef<ScriptSession | null>(null);
   const mockPerceptionRef = useRef<MockPerceptionHandle | null>(null);
   const outRef = useRef<HTMLDivElement>(null);
@@ -103,18 +105,18 @@ const Coding = () => {
     if (outRef.current) outRef.current.scrollTop = outRef.current.scrollHeight;
   }, [output]);
 
-  // Keep robot.telemetry() current inside a running script.
+  // Keep nori.telemetry() current inside a running script.
   useEffect(() => { sessionRef.current?.setTelemetry(tel); }, [tel]);
 
   // Stop a running script if we navigate away (the SESSION persists; only the script stops).
   useEffect(() => () => sessionRef.current?.stop(), []);
 
-  // Dev: start/stop the synthetic perception feed so robot.perceive() returns data before the on-Pi
+  // Dev: start/stop the synthetic perception feed so nori.perceive() returns data before the on-Pi
   // detector exists (Phase F). Off by default; injects through the same path a real frame takes.
   useEffect(() => {
     if (mockPerception && teleop) {
       mockPerceptionRef.current = startMockPerception(teleop);
-      append("🫧 mock perception ON (dev) — robot.perceive() now returns synthetic objects");
+      append("🫧 perception ON — nori.perceive() now returns objects (synthetic mock scene)");
     }
     return () => { mockPerceptionRef.current?.stop(); mockPerceptionRef.current = null; };
   }, [mockPerception, teleop]);
@@ -142,6 +144,10 @@ const Coding = () => {
         // Operator text overrides; else the bridge-derived layout (which tile is which camera); else
         // nothing (the model is told not to assume). So vision knows which feed is which arm by default.
         camera_layout: imageB64 ? (cameraLayout.trim() || teleop?.cameraLayout() || undefined) : undefined,
+        // Whether nori.perceive() is live RIGHT NOW (a frame in the last 2 s — real detector or
+        // the "provide perception" mock), so the model only writes perceive()-polling loops when
+        // they'll actually see data.
+        perception_active: (teleop?.perceptionAgeMs() ?? Infinity) < 2000,
         retry_note: retryNote,
       }),
     });
@@ -294,10 +300,10 @@ const Coding = () => {
                     attach camera view
                   </label>
                   <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
-                    title="Dev: feed synthetic robot.perceive() frames so reactive scripts run before the on-Pi detector exists (Phase F)">
+                    title="Feed nori.perceive() frames so reactive scripts can see objects (synthetic drifting-cup scene until the on-Pi detector ships — Phase F)">
                     <input type="checkbox" checked={mockPerception}
                       onChange={(e) => setMockPerception(e.target.checked)} />
-                    mock perception (dev)
+                    provide perception
                   </label>
                 </div>
                 <Button size="sm" onClick={generate} disabled={generating || !prompt.trim()}
@@ -341,7 +347,7 @@ const Coding = () => {
           <div className="flex flex-1 min-h-0 flex-col gap-2 rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
             <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// run output</span>
             <div ref={outRef} className="flex-1 overflow-y-auto whitespace-pre-wrap rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-3 font-mono text-xs text-[#5a5346]">
-              {output.length > 0 ? output.join("\n") : "Run output + robot.log() appear here."}
+              {output.length > 0 ? output.join("\n") : "Run output + nori.log() appear here."}
             </div>
           </div>
         </div>

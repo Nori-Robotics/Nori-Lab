@@ -33,7 +33,7 @@ never hangs.
 - **`blocked`** — something stopped it. Check `reason` (e.g. `"stall:right_arm_elbow_flex"`).
 - **`timeout`** — no terminal report arrived in time.
 
-`robot.moveTo(...)` in the executor uses all of this internally and returns the daemon's verdict.
+`nori.moveTo(...)` in the executor uses all of this internally and returns the daemon's verdict.
 
 ::: warning Verification status (v0)
 SDK + executor are implemented and unit-tested. The daemon that emits `action_status` is built and

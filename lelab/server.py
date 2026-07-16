@@ -1107,6 +1107,31 @@ def nori_delete_dataset(session_id: str, request: Request):
     return _nori_proxy(lambda: client.delete_dataset(session_id))
 
 
+class NoriLockBody(BaseModel):
+    locked: bool
+
+
+@app.post("/nori/datasets/{session_id}/lock")
+def nori_set_dataset_lock(session_id: str, body: NoriLockBody, request: Request):
+    """Lock/unlock a dataset (locked = can't rename or delete)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.set_dataset_lock(session_id, body.locked))
+
+
+@app.delete("/nori/library/policies/{job_id}")
+def nori_delete_policy(job_id: str, request: Request):
+    """Permanently delete one of the caller's policies (checkpoint + record)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.delete_policy(job_id))
+
+
+@app.post("/nori/library/policies/{job_id}/lock")
+def nori_set_policy_lock(job_id: str, body: NoriLockBody, request: Request):
+    """Lock/unlock a policy (locked = can't rename or delete)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.set_policy_lock(job_id, body.locked))
+
+
 @app.post("/nori/marketplace/policies/{listing_id}/acquire")
 def nori_acquire_policy(listing_id: str, request: Request):
     client = _nori_client(request)

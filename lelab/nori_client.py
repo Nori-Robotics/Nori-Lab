@@ -423,7 +423,7 @@ class NoriClient:
 
     def delete_dataset(self, session_id: str) -> dict[str, Any]:
         """DELETE /datasets/{session_id} — permanently remove a dataset (its HF
-        files + record). 404 on a non-own session; 409 if it's published."""
+        files + record). 404 on a non-own session; 409 if it's published/locked."""
         return self._request("DELETE", f"{API}/datasets/{session_id}")
 
     def rename_training_job(self, job_id: str, title: str | None) -> dict[str, Any]:
@@ -431,6 +431,23 @@ class NoriClient:
         stage (backend PII-scans; None clears)."""
         return self._request(
             "PATCH", f"{API}/training/jobs/{job_id}/name", json={"title": title}
+        )
+
+    def set_dataset_lock(self, session_id: str, locked: bool) -> dict[str, Any]:
+        """POST /datasets/{session_id}/lock — lock/unlock a dataset."""
+        return self._request(
+            "POST", f"{API}/datasets/{session_id}/lock", json={"locked": locked}
+        )
+
+    def delete_policy(self, job_id: str) -> dict[str, Any]:
+        """DELETE /library/policies/{job_id} — remove a policy (checkpoint +
+        record). 409 if it's published, still training, or locked."""
+        return self._request("DELETE", f"{API}/library/policies/{job_id}")
+
+    def set_policy_lock(self, job_id: str, locked: bool) -> dict[str, Any]:
+        """POST /library/policies/{job_id}/lock — lock/unlock a policy."""
+        return self._request(
+            "POST", f"{API}/library/policies/{job_id}/lock", json={"locked": locked}
         )
 
     def get_library(self) -> dict[str, Any]:

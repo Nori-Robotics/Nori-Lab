@@ -479,6 +479,8 @@ export interface LibraryPolicy {
   promoted_at: string | null;
   checkpoint_url: string | null;
   final_cost_usd: number | null;
+  /** Owner-set: when true, the policy can't be renamed or deleted. */
+  locked?: boolean;
 }
 
 /** One uploaded dataset with the policies trained from it. */
@@ -489,6 +491,8 @@ export interface LibraryDataset {
   created_at: string;
   episode_count: number | null;
   frame_count: number | null;
+  /** Owner-set: when true, the dataset can't be renamed or deleted. */
+  locked?: boolean;
   policies: LibraryPolicy[];
 }
 
@@ -544,6 +548,47 @@ export function deleteDataset(
   return noriRequest(baseUrl, fetcher, `/nori/datasets/${encodeURIComponent(sessionId)}`, {
     method: "DELETE",
     action: "Delete dataset",
+  });
+}
+
+/** POST /nori/datasets/{id}/lock — lock/unlock a dataset (locked = no rename/delete). */
+export function setDatasetLock(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string,
+  locked: boolean
+): Promise<{ session_id: string; locked: boolean }> {
+  return noriRequest(baseUrl, fetcher, `/nori/datasets/${encodeURIComponent(sessionId)}/lock`, {
+    method: "POST",
+    body: { locked },
+    action: locked ? "Lock dataset" : "Unlock dataset",
+  });
+}
+
+/** DELETE /nori/library/policies/{id} — delete a policy (checkpoint + record).
+ * 409 if the policy is published, still training, or locked. */
+export function deletePolicy(
+  baseUrl: string,
+  fetcher: Fetcher,
+  jobId: string
+): Promise<{ deleted: boolean; job_id: string }> {
+  return noriRequest(baseUrl, fetcher, `/nori/library/policies/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+    action: "Delete policy",
+  });
+}
+
+/** POST /nori/library/policies/{id}/lock — lock/unlock a policy. */
+export function setPolicyLock(
+  baseUrl: string,
+  fetcher: Fetcher,
+  jobId: string,
+  locked: boolean
+): Promise<{ job_id: string; locked: boolean }> {
+  return noriRequest(baseUrl, fetcher, `/nori/library/policies/${encodeURIComponent(jobId)}/lock`, {
+    method: "POST",
+    body: { locked },
+    action: locked ? "Lock policy" : "Unlock policy",
   });
 }
 

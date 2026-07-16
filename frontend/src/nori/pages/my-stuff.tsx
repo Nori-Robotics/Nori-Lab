@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Lock, Trash2, Unlock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -22,9 +22,12 @@ import { useApi } from "@/contexts/ApiContext";
 import { useNori } from "@/nori/NoriContext";
 import {
   deleteDataset,
+  deletePolicy,
   getLibrary,
   renamePolicy,
   renameUploadLabel,
+  setDatasetLock,
+  setPolicyLock,
   uploadDataset,
   type Library,
   type LibraryDataset,
@@ -167,6 +170,10 @@ const MyStuff = () => {
   const [deleting, setDeleting] = useState<LibraryDataset | null>(null); // pending delete confirmation
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
+  const [deletingPolicy, setDeletingPolicy] = useState<LibraryPolicy | null>(null);
+  const [deletePolicyBusy, setDeletePolicyBusy] = useState(false);
+  const [deletePolicyErr, setDeletePolicyErr] = useState<string | null>(null);
+  const [lockBusy, setLockBusy] = useState<string | null>(null); // id being locked/unlocked
 
   const load = useCallback(async () => {
     setError(null);
@@ -222,6 +229,51 @@ const MyStuff = () => {
       setDeleteBusy(false);
     }
   }, [deleting, baseUrl, fetchWithHeaders, load]);
+
+  const onToggleDatasetLock = useCallback(
+    async (d: LibraryDataset) => {
+      setLockBusy(d.session_id);
+      try {
+        await setDatasetLock(baseUrl, fetchWithHeaders, d.session_id, !d.locked);
+        await load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setLockBusy(null);
+      }
+    },
+    [baseUrl, fetchWithHeaders, load],
+  );
+
+  const onTogglePolicyLock = useCallback(
+    async (jobId: string, locked: boolean) => {
+      setLockBusy(jobId);
+      try {
+        await setPolicyLock(baseUrl, fetchWithHeaders, jobId, !locked);
+        await load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setLockBusy(null);
+      }
+    },
+    [baseUrl, fetchWithHeaders, load],
+  );
+
+  const onDeletePolicy = useCallback(async () => {
+    if (!deletingPolicy) return;
+    setDeletePolicyBusy(true);
+    setDeletePolicyErr(null);
+    try {
+      await deletePolicy(baseUrl, fetchWithHeaders, deletingPolicy.job_id);
+      setDeletingPolicy(null);
+      await load();
+    } catch (e) {
+      setDeletePolicyErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeletePolicyBusy(false);
+    }
+  }, [deletingPolicy, baseUrl, fetchWithHeaders, load]);
 
   const onRenameUpload = useCallback(
     async (sessionId: string, next: string) => {
@@ -358,11 +410,21 @@ const MyStuff = () => {
                 className={`${cardCls} ${highlighted ? "ring-2 ring-accent border-accent" : ""}`}
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <EditableName value={d.label} onRename={(next) => onRenameUpload(d.session_id, next)} />
+                  <div className="min-w-0">
+                    {d.locked ? (
+                      <p className="text-base font-bold text-[#14131a]">{d.label}</p>
+                    ) : (
+                      <EditableName value={d.label} onRename={(next) => onRenameUpload(d.session_id, next)} />
+                    )}
                     <p className="mt-0.5 text-sm text-muted-foreground">Uploaded {shortDate(d.created_at)}</p>
                   </div>
-                  <Pill tone="leaf">Uploaded</Pill>
+                  {d.locked ? (
+                    <Pill tone="accent">
+                      <Lock className="mr-1 inline h-3 w-3" />Locked
+                    </Pill>
+                  ) : (
+                    <Pill tone="leaf">Uploaded</Pill>
+                  )}
                 </div>
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-[#14131a]/80 [font-variant-numeric:tabular-nums]">
                   {d.episode_count != null && <span><b className="font-semibold text-[#14131a]">{fmt(d.episode_count)}</b> episodes</span>}
@@ -391,14 +453,28 @@ const MyStuff = () => {
                   <Button
                     size="sm"
                     variant="ghost"
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => {
-                      setDeleteErr(null);
-                      setDeleting(d);
-                    }}
+                    disabled={lockBusy === d.session_id}
+                    onClick={() => onToggleDatasetLock(d)}
                   >
-                    <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                    {d.locked ? (
+                      <><Unlock className="mr-1 h-3.5 w-3.5" /> Unlock</>
+                    ) : (
+                      <><Lock className="mr-1 h-3.5 w-3.5" /> Lock</>
+                    )}
                   </Button>
+                  {!d.locked && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => {
+                        setDeleteErr(null);
+                        setDeleting(d);
+                      }}
+                    >
+                      <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                    </Button>
+                  )}
                 </div>
               </article>
             );
@@ -439,13 +515,27 @@ const MyStuff = () => {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="space-y-1.5">
-                  {/* Renameable at EVERY stage (jobs-side rename) — a policy
-                      can be named before its training finishes. */}
-                  <EditableName
-                    value={p.title ?? p.sourceLabel ?? "Policy"}
-                    onRename={(next) => onRenamePolicy(p.job_id, next)}
-                  />
-                  {p.policy_class && <Pill tone="accent">{p.policy_class.toUpperCase()}</Pill>}
+                  {/* Renameable at EVERY stage (jobs-side rename) — a policy can
+                      be named before its training finishes. Locked policies show
+                      plain text. */}
+                  {!p.locked ? (
+                    <EditableName
+                      value={p.title ?? p.sourceLabel ?? "Policy"}
+                      onRename={(next) => onRenamePolicy(p.job_id, next)}
+                    />
+                  ) : (
+                    <p className="text-base font-bold text-[#14131a]">
+                      {p.title ?? p.sourceLabel ?? "Policy"}
+                    </p>
+                  )}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {p.policy_class && <Pill tone="accent">{p.policy_class.toUpperCase()}</Pill>}
+                    {p.locked && (
+                      <Pill tone="accent">
+                        <Lock className="mr-1 inline h-3 w-3" />Locked
+                      </Pill>
+                    )}
+                  </div>
                 </div>
                 <Pill tone={STATE_TONE[p.state]}>{STATE_LABEL[p.state]}</Pill>
               </div>
@@ -501,6 +591,37 @@ const MyStuff = () => {
                   </Button>
                 )}
                 {p.state === "paused" && <Button size="sm" onClick={openProgress}>Resume training</Button>}
+                {!inFlight && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={lockBusy === p.job_id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onTogglePolicyLock(p.job_id, !!p.locked);
+                    }}
+                  >
+                    {p.locked ? (
+                      <><Unlock className="mr-1 h-3.5 w-3.5" /> Unlock</>
+                    ) : (
+                      <><Lock className="mr-1 h-3.5 w-3.5" /> Lock</>
+                    )}
+                  </Button>
+                )}
+                {!inFlight && !p.locked && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeletePolicyErr(null);
+                      setDeletingPolicy(p);
+                    }}
+                  >
+                    <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                  </Button>
+                )}
               </div>
             </article>
             );
@@ -550,6 +671,46 @@ const MyStuff = () => {
               className="bg-red-500 text-white hover:bg-red-600"
             >
               {deleteBusy ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!deletingPolicy}
+        onOpenChange={(o) => {
+          if (!o && !deletePolicyBusy) {
+            setDeletingPolicy(null);
+            setDeletePolicyErr(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete “{deletingPolicy?.title ?? "this policy"}”?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes the trained policy and its checkpoint. This can’t be
+              undone. Published policies must be unpublished first.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deletePolicyErr && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {deletePolicyErr}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletePolicyBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void onDeletePolicy();
+              }}
+              disabled={deletePolicyBusy}
+              className="bg-red-500 text-white hover:bg-red-600"
+            >
+              {deletePolicyBusy ? "Deleting…" : "Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/contexts/ApiContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
-import { listLocalPolicies, type LocalPolicy } from "@/nori/api/client";
+import { listLocalPolicies, listPolicies, type LocalPolicy } from "@/nori/api/client";
 import {
   PolicyRunner,
   EXECUTION_PRESETS,
@@ -35,6 +35,8 @@ export function PolicyDeployCard() {
 
   const [available, setAvailable] = useState(true);
   const [policies, setPolicies] = useState<LocalPolicy[]>([]);
+  // ref -> human-readable title (from the policy catalog; local cache has no name)
+  const [titleByRef, setTitleByRef] = useState<Record<string, string>>({});
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<ExecutionMode>("smooth");
   const [runState, setRunState] = useState<{ ref: string | null; phase: PolicyRunPhase }>({
@@ -56,7 +58,16 @@ export function PolicyDeployCard() {
         setAvailable(true);
       })
       .catch(() => setAvailable(false)); // hosted app / no local lelab spool
+    // Best-effort: the catalog carries the human-readable title for each ref.
+    listPolicies(baseUrl, fetchWithHeaders)
+      .then((cat) => setTitleByRef(Object.fromEntries(cat.map((c) => [c.ref, c.title]))))
+      .catch(() => setTitleByRef({}));
   }, [baseUrl, fetchWithHeaders]);
+
+  const nameFor = useCallback(
+    (ref: string) => titleByRef[ref] || shortRef(ref),
+    [titleByRef],
+  );
 
   useEffect(() => {
     refresh();
@@ -178,8 +189,8 @@ export function PolicyDeployCard() {
                     key={p.ref}
                     className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[#14131a]/10 py-1.5 first:border-t-0"
                   >
-                    <span className="min-w-0 flex-1 truncate font-mono text-xs" title={p.ref}>
-                      {shortRef(p.ref)}
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-[#14131a]" title={p.ref}>
+                      {nameFor(p.ref)}
                     </span>
                     {thisActive ? (
                       <>

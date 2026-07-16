@@ -13,7 +13,13 @@ import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/contexts/ApiContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { listLocalPolicies, type LocalPolicy } from "@/nori/api/client";
-import { PolicyRunner, EXECUTION_PRESETS, type PolicyRunPhase } from "@/nori/remote/policyRun";
+import {
+  PolicyRunner,
+  EXECUTION_PRESETS,
+  EXECUTION_MODE_LABELS,
+  type ExecutionMode,
+  type PolicyRunPhase,
+} from "@/nori/remote/policyRun";
 
 // A policy ref looks like "NoriRobotics/customer-xxxx:job-uuid" or a slug — show
 // a readable tail for the compact row.
@@ -30,6 +36,7 @@ export function PolicyDeployCard() {
   const [available, setAvailable] = useState(true);
   const [policies, setPolicies] = useState<LocalPolicy[]>([]);
   const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<ExecutionMode>("smooth");
   const [runState, setRunState] = useState<{ ref: string | null; phase: PolicyRunPhase }>({
     ref: null,
     phase: { kind: "idle" },
@@ -76,7 +83,7 @@ export function PolicyDeployCard() {
       const runner = runnerRef.current;
       runner.onPhase = (ph) => setRunState({ ref: p.ref, phase: ph });
       try {
-        await runner.start(teleop, p.ref, EXECUTION_PRESETS.smooth);
+        await runner.start(teleop, p.ref, EXECUTION_PRESETS[mode]);
       } catch (e) {
         toast({
           title: "Couldn't run on robot",
@@ -85,7 +92,7 @@ export function PolicyDeployCard() {
         });
       }
     },
-    [baseUrl, teleop, toast]
+    [baseUrl, teleop, toast, mode]
   );
 
   const stop = useCallback(() => {
@@ -129,6 +136,33 @@ export function PolicyDeployCard() {
             Run a trained policy on your robot. It runs on this computer and streams only motor
             instructions to the arm — nothing executes on the robot itself.
           </p>
+
+          {runnable.length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">
+                {"// execution"}
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(Object.keys(EXECUTION_PRESETS) as ExecutionMode[]).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setMode(m)}
+                    title={EXECUTION_MODE_LABELS[m].hint}
+                    className={`rounded-full px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors disabled:opacity-50 ${
+                      mode === m ? "bg-[#b06a1c] text-white" : "bg-white/70 text-[#6f6858] hover:text-[#14131a]"
+                    }`}
+                  >
+                    {EXECUTION_MODE_LABELS[m].label}
+                  </button>
+                ))}
+              </div>
+              <span className="min-w-0 flex-1 text-[11px] leading-snug text-[#6f6858]">
+                {EXECUTION_MODE_LABELS[mode].hint}
+              </span>
+            </div>
+          )}
 
           {runnable.length === 0 ? (
             <p className="text-sm text-[#6f6858]">

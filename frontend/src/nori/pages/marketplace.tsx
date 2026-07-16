@@ -92,12 +92,9 @@ export function mockDetailsFor(p: PolicyListEntry): PolicyDetails {
 }
 
 type SourceFilter = "all" | "own" | "first_party" | "community";
-// Own policies do NOT browse in the marketplace — they live in My Stuff
-// (a private policy is never public, so the marketplace, which is the
-// get-things-from-others surface, must not list it). Own policies stay
-// reachable by direct ref (detail page) and via the publish card below.
 const SOURCES: { key: SourceFilter; label: string }[] = [
   { key: "all", label: "All" },
+  { key: "own", label: "Own" },
   { key: "first_party", label: "First-party" },
   { key: "community", label: "Community" },
 ];
@@ -531,10 +528,6 @@ const Marketplace = () => {
     if (!policies) return [];
     const q = query.trim().toLowerCase();
     return policies.filter((p) => {
-      // Own policies never appear in the marketplace grid — private ones
-      // would leak a "published" impression, and all own policies are
-      // managed + run from My Stuff instead.
-      if (p.source === "own") return false;
       if (source !== "all" && p.source !== source) return false;
       if (!q) return true;
       return (

@@ -172,13 +172,14 @@ const PolicyCard = ({
             <ListingStatusChip status={listingStatus} />
           ) : (
             // Own policy that is NOT publicly listed → private to you.
-            // Says plainly it's not shared, so no one hunts for an
-            // "unpublish" on something that was never published.
+            // Distinct bordered chip (not a faint tint) so it's obvious this
+            // was never published — no one should hunt for an "unpublish" on
+            // something that isn't public.
             <span
-              className="inline-flex items-center rounded-full bg-paper-3 px-2.5 py-0.5 font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink/70"
-              title="Only you can see this. Publish it from “Publish something to the community.”"
+              className="inline-flex items-center gap-1 rounded-full border border-ink/25 bg-background px-2.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/70"
+              title="Only you can see this — it was never published. Share it from “Publish something to the community.”"
             >
-              private
+              🔒 not published
             </span>
           )
         )}

@@ -399,8 +399,8 @@ const MarketplaceDetail = () => {
         // publishing is a deliberate action from the marketplace page.
         <div className="mt-6 flex items-center justify-between gap-3 rounded-xl border border-border bg-secondary/40 px-3 py-2">
           <span className="text-[13px] text-muted-foreground">
-            <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink/70">private</span>{" "}
-            — only you can see this policy. It is not in the community.
+            <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink/70">🔒 not published</span>{" "}
+            — only you can see this policy; it was never shared to the community. Nothing to unpublish.
           </span>
           <Link
             to="/nori/marketplace"

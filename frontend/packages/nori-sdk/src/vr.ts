@@ -89,9 +89,20 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 const clamp1 = (v: number) => clamp(v, -1, 1);
 // Cap the top jog speed for the continuous motion DOFs (reach, pan, pitch, roll, base) so VR
 // feels controlled — 0.7 = 70% of the daemon's full jog rate. Low-speed response is
-// unchanged (only saturating, fast hand moves are limited). Gripper/z stay full (discrete).
+// unchanged (only saturating, fast hand moves are limited). Z-lift stays full (discrete);
+// the gripper has its own per-direction rates below.
 const VR_MAX_RATE = 0.7;
 const capRate = (v: number) => clamp(v, -VR_MAX_RATE, VR_MAX_RATE);
+
+// Gripper jog rates, per direction (2026-07-16). Still binary trigger>0.5, but no longer
+// full-rate both ways: at rate 1 a released trigger snapped the gripper fully open almost
+// instantly. Close stays full so grasps are snappy; open is slowed so release is gradual
+// (0.25 = ~4× longer to sweep fully open). The daemon multiplies rate by its per-tick step,
+// so these scale speed only — end positions are unchanged.
+const GRIPPER_CLOSE_RATE = 1.0;
+const GRIPPER_OPEN_RATE = 0.25;
+const gripperRate = (trigger: number) =>
+  trigger > 0.5 ? GRIPPER_CLOSE_RATE : -GRIPPER_OPEN_RATE;
 
 // ---- wrist rates: per-frame BODY-FRAME angular increments -------------------
 // Deliberate deviation from XLeVR (2026-07-02). The reference
@@ -246,12 +257,13 @@ class HandState {
     }
     this.prevQuat = (f.orientation as Quat | null | undefined) ?? this.prevQuat;
 
-    // Cap top speed on the continuous motion DOFs (not the binary gripper).
+    // Cap top speed on the continuous motion DOFs (the gripper has its own per-direction
+    // rates above).
     for (const k of Object.keys(arm)) if (k !== "gripper") arm[k] = capRate(arm[k]);
 
-    // Binary gripper (matches reference: 45 if trigger>0.5 else 0). Through the daemon's
-    // jog accumulator/clamp, +1 drives toward closed and -1 toward open.
-    arm.gripper = f.trigger > 0.5 ? 1 : -1;
+    // Binary gripper trigger (reference: 45 if trigger>0.5 else 0). Through the daemon's
+    // jog accumulator/clamp, + drives toward closed and - toward open.
+    arm.gripper = gripperRate(f.trigger);
 
     return arm;
   }
@@ -262,7 +274,7 @@ function zeroArm(): Record<string, number> {
 }
 function gripperOnly(trigger: number): Record<string, number> {
   const a = zeroArm();
-  a.gripper = trigger > 0.5 ? 1 : -1; // binary, matches reference
+  a.gripper = gripperRate(trigger); // binary trigger, per-direction rates
   return a;
 }
 

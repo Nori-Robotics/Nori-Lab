@@ -185,6 +185,10 @@ export interface ConnectStatus {
 // 'ready' underneath (a robot that boots late still connects on its own) — this deadline only
 // decides when we STOP staying silent and tell the operator something is wrong.
 const WAIT_FOR_ROBOT_MS = 12_000;
+// A nack to our first, mac-less 'ready' is an expected pre-handshake artifact (see onNack),
+// so once we HAVE presented a mac we still wait this long before calling it a bad code — a
+// nack racing an in-flight authorized handshake is cancelled the instant the offer arrives.
+const NACK_CONFIRM_MS = 2_500;
 
 // Which camera is in which composite tile (bridge-derived, from cameras.json order). Sent by the Pi
 // media bridge on control-channel open in composite mode; lets the LLM-vision path know which feed is
@@ -506,6 +510,7 @@ export class RemoteTeleop {
   private jogTimer: ReturnType<typeof setInterval> | null = null;
   private controlCh: RTCDataChannel | null = null;
   private curMac = ""; // HMAC of the robot's nonce, proving we hold the token
+  private nackFailTimer: ReturnType<typeof setTimeout> | null = null; // debounces a nack -> bad_access_code
   private linkMode: "lan" | "wan" | null = null; // measured ICE path -> daemon watchdog
   // Connect-phase machine (see ConnectStatus). `waitTimer` is the "robot never answered" deadline.
   private connStatus: ConnectStatus = { phase: "idle" };
@@ -1059,6 +1064,9 @@ export class RemoteTeleop {
   private clearWaitDeadline() {
     if (this.waitTimer) { clearTimeout(this.waitTimer); this.waitTimer = null; }
   }
+  private clearNackTimer() {
+    if (this.nackFailTimer) { clearTimeout(this.nackFailTimer); this.nackFailTimer = null; }
+  }
 
   // ---- lifecycle -----------------------------------------------------------
   async start() {
@@ -1079,8 +1087,10 @@ export class RemoteTeleop {
       onSdp: async (payload) => {
         if (!payload || payload.type !== "offer") return;
         // The robot answered — whatever else goes wrong from here, it is NOT absent, so the
-        // "nobody is home" deadline is void.
+        // "nobody is home" deadline is void, and any nack we were confirming was the expected
+        // pre-auth transient (we're being offered a session = authorized).
         this.clearWaitDeadline();
+        this.clearNackTimer();
         this.setPhase("negotiating");
         try {
         this.log("offer received; building fresh peer + answering...");
@@ -1152,9 +1162,24 @@ export class RemoteTeleop {
           this.setPhase("failed", "session_rejected", payload.reason);
           return;
         }
-        this.log("robot refused the access code");
-        this.clearWaitDeadline();
-        this.setPhase("failed", "bad_access_code");
+        // A nack to our FIRST 'ready' is expected, not a bad code. Supabase broadcasts aren't
+        // retained, so we join without the robot's nonce and our first 'ready' goes out mac-less
+        // (curMac === ""); the robot re-announces its nonce, onRobotHere recomputes the mac, and
+        // the retry connects. Treating that transient nack as a failure is what flashed "wrong
+        // access code" on every normal connect. So: never fail on a nack before we've actually
+        // PRESENTED a mac, and even after that, debounce — a nack racing an in-flight authorized
+        // handshake (the offer is seconds behind) is cancelled the moment the offer arrives
+        // (onSdp) or we connect. A genuinely wrong code keeps nacking every 2 s retry, so the
+        // timer still fires.
+        if (!this.curMac) { this.log("ignoring pre-handshake nack (no access code presented yet)"); return; }
+        if (this.nackFailTimer) return; // already confirming; don't reset (let a real bad code fire)
+        this.log("robot refused the access code — confirming…");
+        this.nackFailTimer = setTimeout(() => {
+          this.nackFailTimer = null;
+          if (this.connected) return;
+          this.clearWaitDeadline();
+          this.setPhase("failed", "bad_access_code");
+        }, NACK_CONFIRM_MS);
       },
 
       onOpen: () => {
@@ -1200,6 +1225,7 @@ export class RemoteTeleop {
     if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
     if (this.jogTimer) { clearInterval(this.jogTimer); this.jogTimer = null; }
     this.clearWaitDeadline();
+    this.clearNackTimer();
     this.latencyProbe?.stop();
     // tell the robot to exit (clean restart) before we tear down
     this.o.signaling.sendBye();
@@ -1269,6 +1295,7 @@ export class RemoteTeleop {
       if (pc.connectionState === "connected") {
         this.connected = true;
         this.clearWaitDeadline();
+        this.clearNackTimer();
         this.setPhase("connected");
         if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
         this.logSelectedPath();

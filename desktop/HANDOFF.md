@@ -225,3 +225,21 @@ this: extend the same per-user gate to the one-shot coding endpoint (`_llm_prepa
 - The Nori planning docs — `todos.md`, `full_nori_plan.md`, `m0_m2_*`, `m3_m5_*`,
   `onboard_pi_plan.md` — are active work for the teleop/Pi effort, unrelated to packaging.
 - Option 2 (cloud UI) and cloud-inference — future direction, explicitly deferred above.
+
+## Security audit findings (2026-07-15)
+
+From a cross-repo secret/security audit (NoriLeLab + Nori-Backend). **Secret hygiene is clean** — no server secret reaches the browser: `GET /nori/config` (`lelab/utils/config.py:90-104`) returns only `supabaseUrl`/`supabaseAnonKey`/`noriBackendUrl`; the committed `frontend/dist/` bundle has no keys; the `ANTHROPIC_API_KEY` lives only on Nori-Backend and is never reflected back; there's no `shell=True` / command injection (argv lists throughout); the server binds `127.0.0.1` only; Tauri capabilities are minimal (`opener:allow-open-url` scoped to https). The items below are hardening, ordered by real-world impact. **The backend-side counterparts live in `../Nori-Backend/todos.md` → "Security audit hardening (2026-07-15)".**
+
+### 🔴 H1 — Wildcard CORS makes unauthenticated robot-control endpoints drive-by-reachable
+`lelab/server.py:176-182` sets `allow_origins=["*"]`, `allow_methods=["*"]`, `allow_headers=["*"]`. The state-changing control endpoints have **no auth / no CSRF token**: `POST /move-arm` (`:334`), `/stop-teleoperation` (`:340`), `/start-inference` (`:357`), `/start-recording` (`:1441`), `/start-calibration` (`:1790`), `/nori/rollout/load` + `/act` (`nori_rollout.py:158,182`). These take `application/json`, which normally forces a CORS preflight a cross-origin page can't pass — but the `["*"]` config makes the preflight **succeed**, so **any website the user visits while `lelab` is running can POST to `http://127.0.0.1:8000/...` and physically move the arm, start recording, or run a policy.** `127.0.0.1` binding does not help — the request originates from the user's own browser. This is the only finding with real-world actuation impact; fix first.
+
+**Fix:** restrict `allow_origins` to the actual app origins (`http://localhost:8000`, `http://localhost:8080`, and the packaged Tauri origin), drop `allow_methods/headers=["*"]`, and add an Origin check (or a required custom header / CSRF token) on every state-changing control endpoint. See "Is web teleop safe at all?" note below — the local server needs a same-origin/token boundary regardless of CORS.
+
+### 🔴 M1 — LLM proxy does no auth at the LeLab layer
+`/nori/llm/generate`, `/generate/stream`, `/nori/llm/agent` (`server.py:549,571,766`) forward whatever `X-Nori-JWT` header is present (or `None`) straight to Nori-Backend via `_nori_client(request)` (`:836`); LeLab never checks a JWT exists. It only fails closed because the backend rejects it — and combined with H1's wildcard CORS these are cross-origin reachable. **Fix:** reject missing/invalid `X-Nori-JWT` at the LeLab layer before forwarding (defense in depth), and scope CORS per H1. (Pairs with backend H1 token-reservation work.)
+
+### 🟢 Low
+- **`/ws/joint-data` has no Origin check** (`server.py:1409-1438`) — WebSockets bypass CORS, so any open website can connect and read live joint telemetry (read-only leak). Validate `websocket.headers["origin"]` in `manager.connect`.
+- **Path-traversal hardening is inconsistent** — `ensure_local_dataset` (`datasets.py:58`, `_lerobot_cache_root() / repo_id`) and `setup_calibration_files` (`utils/config.py:150-151`, joins a caller-supplied config name) lack the resolve-and-contain guard that `handle_delete_dataset` (`record.py:503-508`) correctly uses. Apply the same `.resolve()` + containment check; reuse the `_safe_bundle_name` pattern from `nori_client.py:51-63`.
+- **Tauri webview has no CSP** — `tauri.conf.json` `app.security.csp: null`. Any XSS in the local UI runs unconstrained. Set a restrictive `csp` (self + known backend/Supabase/Nori-Backend origins).
+- **Verbose `detail=str(exc)` to the browser** at `server.py:893,895,1223,1230,1508,1523,1659,1661,1857` can leak local paths/internals. Return generic messages; log detail server-side.

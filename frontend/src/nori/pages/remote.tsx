@@ -22,6 +22,7 @@ import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import LeaderSetup from "@/nori/pages/leader-setup";
 import { playAudioFile, type ClipHandle } from "@/nori/remote/audioClip";
 import { DatasetCaptureCard } from "@/nori/remote/DatasetCaptureCard";
+import { PolicyDeployCard } from "@/nori/remote/PolicyDeployCard";
 import { isM6VideoEnabled } from "@/nori/remote/flags";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 
@@ -508,6 +509,10 @@ const Remote = () => {
               than in the right rail among the control-mode cards. Renders only when a local lelab
               spool answers (hidden on the hosted app). */}
           <DatasetCaptureCard />
+
+          {/* Deploy a trained policy on the robot — runs on this computer, streams
+              only motor instructions to the arm. Sits under the record card. */}
+          <PolicyDeployCard />
 
           {/* Single combined telemetry card: link/loop chips, then rail height, then grip force. */}
           <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">

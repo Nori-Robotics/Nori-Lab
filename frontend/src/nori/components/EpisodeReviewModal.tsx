@@ -21,6 +21,8 @@ import {
   deleteEpisodes,
   episodeClipUrl,
   cloudEpisodeClipUrl,
+  episodeThumbUrl,
+  cloudEpisodeThumbUrl,
   type DatasetEpisode,
 } from "@/nori/remote/episodeReview";
 
@@ -90,6 +92,14 @@ export function EpisodeReviewModal({
       return cloudEpisodeClipUrl(backendBase, source.sessionId, index, clipToken, camera ?? undefined);
     }
     return episodeClipUrl(baseUrl, source.repoId, index, camera ?? undefined);
+  };
+
+  const thumbSrc = (index: number): string | undefined => {
+    if (isCloud) {
+      if (!clipToken || !backendBase) return undefined;
+      return cloudEpisodeThumbUrl(backendBase, source.sessionId, index, clipToken, camera ?? undefined);
+    }
+    return episodeThumbUrl(baseUrl, source.repoId, index, camera ?? undefined);
   };
 
   const toggleMark = (i: number) =>
@@ -188,11 +198,25 @@ export function EpisodeReviewModal({
                         />
                       ) : (
                         <button
-                          className="flex h-full w-full items-center justify-center text-[#14131a]/60 hover:text-[#14131a]"
+                          className="group flex h-full w-full items-center justify-center text-[#14131a]/60 hover:text-[#14131a]"
                           onClick={() => setPlaying((s) => new Set(s).add(ep.index))}
                           aria-label={`Play episode ${ep.index}`}
                         >
-                          <Play className="h-8 w-8" />
+                          {thumbSrc(ep.index) && (
+                            <img
+                              key={`${ep.index}-${camera}`}
+                              src={thumbSrc(ep.index)}
+                              alt=""
+                              loading="lazy"
+                              className="absolute inset-0 h-full w-full object-cover"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+                              }}
+                            />
+                          )}
+                          <span className="relative flex h-11 w-11 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm transition-transform group-hover:scale-110">
+                            <Play className="h-5 w-5" />
+                          </span>
                         </button>
                       )}
                     </div>

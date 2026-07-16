@@ -38,6 +38,12 @@ export function episodeClipUrl(baseUrl: string, repoId: string, index: number, c
   return `${base(baseUrl)}/nori/capture/datasets/${encodeURIComponent(repoId)}/episode/${index}/clip.mp4${q}`;
 }
 
+/** URL for one episode's first-frame thumbnail (JPEG). */
+export function episodeThumbUrl(baseUrl: string, repoId: string, index: number, camera?: string): string {
+  const q = camera ? `?camera=${encodeURIComponent(camera)}` : "";
+  return `${base(baseUrl)}/nori/capture/datasets/${encodeURIComponent(repoId)}/episode/${index}/thumb.jpg${q}`;
+}
+
 export async function deleteEpisodes(
   baseUrl: string,
   repoId: string,
@@ -92,5 +98,20 @@ export function cloudEpisodeClipUrl(
   return (
     `${base(backendBase)}/api/v1/library/datasets/${encodeURIComponent(sessionId)}` +
     `/episode/${index}/clip.mp4?t=${encodeURIComponent(token)}${cam}`
+  );
+}
+
+/** First-frame thumbnail (JPEG) served from the backend, token-authorized. */
+export function cloudEpisodeThumbUrl(
+  backendBase: string,
+  sessionId: string,
+  index: number,
+  token: string,
+  camera?: string,
+): string {
+  const cam = camera ? `&camera=${encodeURIComponent(camera)}` : "";
+  return (
+    `${base(backendBase)}/api/v1/library/datasets/${encodeURIComponent(sessionId)}` +
+    `/episode/${index}/thumb.jpg?t=${encodeURIComponent(token)}${cam}`
   );
 }

@@ -132,7 +132,12 @@ def _open_previews(preview_dir, ep_idx, views, fps):
         st = c.add_stream("libx264", rate=fps)
         st.width, st.height, st.pix_fmt = (x1 - x0), (y1 - y0), "yuv420p"
         st.options = {"crf": "30", "preset": "veryfast"}
-        ws[key] = {"c": c, "st": st, "tmp": tmp, "final": out / f"ep{ep_idx}.mp4", "n": 0}
+        ws[key] = {
+            "c": c, "st": st, "tmp": tmp,
+            "final": out / f"ep{ep_idx}.mp4",
+            "jpg": out / f"ep{ep_idx}.jpg",  # first-frame thumbnail sidecar
+            "n": 0,
+        }
     return ws
 
 
@@ -143,6 +148,14 @@ def _preview_add(ws, key, img, fps):
     w = ws.get(key)
     if not w:
         return
+    if w["n"] == 0:
+        # First frame -> thumbnail sidecar (previews/<role>/ep<idx>.jpg). Best-effort.
+        try:
+            from PIL import Image
+
+            Image.fromarray(np.ascontiguousarray(img)).save(str(w["jpg"]), quality=85)
+        except Exception:
+            pass
     fr = av.VideoFrame.from_ndarray(np.ascontiguousarray(img), format="rgb24")
     fr.pts = w["n"]
     fr.time_base = Fraction(1, fps)
@@ -164,6 +177,7 @@ def _close_previews(ws, keep):
                 w["tmp"].rename(w["final"])
             else:
                 w["tmp"].unlink(missing_ok=True)
+                w["jpg"].unlink(missing_ok=True)
         except Exception:
             pass
 

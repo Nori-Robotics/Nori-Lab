@@ -31,6 +31,7 @@ router = APIRouter(prefix="/nori/capture")
 _SAFE_REPO = re.compile(r"^[A-Za-z0-9._-]+$")
 _BACKUP = re.compile(r"(\.bak\d*|\.tmp|~)$", re.IGNORECASE)
 _CLIP_CACHE = Path(tempfile.gettempdir()) / "nori_episode_clips"
+_THUMB_CACHE = Path(tempfile.gettempdir()) / "nori_episode_thumbs"
 
 
 def _dataset_dir(repo_id: str) -> Path:
@@ -187,6 +188,65 @@ def episode_clip(repo_id: str, idx: int, camera: str | None = None):
     return FileResponse(clip, media_type="video/mp4")
 
 
+def _extract_thumb(d: Path, repo_id: str, idx: int, camera: str | None = None) -> Path:
+    """Episode `idx` FIRST-frame thumbnail for `camera`: a preview sidecar
+    (previews/<role>/ep<idx>.jpg) if the exporter made one, else decode the
+    episode's first frame from the AV1 (cached by dataset mtime)."""
+    vkey = _resolve_vkey(d, camera)
+    sidecar = d / "previews" / _role(vkey) / f"ep{idx}.jpg"
+    if sidecar.is_file():
+        return sidecar
+    t = _episodes_table(d)
+    row = None
+    for i in range(t.num_rows):
+        if int(t.column("episode_index")[i].as_py()) == idx:
+            row = i
+            break
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"episode {idx} not found")
+    chunk = int(t.column(f"videos/{vkey}/chunk_index")[row].as_py())
+    file_i = int(t.column(f"videos/{vkey}/file_index")[row].as_py())
+    frm = float(t.column(f"videos/{vkey}/from_timestamp")[row].as_py())
+    src = d / "videos" / vkey / f"chunk-{chunk:03d}" / f"file-{file_i:03d}.mp4"
+    if not src.is_file():
+        raise HTTPException(status_code=404, detail="episode video file missing")
+
+    mtime = int(src.stat().st_mtime)
+    cache_dir = _THUMB_CACHE / repo_id
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    dst = cache_dir / f"ep{idx}_{_role(vkey)}_{mtime}.jpg"
+    if dst.exists():
+        return dst
+
+    import av
+    from PIL import Image
+
+    inp = av.open(str(src))
+    ivs = inp.streams.video[0]
+    img = None
+    try:
+        for f in inp.decode(ivs):
+            if float(f.pts * ivs.time_base) < frm:
+                continue
+            img = f.to_ndarray(format="rgb24")
+            break
+    finally:
+        inp.close()
+    if img is None:
+        raise HTTPException(status_code=404, detail="no frame for this episode")
+    tmp = dst.with_suffix(".part")
+    Image.fromarray(img).save(str(tmp), quality=85)
+    tmp.rename(dst)
+    return dst
+
+
+@router.get("/datasets/{repo_id}/episode/{idx}/thumb.jpg")
+def episode_thumb(repo_id: str, idx: int, camera: str | None = None):
+    d = _dataset_dir(repo_id)
+    thumb = _extract_thumb(d, repo_id, idx, camera)
+    return FileResponse(thumb, media_type="image/jpeg")
+
+
 class DeleteEpisodesBody(BaseModel):
     indices: list[int]
 
@@ -226,5 +286,6 @@ def delete_episodes_route(repo_id: str, body: DeleteEpisodesBody):
     tmp_path.rename(root / repo_id)          # swap edited in
     shutil.rmtree(backup, ignore_errors=True)  # drop original
     shutil.rmtree(_CLIP_CACHE / repo_id, ignore_errors=True)  # invalidate clip cache
+    shutil.rmtree(_THUMB_CACHE / repo_id, ignore_errors=True)  # and thumbnail cache
     logger.info("[EPISODES] %s: deleted %d episodes -> %d remain", repo_id, len(set(body.indices)), keep)
     return {"repo_id": repo_id, "deleted": len(set(body.indices)), "remaining": keep}

@@ -13,6 +13,9 @@ export type NoriTrainingFormState = NoriTrainingConfig & {
   /** Train on one of Nori's published open datasets instead (backend
    *  `open_dataset_id`). Mutually exclusive with dataset_ref. */
   open_dataset_id?: string;
+  /** Name the resulting policy BEFORE training (backend `policy_name` →
+   *  jobs.display_title). Renameable later from My Stuff at any stage. */
+  policy_name?: string;
 };
 
 /** Feasible policy options shown in the form — classes VERIFIED end-to-end in
@@ -58,6 +61,7 @@ export const DEFAULT_TRAINING_CONFIG: NoriTrainingFormState = {
   timeout_seconds: 900,
   dataset_ref: undefined,
   open_dataset_id: undefined,
+  policy_name: undefined,
 };
 
 /** The keys the backend `DispatchRequest` actually honors. Everything else in
@@ -74,6 +78,7 @@ export const HONORED_DISPATCH_KEYS = [
   "timeout_seconds",
   "dataset_ref",
   "open_dataset_id",
+  "policy_name",
 ] as const;
 
 /** Build the backend dispatch body from form state: only the honored fields,
@@ -94,5 +99,6 @@ export function toDispatchBody(c: NoriTrainingFormState): Record<string, unknown
   // both being present).
   if (c.open_dataset_id) body.open_dataset_id = c.open_dataset_id;
   else if (c.dataset_ref) body.dataset_ref = c.dataset_ref;
+  if (c.policy_name?.trim()) body.policy_name = c.policy_name.trim();
   return body;
 }

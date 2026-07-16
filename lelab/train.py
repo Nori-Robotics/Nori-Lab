@@ -45,6 +45,9 @@ class TrainingRequest(BaseModel):
     # with dataset_ref; nori_cloud runner only.
     open_dataset_id: str | None = None
 
+    # NORI: pre-training policy display name (backend jobs.display_title).
+    policy_name: str | None = None
+
     # Core training parameters
     steps: int = 10000
     batch_size: int = 8

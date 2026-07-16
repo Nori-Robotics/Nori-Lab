@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import Panel from "@/nori/components/Panel";
 import { NumberInput } from "@/components/ui/number-input";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -83,6 +84,16 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
       {/* Essentials */}
       <Panel eyebrow="policy" title="Run configuration">
         <div className="space-y-5">
+          <div>
+            <Label className={LABEL}>Policy name</Label>
+            <Input
+              value={config.policy_name ?? ""}
+              onChange={(e) => updateConfig("policy_name", e.target.value || undefined)}
+              maxLength={120}
+              placeholder="optional — e.g. Grab the red cup (rename anytime from My Stuff)"
+              className={`mt-1 ${FIELD}`}
+            />
+          </div>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
               <Label className={LABEL}>Policy</Label>

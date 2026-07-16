@@ -1311,6 +1311,16 @@ def nori_dataset_episodes(session_id: str, request: Request):
     return _nori_proxy(lambda: client.list_dataset_episodes(session_id))
 
 
+class NoriJobNameBody(BaseModel):
+    title: str | None = None
+
+
+@app.patch("/nori/training/jobs/{job_id}/name")
+def nori_rename_training_job(job_id: str, body: NoriJobNameBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.rename_training_job(job_id, body.title))
+
+
 @app.get("/nori/training/estimate-params")
 def nori_training_estimate_params(request: Request):
     """Constants for the training form's live time estimate (steps/s rates,

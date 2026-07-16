@@ -76,7 +76,7 @@ class NoriCloudJobRunner:
     # ignores it). dataset_ref is omitted when None (=> backend uses latest upload).
     _HONORED_KEYS = (
         "policy_type", "steps", "batch_size", "num_workers",
-        "seed", "policy_use_amp", "log_freq",
+        "seed", "policy_use_amp", "log_freq", "policy_name",
     )
 
     def _dispatch_body(self, config: TrainingRequest) -> dict:

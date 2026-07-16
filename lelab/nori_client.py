@@ -426,6 +426,13 @@ class NoriClient:
         files + record). 404 on a non-own session; 409 if it's published."""
         return self._request("DELETE", f"{API}/datasets/{session_id}")
 
+    def rename_training_job(self, job_id: str, title: str | None) -> dict[str, Any]:
+        """PATCH /training/jobs/{job_id}/name — name a policy at any lifecycle
+        stage (backend PII-scans; None clears)."""
+        return self._request(
+            "PATCH", f"{API}/training/jobs/{job_id}/name", json={"title": title}
+        )
+
     def get_library(self) -> dict[str, Any]:
         """GET /library — the My Stuff aggregate: promoted datasets joined to
         the policies trained from each, plus source-unknown policies."""

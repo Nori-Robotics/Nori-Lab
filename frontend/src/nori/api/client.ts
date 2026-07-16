@@ -466,6 +466,10 @@ export interface LibraryPolicy {
   job_id: string;
   /** The customer's display title (set via rename), if any. */
   title: string | null;
+  /** applied_config.policy_type — available pre-promotion (policy_class isn't). */
+  policy_type: string | null;
+  /** First RUNNING sighting; drives the live-progress estimate. */
+  run_started_at: string | null;
   status: string;
   state: "live" | "training" | "paused" | "failed";
   policy_class: string | null;
@@ -506,6 +510,22 @@ export function renameUploadLabel(
     fetcher,
     `/nori/datasets/upload/${encodeURIComponent(sessionId)}`,
     { method: "PATCH", body: { label }, action: "Rename dataset" }
+  );
+}
+
+/** PATCH /nori/training/jobs/{id}/name — name a policy at ANY lifecycle stage
+ * (before training finishes included). None/empty clears back to generated titles. */
+export function renameTrainingJob(
+  baseUrl: string,
+  fetcher: Fetcher,
+  jobId: string,
+  title: string | null
+): Promise<{ job_id: string; title: string | null }> {
+  return noriRequest<{ job_id: string; title: string | null }>(
+    baseUrl,
+    fetcher,
+    `/nori/training/jobs/${encodeURIComponent(jobId)}/name`,
+    { method: "PATCH", body: { title }, action: "Rename policy" }
   );
 }
 

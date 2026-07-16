@@ -233,11 +233,39 @@ const MyStuff = () => {
 
   const onRenamePolicy = useCallback(
     async (jobId: string, next: string) => {
-      await renamePolicy(baseUrl, fetchWithHeaders, jobId, next);
+      // Jobs-side rename: works at ANY stage (queued/training/paused/failed/
+      // live), unlike the promotion-gated marketplace rename.
+      await renameTrainingJob(baseUrl, fetchWithHeaders, jobId, next);
       await load();
     },
     [baseUrl, fetchWithHeaders, load],
   );
+
+  // Live-progress estimate inputs: per-policy step rates + setup seconds
+  // (fetched once) and a slow tick so training bars advance without polling —
+  // the estimate is pure clock math against run_started_at.
+  const [estimate, setEstimate] = useState<{ rates: Record<string, { typical: number }>; setup: number } | null>(null);
+  useEffect(() => {
+    getTrainingEstimateParams(baseUrl, fetchWithHeaders)
+      .then((e) => setEstimate({ rates: e.step_rates, setup: e.setup_seconds }))
+      .catch(() => {});
+  }, [baseUrl, fetchWithHeaders]);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 15_000);
+    return () => clearInterval(id);
+  }, []);
+
+  /** Estimated % complete for a RUNNING policy: elapsed-since-first-RUNNING
+   *  minus container setup, over steps/typical-rate. Clamped, labeled ~. */
+  const trainingProgress = (p: { run_started_at: string | null; steps: number | null; policy_type: string | null }): number | null => {
+    if (!estimate || !p.run_started_at || !p.steps) return null;
+    const rate = estimate.rates[p.policy_type ?? ""]?.typical;
+    if (!rate) return null;
+    const elapsed = (Date.now() - new Date(p.run_started_at).getTime()) / 1000 - estimate.setup;
+    if (elapsed <= 0) return 2; // still in container setup
+    return Math.max(2, Math.min(97, Math.round((elapsed / (p.steps / rate)) * 100)));
+  };
 
   const onUpload = useCallback(
     async (repoId: string) => {
@@ -411,18 +439,12 @@ const MyStuff = () => {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="space-y-1.5">
-                  {p.state === "live" ? (
-                    // Rename is promotion-gated server-side, so only live
-                    // policies get the editor; in-flight/failed show plain text.
-                    <EditableName
-                      value={p.title ?? p.sourceLabel ?? "Policy"}
-                      onRename={(next) => onRenamePolicy(p.job_id, next)}
-                    />
-                  ) : (
-                    <p className="text-base font-bold text-[#14131a]">
-                      {p.title ?? p.sourceLabel ?? "Policy"}
-                    </p>
-                  )}
+                  {/* Renameable at EVERY stage (jobs-side rename) — a policy
+                      can be named before its training finishes. */}
+                  <EditableName
+                    value={p.title ?? p.sourceLabel ?? "Policy"}
+                    onRename={(next) => onRenamePolicy(p.job_id, next)}
+                  />
                   {p.policy_class && <Pill tone="accent">{p.policy_class.toUpperCase()}</Pill>}
                 </div>
                 <Pill tone={STATE_TONE[p.state]}>{STATE_LABEL[p.state]}</Pill>
@@ -436,6 +458,31 @@ const MyStuff = () => {
                 {p.promoted_at && <span>Promoted {shortDate(p.promoted_at)}</span>}
                 {p.final_cost_usd != null && <span>${p.final_cost_usd.toFixed(2)}</span>}
               </div>
+              {inFlight && (() => {
+                const pct = trainingProgress(p);
+                return (
+                  <div className="mt-2.5">
+                    <div className="flex items-baseline justify-between">
+                      <span className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+                        training
+                      </span>
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {pct === null
+                          ? "starting…"
+                          : pct <= 2
+                            ? "setting up…"
+                            : `~${pct}% (estimated)`}
+                      </span>
+                    </div>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#14131a]/10">
+                      <div
+                        className="h-full rounded-full bg-[#b06a1c] transition-[width] duration-1000"
+                        style={{ width: `${pct ?? 2}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="mt-3 border-t border-dashed border-border pt-2.5 text-[13px] text-[#14131a]/70">
                 {p.sourceLabel ? (
                   <span>

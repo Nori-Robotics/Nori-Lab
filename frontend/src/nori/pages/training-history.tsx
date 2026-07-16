@@ -78,6 +78,10 @@ const TrainingHistory = () => {
   // ?open=<job id> deep-links from My Stuff straight to a job's live logs.
   const [searchParams] = useSearchParams();
   const [openId, setOpenId] = useState<string | null>(searchParams.get("open"));
+  // ?open= deep links go DIRECTLY to the job's own logs: forwarded to the rich
+  // local monitor when this LeLab is watching the job, else the inline log
+  // expander opens and the card scrolls into view. One-shot per mount.
+  const deepLinkHandled = useRef(false);
   // Map Nori job uuid -> local LeLab job id, for jobs this process is watching.
   const [localByUuid, setLocalByUuid] = useState<Record<string, string>>({});
 
@@ -184,6 +188,15 @@ const TrainingHistory = () => {
     void reload();
   }, [reload]);
 
+  useEffect(() => {
+    const target = searchParams.get("open");
+    if (!target || deepLinkHandled.current || jobs === null) return;
+    deepLinkHandled.current = true;
+    const localId = localByUuid[target];
+    if (localId) navigate(`/nori/training/${localId}`, { replace: true });
+    // else: openId is already set; the card's mount-ref scrolls it into view.
+  }, [searchParams, jobs, localByUuid, navigate]);
+
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between">
@@ -204,7 +217,15 @@ const TrainingHistory = () => {
           {jobs.map((job) => {
             const localId = localByUuid[job.id];
             return (
-              <Card key={job.id}>
+              <Card
+                key={job.id}
+                ref={(el) => {
+                  if (el && openId === job.id && searchParams.get("open") === job.id) {
+                    el.scrollIntoView({ behavior: "smooth", block: "center" });
+                  }
+                }}
+                className={openId === job.id ? "ring-2 ring-[#b06a1c]/50" : undefined}
+              >
                 <CardHeader
                   className="cursor-pointer"
                   onClick={() =>

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import uuid
 import os
 import re
 import time
@@ -720,15 +721,23 @@ class NoriClient:
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
         new_run: bool = False,
+        turn_key: str | None = None,
     ) -> dict[str, Any]:
         """POST /agent/usage/charge — record ONE turn's actual token usage and get the
-        updated budget snapshot back. Additive: call exactly once per turn (retrying
-        double-counts). `new_run` marks the first turn of a new agent run (for run_count)."""
+        updated budget snapshot back. IDEMPOTENT: every call carries a `turn_key`
+        (auto-generated per call when not supplied) which the backend dedups via
+        agent_charge_receipts — a replayed/retried charge returns the existing
+        budget instead of double-counting. Pass your own turn_key to make an
+        application-level retry share the same receipt. `new_run` marks the first
+        turn of a new agent run (for run_count)."""
+        if turn_key is None:
+            turn_key = str(uuid.uuid4())
         return self._request(
             "POST",
             f"{API}/agent/usage/charge",
             json={
                 "model": model,
+                "turn_key": turn_key,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "cache_read_tokens": cache_read_tokens,

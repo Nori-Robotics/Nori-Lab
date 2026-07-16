@@ -134,3 +134,31 @@ class TestDownloadPolicyBundle:
             NoriClient(jwt="j").download_policy_bundle(REF, str(tmp_path))
         assert ei.value.status_code == 404
         assert not list(tmp_path.glob("*.part"))
+
+
+# ---- charge idempotency (turn_key) -------------------------------------------
+
+def test_charge_auto_generates_turn_key():
+    import uuid as _uuid
+    from unittest.mock import MagicMock
+    from lelab.nori_client import NoriClient
+
+    c = NoriClient(jwt="x", base_url="https://backend.example")
+    c._request = MagicMock(return_value={})
+    c.charge_agent_usage(model="m", input_tokens=10, output_tokens=5)
+    body = c._request.call_args.kwargs["json"]
+    _uuid.UUID(body["turn_key"])  # raises if not a valid UUID
+    # two calls never share a key by accident
+    c.charge_agent_usage(model="m", input_tokens=10, output_tokens=5)
+    assert c._request.call_args.kwargs["json"]["turn_key"] != body["turn_key"]
+
+
+def test_charge_explicit_turn_key_passes_through():
+    from unittest.mock import MagicMock
+    from lelab.nori_client import NoriClient
+
+    c = NoriClient(jwt="x", base_url="https://backend.example")
+    c._request = MagicMock(return_value={})
+    c.charge_agent_usage(model="m", input_tokens=1, output_tokens=1,
+                         turn_key="11111111-2222-3333-4444-555555555555")
+    assert c._request.call_args.kwargs["json"]["turn_key"] == "11111111-2222-3333-4444-555555555555"

@@ -135,6 +135,24 @@ export class PolicyRunner {
       };
       const layout = t.cameraLayoutInfo?.() ?? t.cameraLayout?.() ?? "(no layout / single-camera)";
       console.warn("[policyRun] policy needs cameras:", neededRoles, "| session camera layout:", layout);
+
+      // Ground truth: is the composite video track actually LIVE right now? Every
+      // per-camera crop is derived from this one track — if it reports 0x0 / muted /
+      // ended, no crop can ever produce a frame, and the fix is about the composite
+      // itself streaming on this page, not the cropping.
+      const vs = teleop.videoStream();
+      const vtracks = vs?.getVideoTracks() ?? [];
+      console.warn(
+        "[policyRun] composite track state:",
+        vtracks.length
+          ? vtracks.map((tr) => ({
+              readyState: tr.readyState,
+              enabled: tr.enabled,
+              muted: tr.muted,
+              settings: tr.getSettings(),
+            }))
+          : "(no video track on videoStream)",
+      );
     }
 
     // Wire a frame source per image feature the policy demands.

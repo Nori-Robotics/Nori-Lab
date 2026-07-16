@@ -51,6 +51,33 @@ const ArmPills = ({
   </div>
 );
 
+// One labeled sensitivity slider (keyboard speed / VR tuning). Values are fractions of the
+// hardware-tuned rate; the readout shows percent, so 100% always means "the default feel".
+const TuneSlider = ({
+  label, value, min, max, title, onChange,
+}: {
+  label: string; value: number; min: number; max: number; title: string;
+  onChange: (v: number) => void;
+}) => (
+  <label className="flex items-center gap-2" title={title}>
+    <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+      {label}
+    </span>
+    <input
+      type="range"
+      min={min}
+      max={max}
+      step={0.05}
+      value={value}
+      onChange={(e) => onChange(Number(e.target.value))}
+      className="h-1 w-28 cursor-pointer accent-[#14131a]"
+    />
+    <span className="w-10 text-right font-mono text-[11px] text-muted-foreground">
+      {Math.round(value * 100)}%
+    </span>
+  </label>
+);
+
 const Remote = () => {
   const { ready, error: noriError } = useNori();
   const { baseUrl, fetchWithHeaders } = useApi();
@@ -186,6 +213,14 @@ const Remote = () => {
   useEffect(() => {
     if (connState === "failed" || connState === "disconnected") vrRef.current?.reclutch();
   }, [connState]);
+  // Apply the VR sensitivity sliders live to a running headset session (they also seed a
+  // new session at enterVr, since this only fires on changes).
+  useEffect(() => {
+    vrRef.current?.setTuning({
+      sensitivity: settings.vrSensitivity,
+      gripperOpenRate: settings.vrGripperOpen,
+    });
+  }, [settings.vrSensitivity, settings.vrGripperOpen]);
 
   // Connect/disconnect the session itself live in the provider. This page's disconnect also
   // stops the page-local drivers (leader / VR / clip) first, then tears the session down.
@@ -212,6 +247,13 @@ const Remote = () => {
       videoEl: videoRef.current,
       onLog: appendLog,
       onEnd: () => { setInVr(false); vrRef.current = null; },
+      tuning: { sensitivity: settings.vrSensitivity, gripperOpenRate: settings.vrGripperOpen },
+      // In-VR poke-panel changes persist to the same settings the sliders edit (the
+      // settings-change effect then echoes the same values back — harmless no-op).
+      onTuningChange: (t) => {
+        set("vrSensitivity", t.sensitivity);
+        set("vrGripperOpen", t.gripperOpenRate);
+      },
     });
     vrRef.current = session;
     try {
@@ -671,6 +713,25 @@ const Remote = () => {
                     )}
                   </div>
                 )}
+                {/* Sensitivity sliders — persisted per browser, applied live while in VR. */}
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                  <TuneSlider
+                    label="motion"
+                    value={settings.vrSensitivity}
+                    min={0.25}
+                    max={2}
+                    title="How much the robot moves per hand movement (100% = hardware-tuned default)"
+                    onChange={(v) => set("vrSensitivity", v)}
+                  />
+                  <TuneSlider
+                    label="grip open"
+                    value={settings.vrGripperOpen}
+                    min={0.05}
+                    max={1}
+                    title="How fast the gripper opens when the trigger is released (lower = more gradual)"
+                    onChange={(v) => set("vrGripperOpen", v)}
+                  />
+                </div>
                 {/* On a laptop: hand off a link to the hosted VR page to open on the headset. */}
                 <VrHandoff room={settings.room} token={settings.token} />
               </div>
@@ -799,6 +860,17 @@ const Remote = () => {
               >
                 Mode: {mode === "joint" ? "per-motor" : "cylindrical"}
               </Button>
+            </div>
+            {/* Jog speed — persisted per browser, applied live to the running session. */}
+            <div className="mb-3">
+              <TuneSlider
+                label="key speed"
+                value={settings.kbSpeed}
+                min={0.1}
+                max={1}
+                title="How fast held keys jog the robot (arm, base and lift), as a fraction of full speed"
+                onChange={(v) => set("kbSpeed", v)}
+              />
             </div>
             <ControlLegend mode={mode} />
           </CardContent>

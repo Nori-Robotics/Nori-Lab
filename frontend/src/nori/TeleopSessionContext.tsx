@@ -39,10 +39,17 @@ export type Settings = {
   turnCred: string;
   forceRelay: boolean;
   arm: ArmSide;
+  // Sensitivity tuning (per-browser, like everything else here). kbSpeed scales every
+  // held-key jog rate (RemoteTeleop.setKeyboardSpeed); the vr* fields feed
+  // VrJogMapper.setTuning. Defaults reproduce the hardware-tuned behavior exactly.
+  kbSpeed: number;       // (0..1] fraction of the daemon's full per-tick step
+  vrSensitivity: number; // multiplier on VR hand-motion response
+  vrGripperOpen: number; // (0..1] VR gripper opening rate (1 = instant legacy snap)
 };
 
 const DEFAULTS: Settings = {
   room: "", token: "", stun: DEFAULT_STUN, turn: "", turnUser: "", turnCred: "", forceRelay: false, arm: "right",
+  kbSpeed: 1, vrSensitivity: 1, vrGripperOpen: 0.25,
 };
 
 const LS_SETTINGS = "nori_remote_settings";
@@ -210,6 +217,12 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     teleopRef.current?.setArm(settings.arm);
   }, [settings.arm]);
 
+  // Live-update keyboard speed the same way (also applied at connect for a new session,
+  // since this effect only fires on slider changes).
+  useEffect(() => {
+    teleopRef.current?.setKeyboardSpeed(settings.kbSpeed);
+  }, [settings.kbSpeed]);
+
   const connect = useCallback(async () => {
     if (teleopRef.current) return; // already have a session
     setConnecting(true);
@@ -289,6 +302,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     });
     teleopRef.current = t;
     setTeleop(t);
+    t.setKeyboardSpeed(settings.kbSpeed);
     // Default video OFF for power: the robot's software x264 encoder is idle until a page that
     // shows video resumes it (the Remote page does, on mount). Applied when the control channel
     // opens even though it's set here pre-connect.

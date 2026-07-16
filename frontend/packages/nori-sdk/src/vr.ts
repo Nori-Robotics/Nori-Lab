@@ -101,8 +101,36 @@ const capRate = (v: number) => clamp(v, -VR_MAX_RATE, VR_MAX_RATE);
 // so these scale speed only — end positions are unchanged.
 const GRIPPER_CLOSE_RATE = 1.0;
 const GRIPPER_OPEN_RATE = 0.25;
-const gripperRate = (trigger: number) =>
-  trigger > 0.5 ? GRIPPER_CLOSE_RATE : -GRIPPER_OPEN_RATE;
+
+// User-tunable sensitivity (the web UI exposes these as sliders — VrJogMapper.setTuning).
+// Everything here scales the hardware-tuned constants above; the defaults reproduce them
+// exactly, so an untouched slider changes nothing.
+export interface VrTuning {
+  // Master multiplier on the continuous motion DOFs (translation, pan, wrist). Applied to
+  // the per-frame deltas BEFORE their per-axis limits, so it shapes low-speed response the
+  // same way the hand-tuned gain passes did; DELTA/PITCH/ROLL limits and VR_MAX_RATE still
+  // cap top speed.
+  sensitivity?: number;
+  gripperOpenRate?: number;  // fraction of the daemon's full jog rate, (0..1]
+  gripperCloseRate?: number;
+}
+type ResolvedTuning = Required<VrTuning>;
+const DEFAULT_TUNING: ResolvedTuning = {
+  sensitivity: 1,
+  gripperOpenRate: GRIPPER_OPEN_RATE,
+  gripperCloseRate: GRIPPER_CLOSE_RATE,
+};
+// Fill defaults + clamp. Shared by the mapper and the in-VR tuning panel (vr-session.ts),
+// so a value can never exceed the daemon's full jog rate or zero out, whichever UI set it.
+export function resolveTuning(t?: VrTuning): Required<VrTuning> {
+  return {
+    sensitivity: clamp(t?.sensitivity ?? DEFAULT_TUNING.sensitivity, 0.1, 3),
+    gripperOpenRate: clamp(t?.gripperOpenRate ?? DEFAULT_TUNING.gripperOpenRate, 0.05, 1),
+    gripperCloseRate: clamp(t?.gripperCloseRate ?? DEFAULT_TUNING.gripperCloseRate, 0.05, 1),
+  };
+}
+const gripperRate = (trigger: number, t: ResolvedTuning) =>
+  trigger > 0.5 ? t.gripperCloseRate : -t.gripperOpenRate;
 
 // ---- wrist rates: per-frame BODY-FRAME angular increments -------------------
 // Deliberate deviation from XLeVR (2026-07-02). The reference
@@ -176,7 +204,11 @@ class HandState {
   // Returns the arm jog rates for this hand, or null when the clutch is released
   // (caller treats null as "no contribution"; an engaged-but-still hand returns zeros).
   // controlYaw = the control frame's yaw in reference-space radians (see setControlYaw).
-  step(f: VrControllerFrame | null | undefined, controlYaw: number): Record<string, number> | null {
+  step(
+    f: VrControllerFrame | null | undefined,
+    controlYaw: number,
+    tuning: ResolvedTuning,
+  ): Record<string, number> | null {
     if (!f) { this.release(); return null; }
 
     // Clutch with hysteresis. Released -> hold (zero) and forget baselines so the next
@@ -198,7 +230,7 @@ class HandState {
     if (!wasEngaged || !this.prevPos) {
       this.prevPos = cur;
       this.prevQuat = (f.orientation as Quat | null | undefined) ?? null;
-      return gripperOnly(f.trigger);
+      return gripperOnly(f.trigger, tuning);
     }
 
     // World-frame metre deltas, rotated into the CONTROL frame (yaw set at recenter) before
@@ -216,13 +248,16 @@ class HandState {
     // Controller reconnect / tracking glitch -> reset baseline, hold this frame.
     if (Math.abs(vrX) > JUMP_POS || Math.abs(vrY) > JUMP_POS || Math.abs(vrZ) > JUMP_POS) {
       this.prevPos = cur;
-      return gripperOnly(f.trigger);
+      return gripperOnly(f.trigger, tuning);
     }
     this.prevPos = cur;
 
-    const dx = clamp(vrX * POS_SCALE, -DELTA_LIMIT, DELTA_LIMIT);
-    const dy = clamp(vrY * POS_SCALE, -DELTA_LIMIT, DELTA_LIMIT);
-    const dz = clamp(vrZ * POS_SCALE, -DELTA_LIMIT, DELTA_LIMIT);
+    // User sensitivity scales the deltas AFTER the jump guard above (the guard watches raw
+    // tracking, not preference) but BEFORE the per-frame limits (which stay absolute caps).
+    const sens = tuning.sensitivity;
+    const dx = clamp(vrX * POS_SCALE * sens, -DELTA_LIMIT, DELTA_LIMIT);
+    const dy = clamp(vrY * POS_SCALE * sens, -DELTA_LIMIT, DELTA_LIMIT);
+    const dz = clamp(vrZ * POS_SCALE * sens, -DELTA_LIMIT, DELTA_LIMIT);
 
     const arm = zeroArm();
     // rpi4 reference, sign-for-sign: current_x += -delta_z (Z flipped), current_y += delta_y.
@@ -244,15 +279,16 @@ class HandState {
       const step = wristStepDeg(f.orientation as Quat, this.prevQuat);
 
       // Wrist pitch from the flex step (rpi4 couples wrist_flex to pitch downstream).
+      // Sensitivity multiplies after the glitch guard, same reasoning as translation.
       let dp = step.flex * PITCH_SCALE;
       if (Math.abs(dp) > JUMP_ANGLE) dp = 0; // glitch guard
-      else dp = clamp(dp, -PITCH_LIMIT, PITCH_LIMIT);
+      else dp = clamp(dp * sens, -PITCH_LIMIT, PITCH_LIMIT);
       arm.pitch = clamp1(dp / DEG_STEP);
 
       // Wrist roll step (gentler than pitch — separate scale/limit).
       let dr = step.roll * ROLL_SCALE;
       if (Math.abs(dr) > JUMP_ANGLE) dr = 0;
-      else dr = clamp(dr, -ROLL_LIMIT, ROLL_LIMIT);
+      else dr = clamp(dr * sens, -ROLL_LIMIT, ROLL_LIMIT);
       arm.wrist_roll = clamp1(dr / DEG_STEP);
     }
     this.prevQuat = (f.orientation as Quat | null | undefined) ?? this.prevQuat;
@@ -263,7 +299,7 @@ class HandState {
 
     // Binary gripper trigger (reference: 45 if trigger>0.5 else 0). Through the daemon's
     // jog accumulator/clamp, + drives toward closed and - toward open.
-    arm.gripper = gripperRate(f.trigger);
+    arm.gripper = gripperRate(f.trigger, tuning);
 
     return arm;
   }
@@ -272,9 +308,9 @@ class HandState {
 function zeroArm(): Record<string, number> {
   return { shoulder_pan: 0, x: 0, y: 0, pitch: 0, wrist_roll: 0, gripper: 0 };
 }
-function gripperOnly(trigger: number): Record<string, number> {
+function gripperOnly(trigger: number, tuning: ResolvedTuning): Record<string, number> {
   const a = zeroArm();
-  a.gripper = gripperRate(trigger); // binary trigger, per-direction rates
+  a.gripper = gripperRate(trigger, tuning); // binary trigger, per-direction rates
   return a;
 }
 
@@ -310,6 +346,7 @@ export class VrJogMapper {
   private readonly left = new HandState();
   private readonly right = new HandState();
   private estopPrev = false;
+  private tuning: ResolvedTuning = { ...DEFAULT_TUNING };
   // Yaw (radians, reference space) of the control frame the arm TRANSLATIONS are expressed
   // in. 0 = reference-space forward (the panel's spawn facing). The session updates this on
   // every recenter so "toward the video panel" always means robot-forward, even after the
@@ -323,6 +360,12 @@ export class VrJogMapper {
   // frame.
   setControlYaw(yawRad: number) {
     this.controlYaw = yawRad;
+  }
+
+  // User sensitivity settings (web sliders or the in-VR panel). Safe to call mid-session —
+  // takes effect on the next frame. Unset fields fall back to the hardware-tuned defaults.
+  setTuning(t: VrTuning) {
+    this.tuning = resolveTuning(t);
   }
 
   // Which arms are under active clutch this frame. VR is dual-arm (each controller drives its
@@ -342,8 +385,8 @@ export class VrJogMapper {
   // Map one VR frame to a jog payload. Left controller -> left arm, right -> right arm;
   // base comes from the right controller; z-lift + E-STOP come from the resolved controls.
   map(frame: VrFrame): VrMapResult {
-    const lArm = this.left.step(frame.left, this.controlYaw);
-    const rArm = this.right.step(frame.right, this.controlYaw);
+    const lArm = this.left.step(frame.left, this.controlYaw, this.tuning);
+    const rArm = this.right.step(frame.right, this.controlYaw, this.tuning);
     const base = baseFromThumb(frame.right);
     const c = frame.controls;
     const leftLift = liftFromControls(c?.leftLiftUp, c?.leftLiftDown);

@@ -524,6 +524,11 @@ export class RemoteTeleop {
   // frame (arms follow the physical leader arms); base + lift still come from the keyboard.
   // Set by the leader driver each poll; null = no leader source (arms owned by keyboard/VR).
   private externalLeader: LeaderActionDeg | null = null;
+  // Keyboard jog speed in (0..1] — scales every held-key rate (arm, base, lift) before it
+  // goes on the wire. 1 (default) = the daemon's full per-tick step, i.e. legacy behavior.
+  // Keyboard-only: VR carries its own tuning (VrJogMapper.setTuning) and passes through
+  // externalJog untouched; leader targets are absolute and unaffected.
+  private keyboardSpeed = 1;
   // When true, an autonomous policy owns the control stream via sendAction(): the 50 Hz
   // jog tick yields entirely so its ever-present "hold" frame (idle zero-jog, or a
   // leader's absolute targets) can't out-vote the policy's ~10 Hz absolute actions and
@@ -703,6 +708,12 @@ export class RemoteTeleop {
   // to release the stream back to the keyboard. The next jogTick uses it as-is.
   setExternalJog(jog: ExternalJog | null) {
     this.externalJog = jog;
+  }
+
+  // Keyboard jog speed (user setting). Takes effect on the next 50 Hz tick; clamped to
+  // (0..1] so it can only slow keys down, never exceed the daemon's full rate.
+  setKeyboardSpeed(s: number) {
+    this.keyboardSpeed = Math.max(0.05, Math.min(1, s));
   }
 
   // Physical leader arms hand the jog tick their measured absolute targets (degrees /
@@ -1732,17 +1743,19 @@ export class RemoteTeleop {
         : {};
     const base: Record<string, number> = {};
     let z = 0;
+    // User keyboard-speed setting: every held key jogs at this fraction of full rate.
+    const sp = this.keyboardSpeed;
     for (const k of this.pressed) {
       // A policy owns the arms AND the base/lift for the rollout: ignore every held
       // key so nothing competes with sendAction; the frame stays a pure heartbeat.
       if (this.policyDriving) continue;
       // While a leader source drives the arms, arm keys are ignored (leader wins on those
       // joints); base + lift keys still apply so the operator drives the base/rails by hand.
-      if (!leader && k in km) { const [d, s] = km[k]; a[d] = s; }
+      if (!leader && k in km) { const [d, s] = km[k]; a[d] = s * sp; }
       // Firmware turns the base opposite our "+angular = left" convention, so negate the
       // angular sign on the wire (keeps BASE_KEYS/legend reading a,j = left, and now true).
-      else if (k in BASE_KEYS) { const [dof, s] = BASE_KEYS[k]; base[dof] = dof === "angular" ? -s : s; }
-      else if (k in ZLIFT_KEYS) z = ZLIFT_KEYS[k];
+      else if (k in BASE_KEYS) { const [dof, s] = BASE_KEYS[k]; base[dof] = (dof === "angular" ? -s : s) * sp; }
+      else if (k in ZLIFT_KEYS) z = ZLIFT_KEYS[k] * sp;
     }
     // Leader mode: arms come from leader_action_deg, so the jog carries only base + lift.
     // Always include a base object (even empty) so the daemon keeps commanding base velocity

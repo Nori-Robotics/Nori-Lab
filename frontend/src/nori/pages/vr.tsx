@@ -85,6 +85,14 @@ export default function VrLanding() {
   useEffect(() => {
     if (connState === "failed" || connState === "disconnected") vrRef.current?.reclutch();
   }, [connState]);
+  // Apply the sensitivity sliders live to a running headset session (this page runs on the
+  // headset browser, so the values live in ITS localStorage — separate from the laptop's).
+  useEffect(() => {
+    vrRef.current?.setTuning({
+      sensitivity: settings.vrSensitivity,
+      gripperOpenRate: settings.vrGripperOpen,
+    });
+  }, [settings.vrSensitivity, settings.vrGripperOpen]);
 
   // Stop the VR driver if the page unmounts (the session itself lives in the provider).
   useEffect(() => () => { vrRef.current?.stop(); }, []);
@@ -96,6 +104,12 @@ export default function VrLanding() {
       videoEl: videoRef.current,
       onLog: appendLog,
       onEnd: () => { setInVr(false); vrRef.current = null; },
+      tuning: { sensitivity: settings.vrSensitivity, gripperOpenRate: settings.vrGripperOpen },
+      // In-VR poke-panel changes persist here too, so this page's sliders stay in sync.
+      onTuningChange: (t) => {
+        set("vrSensitivity", t.sensitivity);
+        set("vrGripperOpen", t.gripperOpenRate);
+      },
     });
     vrRef.current = session;
     try {
@@ -105,7 +119,7 @@ export default function VrLanding() {
       appendLog("enter VR failed: " + (e instanceof Error ? e.message : String(e)));
       vrRef.current = null;
     }
-  }, [teleop, appendLog]);
+  }, [teleop, appendLog, settings.vrSensitivity, settings.vrGripperOpen, set]);
 
   const handleDisconnect = useCallback(async () => {
     await vrRef.current?.stop();
@@ -246,6 +260,29 @@ export default function VrLanding() {
                 >
                   {inVr ? "In VR — put on your headset" : "Enter VR"}
                 </Button>
+                {/* Sensitivity — persisted in THIS (headset) browser, applied live while in VR. */}
+                <div className="space-y-2 rounded-lg bg-[#14131a]/5 px-3 py-2">
+                  <label className="flex items-center gap-2 text-sm" title="How much the robot moves per hand movement (100% = default)">
+                    <span className="w-20 text-muted-foreground">motion</span>
+                    <input
+                      type="range" min={0.25} max={2} step={0.05}
+                      value={settings.vrSensitivity}
+                      onChange={(e) => set("vrSensitivity", Number(e.target.value))}
+                      className="h-1 flex-1 cursor-pointer accent-[#14131a]"
+                    />
+                    <span className="w-10 text-right font-mono text-xs">{Math.round(settings.vrSensitivity * 100)}%</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm" title="How fast the gripper opens when the trigger is released (lower = more gradual)">
+                    <span className="w-20 text-muted-foreground">grip open</span>
+                    <input
+                      type="range" min={0.05} max={1} step={0.05}
+                      value={settings.vrGripperOpen}
+                      onChange={(e) => set("vrGripperOpen", Number(e.target.value))}
+                      className="h-1 flex-1 cursor-pointer accent-[#14131a]"
+                    />
+                    <span className="w-10 text-right font-mono text-xs">{Math.round(settings.vrGripperOpen * 100)}%</span>
+                  </label>
+                </div>
                 <Button
                   variant="destructive"
                   onClick={handleDisconnect}

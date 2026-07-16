@@ -24,7 +24,7 @@
 //               are already the grippers. -> VrSession.recenter().
 
 import * as THREE from "three";
-import { VrJogMapper, type VrControllerFrame, type VrFrame } from "./vr";
+import { VrJogMapper, resolveTuning, type VrControllerFrame, type VrFrame, type VrTuning } from "./vr";
 import { buildRobotModel, type ArmHighlight, type RobotModel } from "./robot-model";
 import type { RemoteTeleop, TelemetryView } from "./teleop";
 
@@ -83,6 +83,25 @@ const RC_BTN_UP = 0.09;      // button offset above the left controller
 const RC_POKE_FIRE_R = 0.045;
 const RC_POKE_REARM_R = 0.08;
 const RC_POKE_NEAR_R = 0.11;
+// In-VR sensitivity panel — the wrist-glance card's mirror image, on the RIGHT wrist:
+// glance at the right controller (its clutch released) and a two-row −/+ panel appears
+// above it; poke a zone with the LEFT controller tip to step the value. Hidden while the
+// right clutch is engaged, since driving rolls that wrist through the glance pose
+// constantly. Changes apply on the next mapped frame and are reported via onTuningChange
+// so the page can persist them alongside its sliders.
+const TUNE_UP = 0.17;        // metres above the right controller (mirrors CARD_UP)
+const TUNE_W = 0.24;
+const TUNE_H = 0.12;         // 2:1 aspect, matches the 512x256 canvas
+const TUNE_SENS_STEP = 0.25; // one poke, on the web slider's 0.25..2 range
+const TUNE_GRIP_STEP = 0.1;  // one poke, on the web slider's 0.05..1 range
+// Poke zones in the panel plane's LOCAL metres (x right, y up, origin center):
+// row 0 = motion sensitivity, row 1 = gripper-open rate; dir = which way the poke steps.
+const TUNE_ZONES = [
+  { x: -(TUNE_W / 2 - 0.04), y: TUNE_H / 4, row: 0, dir: -1 },
+  { x: TUNE_W / 2 - 0.04, y: TUNE_H / 4, row: 0, dir: 1 },
+  { x: -(TUNE_W / 2 - 0.04), y: -TUNE_H / 4, row: 1, dir: -1 },
+  { x: TUNE_W / 2 - 0.04, y: -TUNE_H / 4, row: 1, dir: 1 },
+];
 // gripper Present_Current -> rumble. Raw sign-magnitude ints; tune on hardware.
 // Tuned stronger 2026-07-02 (was hard to feel): lower the contact threshold, reach full
 // rumble much sooner, and floor any real contact at HAPTIC_MIN so light grips still register.
@@ -143,6 +162,10 @@ export interface VrSessionOptions {
   onLog: (msg: string) => void;
   onEnd: () => void;
   bindings?: VrBindings; // defaults to DEFAULT_BINDINGS
+  tuning?: VrTuning; // initial sensitivity settings (live-updatable via setTuning)
+  // Fired when the operator changes tuning from INSIDE VR (the right-wrist poke panel),
+  // with the full resolved values — the page persists them so its sliders stay in sync.
+  onTuningChange?: (t: Required<VrTuning>) => void;
 }
 
 // Wrist angles are NOT derived here anymore (2026-07-01). The session forwards the RAW
@@ -206,11 +229,33 @@ export class VrSession {
   private cardOpacity = 0;
   private rcPoked = false;      // armed-state: true between fire and re-arm (hysteresis)
   private rcBtnHot = false;     // last painted highlight state (redraw only on change)
+  // In-VR sensitivity panel (right-wrist glance, see TUNE_* constants). Same
+  // canvas-texture-on-a-plane pattern as the controls card; repainted on value/highlight
+  // changes only.
+  private tuning: Required<VrTuning>;
+  private tuneBtn: THREE.Mesh | null = null;
+  private tuneCanvas: HTMLCanvasElement | null = null;
+  private tuneCtx: CanvasRenderingContext2D | null = null;
+  private tuneTexture: THREE.CanvasTexture | null = null;
+  private tuneMat: THREE.MeshBasicMaterial | null = null;
+  private tuneShown = false;   // glance hysteresis latch (mirrors cardShown)
+  private tuneOpacity = 0;
+  private tunePoked = false;   // between fire and re-arm (mirrors rcPoked)
+  private tuneHotZone = -1;    // highlighted zone index, -1 = none (redraw only on change)
   private running = false;
 
   constructor(opts: VrSessionOptions) {
     this.o = opts;
     this.b = opts.bindings ?? DEFAULT_BINDINGS;
+    this.tuning = resolveTuning(opts.tuning);
+    this.mapper.setTuning(this.tuning);
+  }
+
+  // Live sensitivity updates while in VR (the page's sliders call this on change).
+  setTuning(t: VrTuning) {
+    this.tuning = resolveTuning(t);
+    this.mapper.setTuning(this.tuning);
+    this.drawTunePanel(); // keep the in-VR panel's numbers in sync with the web sliders
   }
 
   static async isSupported(): Promise<boolean> {
@@ -375,6 +420,27 @@ export class VrSession {
     this.card = card;
     this.drawControlsCard(); // static content — painted once, never repainted
 
+    // Sensitivity tuning panel — the card's right-wrist mirror (see TUNE_* constants).
+    const tuneCanvas = document.createElement("canvas");
+    tuneCanvas.width = 512;
+    tuneCanvas.height = 256;
+    this.tuneCanvas = tuneCanvas;
+    this.tuneCtx = tuneCanvas.getContext("2d");
+    const tuneTex = new THREE.CanvasTexture(tuneCanvas);
+    tuneTex.colorSpace = THREE.SRGBColorSpace;
+    this.tuneTexture = tuneTex;
+    const tuneMat = new THREE.MeshBasicMaterial({
+      map: tuneTex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthTest: false,
+    });
+    this.tuneMat = tuneMat;
+    const tuneBtn = new THREE.Mesh(new THREE.PlaneGeometry(TUNE_W, TUNE_H), tuneMat);
+    tuneBtn.renderOrder = 998; // same layer as the controls card
+    tuneBtn.visible = false;
+    tuneBtn.scale.setScalar(UI_SCALE);
+    scene.add(tuneBtn);
+    this.tuneBtn = tuneBtn;
+    this.drawTunePanel();
+
     const session = await xr.requestSession(mode, {
       optionalFeatures: ["local-floor", "bounded-floor"],
     });
@@ -393,7 +459,8 @@ export class VrSession {
         "grip to engage clutch, B/Y & A/X = that arm's lift up/down, "
           + "right stick = drive the base, left stick = spin the 3D robot, "
           + "left stick-press = E-STOP, hold right stick-press = reset, "
-          + "poke the Recenter button above your left hand to recenter the view"
+          + "poke the Recenter button above your left hand to recenter the view, "
+          + "glance at your right wrist for sensitivity tuning"
     );
     renderer.setAnimationLoop((_t, frame) => this.onXRFrame(frame));
   }
@@ -419,6 +486,7 @@ export class VrSession {
     this.hudTexture?.dispose();
     this.rcBtnTexture?.dispose();
     this.cardTexture?.dispose();
+    this.tuneTexture?.dispose();
     this.robot?.dispose();
     this.renderer = null;
     this.scene = null;
@@ -444,6 +512,15 @@ export class VrSession {
     this.cardOpacity = 0;
     this.rcPoked = false;
     this.rcBtnHot = false;
+    this.tuneBtn = null;
+    this.tuneCanvas = null;
+    this.tuneCtx = null;
+    this.tuneTexture = null;
+    this.tuneMat = null;
+    this.tuneShown = false;
+    this.tuneOpacity = 0;
+    this.tunePoked = false;
+    this.tuneHotZone = -1;
     this.tel = null;
     this.motorsOnline = true;
     this.session = null;
@@ -502,6 +579,7 @@ export class VrSession {
         this.handleResetHold(resetHeld);   // sustained hold of the reset button = reset_latch
         this.updateRecenterButton(vrFrame); // in-VR poke button -> recenter()
         this.updateControlsCard(vrFrame, dt); // wrist-glance controls cheat-sheet
+        this.updateTunePanel(vrFrame, dt); // right-wrist glance sensitivity panel
         if (this.recenterPending) this.serviceRecenter(frame, refSpace);
         this.applyHaptics(session);
       }
@@ -680,6 +758,148 @@ export class VrSession {
         : Math.max(target, this.cardOpacity - step);
     mat.opacity = this.cardOpacity;
     card.visible = this.cardOpacity > 0.01; // fully faded -> skip drawing it entirely
+  }
+
+  // Anchor + reveal the sensitivity panel above the RIGHT controller (the controls card's
+  // mirror image), and step the values when the LEFT controller tip pokes a −/+ zone.
+  private updateTunePanel(f: VrFrame, dt: number) {
+    const btn = this.tuneBtn;
+    const mat = this.tuneMat;
+    if (!btn || !mat) return;
+
+    const rp = f.right?.position;
+    const rq = f.right?.orientation;
+    if (!rp) {
+      this.tuneShown = false; // right hand not tracked: fade out (mirrors the card)
+    } else {
+      const off = new THREE.Vector3(0, TUNE_UP, 0);
+      const q = rq ? new THREE.Quaternion(rq[0], rq[1], rq[2], rq[3]) : null;
+      if (q) off.applyQuaternion(q);
+      btn.position.set(rp[0] + off.x, rp[1] + off.y, rp[2] + off.z);
+
+      const head = new THREE.Vector3();
+      this.renderer?.xr.getCamera().getWorldPosition(head);
+
+      // Same glance test as the controls card, on the other wrist — but never while the
+      // right clutch is engaged: driving rolls that wrist straight through the glance pose.
+      if (this.mapper.engagedArms().right) {
+        this.tuneShown = false;
+      } else if (q) {
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+        const toHead = head.clone().sub(btn.position).normalize();
+        const facing = up.dot(toHead);
+        if (!this.tuneShown && facing > CARD_SHOW_DOT) this.tuneShown = true;
+        else if (this.tuneShown && facing < CARD_HIDE_DOT) this.tuneShown = false;
+      }
+      btn.lookAt(head); // billboard, same as the other hand-anchored UI
+    }
+
+    // Fade like the controls card so it never pops.
+    const target = this.tuneShown ? 1 : 0;
+    const step = CARD_FADE_PER_S * dt;
+    this.tuneOpacity =
+      this.tuneOpacity < target
+        ? Math.min(target, this.tuneOpacity + step)
+        : Math.max(target, this.tuneOpacity - step);
+    mat.opacity = this.tuneOpacity;
+    btn.visible = this.tuneOpacity > 0.01;
+
+    // Poke test only while the panel is (nearly) fully shown — no blind fires mid-fade.
+    let hot = -1;
+    const lp = f.left?.position;
+    if (btn.visible && this.tuneOpacity > 0.8 && lp) {
+      btn.updateMatrixWorld();
+      const tip = new THREE.Vector3(lp[0], lp[1], lp[2]);
+      let best = -1;
+      let bestD = Infinity;
+      TUNE_ZONES.forEach((z, i) => {
+        const d = tip.distanceTo(btn.localToWorld(new THREE.Vector3(z.x, z.y, 0)));
+        if (d < bestD) { bestD = d; best = i; }
+      });
+      if (bestD < RC_POKE_NEAR_R) hot = best;
+      // Same fire/re-arm hysteresis as the Recenter button, against the NEAREST zone only.
+      if (!this.tunePoked && bestD < RC_POKE_FIRE_R) {
+        this.tunePoked = true;
+        this.applyTuneStep(best);
+      } else if (this.tunePoked && bestD > RC_POKE_REARM_R) {
+        this.tunePoked = false;
+      }
+    }
+    if (hot !== this.tuneHotZone) { this.tuneHotZone = hot; this.drawTunePanel(); }
+  }
+
+  // One poke on zone `i`: step that row's value, clamp to the web sliders' ranges, apply
+  // to the mapper, and tell the page so it persists (keeps the 2D sliders in sync too).
+  private applyTuneStep(i: number) {
+    const z = TUNE_ZONES[i];
+    if (!z) return;
+    const t = { ...this.tuning };
+    if (z.row === 0) {
+      t.sensitivity = Math.min(2, Math.max(0.25, t.sensitivity + z.dir * TUNE_SENS_STEP));
+    } else {
+      t.gripperOpenRate = Math.min(1, Math.max(0.05, t.gripperOpenRate + z.dir * TUNE_GRIP_STEP));
+    }
+    // Kill float-step residue (0.35000000000000003) before it reaches the UI/persistence.
+    t.sensitivity = Math.round(t.sensitivity * 100) / 100;
+    t.gripperOpenRate = Math.round(t.gripperOpenRate * 100) / 100;
+    this.tuning = resolveTuning(t);
+    this.mapper.setTuning(this.tuning);
+    this.drawTunePanel();
+    this.o.onLog(
+      `tuning: motion ${Math.round(this.tuning.sensitivity * 100)}% · ` +
+        `grip open ${Math.round(this.tuning.gripperOpenRate * 100)}%`
+    );
+    this.o.onTuningChange?.(this.tuning);
+  }
+
+  // Paint the sensitivity panel: two rows (motion / grip open), each a − and + zone with
+  // the current value between them. Zone canvas positions derive from TUNE_ZONES so the
+  // hit-test and the artwork can't drift apart.
+  private drawTunePanel() {
+    const ctx = this.tuneCtx;
+    const cv = this.tuneCanvas;
+    if (!ctx || !cv) return;
+    const W = cv.width, H = cv.height;
+    // plane-local metres -> canvas px (canvas y grows downward)
+    const px = (x: number) => (0.5 + x / TUNE_W) * W;
+    const py = (y: number) => (0.5 - y / TUNE_H) * H;
+    ctx.clearRect(0, 0, W, H);
+
+    ctx.fillStyle = "rgba(15,23,42,0.92)";
+    this.roundRect(ctx, 4, 4, W - 8, H - 8, 26);
+    ctx.fill();
+    ctx.strokeStyle = "#64748b";
+    ctx.lineWidth = 4;
+    this.roundRect(ctx, 4, 4, W - 8, H - 8, 26);
+    ctx.stroke();
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const rows: [string, number][] = [
+      ["motion", this.tuning.sensitivity],
+      ["grip open", this.tuning.gripperOpenRate],
+    ];
+    TUNE_ZONES.forEach((z, i) => {
+      const hot = i === this.tuneHotZone;
+      ctx.fillStyle = hot ? "rgba(34,197,94,0.92)" : "rgba(51,65,85,0.95)";
+      ctx.beginPath();
+      ctx.arc(px(z.x), py(z.y), 34, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#f1f5f9";
+      ctx.font = "bold 48px system-ui, sans-serif";
+      ctx.fillText(z.dir > 0 ? "+" : "−", px(z.x), py(z.y) + 2);
+    });
+    rows.forEach(([label, value], row) => {
+      const y = py(row === 0 ? TUNE_H / 4 : -TUNE_H / 4);
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "bold 24px system-ui, sans-serif";
+      ctx.fillText(label.toUpperCase(), W / 2, y - 26);
+      ctx.fillStyle = "#e2e8f0";
+      ctx.font = "bold 40px system-ui, sans-serif";
+      ctx.fillText(`${Math.round(value * 100)}%`, W / 2, y + 16);
+    });
+    ctx.textAlign = "start"; // restore shared-ctx defaults, same as drawRecenterButton
+    if (this.tuneTexture) this.tuneTexture.needsUpdate = true;
   }
 
   // Paint the controls cheat-sheet. Static — called once at session start. Keep the rows in sync

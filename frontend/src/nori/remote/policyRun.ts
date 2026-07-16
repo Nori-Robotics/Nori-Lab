@@ -162,6 +162,11 @@ export class PolicyRunner {
       video.muted = true;
       video.playsInline = true;
       video.srcObject = stream;
+      // Keep the sink in the render tree (offscreen) — a fully detached <video> is
+      // not reliably frame-decoded, which leaves videoWidth at 0 and starves grab().
+      video.style.cssText =
+        "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;";
+      document.body.appendChild(video);
       void video.play().catch(() => undefined);
       this.sources.push({ featureKey, video, canvas: document.createElement("canvas"), stop: stopView });
     }
@@ -248,6 +253,7 @@ export class PolicyRunner {
     }
     for (const s of this.sources) {
       s.video.srcObject = null;
+      s.video.remove();
       s.stop();
     }
     this.sources = [];

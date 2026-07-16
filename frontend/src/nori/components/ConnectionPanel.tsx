@@ -82,19 +82,12 @@ export function ConnectionSettings() {
       <div className="space-y-1.5">
         <Label htmlFor="room">Room (your Nori serial number)</Label>
         {/* The room IS the Supabase realtime channel name — matched EXACTLY against the Pi's
-            NORI_ROOM, which is the serial in canonical uppercase. Typing "nori-l2-1234" joins a
-            channel the robot isn't on, and the only symptom is "your robot isn't answering".
-            So on blur, snap a case-only mismatch onto the paired serial's real casing.
-            Deliberately NOT a blanket .toUpperCase() on every keystroke: dev rooms are lowercase
-            by convention (NORI_ROOM=nori-dev), and uppercasing those would break them. */}
+            NORI_ROOM. Case is preserved AS TYPED: we neither upper- nor lower-case it, and no
+            longer snap a case-only mismatch onto the paired serial's casing. The room must match
+            the robot's NORI_ROOM exactly (including case) — the "use it" link / placeholder below
+            offer the paired serial's canonical casing when a robot is paired. */}
         <Input id="room" value={settings.room}
           onChange={(e) => set("room", e.target.value)}
-          onBlur={(e) => {
-            const v = e.target.value.trim();
-            if (serial && v !== serial && v.toLowerCase() === serial.toLowerCase()) {
-              set("room", serial);
-            }
-          }}
           autoCorrect="off"
           spellCheck={false}
           placeholder={serial || "nori-dev"} />

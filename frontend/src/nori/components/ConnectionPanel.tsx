@@ -82,15 +82,14 @@ export function ConnectionSettings() {
       <div className="space-y-1.5">
         <Label htmlFor="room">Room (your Nori serial number)</Label>
         {/* The room IS the Supabase realtime channel name — matched EXACTLY against the Pi's
-            NORI_ROOM. Case is preserved AS TYPED: we neither upper- nor lower-case it, and no
-            longer snap a case-only mismatch onto the paired serial's casing. The room must match
-            the robot's NORI_ROOM exactly (including case) — the "use it" link / placeholder below
-            offer the paired serial's canonical casing when a robot is paired. */}
+            NORI_ROOM. Forced to UPPERCASE on every keystroke. NOTE: this breaks lowercase dev
+            rooms (e.g. NORI_ROOM=nori-dev -> NORI-DEV joins a channel the robot isn't on); set the
+            robot's NORI_ROOM to uppercase to match, or use a real (uppercase) serial. */}
         <Input id="room" value={settings.room}
-          onChange={(e) => set("room", e.target.value)}
+          onChange={(e) => set("room", e.target.value.toUpperCase())}
           autoCorrect="off"
           spellCheck={false}
-          placeholder={serial || "nori-dev"} />
+          placeholder={serial || "NORI-DEV"} />
         {serial ? (
           settings.room === serial ? (
             <p className="text-xs text-muted-foreground">

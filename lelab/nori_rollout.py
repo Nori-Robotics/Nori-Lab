@@ -145,8 +145,23 @@ def _load_bundle(
     # .json + .safetensors); bundles promoted before the real-training merge
     # have only config+model. Fall back to config-derived default processors
     # for those — same behavior lerobot itself uses for a bare checkpoint.
+    #
+    # The fitted processors are saved with the TRAINING device baked into the
+    # `device_processor` step (always 'cuda' — training runs on the GPU
+    # container). On a non-CUDA host (e.g. an Apple-Silicon Mac → mps) that step
+    # fails to instantiate and we'd silently fall back to config-default
+    # processors — which DROPS the fitted normalization stats, so the policy
+    # sees un-normalized observations and just holds its pose ("driving but not
+    # moving"). Override the device to THIS host's device so the fitted stats
+    # actually load. (2026-07-15 incident: bbf7ff17 on mps.)
+    _dev_override = {"device_processor": {"device": device}}
     try:
-        pre, post = make_pre_post_processors(cfg, pretrained_path=str(bundle))
+        pre, post = make_pre_post_processors(
+            cfg,
+            pretrained_path=str(bundle),
+            preprocessor_overrides=_dev_override,
+            postprocessor_overrides=_dev_override,
+        )
     except Exception as e:
         logger.warning("[ROLLOUT] no fitted processors in %s (%s) — using config defaults", ref, e)
         pre, post = make_pre_post_processors(cfg)

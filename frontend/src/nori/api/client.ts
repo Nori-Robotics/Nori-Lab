@@ -268,6 +268,11 @@ export interface PolicyDetails {
   editable: boolean;
   files: PolicyFileSummary[];
   dataset_stats?: DatasetStats | null;
+  /** Real training stats for own policies (null for listings). */
+  training_steps?: number | null;
+  batch_size?: number | null;
+  dataset_episode_count?: number | null;
+  dataset_frame_count?: number | null;
 }
 
 /** GET /nori/marketplace/policies/{ref}/details — full detail view. */

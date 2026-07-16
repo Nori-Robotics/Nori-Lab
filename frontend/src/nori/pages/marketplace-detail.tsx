@@ -3,7 +3,7 @@
 // A policy can be installed/renamed/uninstalled/published (own); a dataset is
 // acquired and then trained on from the Training page. `kind` comes from the
 // catalog list entry (the details endpoint doesn't carry it), so we fetch
-// listPolicies to find the entry and fall back to mockDetailsFor on a 404.
+// listPolicies to find the entry (for kind); details come from the real endpoint only.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -28,7 +28,6 @@ import {
   ListingStatusChip,
   SourceChip,
   fmtBytes,
-  mockDetailsFor,
 } from "./marketplace";
 
 type Loaded = {
@@ -81,16 +80,16 @@ const MarketplaceDetail = () => {
       } catch {
         /* catalog fetch best-effort */
       }
-      let details: PolicyDetails;
-      try {
-        details = await getPolicyDetails(baseUrl, fetchWithHeaders, ref);
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 404 && entry) {
-          details = mockDetailsFor(entry); // preview until the details endpoint ships
-        } else {
-          throw e;
+      // Always the REAL details endpoint — no synthesized/preview data. A 404
+      // means the artifact is genuinely unavailable (e.g. erased under
+      // right-to-erasure, or taken down); surface that honestly rather than
+      // fabricating stats.
+      const details: PolicyDetails = await getPolicyDetails(baseUrl, fetchWithHeaders, ref).catch((e) => {
+        if (e instanceof ApiError && e.status === 404) {
+          throw new Error("This policy's data is no longer available (it may have been erased or taken down).");
         }
-      }
+        throw e;
+      });
       setLoaded({ details, entry });
       setTitle(details.title);
     } catch (e) {
@@ -304,6 +303,18 @@ const MarketplaceDetail = () => {
             </>
           )}
           {details.policy_class && <DetailRow label="class" value={details.policy_class} />}
+          {!isDataset && details.training_steps != null && (
+            <DetailRow label="trained steps" value={details.training_steps.toLocaleString()} />
+          )}
+          {!isDataset && details.batch_size != null && (
+            <DetailRow label="batch size" value={String(details.batch_size)} />
+          )}
+          {!isDataset && details.dataset_episode_count != null && (
+            <DetailRow label="dataset episodes" value={String(details.dataset_episode_count)} />
+          )}
+          {!isDataset && details.dataset_frame_count != null && (
+            <DetailRow label="dataset frames" value={details.dataset_frame_count.toLocaleString()} />
+          )}
           {details.dataset_repo && (
             <DetailRow label={isDataset ? "repo" : "dataset"} value={details.dataset_repo} />
           )}

@@ -22,7 +22,6 @@ import {
   listPolicies,
   type LocalPolicy,
   type MyListing,
-  type PolicyDetails,
   type PolicyListEntry,
 } from "@/nori/api/client";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
@@ -35,61 +34,6 @@ import {
 } from "@/nori/remote/policyRun";
 import CommunityPublishCard from "@/nori/components/marketplace/CommunityPublishCard";
 
-/**
- * PREVIEW-ONLY stand-in for GET .../details while the backend endpoint is
- * unreleased (it lands with the marketplace-details branch + migration 014).
- * Values are plausible placeholders modeled on a real promoted bundle; the
- * description carries an explicit preview-data banner so nobody mistakes
- * them for real stats. Delete once the endpoint is deployed everywhere.
- */
-export function mockDetailsFor(p: PolicyListEntry): PolicyDetails {
-  const withRepo = p as PolicyListEntry & { dataset_repo?: string | null; kind?: string };
-  const isDataset = withRepo.kind === "dataset";
-  return {
-    ref: p.ref,
-    source: p.source,
-    title: p.title,
-    is_renamed: false,
-    description:
-      `${p.description ?? ""}\n\n` +
-      (isDataset
-        ? "⚠ preview data — the dataset-details endpoint isn't deployed yet; the " +
-          "file list below is a placeholder for the LeRobot layout (meta/data/videos)."
-        : "⚠ preview data — the policy-details endpoint isn't deployed yet; " +
-          "the file list and stats below are placeholders."),
-    policy_class: isDataset ? null : (p.policy_class ?? "act"),
-    price_usd: p.price_usd ?? null,
-    created_at: p.created_at,
-    dataset_repo: isDataset
-      ? "NoriRobotics/community-datasets"
-      : withRepo.dataset_repo ?? (p.source === "own" ? "NoriRobotics/customer-preview" : null),
-    promoted_at: p.created_at,
-    final_cost_usd: !isDataset && p.source === "own" ? 0.0751 : null,
-    timeout_seconds: !isDataset && p.source === "own" ? 900 : null,
-    editable: !isDataset && p.source === "own",
-    files: isDataset
-      ? [
-          { name: "meta/info.json", size_bytes: 1024, sha256: null },
-          { name: "meta/episodes.jsonl", size_bytes: 4096, sha256: null },
-          { name: "data/chunk-000/episode_000000.parquet", size_bytes: 5242880, sha256: null },
-          { name: "videos/chunk-000/observation.images.cam/episode_000000.mp4", size_bytes: 12582912, sha256: null },
-        ]
-      : [
-          {
-            name: "model.safetensors",
-            size_bytes: 206766560,
-            sha256: "42772891cb6eba1e7bc36ad8e12c0fa0723c61f036fa235c725ce6026e6e81df",
-          },
-          {
-            name: "config.json",
-            size_bytes: 198,
-            sha256: "d2ef3c412258b5daf89205d2a651e53c2631ce3adea78cd2d08df698cc58334c",
-          },
-          { name: "policy_preprocessor.safetensors", size_bytes: 1184, sha256: null },
-          { name: "policy_postprocessor.safetensors", size_bytes: 1088, sha256: null },
-        ],
-  };
-}
 
 type SourceFilter = "all" | "own" | "first_party" | "community";
 const SOURCES: { key: SourceFilter; label: string }[] = [

@@ -173,7 +173,14 @@ export class PolicyRunner {
     if (this.inflight || !this.teleop || !this.timer) return;
 
     const tel = this.getTel();
-    if (tel.safety !== "ok") return void this.stop(`robot safety state: ${tel.safety}`);
+    // Stop on a REPORTED unsafe state, but NOT on "-" — that's the telemetry's
+    // default placeholder before/without a safety field (some robot/session
+    // configs never populate it). Teleop drives the follower under the same "-",
+    // and the daemon still gates every control frame we send (this is only a
+    // belt-on-top). A real reported state (e.g. "latched") still halts us.
+    if (tel.safety && tel.safety !== "ok" && tel.safety !== "-") {
+      return void this.stop(`robot safety state: ${tel.safety}`);
+    }
     if (tel.watchdog === "stop") return void this.stop("robot watchdog stopped motion");
     if (!tel.state || Object.keys(tel.state).length === 0) return; // stale tick — skip
 

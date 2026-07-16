@@ -106,7 +106,9 @@ const capRate = (v: number) => clamp(v, -VR_MAX_RATE, VR_MAX_RATE);
 // rotvec is the body-frame angular velocity — x = tilt about the hand's own pitch axis,
 // z = twist about the handle — independent of facing direction and travel since engage.
 //     flex step = −deg(rotvec.x)   (sign flipped vs XLeVR — inverted on our hardware)
-//     roll step = −deg(rotvec.z)
+//     roll step = +deg(rotvec.z)   (sign flipped vs XLeVR 2026-07-16 — same story as flex:
+//                                   the reference sign twisted the wrist opposite the
+//                                   controller on hardware, both arms, leaders correct)
 // Quats are [x,y,z,w], Hamilton (same as scipy). Do NOT copy quest_vr_bridge.py's
 // aerospace euler (asin = Y axis) — that unverified path never registered flex at all.
 type Quat = [number, number, number, number];
@@ -130,12 +132,14 @@ function qRotvecDeg(q: Quat): [number, number, number] {
   return [x * k, y * k, z * k];
 }
 // This frame's wrist steps (degrees) from the body-frame increment prev⁻¹ · cur.
-// Flex is NEGATED vs the reference's +rotvec.x: on our hardware the reference sign drove
-// the wrist opposite to the controller (tilt down moved the wrist up), so the sensing
-// direction is flipped here at the single source the pitch delta pipeline reads.
+// BOTH signs are flipped vs the reference here, at the single source the wrist delta
+// pipelines read. Flex (2026-07-02): the reference's +rotvec.x drove the wrist opposite
+// the controller (tilt down moved the wrist up). Roll (2026-07-16): same inversion —
+// −rotvec.z twisted the wrist opposite the controller on both arms (leader arms, which
+// share the daemon's target convention, were correct — so the fix belongs in VR sensing).
 function wristStepDeg(cur: Quat, prev: Quat): { flex: number; roll: number } {
   const rv = qRotvecDeg(qMul(qConj(prev), cur));
-  return { flex: -rv[0], roll: -rv[2] };
+  return { flex: -rv[0], roll: rv[2] };
 }
 
 // Stateful per-hand integrator. One instance per controller; the mapper owns two.

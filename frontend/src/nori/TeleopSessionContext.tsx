@@ -25,7 +25,7 @@ import { getSupabase } from "@/nori/auth/supabase";
 import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
 import { getTurnCredentials } from "@/nori/api/client";
-import { isTurnMintEnabled } from "@/nori/remote/flags";
+import { isTurnMintEnabled, isPrivateRoomEnabled } from "@/nori/remote/flags";
 
 const DEFAULT_STUN = "stun:stun.l.google.com:19302";
 
@@ -249,7 +249,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
       return;
     }
     const t = new RemoteTeleop({
-      signaling: new SupabaseSignaling(supabase, room, appendLog),
+      signaling: new SupabaseSignaling(supabase, room, appendLog, { private: isPrivateRoomEnabled() }),
       // No videoEl/audioEl here: the session is page-independent. The page that shows video
       // attaches its elements via teleop.setVideoEl()/setAudioEl() on mount.
       token: settings.token.trim(),

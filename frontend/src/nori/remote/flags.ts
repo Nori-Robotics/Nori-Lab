@@ -31,3 +31,18 @@ export function isTurnMintEnabled(): boolean {
     return false;
   }
 }
+
+// Private signaling rooms (signaling Phase 1 / 1e): join realtime:<serial> as a PRIVATE
+// channel so Supabase RLS admits only the robot + its paired customer. Shipped DARK: the
+// SDK falls back to a public join on first error, so enabling it can't break a connect to
+// an un-migrated (public) robot — but it stays off until the robots themselves are flipped
+// to NORI_PRIVATE_ROOM=1, to avoid an operator-private / robot-public mismatch window.
+// Flip for dev/cutover via:
+//   localStorage.setItem("nori_private_room", "1"); location.reload();
+export function isPrivateRoomEnabled(): boolean {
+  try {
+    return localStorage.getItem("nori_private_room") === "1";
+  } catch {
+    return false;
+  }
+}

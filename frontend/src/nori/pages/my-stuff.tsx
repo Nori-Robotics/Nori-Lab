@@ -358,23 +358,39 @@ const MyStuff = () => {
   }, [baseUrl, teleop]);
   const stopRun = useCallback(() => { void runnerRef.current?.stop(); }, []);
 
-  /** The run control for a live policy card (null when no robot session). */
+  /** Install + run controls for a live policy card. Installing is just a
+   *  download to the local cache — it does NOT need a robot session, and once
+   *  installed the policy is deployable from the Remote page too. Running does
+   *  need a connected robot. */
   const runControlFor = (jobId: string) => {
-    if (!sessionRunning || !teleop) {
-      return <span className="text-xs text-muted-foreground">connect to your robot (Remote) to run</span>;
+    // Not installed yet → offer Install (no robot needed).
+    if (!localRefs.has(jobId)) {
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" onClick={() => installForRun(jobId)} disabled={installingRef === jobId}>
+            {installingRef === jobId ? "Installing…" : "Install"}
+          </Button>
+          <span className="text-xs text-muted-foreground">to deploy on the Remote page</span>
+        </div>
+      );
     }
+    // Installed but no robot session → point to the Remote page to deploy.
+    if (!sessionRunning || !teleop) {
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => navigate("/nori/remote")}>
+            Deploy on Remote →
+          </Button>
+          <span className="text-xs text-muted-foreground">installed ✓</span>
+        </div>
+      );
+    }
+    // Installed + connected → run it here.
     const mine = runPhase.ref === jobId ? runPhase.phase : null;
     if (mine?.kind === "loading") return <Button size="sm" disabled>loading…</Button>;
     if (mine?.kind === "running") return <Button size="sm" variant="destructive" onClick={stopRun}>Stop</Button>;
     if (runPhase.phase.kind === "running" || runPhase.phase.kind === "loading") {
       return <span className="text-xs text-muted-foreground">another policy is driving</span>;
-    }
-    if (!localRefs.has(jobId)) {
-      return (
-        <Button size="sm" onClick={() => installForRun(jobId)} disabled={installingRef === jobId}>
-          {installingRef === jobId ? "installing…" : "Install to run"}
-        </Button>
-      );
     }
     const label = mine?.kind === "error" ? "Retry run" : mine?.kind === "stopped" ? "Run again" : "Run on robot";
     return <Button size="sm" onClick={() => runOnRobot(jobId)}>{label}</Button>;

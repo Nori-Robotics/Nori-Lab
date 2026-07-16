@@ -18,7 +18,7 @@
 // request in flight (a slow model skips ticks instead of queueing stale
 // actions).
 
-import type { RemoteTeleop, TelemetryView } from "@nori/sdk";
+import { cameraTileRect, type CameraLayout, type RemoteTeleop, type TelemetryView } from "@nori/sdk";
 
 // Must mirror lelab/capture_export.py's exclusion — the training-side joint
 // order and the inference-side joint order MUST be derived identically.
@@ -60,11 +60,16 @@ export const EXECUTION_MODE_LABELS: Record<ExecutionMode, { label: string; hint:
   fast: { label: "Fast", hint: "Full chunk open-loop — most reactive-feeling, can drift" },
 };
 
+// Every image feature is drawn from the ONE composite video the robot sends. A
+// per-role feature (e.g. "left_wrist") crops its tile out of that composite via
+// cameraTileRect + the live layout; "remote"/"composite" is the full frame
+// (role === null). We deliberately do NOT go through teleop.cameraView()'s
+// captureStream crop — that secondary canvas→stream→video hop never produced
+// frames on Chrome, so we crop straight from the decoded composite instead.
 interface FrameSource {
   featureKey: string;
-  video: HTMLVideoElement;
+  role: string | null; // layout tile to crop, or null for the full composite
   canvas: HTMLCanvasElement;
-  stop: () => void;
 }
 
 export class PolicyRunner {
@@ -73,6 +78,8 @@ export class PolicyRunner {
   private getTel: () => TelemetryView;
   private timer: ReturnType<typeof setInterval> | null = null;
   private sources: FrameSource[] = [];
+  private composite: HTMLVideoElement | null = null; // the single decoded feed
+  private layout: CameraLayout | null = null; // tile → crop-rect mapping
   private inflight = false;
   private consecutiveFailures = 0;
   private ticks = 0;
@@ -155,38 +162,39 @@ export class PolicyRunner {
       );
     }
 
-    // Wire a frame source per image feature the policy demands.
+    // ONE composite video, kept in the render tree (offscreen) so Chrome actually
+    // decodes it. Every image feature is a crop of this single feed at grab-time.
+    this.layout =
+      (teleop as unknown as { cameraLayoutInfo?: () => CameraLayout | null }).cameraLayoutInfo?.() ??
+      null;
+    const composite = document.createElement("video");
+    composite.muted = true;
+    composite.playsInline = true;
+    composite.srcObject = teleop.videoStream();
+    composite.style.cssText =
+      "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;";
+    document.body.appendChild(composite);
+    void composite.play().catch(() => undefined);
+    this.composite = composite;
+
     this.sources = [];
     for (const featureKey of Object.keys(loaded.image_keys)) {
-      const role = featureKey.replace(/^observation\.images\./, "");
-      let stream: MediaStream | null = null;
-      let stopView = () => {};
-      if (role === "remote" || role === "composite") {
-        stream = teleop.videoStream();
-      } else {
-        const view = teleop.cameraView(role, { fps: loaded.fps });
-        if (view) {
-          stream = view.stream;
-          stopView = () => view.stop();
-        }
-      }
-      if (!stream) {
+      const rawRole = featureKey.replace(/^observation\.images\./, "");
+      const isFull = rawRole === "remote" || rawRole === "composite";
+      // A per-role feature must correspond to a tile in the live layout, else we
+      // have no crop rect for it — fail loudly with the tiles we DO have.
+      if (!isFull && !this.layout?.tiles.includes(rawRole)) {
         await this.unloadQuietly();
-        const message = `policy needs camera "${role}" but the session doesn't provide it (video on? layout arrived?)`;
+        const tiles = this.layout?.tiles.join(", ") || "(no layout / single-camera)";
+        const message = `policy needs camera "${rawRole}" but the session layout has tiles [${tiles}]`;
         this.onPhase({ kind: "error", message });
         throw new Error(message);
       }
-      const video = document.createElement("video");
-      video.muted = true;
-      video.playsInline = true;
-      video.srcObject = stream;
-      // Keep the sink in the render tree (offscreen) — a fully detached <video> is
-      // not reliably frame-decoded, which leaves videoWidth at 0 and starves grab().
-      video.style.cssText =
-        "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;";
-      document.body.appendChild(video);
-      void video.play().catch(() => undefined);
-      this.sources.push({ featureKey, video, canvas: document.createElement("canvas"), stop: stopView });
+      this.sources.push({
+        featureKey,
+        role: isFull ? null : rawRole,
+        canvas: document.createElement("canvas"),
+      });
     }
 
     this.teleop = teleop;
@@ -198,14 +206,29 @@ export class PolicyRunner {
   }
 
   private grab(src: FrameSource): string | null {
-    const w = src.video.videoWidth;
-    const h = src.video.videoHeight;
-    if (!w || !h) return null;
-    src.canvas.width = w;
-    src.canvas.height = h;
+    const video = this.composite;
+    if (!video) return null;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) return null;
+    // Full composite (role === null), or this tile's source-crop rect from the
+    // live layout (recomputed each frame so it survives an encode-res change).
+    let sx = 0;
+    let sy = 0;
+    let sw = vw;
+    let sh = vh;
+    if (src.role) {
+      const r = this.layout && cameraTileRect(this.layout, src.role, vw, vh);
+      if (!r) return null;
+      ({ sx, sy, sw, sh } = r);
+    }
+    const cw = Math.max(2, Math.round(sw));
+    const ch = Math.max(2, Math.round(sh));
+    src.canvas.width = cw;
+    src.canvas.height = ch;
     const ctx = src.canvas.getContext("2d");
     if (!ctx) return null;
-    ctx.drawImage(src.video, 0, 0, w, h);
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
     return src.canvas.toDataURL("image/jpeg", 0.85);
   }
 
@@ -235,7 +258,8 @@ export class PolicyRunner {
         if (this.skipLog++ % 15 === 0)
           console.warn(
             `[policyRun] tick skipped: camera "${src.featureKey}" has no frame ` +
-              `(video ${src.video.videoWidth}x${src.video.videoHeight}, readyState ${src.video.readyState})`,
+              `(composite ${this.composite?.videoWidth ?? 0}x${this.composite?.videoHeight ?? 0}, ` +
+              `readyState ${this.composite?.readyState ?? 0})`,
           );
         return; // video not ready this tick
       }
@@ -269,12 +293,13 @@ export class PolicyRunner {
       clearInterval(this.timer);
       this.timer = null;
     }
-    for (const s of this.sources) {
-      s.video.srcObject = null;
-      s.video.remove();
-      s.stop();
-    }
     this.sources = [];
+    if (this.composite) {
+      this.composite.srcObject = null;
+      this.composite.remove();
+      this.composite = null;
+    }
+    this.layout = null;
     this.teleop = null;
     this.ref = null;
     await this.unloadQuietly();

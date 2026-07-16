@@ -138,6 +138,10 @@ export function DatasetCaptureCard() {
   const [task, setTask] = useState("");
   const [episodeOn, setEpisodeOn] = useState(false);
   const [episodeCount, setEpisodeCount] = useState(0);
+  // After Stop episode, the just-recorded clip awaits Accept/Reject before it
+  // counts toward the dataset. `url` is an object URL for the preview <video>.
+  const [review, setReview] = useState<{ index: number; url: string } | null>(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
   const captureRef = useRef<DatasetCapture | null>(null);
 
   // Collapsed by default, like Robot logs — recording is an occasional task and the card is tall.
@@ -187,6 +191,13 @@ export function DatasetCaptureCard() {
     if (phase.kind !== "idle") setOpen(true);
   }, [phase.kind]);
 
+  // Free the review clip's object URL when it changes or the card unmounts.
+  useEffect(() => {
+    return () => {
+      if (review) URL.revokeObjectURL(review.url);
+    };
+  }, [review]);
+
   const appendable = datasets.filter((d) => d.appendable);
   const appendTarget =
     dest.mode === "append" ? appendable.find((d) => d.repo_id === dest.repoId) : undefined;
@@ -213,9 +224,11 @@ export function DatasetCaptureCard() {
     if (!capture || !teleop) return;
     try {
       if (episodeOn) {
-        await capture.episodeStop();
+        // Stop, then hand the clip to the Accept/Reject review — it does NOT
+        // count toward the dataset until Accepted.
+        const res = await capture.episodeStop();
         setEpisodeOn(false);
-        setEpisodeCount((n) => n + 1);
+        if (res) setReview({ index: res.index, url: URL.createObjectURL(res.blob) });
       } else {
         await capture.episodeStart(teleop, task.trim() || "teleop session");
         setEpisodeOn(true);
@@ -224,6 +237,28 @@ export function DatasetCaptureCard() {
       setPhase({ kind: "error", message: e instanceof Error ? e.message : String(e) });
     }
   }, [episodeOn, task, teleop]);
+
+  const acceptEpisode = useCallback(() => {
+    setReview((r) => {
+      if (r) URL.revokeObjectURL(r.url);
+      return null;
+    });
+    setEpisodeCount((n) => n + 1);
+  }, []);
+
+  const rejectEpisode = useCallback(async () => {
+    if (!review) return;
+    setReviewBusy(true);
+    try {
+      await captureRef.current?.discardEpisode(review.index);
+      URL.revokeObjectURL(review.url);
+      setReview(null);
+    } catch (e) {
+      setPhase({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setReviewBusy(false);
+    }
+  }, [review]);
 
   const finishCapture = useCallback(async () => {
     const capture = captureRef.current;
@@ -254,6 +289,7 @@ export function DatasetCaptureCard() {
     captureRef.current = null;
     setEpisodeOn(false);
     setEpisodeCount(0);
+    setReview(null);
     setPhase({ kind: "idle" });
   }, [setTelemetryListener, setControlSentListener]);
 
@@ -389,7 +425,36 @@ export function DatasetCaptureCard() {
           </>
         )}
 
-        {capturing && (
+        {capturing && review && (
+          // At-capture review: play back the just-recorded episode; Accept adds
+          // it to the dataset, Reject discards it. No other controls until chosen.
+          <div className="space-y-3">
+            <p className="text-sm font-medium text-[#14131a]">Keep this episode?</p>
+            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+            <video
+              key={review.url}
+              src={review.url}
+              className="w-full max-w-md rounded-md border border-[#14131a]/15 bg-black"
+              controls
+              loop
+              autoPlay
+              muted
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={acceptEpisode} disabled={reviewBusy}>
+                Accept
+              </Button>
+              <Button onClick={() => void rejectEpisode()} variant="destructive" disabled={reviewBusy}>
+                {reviewBusy ? "Discarding…" : "Reject"}
+              </Button>
+              <span className="text-xs text-[#6f6858]">
+                Accepted episodes join the dataset; rejected ones are discarded.
+              </span>
+            </div>
+          </div>
+        )}
+
+        {capturing && !review && (
           <>
             <div className="flex flex-wrap items-center gap-2">
               <input

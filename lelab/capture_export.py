@@ -56,11 +56,16 @@ def _read_ndjson(path: Path) -> list[dict]:
 
 def _episode_windows(events: list[dict]) -> list[dict]:
     """Pair start/stop events by index; unmatched starts are dropped (the
-    browser crashed mid-episode — there's no clean video tail to trust)."""
+    browser crashed mid-episode — there's no clean video tail to trust).
+    Episodes rejected in the at-capture review carry a "discard" event and are
+    excluded here, so they never reach the dataset."""
     starts = {e["index"]: e for e in events if e["event"] == "start"}
     stops = {e["index"]: e for e in events if e["event"] == "stop"}
+    discarded = {e["index"] for e in events if e["event"] == "discard"}
     out = []
     for idx in sorted(starts):
+        if idx in discarded:
+            continue
         if idx in stops and stops[idx]["t_ms"] > starts[idx]["t_ms"]:
             out.append({
                 "index": idx,

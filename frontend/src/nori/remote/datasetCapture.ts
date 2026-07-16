@@ -75,6 +75,9 @@ export class DatasetCapture {
   private chunkChain: Promise<void> = Promise.resolve();
   private epIndex = -1;
   private mime = "";
+  // The current episode's video chunks, kept in-memory so the at-capture review
+  // can play back what was just recorded (in addition to streaming to the spool).
+  private episodeChunks: BlobPart[] = [];
 
   episodeActive = false;
   episodes: CaptureEpisode[] = [];
@@ -166,10 +169,12 @@ export class DatasetCapture {
     const index = ++this.epIndex;
     const recorder = new MediaRecorder(stream, this.mime ? { mimeType: this.mime } : undefined);
     this.recorder = recorder;
+    this.episodeChunks = []; // fresh buffer for this episode's review playback
 
     recorder.ondataavailable = (ev: BlobEvent) => {
       if (!ev.data || ev.data.size === 0) return;
       const blob = ev.data;
+      this.episodeChunks.push(blob); // keep for the at-capture review preview
       this.chunkChain = this.chunkChain.then(async () => {
         try {
           await fetch(`${this.baseUrl}/nori/capture/${this.captureId}/video/${index}`, {
@@ -201,9 +206,13 @@ export class DatasetCapture {
     this.episodeActive = true;
   }
 
-  async episodeStop(): Promise<void> {
+  /** Stop the current episode. Returns the recorded video (assembled from the
+   *  streamed chunks) + its index, so the UI can play it back for the at-capture
+   *  Accept/Reject review. The episode's start/stop events and video are already
+   *  in the spool; Accept keeps it, Reject calls discardEpisode(index). */
+  async episodeStop(): Promise<{ index: number; blob: Blob } | null> {
     const recorder = this.recorder;
-    if (!recorder || !this.episodeActive) return;
+    if (!recorder || !this.episodeActive) return null;
     const index = this.epIndex;
     const stopped = new Promise<void>((resolve) => {
       recorder.onstop = () => resolve();
@@ -217,6 +226,21 @@ export class DatasetCapture {
     });
     this.recorder = null;
     this.episodeActive = false;
+    const blob = new Blob(this.episodeChunks, { type: this.mime || "video/webm" });
+    return { index, blob };
+  }
+
+  /** Reject an episode from the at-capture review: mark it discarded so the
+   *  exporter skips it (the spooled files stay on disk but never reach the
+   *  dataset). Safe to call for the just-stopped episode's index. */
+  async discardEpisode(index: number): Promise<void> {
+    if (!this.captureId) return;
+    await this.post(`/nori/capture/${this.captureId}/episode`, {
+      index,
+      event: "discard",
+      t_ms: Date.now(),
+    });
+    this.episodes = this.episodes.filter((e) => e.index !== index);
   }
 
   // ---- finish --------------------------------------------------------------

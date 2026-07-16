@@ -252,15 +252,17 @@ def capture_controls(capture_id: str, body: RowsBody):
 
 class EpisodeEventBody(BaseModel):
     index: int
-    event: str  # "start" | "stop"
+    event: str  # "start" | "stop" | "discard"
     t_ms: float
     task: str = ""
 
 
 @router.post("/{capture_id}/episode")
 def capture_episode(capture_id: str, body: EpisodeEventBody):
-    if body.event not in ("start", "stop"):
-        raise HTTPException(status_code=422, detail="event must be start|stop")
+    # "discard" marks an episode rejected in the at-capture review — the exporter
+    # skips any index with a discard event (no file deletion, no re-indexing).
+    if body.event not in ("start", "stop", "discard"):
+        raise HTTPException(status_code=422, detail="event must be start|stop|discard")
     d = _capture_dir(capture_id)
     _append_ndjson(d / "episodes.ndjson", [body.model_dump()])
     return {"ok": True}

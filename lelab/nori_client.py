@@ -421,6 +421,11 @@ class NoriClient:
             "PATCH", f"{API}/datasets/upload/{session_id}", json={"label": label}
         )
 
+    def delete_dataset(self, session_id: str) -> dict[str, Any]:
+        """DELETE /datasets/{session_id} — permanently remove a dataset (its HF
+        files + record). 404 on a non-own session; 409 if it's published."""
+        return self._request("DELETE", f"{API}/datasets/{session_id}")
+
     def get_library(self) -> dict[str, Any]:
         """GET /library — the My Stuff aggregate: promoted datasets joined to
         the policies trained from each, plus source-unknown policies."""

@@ -514,6 +514,19 @@ export function getLibrary(baseUrl: string, fetcher: Fetcher): Promise<Library> 
   return noriRequest<Library>(baseUrl, fetcher, "/nori/library", { action: "Load your library" });
 }
 
+/** DELETE /nori/datasets/{id} — permanently delete a dataset (HF files + record).
+ * Owner-scoped; 409 if the dataset is published to the community. */
+export function deleteDataset(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string
+): Promise<{ deleted: boolean; session_id: string }> {
+  return noriRequest(baseUrl, fetcher, `/nori/datasets/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+    action: "Delete dataset",
+  });
+}
+
 export function getTrainingEstimateParams(
   baseUrl: string,
   fetcher: Fetcher

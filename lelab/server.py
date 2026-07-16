@@ -1100,6 +1100,13 @@ def nori_list_my_datasets(request: Request):
     return _nori_proxy(client.list_my_datasets)
 
 
+@app.delete("/nori/datasets/{session_id}")
+def nori_delete_dataset(session_id: str, request: Request):
+    """Permanently delete one of the caller's datasets (HF files + record)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.delete_dataset(session_id))
+
+
 @app.post("/nori/marketplace/policies/{listing_id}/acquire")
 def nori_acquire_policy(listing_id: str, request: Request):
     client = _nori_client(request)

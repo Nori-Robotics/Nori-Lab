@@ -6,11 +6,22 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Loader2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useApi } from "@/contexts/ApiContext";
 import { useNori } from "@/nori/NoriContext";
 import {
+  deleteDataset,
   getLibrary,
   renamePolicy,
   renameUploadLabel,
@@ -153,6 +164,9 @@ const MyStuff = () => {
   const [activeRef, setActiveRef] = useState<string | null>(null); // hovered policy's source
   const [uploading, setUploading] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<ReviewSource | null>(null); // dataset under review
+  const [deleting, setDeleting] = useState<LibraryDataset | null>(null); // pending delete confirmation
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -192,6 +206,22 @@ const MyStuff = () => {
     },
     [baseUrl, load],
   );
+
+  const onDelete = useCallback(async () => {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    setDeleteErr(null);
+    try {
+      await deleteDataset(baseUrl, fetchWithHeaders, deleting.session_id);
+      setDeleting(null);
+      await load();
+    } catch (e) {
+      // Keep the dialog open and show why (e.g. 409: published to the community).
+      setDeleteErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleteBusy(false);
+    }
+  }, [deleting, baseUrl, fetchWithHeaders, load]);
 
   const onRenameUpload = useCallback(
     async (sessionId: string, next: string) => {
@@ -330,6 +360,17 @@ const MyStuff = () => {
                   >
                     Review episodes
                   </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => {
+                      setDeleteErr(null);
+                      setDeleting(d);
+                    }}
+                  >
+                    <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                  </Button>
                 </div>
               </article>
             );
@@ -423,6 +464,49 @@ const MyStuff = () => {
       {reviewing && (
         <EpisodeReviewModal source={reviewing} onClose={() => setReviewing(null)} onChanged={load} />
       )}
+
+      <AlertDialog
+        open={!!deleting}
+        onOpenChange={(o) => {
+          if (!o && !deleteBusy) {
+            setDeleting(null);
+            setDeleteErr(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{deleting?.label}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes the dataset and its files from your Nori cloud. This can’t be undone.
+              {deleting && deleting.policies.length > 0 ? (
+                <>
+                  {" "}
+                  Policies already trained from it are kept, but will show “source not recorded.”
+                </>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleteErr && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {deleteErr}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault(); // stay open while deleting / on error
+                void onDelete();
+              }}
+              disabled={deleteBusy}
+              className="bg-red-500 text-white hover:bg-red-600"
+            >
+              {deleteBusy ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {!leLabAvailable && (
         <p className="font-mono text-xs text-muted-foreground">

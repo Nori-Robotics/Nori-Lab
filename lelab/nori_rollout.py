@@ -49,6 +49,7 @@ router = APIRouter(prefix="/nori/rollout")
 # Suggested browser loop rate. ACT inference on Apple Silicon (mps) runs a
 # forward pass in tens of ms; 10 Hz leaves headroom for JPEG encode + POST.
 DEFAULT_FPS = 10
+_act_dbg_counter = 0  # throttles the per-tick rollout debug line to ~1/sec
 
 _lock = threading.Lock()  # single-flight inference + load/unload mutex
 _session: dict[str, Any] = {}  # ref, policy, pre, post, device, joints, image_shapes
@@ -296,6 +297,23 @@ def rollout_act(body: ActBody):
             action = _session["post"](action)
 
         vec = action.squeeze(0).detach().float().cpu().tolist()
+
+        # DEBUG (throttled ~1/s): diagnose a "driving but not moving" run.
+        #  - action max_delta ≈ 0  => the policy is commanding ~the current pose
+        #    (no motion) — an observation/out-of-distribution problem.
+        #  - a camera mean ≈ 0     => that feed is black; ~constant across ticks
+        #    => it's frozen. Either way the policy sees the wrong scene.
+        global _act_dbg_counter
+        _act_dbg_counter += 1
+        if _act_dbg_counter % 15 == 0:
+            cur = [float(body.state.get(j, 0.0)) for j in joints]
+            dmax = max((abs(a - c) for a, c in zip(vec, cur)), default=0.0)
+            jmax = joints[max(range(len(vec)), key=lambda i: abs(vec[i] - cur[i]))] if vec else "-"
+            cams = {k.split(".")[-1]: round(float(obs[k].mean().item()), 3) for k in _session["image_shapes"]}
+            logger.info(
+                "[ROLLOUT-DBG] action max_delta=%.3f @%s (~0 => policy commanding NO motion) | cam means=%s (~0 => black feed)",
+                dmax, jmax, cams,
+            )
         if len(vec) != len(joints):
             raise HTTPException(
                 status_code=500,

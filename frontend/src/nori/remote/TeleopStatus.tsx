@@ -223,6 +223,17 @@ export function TelemetryPanel({
         value={tel.linkMode ? tel.linkMode.toUpperCase() : "—"}
         tone={tel.linkMode === "lan" ? "good" : tel.linkMode === "wan" ? "warn" : "default"}
       />
+      {/* Video-link health from the ABR loop (SDK videoQuality.ts). Before this chip, a feed
+          starved by packet loss hid behind a green "connected" — 70% loss still read as fine.
+          "degraded/bad" = the loop is actively cutting bitrate to keep frames flowing. */}
+      {tel.videoNet && (
+        <Stat
+          label="net"
+          value={tel.videoNet.quality === "good" ? "OK" : tel.videoNet.quality}
+          tone={tel.videoNet.quality === "good" ? "good"
+            : tel.videoNet.quality === "degraded" ? "warn" : "bad"}
+        />
+      )}
       {/* "offline", not "disconnected": this chip is false when ANY of the three signals above
           fails (channel closed, telemetry stale, motors unhealthy), and only the first of those
           is really a disconnection. The vaguer word is the more honest one here. */}
@@ -536,7 +547,7 @@ export function ControlLegend({ mode }: { mode: ControlMode }) {
             </button>
           </TooltipTrigger>
           <TooltipContent className="max-w-64 text-xs">
-            Cylindrical maps to x/y/z; Motor allows per-motion control
+            Cylindrical maps to x/y/z; Motor allows per-motor control
           </TooltipContent>
         </Tooltip>
       </div>

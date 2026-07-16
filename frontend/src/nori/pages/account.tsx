@@ -10,6 +10,7 @@ import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
 import { signOut } from "@/nori/auth/session";
 import ConsentsSection from "@/nori/components/ConsentsSection";
+import HelpTip from "@/nori/components/HelpTip";
 import {
   getBillingSummary,
   listRobots,
@@ -152,7 +153,17 @@ const Account = () => {
       </Panel>
 
       {billing ? (
-        <Panel eyebrow="billing" title="Usage this month" bodyClassName="space-y-3">
+        <Panel
+          eyebrow="billing"
+          title="Usage this month"
+          titleExtra={
+            <HelpTip label="About your usage limits">
+              As thanks for supporting Nori early, please contact Nori support and we are
+              happy to raise your default limits for free.
+            </HelpTip>
+          }
+          bodyClassName="space-y-3"
+        >
           <div>
             <div className="flex justify-between gap-4 text-sm">
               <span className="text-[#5c564b]">Training compute</span>

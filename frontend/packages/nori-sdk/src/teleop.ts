@@ -14,6 +14,7 @@
 
 import type { SignalingTransport } from "./signaling";
 import { AudioLatencyProbe, audioLatencyEnabled } from "./audioLatency";
+import { VideoQualityLoop, type VideoNetState } from "./videoQuality";
 import { NORI_PROTOCOL_VERSION } from "./version";
 
 export type ControlMode = "cylindrical" | "joint";
@@ -87,6 +88,11 @@ export interface TelemetryView {
   // Pi-side stall homing lands, so values can be negative). The keys are OMITTED while the
   // Pi's tracker isn't valid — treat absence as "height unknown", not zero.
   state: Record<string, number>;
+  // Adaptive-video link state (videoQuality.ts, ~1 Hz): delivered fps / loss / RTT and the ABR
+  // controller's current bitrate target. Null until the first sample after connect (and cleared
+  // on disconnect) — this is how a UI shows "poor network, quality reduced" instead of letting
+  // a black/frozen feed hide behind a green "connected" chip.
+  videoNet: VideoNetState | null;
 }
 
 // A single object the on-Pi detector reports (nori-protocol perception.json $items). Fields
@@ -507,6 +513,7 @@ export class RemoteTeleop {
   private connected = false;
   private retryTimer: ReturnType<typeof setInterval> | null = null;
   private latencyProbe: AudioLatencyProbe | null = null; // R-X.2 audio-latency harness (per peer)
+  private videoLoop: VideoQualityLoop | null = null;     // ABR loop (videoQuality.ts, per peer)
   private jogTimer: ReturnType<typeof setInterval> | null = null;
   private controlCh: RTCDataChannel | null = null;
   private curMac = ""; // HMAC of the robot's nonce, proving we hold the token
@@ -548,7 +555,8 @@ export class RemoteTeleop {
   // loop_hz / temp / status only ride the periodic telemetry block, not every per-tick
   // frame — keep last values so the readout doesn't flicker to 0.
   private tel: TelemetryView = {
-    loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {}, state: {},
+    loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {},
+    state: {}, videoNet: null,
   };
   private stopped = false;
   // Latest world-state from the daemon perception process (Phase F). null until a frame arrives
@@ -779,11 +787,16 @@ export class RemoteTeleop {
   }
 
   // Ask the robot to drop / restore its camera-encoder bitrate to free CPU+bandwidth while
-  // the laptop adds load (e.g. streaming a clip to the speaker). "low" halves the x264 bitrate
-  // on the robot; "normal" restores the default. Intercepted by webrtc_robot.py (never reaches
-  // the daemon), exactly like {type:"call"} — no nori-protocol change, no version bump.
-  setVideoQuality(quality: "low" | "normal") {
-    this.dcSend({ type: "video", quality });
+  // the laptop adds load (e.g. streaming a clip to the speaker). "low" cuts the x264 bitrate
+  // on the robot; "normal" restores the default; a NUMBER requests that exact kbps (clamped
+  // robot-side to its --bitrate ceiling — this is what the ABR loop streams). Intercepted by
+  // webrtc_robot.py (never reaches the daemon), exactly like {type:"call"} — no nori-protocol
+  // change, no version bump. NOTE: while connected, the ABR loop re-asserts its own target
+  // every second, so a manual value only sticks if the loop is stopped first.
+  setVideoQuality(quality: "low" | "normal" | number) {
+    this.dcSend(typeof quality === "number"
+      ? { type: "video", bitrate: quality }
+      : { type: "video", quality });
   }
 
 
@@ -1261,6 +1274,8 @@ export class RemoteTeleop {
     this.clearWaitDeadline();
     this.clearNackTimer();
     this.latencyProbe?.stop();
+    this.videoLoop?.stop();
+    this.tel.videoNet = null;
     // tell the robot to exit (clean restart) before we tear down
     this.o.signaling.sendBye();
     if (this.pc) { try { this.pc.close(); } catch { /* noop */ } this.pc = null; }
@@ -1296,6 +1311,24 @@ export class RemoteTeleop {
     this.pc = pc;
     this.latencyProbe?.stop();
     this.latencyProbe = new AudioLatencyProbe(pc, (...a) => this.log(...a));
+    // ABR loop (videoQuality.ts): per peer like the latency probe; started on `connected`.
+    // Suspends itself while the encoder is paused (a 0 fps sample there is not congestion).
+    this.videoLoop?.stop();
+    this.videoLoop = new VideoQualityLoop(pc, {
+      sendTarget: (kbps) => this.dcSend({ type: "video", bitrate: kbps }),
+      paused: () => this.videoPaused,
+      onState: (s) => {
+        const prev = this.tel.videoNet?.quality;
+        this.tel.videoNet = s;
+        // Telemetry normally flows at 50 Hz and carries videoNet with it, but when the daemon
+        // is down that stream is silent — emit on the 1 Hz tick so the net chip stays live.
+        this.o.onTelemetry({ ...this.tel });
+        if (s.quality !== prev && (s.quality !== "good" || prev !== undefined)) {
+          this.log(`video link ${s.quality}: loss ${s.lossPct}%, ` +
+            `${s.fps ?? "?"} fps, rtt ${s.rttMs ?? "?"} ms -> target ${s.targetKbps} kbps`);
+        }
+      },
+    });
     this.linkMode = null; // recomputed per connection from the selected candidate pair
     this.tel.linkMode = null;
     pc.ontrack = (ev) => {
@@ -1333,12 +1366,15 @@ export class RemoteTeleop {
         this.setPhase("connected");
         if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
         this.logSelectedPath();
+        this.videoLoop?.start(); // ABR: adapt the robot's encoder to this link from second one
         // Latency harness (R-X.2): with ?audiolatency, log the network+jitter-buffer breakdown
         // of the audio path every few seconds. Works on the M3a uplink today; reused for M3b.
         if (audioLatencyEnabled()) this.latencyProbe?.start();
       } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
         this.connected = false; // robot will exit + restart; keep asking for a new offer
         this.latencyProbe?.stop();
+        this.videoLoop?.stop();
+        this.tel.videoNet = null; // stale numbers must not outlive the link they measured
         // "failed" = ICE could find no working path (NAT/firewall/TURN) — a real, nameable fault.
         // "disconnected" is often a transient blip that heals itself, so we drop back to `waiting`
         // (the retry loop below is already asking for a fresh offer) rather than crying failure.

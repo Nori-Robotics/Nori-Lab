@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import HelpTip from "@/nori/components/HelpTip";
 import { useNori } from "@/nori/NoriContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { ConnectionBanner } from "@/nori/remote/TeleopStatus";
@@ -109,10 +110,15 @@ export function ConnectionSettings() {
         )}
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="token">Room token (your special password)</Label>
+        <div className="flex items-center gap-2">
+          <Label htmlFor="token">Room token (your password)</Label>
+          <HelpTip label="Forgot your room token?">
+            Forgotten? Contact Nori support to get it back.
+          </HelpTip>
+        </div>
         <Input id="token" type="password" value={settings.token}
           onChange={(e) => set("token", e.target.value)}
-          placeholder="your special password" />
+          placeholder="your password" />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="stun">STUN</Label>

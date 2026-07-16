@@ -11,6 +11,7 @@
 
 // RemoteTeleop + its option/telemetry/keybind types + the control-key maps + keybindLegend.
 export * from "./teleop";
+export * from "./videoQuality";
 // The robot command vocabulary (executor/codegen/agent surfaces) — the single source the LLM tool
 // schemas + API-reference prose are generated from. See robot-ops.ts / robot-tools.json.
 export * from "./robot-ops";

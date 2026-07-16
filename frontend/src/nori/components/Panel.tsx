@@ -6,12 +6,14 @@ import { cn } from "@/lib/utils";
 export function Panel({
   eyebrow,
   title,
+  titleExtra,
   className,
   bodyClassName,
   children,
 }: {
   eyebrow?: string;
   title?: string;
+  titleExtra?: React.ReactNode; // rendered inline after the title (e.g. a HelpTip)
   className?: string;
   bodyClassName?: string;
   children: React.ReactNode;
@@ -28,7 +30,12 @@ export function Panel({
           // {eyebrow}
         </p>
       )}
-      {title && <h2 className="mt-1 text-lg font-semibold">{title}</h2>}
+      {title && (
+        <h2 className="mt-1 flex items-center gap-2 text-lg font-semibold">
+          {title}
+          {titleExtra}
+        </h2>
+      )}
       <div className={cn((eyebrow || title) && "mt-3", bodyClassName)}>{children}</div>
     </div>
   );

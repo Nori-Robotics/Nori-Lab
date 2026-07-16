@@ -376,7 +376,7 @@ const MarketplaceDetail = () => {
       {/* Community status (publishing itself moved to the marketplace page's
           "Publish something to the community" card — the single publish
           surface). Owners keep status visibility + instant withdraw here. */}
-      {details.editable && myListing && (myListing.in_review || myListing.is_public) && (
+      {details.editable && myListing && (myListing.in_review || myListing.is_public) ? (
         <div className="mt-6 flex items-center justify-between gap-3 rounded-xl border border-border bg-secondary/60 px-3 py-2">
           <span className="flex items-center gap-2 text-[13px]">
             <ListingStatusChip status={myListing.status} />
@@ -393,7 +393,23 @@ const MarketplaceDetail = () => {
             {myListing.is_public ? "unpublish (instant)" : "withdraw submission"}
           </button>
         </div>
-      )}
+      ) : details.editable && !isDataset ? (
+        // Own policy that is NOT publicly listed. State this plainly so it's
+        // clear the policy is PRIVATE and there is nothing to "unpublish" —
+        // publishing is a deliberate action from the marketplace page.
+        <div className="mt-6 flex items-center justify-between gap-3 rounded-xl border border-border bg-secondary/40 px-3 py-2">
+          <span className="text-[13px] text-muted-foreground">
+            <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink/70">private</span>{" "}
+            — only you can see this policy. It is not in the community.
+          </span>
+          <Link
+            to="/nori/marketplace"
+            className="shrink-0 rounded-xl border border-border bg-background px-3 py-1.5 font-mono text-[12px] hover:bg-accent"
+          >
+            publish →
+          </Link>
+        </div>
+      ) : null}
 
       {actionErr && <p className="mt-4 text-[13px] text-destructive">{actionErr}</p>}
 

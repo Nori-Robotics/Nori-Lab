@@ -18,7 +18,18 @@
 // request in flight (a slow model skips ticks instead of queueing stale
 // actions).
 
-import { cameraTileRect, type CameraLayout, type RemoteTeleop, type TelemetryView } from "@nori/sdk";
+import type { CameraLayout, RemoteTeleop, TelemetryView } from "@nori/sdk";
+
+// FileReader → "data:image/jpeg;base64,…" (the exact shape the /act endpoint and
+// the old canvas.toDataURL path produced).
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
 
 // Must mirror lelab/capture_export.py's exclusion — the training-side joint
 // order and the inference-side joint order MUST be derived identically.
@@ -60,16 +71,16 @@ export const EXECUTION_MODE_LABELS: Record<ExecutionMode, { label: string; hint:
   fast: { label: "Fast", hint: "Full chunk open-loop — most reactive-feeling, can drift" },
 };
 
-// Every image feature is drawn from the ONE composite video the robot sends. A
-// per-role feature (e.g. "left_wrist") crops its tile out of that composite via
-// cameraTileRect + the live layout; "remote"/"composite" is the full frame
-// (role === null). We deliberately do NOT go through teleop.cameraView()'s
-// captureStream crop — that secondary canvas→stream→video hop never produced
-// frames on Chrome, so we crop straight from the decoded composite instead.
+// Every image feature is grabbed off the ONE composite track the robot sends,
+// via teleop.captureFrame() (ImageCapture.grabFrame — reads the live track
+// directly, no <video> element). A per-role feature (e.g. "left_wrist") passes
+// its role so captureFrame crops that tile; "remote"/"composite" passes no role
+// (full frame → role === null). We deliberately do NOT use a <video> sink +
+// canvas: an offscreen/hidden video is not reliably frame-decoded on Chrome
+// (videoWidth stayed 0), and cameraView()'s captureStream had the same problem.
 interface FrameSource {
   featureKey: string;
   role: string | null; // layout tile to crop, or null for the full composite
-  canvas: HTMLCanvasElement;
 }
 
 export class PolicyRunner {
@@ -78,8 +89,6 @@ export class PolicyRunner {
   private getTel: () => TelemetryView;
   private timer: ReturnType<typeof setInterval> | null = null;
   private sources: FrameSource[] = [];
-  private composite: HTMLVideoElement | null = null; // the single decoded feed
-  private layout: CameraLayout | null = null; // tile → crop-rect mapping
   private inflight = false;
   private consecutiveFailures = 0;
   private ticks = 0;
@@ -162,39 +171,23 @@ export class PolicyRunner {
       );
     }
 
-    // ONE composite video, kept in the render tree (offscreen) so Chrome actually
-    // decodes it. Every image feature is a crop of this single feed at grab-time.
-    this.layout =
+    // Validate each requested camera against the live composite layout up front,
+    // so a missing tile fails loudly here instead of silently skipping every tick.
+    const layout =
       (teleop as unknown as { cameraLayoutInfo?: () => CameraLayout | null }).cameraLayoutInfo?.() ??
       null;
-    const composite = document.createElement("video");
-    composite.muted = true;
-    composite.playsInline = true;
-    composite.srcObject = teleop.videoStream();
-    composite.style.cssText =
-      "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;";
-    document.body.appendChild(composite);
-    void composite.play().catch(() => undefined);
-    this.composite = composite;
-
     this.sources = [];
     for (const featureKey of Object.keys(loaded.image_keys)) {
       const rawRole = featureKey.replace(/^observation\.images\./, "");
       const isFull = rawRole === "remote" || rawRole === "composite";
-      // A per-role feature must correspond to a tile in the live layout, else we
-      // have no crop rect for it — fail loudly with the tiles we DO have.
-      if (!isFull && !this.layout?.tiles.includes(rawRole)) {
+      if (!isFull && !layout?.tiles.includes(rawRole)) {
         await this.unloadQuietly();
-        const tiles = this.layout?.tiles.join(", ") || "(no layout / single-camera)";
+        const tiles = layout?.tiles.join(", ") || "(no layout / single-camera)";
         const message = `policy needs camera "${rawRole}" but the session layout has tiles [${tiles}]`;
         this.onPhase({ kind: "error", message });
         throw new Error(message);
       }
-      this.sources.push({
-        featureKey,
-        role: isFull ? null : rawRole,
-        canvas: document.createElement("canvas"),
-      });
+      this.sources.push({ featureKey, role: isFull ? null : rawRole });
     }
 
     this.teleop = teleop;
@@ -203,33 +196,6 @@ export class PolicyRunner {
     this.consecutiveFailures = 0;
     this.timer = setInterval(() => void this.tick(), Math.max(50, 1000 / (loaded.fps || 10)));
     this.onPhase({ kind: "running", ticks: 0 });
-  }
-
-  private grab(src: FrameSource): string | null {
-    const video = this.composite;
-    if (!video) return null;
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    if (!vw || !vh) return null;
-    // Full composite (role === null), or this tile's source-crop rect from the
-    // live layout (recomputed each frame so it survives an encode-res change).
-    let sx = 0;
-    let sy = 0;
-    let sw = vw;
-    let sh = vh;
-    if (src.role) {
-      const r = this.layout && cameraTileRect(this.layout, src.role, vw, vh);
-      if (!r) return null;
-      ({ sx, sy, sw, sh } = r);
-    }
-    const cw = Math.max(2, Math.round(sw));
-    const ch = Math.max(2, Math.round(sh));
-    src.canvas.width = cw;
-    src.canvas.height = ch;
-    const ctx = src.canvas.getContext("2d");
-    if (!ctx) return null;
-    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
-    return src.canvas.toDataURL("image/jpeg", 0.85);
   }
 
   private async tick(): Promise<void> {
@@ -251,23 +217,27 @@ export class PolicyRunner {
       return; // stale tick — skip
     }
 
-    const images: Record<string, string> = {};
-    for (const src of this.sources) {
-      const jpeg = this.grab(src);
-      if (!jpeg) {
-        if (this.skipLog++ % 15 === 0)
-          console.warn(
-            `[policyRun] tick skipped: camera "${src.featureKey}" has no frame ` +
-              `(composite ${this.composite?.videoWidth ?? 0}x${this.composite?.videoHeight ?? 0}, ` +
-              `readyState ${this.composite?.readyState ?? 0})`,
-          );
-        return; // video not ready this tick
-      }
-      images[src.featureKey] = jpeg;
-    }
-
+    // Claim the tick before any await — grabbing + inference is async now, and a
+    // slow model must skip ticks, never overlap them.
     this.inflight = true;
+    const teleop = this.teleop;
     try {
+      // Grab each camera straight off the live track (ImageCapture.grabFrame), the
+      // one path that reliably yields frames without a decoded <video> element.
+      const images: Record<string, string> = {};
+      for (const src of this.sources) {
+        const blob = await teleop.captureFrame("image/jpeg", 0.85, src.role ?? undefined);
+        if (!blob) {
+          if (this.skipLog++ % 15 === 0)
+            console.warn(
+              `[policyRun] tick skipped: camera "${src.featureKey}" — no frame off the live ` +
+                `track (ImageCapture.grabFrame returned null; role ${src.role ?? "composite"})`,
+            );
+          return; // no frame this tick — finally resets inflight, no failure counted
+        }
+        images[src.featureKey] = await blobToDataUrl(blob);
+      }
+
       const res = await fetch(`${this.baseUrl}/nori/rollout/act`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -276,7 +246,7 @@ export class PolicyRunner {
       if (!res.ok) throw new Error(`act HTTP ${res.status}`);
       const { action } = (await res.json()) as { action: Record<string, number> };
       // The one and only robot-bound artifact of this whole subsystem:
-      this.teleop.sendAction(action);
+      teleop.sendAction(action);
       this.ticks += 1;
       this.consecutiveFailures = 0;
       if (this.ticks % 10 === 0) this.onPhase({ kind: "running", ticks: this.ticks });
@@ -294,12 +264,6 @@ export class PolicyRunner {
       this.timer = null;
     }
     this.sources = [];
-    if (this.composite) {
-      this.composite.srcObject = null;
-      this.composite.remove();
-      this.composite = null;
-    }
-    this.layout = null;
     this.teleop = null;
     this.ref = null;
     await this.unloadQuietly();

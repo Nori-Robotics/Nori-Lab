@@ -121,6 +121,22 @@ export class PolicyRunner {
     }
     const loaded = (await res.json()) as { image_keys: Record<string, number[]>; fps: number };
 
+    // Diagnostic: what cameras does the policy require vs what tiles the session's
+    // camera layout actually exposes? A missing/renamed tile → cameraView returns
+    // an empty (0x0) crop and the tick loop skips forever ("driving, nothing
+    // happens"). Logs the needed roles + the live layout so a mismatch is obvious.
+    {
+      const neededRoles = Object.keys(loaded.image_keys).map((k) =>
+        k.replace(/^observation\.images\./, ""),
+      );
+      const t = teleop as unknown as {
+        cameraLayoutInfo?: () => unknown;
+        cameraLayout?: () => unknown;
+      };
+      const layout = t.cameraLayoutInfo?.() ?? t.cameraLayout?.() ?? "(no layout / single-camera)";
+      console.warn("[policyRun] policy needs cameras:", neededRoles, "| session camera layout:", layout);
+    }
+
     // Wire a frame source per image feature the policy demands.
     this.sources = [];
     for (const featureKey of Object.keys(loaded.image_keys)) {

@@ -524,6 +524,11 @@ export class RemoteTeleop {
   // frame (arms follow the physical leader arms); base + lift still come from the keyboard.
   // Set by the leader driver each poll; null = no leader source (arms owned by keyboard/VR).
   private externalLeader: LeaderActionDeg | null = null;
+  // When true, an autonomous policy owns the control stream via sendAction(): the 50 Hz
+  // jog tick yields entirely so its ever-present "hold" frame (idle zero-jog, or a
+  // leader's absolute targets) can't out-vote the policy's ~10 Hz absolute actions and
+  // pin the arm. Set by PolicyRunner around a rollout. See jogTick + setPolicyDriving.
+  private policyDriving = false;
   // Last inbound robot media streams, remembered so setVideoEl/setAudioEl can re-point a fresh
   // DOM element at the live stream after a page swap (the session can outlive the page that
   // rendered the original <video>/<audio>). See setVideoEl below.
@@ -726,6 +731,15 @@ export class RemoteTeleop {
   // Mint a fresh, unique action_id for a move (Phase E). Human-readable for logs.
   nextActionId(): string {
     return `a${++this.actionSeq}`;
+  }
+
+  // Hand the arms to an autonomous policy (or take them back). While on, the 50 Hz
+  // jog tick drops the leader's absolute targets and held keys so only sendAction()
+  // drives the arms — otherwise the ever-present jog frame out-votes the policy and
+  // the arm never reaches the commanded pose. Call setPolicyDriving(false) to restore
+  // normal keyboard/leader control. See jogTick.
+  setPolicyDriving(on: boolean) {
+    this.policyDriving = on;
   }
 
   // Latest action_status seen for `id` (any state), or null. The executor uses this to detect
@@ -1692,7 +1706,12 @@ export class RemoteTeleop {
     if (!ch || ch.readyState !== "open") return;
     if (ch.bufferedAmount > BUFFER_LIMIT) return; // congested -> skip, don't pile up latency
 
-    const leader = this.externalLeader;
+    // While a policy owns the arms via sendAction(), drop the leader's absolute
+    // targets and any held keys: those out-vote the policy at 50 Hz and pin the arm.
+    // We still emit the benign zero-jog heartbeat below (which the daemon does NOT
+    // let cancel an action — see sendAction), so base velocity can't latch and the
+    // control-liveness heartbeat stays fresh. sendAction is the sole arm driver.
+    const leader = this.policyDriving ? null : this.externalLeader;
 
     // VR (or another mapper) owns the stream: send its payload verbatim. It already
     // carries left_arm/right_arm/base/left_lift/right_lift in the daemon's jog vocabulary, so this is
@@ -1714,6 +1733,9 @@ export class RemoteTeleop {
     const base: Record<string, number> = {};
     let z = 0;
     for (const k of this.pressed) {
+      // A policy owns the arms AND the base/lift for the rollout: ignore every held
+      // key so nothing competes with sendAction; the frame stays a pure heartbeat.
+      if (this.policyDriving) continue;
       // While a leader source drives the arms, arm keys are ignored (leader wins on those
       // joints); base + lift keys still apply so the operator drives the base/rails by hand.
       if (!leader && k in km) { const [d, s] = km[k]; a[d] = s; }

@@ -117,6 +117,11 @@ export class PolicyRunner {
     // time we start ticking; stop() restores the paused state.
     teleop.resumeVideo();
 
+    // Hand the arms to the policy: the 50 Hz jog/leader heartbeat otherwise
+    // out-votes our ~10 Hz sendAction() and the arm never reaches the commanded
+    // pose (valid actions, no motion). Released in stop().
+    teleop.setPolicyDriving(true);
+
     const res = await fetch(`${this.baseUrl}/nori/rollout/load`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -327,8 +332,10 @@ export class PolicyRunner {
       this.compositeWrap = null;
     }
     this.layout = null;
-    // Restore the "video off unless a page is showing it" convention we broke to
-    // run. A live remote/vr page re-resumes on its own next interaction.
+    // Hand the arms back to keyboard/leader control, and restore the "video off
+    // unless a page is showing it" convention we broke to run. A live remote/vr
+    // page re-resumes on its own next interaction.
+    this.teleop?.setPolicyDriving(false);
     this.teleop?.pauseVideo();
     this.teleop = null;
     this.ref = null;

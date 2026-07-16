@@ -4,7 +4,7 @@
 // (each showing what it trained). Policies column: every trained policy with a
 // chip back to its source dataset; hovering a policy highlights that dataset.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Loader2, Lock, Trash2, Unlock } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,11 +20,15 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useApi } from "@/contexts/ApiContext";
 import { useNori } from "@/nori/NoriContext";
+import { useTeleopSession } from "@/nori/TeleopSessionContext";
+import { PolicyRunner, EXECUTION_PRESETS, type PolicyRunPhase } from "@/nori/remote/policyRun";
 import {
   deleteDataset,
   deletePolicy,
+  downloadPolicy,
   getLibrary,
   getTrainingEstimateParams,
+  listLocalPolicies,
   renameTrainingJob,
   renameUploadLabel,
   setDatasetLock,
@@ -309,6 +313,73 @@ const MyStuff = () => {
     return () => clearInterval(id);
   }, []);
 
+  // Run-on-robot: policies run in the LOCAL lelab process; the robot only
+  // receives {type:"control", action} frames. This moved here from the
+  // marketplace (own policies no longer browse there) — My Stuff is where
+  // your policies live, so it is where they run.
+  const { teleop, running: sessionRunning, tel } = useTeleopSession();
+  const telRef = useRef(tel);
+  useEffect(() => { telRef.current = tel; }, [tel]);
+  const runnerRef = useRef<PolicyRunner | null>(null);
+  const [runPhase, setRunPhase] = useState<{ ref: string | null; phase: PolicyRunPhase }>({ ref: null, phase: { kind: "idle" } });
+  const [localRefs, setLocalRefs] = useState<Set<string>>(new Set());
+  const refreshLocalRefs = useCallback(() => {
+    listLocalPolicies(baseUrl, fetchWithHeaders)
+      .then((rows) => setLocalRefs(new Set(rows.filter((r) => r.runnable).map((r) => r.ref))))
+      .catch(() => {});
+  }, [baseUrl, fetchWithHeaders]);
+  useEffect(() => refreshLocalRefs(), [refreshLocalRefs]);
+  // Never leave the robot moving after this page unmounts.
+  useEffect(() => () => { void runnerRef.current?.stop("left My Stuff"); }, []);
+
+  const [installingRef, setInstallingRef] = useState<string | null>(null);
+  const installForRun = useCallback(async (ref: string) => {
+    setInstallingRef(ref);
+    try {
+      await downloadPolicy(baseUrl, fetchWithHeaders, ref);
+      refreshLocalRefs();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInstallingRef(null);
+    }
+  }, [baseUrl, fetchWithHeaders, refreshLocalRefs]);
+
+  const runOnRobot = useCallback(async (ref: string) => {
+    if (!teleop) return;
+    if (!runnerRef.current) runnerRef.current = new PolicyRunner(baseUrl, () => telRef.current);
+    const runner = runnerRef.current;
+    runner.onPhase = (phase) => setRunPhase({ ref, phase });
+    try {
+      await runner.start(teleop, ref, EXECUTION_PRESETS.balanced);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [baseUrl, teleop]);
+  const stopRun = useCallback(() => { void runnerRef.current?.stop(); }, []);
+
+  /** The run control for a live policy card (null when no robot session). */
+  const runControlFor = (jobId: string) => {
+    if (!sessionRunning || !teleop) {
+      return <span className="text-xs text-muted-foreground">connect to your robot (Remote) to run</span>;
+    }
+    const mine = runPhase.ref === jobId ? runPhase.phase : null;
+    if (mine?.kind === "loading") return <Button size="sm" disabled>loading…</Button>;
+    if (mine?.kind === "running") return <Button size="sm" variant="destructive" onClick={stopRun}>Stop</Button>;
+    if (runPhase.phase.kind === "running" || runPhase.phase.kind === "loading") {
+      return <span className="text-xs text-muted-foreground">another policy is driving</span>;
+    }
+    if (!localRefs.has(jobId)) {
+      return (
+        <Button size="sm" onClick={() => installForRun(jobId)} disabled={installingRef === jobId}>
+          {installingRef === jobId ? "installing…" : "Install to run"}
+        </Button>
+      );
+    }
+    const label = mine?.kind === "error" ? "Retry run" : mine?.kind === "stopped" ? "Run again" : "Run on robot";
+    return <Button size="sm" onClick={() => runOnRobot(jobId)}>{label}</Button>;
+  };
+
   /** Estimated % complete for a RUNNING policy: elapsed-since-first-RUNNING
    *  minus container setup, over steps/typical-rate. Clamped, labeled ~. */
   const trainingProgress = (p: { run_started_at: string | null; steps: number | null; policy_type: string | null }): number | null => {
@@ -585,7 +656,7 @@ const MyStuff = () => {
                 )}
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                {p.state === "live" && <Button size="sm" onClick={() => navigate("/nori/marketplace")}>Run on robot</Button>}
+                {p.state === "live" && runControlFor(p.job_id)}
                 {p.state === "training" && (
                   <Button size="sm" onClick={(e) => { e.stopPropagation(); openProgress(); }}>
                     View progress →

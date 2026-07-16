@@ -529,13 +529,21 @@ const Marketplace = () => {
     if (!policies) return [];
     const q = query.trim().toLowerCase();
     return policies.filter((p) => {
+      // Marketplace = published work only. An own policy shows here only if it
+      // has an ACTIVE community listing (public or being reviewed); otherwise
+      // it is private and lives in My Stuff, not here. This is what keeps
+      // never-published (and continued-but-unpublished) policies out.
+      if (p.source === "own") {
+        const l = myListingByJob[p.ref];
+        if (!l || !(l.is_public || l.in_review)) return false;
+      }
       if (source !== "all" && p.source !== source) return false;
       if (!q) return true;
       return (
         p.title.toLowerCase().includes(q) || (p.description ?? "").toLowerCase().includes(q)
       );
     });
-  }, [policies, source, query]);
+  }, [policies, source, query, myListingByJob]);
 
   return (
     <section>

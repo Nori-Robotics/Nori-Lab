@@ -76,6 +76,7 @@ export class PolicyRunner {
   private inflight = false;
   private consecutiveFailures = 0;
   private ticks = 0;
+  private skipLog = 0; // throttles the "tick skipped before /act" diagnostic
 
   ref: string | null = null;
   onPhase: (p: PolicyRunPhase) => void = () => {};
@@ -182,12 +183,23 @@ export class PolicyRunner {
       return void this.stop(`robot safety state: ${tel.safety}`);
     }
     if (tel.watchdog === "stop") return void this.stop("robot watchdog stopped motion");
-    if (!tel.state || Object.keys(tel.state).length === 0) return; // stale tick — skip
+    if (!tel.state || Object.keys(tel.state).length === 0) {
+      if (this.skipLog++ % 15 === 0)
+        console.warn("[policyRun] tick skipped: no joint state this tick (telemetry not flowing)");
+      return; // stale tick — skip
+    }
 
     const images: Record<string, string> = {};
     for (const src of this.sources) {
       const jpeg = this.grab(src);
-      if (!jpeg) return; // video not ready this tick
+      if (!jpeg) {
+        if (this.skipLog++ % 15 === 0)
+          console.warn(
+            `[policyRun] tick skipped: camera "${src.featureKey}" has no frame ` +
+              `(video ${src.video.videoWidth}x${src.video.videoHeight}, readyState ${src.video.readyState})`,
+          );
+        return; // video not ready this tick
+      }
       images[src.featureKey] = jpeg;
     }
 

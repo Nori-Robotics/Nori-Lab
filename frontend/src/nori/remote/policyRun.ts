@@ -109,6 +109,14 @@ export class PolicyRunner {
       throw new Error("no telemetry");
     }
 
+    // The robot pauses its video ENCODER whenever no page is showing video (the
+    // remote/vr pages resume on mount and pause on unmount; TeleopSessionContext
+    // pauses too). Running a policy from any other page would therefore get a
+    // black/frozen feed — the real cause of the 0x0 / grabFrame-null failures.
+    // Explicitly resume before we load so a fresh keyframe is on its way by the
+    // time we start ticking; stop() restores the paused state.
+    teleop.resumeVideo();
+
     const res = await fetch(`${this.baseUrl}/nori/rollout/load`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -319,6 +327,9 @@ export class PolicyRunner {
       this.compositeWrap = null;
     }
     this.layout = null;
+    // Restore the "video off unless a page is showing it" convention we broke to
+    // run. A live remote/vr page re-resumes on its own next interaction.
+    this.teleop?.pauseVideo();
     this.teleop = null;
     this.ref = null;
     await this.unloadQuietly();

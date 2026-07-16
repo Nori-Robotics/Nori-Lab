@@ -121,6 +121,40 @@ export class PolicyRunner {
     }
     const loaded = (await res.json()) as { image_keys: Record<string, number[]>; fps: number };
 
+    // Diagnostic: what cameras does the policy require vs what tiles the session's
+    // camera layout actually exposes? A missing/renamed tile → cameraView returns
+    // an empty (0x0) crop and the tick loop skips forever ("driving, nothing
+    // happens"). Logs the needed roles + the live layout so a mismatch is obvious.
+    {
+      const neededRoles = Object.keys(loaded.image_keys).map((k) =>
+        k.replace(/^observation\.images\./, ""),
+      );
+      const t = teleop as unknown as {
+        cameraLayoutInfo?: () => unknown;
+        cameraLayout?: () => unknown;
+      };
+      const layout = t.cameraLayoutInfo?.() ?? t.cameraLayout?.() ?? "(no layout / single-camera)";
+      console.warn("[policyRun] policy needs cameras:", neededRoles, "| session camera layout:", layout);
+
+      // Ground truth: is the composite video track actually LIVE right now? Every
+      // per-camera crop is derived from this one track — if it reports 0x0 / muted /
+      // ended, no crop can ever produce a frame, and the fix is about the composite
+      // itself streaming on this page, not the cropping.
+      const vs = teleop.videoStream();
+      const vtracks = vs?.getVideoTracks() ?? [];
+      console.warn(
+        "[policyRun] composite track state:",
+        vtracks.length
+          ? vtracks.map((tr) => ({
+              readyState: tr.readyState,
+              enabled: tr.enabled,
+              muted: tr.muted,
+              settings: tr.getSettings(),
+            }))
+          : "(no video track on videoStream)",
+      );
+    }
+
     // Wire a frame source per image feature the policy demands.
     this.sources = [];
     for (const featureKey of Object.keys(loaded.image_keys)) {
@@ -146,6 +180,11 @@ export class PolicyRunner {
       video.muted = true;
       video.playsInline = true;
       video.srcObject = stream;
+      // Keep the sink in the render tree (offscreen) — a fully detached <video> is
+      // not reliably frame-decoded, which leaves videoWidth at 0 and starves grab().
+      video.style.cssText =
+        "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;";
+      document.body.appendChild(video);
       void video.play().catch(() => undefined);
       this.sources.push({ featureKey, video, canvas: document.createElement("canvas"), stop: stopView });
     }
@@ -232,6 +271,7 @@ export class PolicyRunner {
     }
     for (const s of this.sources) {
       s.video.srcObject = null;
+      s.video.remove();
       s.stop();
     }
     this.sources = [];

@@ -636,6 +636,14 @@ export class RemoteTeleop {
     video.muted = true;
     video.playsInline = true;
     video.srcObject = src;
+    // The draw loop below is driven by requestVideoFrameCallback, which only fires
+    // when a frame is PRESENTED to the compositor. A detached <video> (never in the
+    // DOM) is never presented, so rvfc never fires, drawImage never runs, and the
+    // captured crop stream stays empty (0x0) — the "policy drives but nothing moves"
+    // failure. Keep the element in the render tree but visually gone so it decodes.
+    video.style.cssText =
+      "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;";
+    document.body.appendChild(video);
     void video.play().catch(() => { /* autoplay quirks: captureStream still pulls frames */ });
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
@@ -673,6 +681,7 @@ export class RemoteTeleop {
       stop() {
         stopped = true;
         video.srcObject = null;
+        video.remove();
         for (const t of stream.getTracks()) t.stop();
       },
     };

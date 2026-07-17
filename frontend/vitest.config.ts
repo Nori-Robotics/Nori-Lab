@@ -9,6 +9,7 @@ import path from "node:path";
 export default defineConfig({
   resolve: {
     alias: [
+      { find: "@nori/sdk/mock", replacement: path.resolve(__dirname, "./packages/nori-sdk/src/entry-mock.ts") },
       { find: "@nori/sdk/vr", replacement: path.resolve(__dirname, "./packages/nori-sdk/src/entry-vr.ts") },
       { find: "@nori/sdk/supabase", replacement: path.resolve(__dirname, "./packages/nori-sdk/src/signaling-supabase.ts") },
       { find: "@nori/sdk", replacement: path.resolve(__dirname, "./packages/nori-sdk/src/index.ts") },

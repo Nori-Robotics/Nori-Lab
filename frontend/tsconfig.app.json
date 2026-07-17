@@ -26,6 +26,7 @@
     "paths": {
       "@/*": ["./src/*"],
       "@nori/sdk": ["./packages/nori-sdk/src/index.ts"],
+      "@nori/sdk/mock": ["./packages/nori-sdk/src/entry-mock.ts"],
       "@nori/sdk/vr": ["./packages/nori-sdk/src/entry-vr.ts"],
       "@nori/sdk/supabase": ["./packages/nori-sdk/src/signaling-supabase.ts"]
     }

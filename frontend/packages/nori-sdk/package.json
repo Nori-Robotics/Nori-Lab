@@ -24,6 +24,10 @@
     "./supabase": {
       "types": "./dist/signaling-supabase.d.ts",
       "import": "./dist/signaling-supabase.js"
+    },
+    "./mock": {
+      "types": "./dist/entry-mock.d.ts",
+      "import": "./dist/entry-mock.js"
     }
   },
   "scripts": {

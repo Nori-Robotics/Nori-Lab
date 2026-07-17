@@ -46,7 +46,9 @@ function Stat({
     default: "border-[#14131a]/20 bg-transparent text-[#14131a]",
     good: "border-[#8ab135]/40 bg-[#8ab135]/15 text-[#4d6a1e]",
     warn: "border-[#db9346]/35 bg-[#fdf1de] text-[#8a5a12]",
-    bad: "border-[#d24a3d]/35 bg-[#fde7e4] text-[#a3271c]",
+    // Same recipe as good — brand red at /15 over the card instead of the old solid
+    // #fde7e4 fill — so the two tones sit at one vibrancy level (muted 2026-07-16).
+    bad: "border-[#d24a3d]/40 bg-[#d24a3d]/15 text-[#8f2318]",
   }[tone];
   return (
     <div className={cn("flex flex-col gap-1 rounded-md border px-2.5 py-1.5", toneClass)}>

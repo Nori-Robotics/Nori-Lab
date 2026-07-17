@@ -53,14 +53,17 @@ const ArmPills = ({
 
 // One labeled sensitivity slider (keyboard speed / VR tuning). Values are fractions of the
 // hardware-tuned rate; the readout shows percent, so 100% always means "the default feel".
+// The track flexes to the card's right edge — the row takes that height regardless, so the
+// extra width is free slider precision.
 const TuneSlider = ({
   label, value, min, max, title, onChange,
 }: {
   label: string; value: number; min: number; max: number; title: string;
   onChange: (v: number) => void;
 }) => (
-  <label className="flex items-center gap-2" title={title}>
-    <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+  <label className="flex w-full items-center gap-2" title={title}>
+    {/* Fixed label column so stacked sliders' tracks start flush (fits "sensitivity"). */}
+    <span className="w-24 shrink-0 font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
       {label}
     </span>
     <input
@@ -70,9 +73,9 @@ const TuneSlider = ({
       step={0.05}
       value={value}
       onChange={(e) => onChange(Number(e.target.value))}
-      className="h-1 w-28 cursor-pointer accent-[#14131a]"
+      className="h-1 min-w-0 flex-1 cursor-pointer accent-[#14131a]"
     />
-    <span className="w-10 text-right font-mono text-[11px] text-muted-foreground">
+    <span className="w-10 shrink-0 text-right font-mono text-[11px] text-muted-foreground">
       {Math.round(value * 100)}%
     </span>
   </label>
@@ -713,8 +716,9 @@ const Remote = () => {
                     )}
                   </div>
                 )}
-                {/* Sensitivity sliders — persisted per browser, applied live while in VR. */}
-                <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                {/* Sensitivity sliders — persisted per browser, applied live while in VR.
+                    Stacked full-width rows (the sliders flex to the card edge). */}
+                <div className="space-y-2">
                   <TuneSlider
                     label="motion"
                     value={settings.vrSensitivity}

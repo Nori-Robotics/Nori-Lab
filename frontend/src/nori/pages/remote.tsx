@@ -339,19 +339,10 @@ const Remote = () => {
   const toggleMute = () => teleop?.setMicMuted(!call.micMuted);
 
   // ---- on-robot episode recording (W2.11) ----------------------------------
-  // Start/stop the robot's recorder; the reply drives recordState (CallBar badge).
-  // The task label is what training sees — v1 uses a window prompt over a whole
-  // task-entry UI; recording works fine with the default label if cancelled.
-  const toggleRecord = () => {
-    if (recordState?.recording) {
-      teleop?.record("stop");
-    } else {
-      const task = window.prompt("What is this demo? (task label for training)", "") ?? "";
-      teleop?.record("start", task || undefined);
-    }
-  };
-  // Probe the recorder once per session so the Record button reflects reality
-  // (a recording-disabled robot answers "recorder unreachable" -> badge, not mystery).
+  // The controls live in DatasetCaptureCard ("Record training dataset") — episode
+  // start/stop there drives BOTH the browser catcher and the robot's recorder.
+  // This page only probes once per session so the card reflects reality (a
+  // recording-disabled robot answers "recorder unreachable", not silence).
   useEffect(() => {
     if (connState === "connected" && controlActive) teleop?.record("status");
   }, [connState, controlActive, teleop]);
@@ -673,8 +664,6 @@ const Remote = () => {
               onToggleCamera={toggleCamera}
               volume={volume}
               onVolumeChange={setVolume}
-              record={recordState}
-              onToggleRecord={toggleRecord}
             />
           </div>
         </div>

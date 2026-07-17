@@ -130,7 +130,7 @@ function DatasetRow({
 
 export function DatasetCaptureCard() {
   const { baseUrl, fetchWithHeaders } = useApi();
-  const { teleop, running, settings, setTelemetryListener, setControlSentListener } =
+  const { teleop, running, recordState, settings, setTelemetryListener, setControlSentListener } =
     useTeleopSession();
 
   const [available, setAvailable] = useState(false);
@@ -226,11 +226,25 @@ export function DatasetCaptureCard() {
       if (episodeOn) {
         // Stop, then hand the clip to the Accept/Reject review — it does NOT
         // count toward the dataset until Accepted.
+        // W2.11 transition: the ON-ROBOT recorder stops with the browser episode.
+        // Known divergence, accepted for now: Reject below discards only the
+        // browser clip — the robot's full-quality copy is already finalized and
+        // will ship to the cloud regardless (server-side curation later).
+        teleop.record("stop");
         const res = await capture.episodeStop();
         setEpisodeOn(false);
         if (res) setReview({ index: res.index, url: URL.createObjectURL(res.blob) });
       } else {
-        await capture.episodeStart(teleop, task.trim() || "teleop session");
+        const label = task.trim() || "teleop session";
+        // W2.11 transition period: episode start drives BOTH recorders — the
+        // browser catcher (the pipeline the dataset/export flow below still
+        // uses) AND the robot's on-device recorder (full-quality frames + 50 Hz
+        // state + actions, shipped to the cloud when the robot idles). The
+        // robot-side reply surfaces in the status line under the buttons; on a
+        // robot without recording enabled it reads "recorder unreachable" and
+        // the browser capture simply proceeds alone.
+        teleop.record("start", label);
+        await capture.episodeStart(teleop, label);
         setEpisodeOn(true);
       }
     } catch (e) {
@@ -480,6 +494,23 @@ export function DatasetCaptureCard() {
                 <span className="text-xs text-red-700">spool: {captureRef.current.lastError}</span>
               )}
             </div>
+            {/* W2.11: the on-robot recorder runs in lockstep with the episode buttons
+                above (start/stop drive both). This line is its live reply — full-quality
+                robot-side copies upload to your cloud on their own once the robot idles. */}
+            <p className="text-xs text-[#6f6858]">
+              robot recorder:{" "}
+              {recordState === null
+                ? "no reply yet"
+                : recordState.recording
+                  ? <>
+                      <span className="mr-1 inline-block h-2 w-2 animate-pulse rounded-full bg-red-500 align-middle" />
+                      recording {recordState.episode ?? ""}
+                      {recordState.freeGb !== undefined ? ` · ${recordState.freeGb} GB free` : ""}
+                    </>
+                  : recordState.error
+                    ? `unavailable (${recordState.error})`
+                    : "idle — full-quality robot-side copy records with each episode"}
+            </p>
           </>
         )}
 

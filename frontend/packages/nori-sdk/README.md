@@ -68,6 +68,69 @@ await teleop.start();       // subscribes, answers the robot's offer, opens the 
 
 Video now flows into your `<video>` element and `onTelemetry` fires ~50×/s.
 
+## Develop without a robot (mock mode)
+
+`@nori/sdk/mock` ships a fake robot so you can build and CI-test **with zero hardware, zero
+cloud, and zero network** — no Supabase, no credentials, no robot time. Swap only the
+signaling option; everything else is the identical SDK path (real WebRTC in-page, real
+handshake/ack, real frame parsing), so code developed against the mock talks to a real robot
+by changing one line:
+
+```ts
+import { RemoteTeleop } from "@nori/sdk";
+import { createMockRobot } from "@nori/sdk/mock";
+
+const robot = createMockRobot();          // the fake robot, living in your page
+const teleop = new RemoteTeleop({
+  signaling: robot.signaling,             // <- the ONLY line that differs from production
+  videoEl: document.querySelector("video")!,
+  token: "",
+  stun: "", turnUrls: [], turnUser: "", turnCred: "", forceRelay: false,
+  arm: "right",
+  onLog: console.log,
+  onConnState: (s) => console.log("conn:", s),
+  onTelemetry: (t) => console.log(t.safety, t.state["right_arm_shoulder_pan.pos"]),
+  onMode: () => {}, onControlActive: () => {},
+});
+await teleop.start();                     // connects in ~a second, telemetry + video flowing
+// later: robot.restart() simulates a robot reboot; robot.stop() tears it down.
+```
+
+What the mock gives you:
+
+- **A drivable robot**: jog (keyboard/`setExternalJog`), absolute `sendAction` targets with the
+  full `accepted → active → done|clamped|blocked` action-status lifecycle, range clamping
+  (clamp-don't-reject, like the daemon), `estop`/`reset_latch` latching, and an arrival-keyed
+  watchdog that stops motion when your control frames go silent — so your error handling is
+  testable, not just your happy path.
+- **Test-pattern video**: a canvas-drawn composite honoring the `camera_layout` grid, so
+  `videoStream()`, `cameraView(role)`, `captureFrame`/`snapshot(role)` all work. Tiles move
+  when you jog (a dot tracks `shoulder_pan`), so "is my view wired up" is answerable by eye.
+- **The real handshake**: `onReady`/`robotInfo()` deliver a descriptor (12 joints, 4 cameras,
+  ranges) shaped exactly like the golden fixture; pass `token:` to `createMockRobot` to
+  exercise the HMAC auth path (wrong token → the real nack/`bad_access_code` flow).
+- **Determinism for CI**: the simulation core (`MockDaemonSim`) is pure and seeded — no
+  `Date.now`/`Math.random` — and can be driven tick-by-tick in Node unit tests without any
+  browser at all (`sim.handleFrame(...)` / `sim.tick(ms)`).
+
+The mock speaks the same room handshake as the real robot (`robot_here` + nonce → HMAC `ready`
+→ offer, with rate-limited nack/announce), so the auth path you code against is the real one.
+
+Honest limits (v1): no audio tracks (`joinCall()` degrades to local-only), no perception frames
+(use `injectPerception()`), motion is *plausible, not kinematically true* — cylindrical dofs
+nudge a fixed joint mapping so telemetry visibly responds. Never use mock trajectories to
+validate motion or train anything. `createMockRobot()` needs a browser (WebRTC + canvas);
+`MockDaemonSim` alone runs anywhere.
+
+Two gotchas worth knowing (they apply to real robots too, so the mock reproduces them):
+
+- **`onTelemetry` fires for more than daemon frames.** RemoteTeleop also emits a view on its
+  ~1 Hz video/ABR tick, and that one carries an **empty `state`**. Wait for the field you need
+  (`t.state["right_arm_shoulder_pan.pos"] !== undefined`), not merely the first callback.
+- **A wrong `token` surfaces as `bad_access_code` after ~2.5 s**, not instantly: the first
+  `ready` is legitimately mac-less, so the SDK debounces a nack before believing it. Read the
+  failure from `onConnectStatus`'s **`reason`** field (`ConnectStatus.reason`).
+
 ## Connectivity: LAN, STUN, TURN
 
 How the media/control connection is established, and what you need for each situation:
@@ -485,6 +548,7 @@ The robot side (`webrtc_robot.py`) must exchange the same named events (`sdp`, `
 | `@nori/sdk` | `RemoteTeleop`, telemetry/jog/keybind types, `SignalingTransport` contract, `NORI_PROTOCOL_VERSION` | none |
 | `@nori/sdk/vr` | `VrJogMapper`, `VrSession`, `DEFAULT_BINDINGS`, VR types | `three` |
 | `@nori/sdk/supabase` | `SupabaseSignaling` (reference transport) | `@supabase/supabase-js` |
+| `@nori/sdk/mock` | `createMockRobot`, `MockDaemonSim`, `createLoopbackSignaling` (dev/CI fake robot) | none |
 
 ## License & lineage
 

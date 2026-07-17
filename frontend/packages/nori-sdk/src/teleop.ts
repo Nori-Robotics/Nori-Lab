@@ -493,7 +493,11 @@ export function keybindLegend(mode: ControlMode): {
 const JOG_HZ_MS = 20; // 50 Hz level-jog
 const BUFFER_LIMIT = 16384; // skip a jog frame if the channel is congested
 
-async function hmacHex(key: string, msg: string): Promise<string> {
+// The room-auth proof: HMAC-SHA256 of the robot's nonce under the room token, lowercase hex.
+// Exported so the mock robot (@nori/sdk/mock) verifies with the SAME primitive the operator
+// signs with — two copies of this would have to stay byte-identical (key encoding, hash, hex
+// padding) forever, and any drift would surface as an unexplained "wrong access code".
+export async function hmacHex(key: string, msg: string): Promise<string> {
   if (!crypto.subtle) {
     throw new Error("crypto.subtle unavailable — open the app over http://localhost or https");
   }
@@ -1072,7 +1076,12 @@ export class RemoteTeleop {
   }
 
   private iceServers(): RTCIceServer[] {
-    const servers: RTCIceServer[] = [{ urls: this.o.stun }];
+    // An empty `stun` means "no STUN server", not "a server whose URL is the empty string":
+    // RTCPeerConnection REJECTS `{urls: ""}` with a SyntaxError at construction, which would
+    // take down the whole session. Omitting it is the valid configuration for the two cases
+    // that legitimately need no STUN — same-LAN sessions (host candidates suffice) and the
+    // in-page mock robot (@nori/sdk/mock), whose dev loop must not touch the network at all.
+    const servers: RTCIceServer[] = this.o.stun ? [{ urls: this.o.stun }] : [];
     if (this.o.turnUrls.length) {
       servers.push({ urls: this.o.turnUrls, username: this.o.turnUser, credential: this.o.turnCred });
     }

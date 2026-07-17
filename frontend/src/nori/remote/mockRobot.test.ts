@@ -13,6 +13,18 @@ const jogFrame = (arm: Record<string, number>, base?: { linear: number; angular:
   jog: { right_arm: arm, ...(base ? { base } : {}) },
 });
 
+// Advance the sim from `fromMs` to `toMs`, refreshing a (neutral) control frame each slice so the
+// watchdog stays fed — i.e. what a connected operator's 50 Hz jog stream does. Tests that just
+// jump the clock are testing the watchdog, not the behavior under test.
+function drive(sim: MockDaemonSim, fromMs: number, toMs: number, stepMs = 50): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  for (let t = fromMs; t <= toMs; t += stepMs) {
+    sim.handleFrame({ type: "control", seq: t, jog: {} }, t);
+    out.push(...sim.tick(t));
+  }
+  return out;
+}
+
 describe("MockDaemonSim ack", () => {
   it("emits a fixture-shaped ack the SDK's parseAck accepts", () => {
     const sim = new MockDaemonSim();
@@ -38,6 +50,14 @@ describe("MockDaemonSim ack", () => {
       descriptor: { joints: ["right_arm_gripper.pos"], cameras: ["front"], ranges: {} },
     });
     expect(sim.cameraLayoutFrame()).toBeNull();
+  });
+
+  it("reports currents only for motors the descriptor actually has", () => {
+    const sim = new MockDaemonSim({
+      descriptor: { joints: ["left_arm_gripper.pos"], cameras: ["front"], ranges: {} },
+    });
+    const tel = sim.tick(0).find((f) => f.type === "telemetry")!;
+    expect(Object.keys(tel.currents as Record<string, number>)).toEqual(["left_arm_gripper"]);
   });
 });
 
@@ -80,6 +100,20 @@ describe("MockDaemonSim motion", () => {
     sim.tick(50);
     expect(sim.state()["x.vel"]).toBe(0.3);
   });
+
+  it("stops the base when a jog frame omits `base` (released key must not latch)", () => {
+    // The SDK's keyboard path drops the base key entirely once no base key is held, so absence
+    // means stop. Latching here would drive the mock's base away forever.
+    const sim = new MockDaemonSim();
+    sim.tick(0);
+    sim.handleFrame(jogFrame({}, { linear: 0.5, angular: 0.2 }), 0);
+    sim.tick(50);
+    expect(sim.state()["x.vel"]).toBe(0.5);
+    sim.handleFrame(jogFrame({ shoulder_pan: 0 }), 100); // key released: no base key at all
+    sim.tick(150);
+    expect(sim.state()["x.vel"]).toBe(0);
+    expect(sim.state()["theta.vel"]).toBe(0);
+  });
 });
 
 describe("MockDaemonSim safety", () => {
@@ -119,6 +153,28 @@ describe("MockDaemonSim safety", () => {
     const rec = sim.tick(1700).find((f) => f.type === "telemetry")!;
     expect((rec.status as Record<string, unknown>).watchdog).toBe("ok");
   });
+
+  it("watchdog stop freezes an in-flight action instead of completing it", () => {
+    // A real daemon halts ALL motion on control silence; an action that kept slewing to `done`
+    // would teach link-loss recovery code the opposite of hardware behavior.
+    const sim = new MockDaemonSim({ actionUnitsPerS: 20 });
+    sim.tick(0);
+    sim.handleFrame({ type: "control", action: { "right_arm_shoulder_pan.pos": 90 }, action_id: "w1" }, 0);
+    sim.tick(100);
+    const posAtStop = sim.state()["right_arm_shoulder_pan.pos"];
+    // Go silent well past t_stop_ms, then keep ticking: motion must not advance, and no
+    // terminal status may be emitted.
+    const frames = [...sim.tick(2000), ...sim.tick(4000), ...sim.tick(6000)];
+    expect((frames.find((f) => f.type === "telemetry")!.status as Record<string, unknown>).watchdog).toBe("stop");
+    expect(frames.filter((f) => f.type === "action_status")).toEqual([]);
+    expect(sim.state()["right_arm_shoulder_pan.pos"]).toBe(posAtStop);
+
+    // Control returns -> the frozen action resumes and completes.
+    const resumed = drive(sim, 6100, 12000);
+    expect(resumed.filter((f) => f.type === "action_status")).toContainEqual(
+      expect.objectContaining({ action_id: "w1", state: "done" })
+    );
+  });
 });
 
 describe("MockDaemonSim actions", () => {
@@ -132,7 +188,7 @@ describe("MockDaemonSim actions", () => {
     expect(replies).toEqual([expect.objectContaining({ type: "action_status", action_id: "a1", state: "accepted" })]);
     const mid = sim.tick(100).filter((f) => f.type === "action_status");
     expect(mid).toEqual([expect.objectContaining({ action_id: "a1", state: "active" })]);
-    const end = sim.tick(2000).filter((f) => f.type === "action_status");
+    const end = drive(sim, 150, 1500).filter((f) => f.type === "action_status");
     expect(end).toEqual([expect.objectContaining({ action_id: "a1", state: "done" })]);
     expect(sim.state()["right_arm_shoulder_pan.pos"]).toBe(50);
   });
@@ -141,8 +197,8 @@ describe("MockDaemonSim actions", () => {
     const sim = new MockDaemonSim();
     sim.tick(0);
     sim.handleFrame({ type: "control", action: { "right_arm_gripper.pos": 250 }, action_id: "a2" }, 0);
-    const end = sim.tick(60000).filter((f) => f.type === "action_status");
-    expect(end).toEqual([expect.objectContaining({ action_id: "a2", state: "clamped" })]);
+    const end = drive(sim, 50, 2000).filter((f) => f.type === "action_status");
+    expect(end).toContainEqual(expect.objectContaining({ action_id: "a2", state: "clamped" }));
     expect(sim.state()["right_arm_gripper.pos"]).toBe(100);
   });
 
@@ -183,7 +239,7 @@ describe("loopback signaling", () => {
     expect(seen).toContain("bye");
   });
 
-  it("drops deliveries after close", async () => {
+  it("drops sends made after close", async () => {
     const { transport, robot } = createLoopbackSignaling();
     let opened = false;
     robot.onReady(() => { opened = true; });
@@ -192,5 +248,18 @@ describe("loopback signaling", () => {
     transport.sendReady({});
     await new Promise((r) => setTimeout(r, 20));
     expect(opened).toBe(false);
+  });
+
+  it("still delivers a bye sent immediately before close (RemoteTeleop.stop's exact shape)", async () => {
+    // teleop.stop() calls sendBye() and close() in the same synchronous task. Dropping that bye
+    // leaves the mock robot's timers and peer running forever and breaks the next start().
+    const { transport, robot } = createLoopbackSignaling();
+    let byes = 0;
+    robot.onBye(() => { byes++; });
+    await transport.connect({ onSdp: () => {}, onIce: () => {}, onRobotHere: () => {}, onOpen: () => {} });
+    transport.sendBye();
+    await transport.close();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(byes).toBe(1);
   });
 });

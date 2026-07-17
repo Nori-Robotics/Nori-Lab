@@ -104,6 +104,12 @@ const capRate = (v: number) => clamp(v, -VR_MAX_RATE, VR_MAX_RATE);
 // end positions are unchanged.
 const GRIPPER_OPEN_RATE = 0.25;   // default open rate (fraction of full jog rate)
 const GRIPPER_CLOSE_FACTOR = 1.5; // close speed = open speed × this, whatever the tuning
+// Opening RAMP: the open rate tapers linearly with how far open the jaws already are
+// (telemetry gripper.pos, 0 = closed .. 100 = fully open) — full tuned rate at closed,
+// this floor × the tuned rate at fully open. The fine end of the travel (nearly open,
+// where overshoot loses the object) is the slow end. Position unknown (no telemetry
+// yet) -> no taper. Close is NOT ramped.
+const GRIPPER_RAMP_FLOOR = 0.3;
 
 // User-tunable sensitivity (the web UI exposes these as sliders — VrJogMapper.setTuning).
 // Everything here scales the hardware-tuned constants above; the defaults reproduce them
@@ -131,10 +137,13 @@ export function resolveTuning(t?: VrTuning): Required<VrTuning> {
     gripperOpenRate: clamp(t?.gripperOpenRate ?? DEFAULT_TUNING.gripperOpenRate, 0.05, 1),
   };
 }
-// Trigger held = + = open (tunable); released = − = close (1.5× open, capped at full).
-const gripperRate = (trigger: number, t: ResolvedTuning) => {
-  const close = Math.min(1, t.gripperOpenRate * GRIPPER_CLOSE_FACTOR);
-  return trigger > 0.5 ? t.gripperOpenRate : -close;
+// Trigger held = + = open (tunable, ramped by how open the jaws already are); released =
+// − = close (1.5× the tuned open rate, capped at full, NOT ramped). gripperPos is the
+// telemetry gripper.pos [0,100] for this hand's arm, or null when unknown.
+const gripperRate = (trigger: number, t: ResolvedTuning, gripperPos: number | null) => {
+  if (trigger <= 0.5) return -Math.min(1, t.gripperOpenRate * GRIPPER_CLOSE_FACTOR);
+  const openFrac = gripperPos == null ? 0 : clamp(gripperPos, 0, 100) / 100;
+  return t.gripperOpenRate * (1 - (1 - GRIPPER_RAMP_FLOOR) * openFrac);
 };
 
 // ---- wrist rates: per-frame BODY-FRAME angular increments -------------------
@@ -213,6 +222,7 @@ class HandState {
     f: VrControllerFrame | null | undefined,
     controlYaw: number,
     tuning: ResolvedTuning,
+    gripperPos: number | null,
   ): Record<string, number> | null {
     if (!f) { this.release(); return null; }
 
@@ -235,7 +245,7 @@ class HandState {
     if (!wasEngaged || !this.prevPos) {
       this.prevPos = cur;
       this.prevQuat = (f.orientation as Quat | null | undefined) ?? null;
-      return gripperOnly(f.trigger, tuning);
+      return gripperOnly(f.trigger, tuning, gripperPos);
     }
 
     // World-frame metre deltas, rotated into the CONTROL frame (yaw set at recenter) before
@@ -253,7 +263,7 @@ class HandState {
     // Controller reconnect / tracking glitch -> reset baseline, hold this frame.
     if (Math.abs(vrX) > JUMP_POS || Math.abs(vrY) > JUMP_POS || Math.abs(vrZ) > JUMP_POS) {
       this.prevPos = cur;
-      return gripperOnly(f.trigger, tuning);
+      return gripperOnly(f.trigger, tuning, gripperPos);
     }
     this.prevPos = cur;
 
@@ -304,7 +314,7 @@ class HandState {
 
     // Binary gripper trigger (reference: 45 if trigger>0.5 else 0). Through the daemon's
     // jog accumulator/clamp, + drives toward the 45° target (jaws open), − toward 0 (closed).
-    arm.gripper = gripperRate(f.trigger, tuning);
+    arm.gripper = gripperRate(f.trigger, tuning, gripperPos);
 
     return arm;
   }
@@ -313,9 +323,11 @@ class HandState {
 function zeroArm(): Record<string, number> {
   return { shoulder_pan: 0, x: 0, y: 0, pitch: 0, wrist_roll: 0, gripper: 0 };
 }
-function gripperOnly(trigger: number, tuning: ResolvedTuning): Record<string, number> {
+function gripperOnly(
+  trigger: number, tuning: ResolvedTuning, gripperPos: number | null,
+): Record<string, number> {
   const a = zeroArm();
-  a.gripper = gripperRate(trigger, tuning); // binary trigger, per-direction rates
+  a.gripper = gripperRate(trigger, tuning, gripperPos); // binary trigger, ramped rates
   return a;
 }
 
@@ -352,6 +364,8 @@ export class VrJogMapper {
   private readonly right = new HandState();
   private estopPrev = false;
   private tuning: ResolvedTuning = { ...DEFAULT_TUNING };
+  // Latest telemetry gripper positions ([0,100], null = unknown) for the opening ramp.
+  private gripperPos: { left: number | null; right: number | null } = { left: null, right: null };
   // Yaw (radians, reference space) of the control frame the arm TRANSLATIONS are expressed
   // in. 0 = reference-space forward (the panel's spawn facing). The session updates this on
   // every recenter so "toward the video panel" always means robot-forward, even after the
@@ -373,6 +387,12 @@ export class VrJogMapper {
     this.tuning = resolveTuning(t);
   }
 
+  // Telemetry gripper positions (gripper.pos [0,100], null = unknown), fed by the session
+  // each frame so the opening ramp knows how far open each arm's jaws already are.
+  setGripperPos(left: number | null, right: number | null) {
+    this.gripperPos = { left, right };
+  }
+
   // Which arms are under active clutch this frame. VR is dual-arm (each controller drives its
   // own arm), so unlike the keyboard's single `settings.arm` there's no one "active" arm —
   // the 3D robot highlights whichever arm(s) you're actually commanding.
@@ -390,8 +410,8 @@ export class VrJogMapper {
   // Map one VR frame to a jog payload. Left controller -> left arm, right -> right arm;
   // base comes from the right controller; z-lift + E-STOP come from the resolved controls.
   map(frame: VrFrame): VrMapResult {
-    const lArm = this.left.step(frame.left, this.controlYaw, this.tuning);
-    const rArm = this.right.step(frame.right, this.controlYaw, this.tuning);
+    const lArm = this.left.step(frame.left, this.controlYaw, this.tuning, this.gripperPos.left);
+    const rArm = this.right.step(frame.right, this.controlYaw, this.tuning, this.gripperPos.right);
     const base = baseFromThumb(frame.right);
     const c = frame.controls;
     const leftLift = liftFromControls(c?.leftLiftUp, c?.leftLiftDown);

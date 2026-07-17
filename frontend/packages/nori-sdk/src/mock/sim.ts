@@ -87,6 +87,8 @@ export class MockDaemonSim {
   private rng: number;
   private readonly jogRate: number;
   private readonly actionRate: number;
+  // Motor whose idle holding current is always reported; null on a jointless descriptor.
+  private readonly idleCurrentMotor: string | null;
 
   constructor(opts?: MockSimOptions) {
     this.descriptor = opts?.descriptor ?? defaultDescriptor();
@@ -96,7 +98,9 @@ export class MockDaemonSim {
     this.jogRate = opts?.jogUnitsPerS ?? 60;
     this.actionRate = opts?.actionUnitsPerS ?? 120;
 
-    for (const j of this.descriptor.joints ?? []) this.st[j] = j.includes("gripper") ? 30 : 0;
+    const joints = this.descriptor.joints ?? [];
+    this.idleCurrentMotor = joints.length ? joints[joints.length - 1].replace(/\.pos$/, "") : null;
+    for (const j of joints) this.st[j] = j.includes("gripper") ? 30 : 0;
     for (const b of this.descriptor.base ?? []) this.st[b] = 0;
     for (const a of this.descriptor.aux ?? []) this.st[`${a}.pos`] = 100;
     Object.assign(this.st, opts?.initialState);
@@ -181,11 +185,13 @@ export class MockDaemonSim {
 
   private handleCommand(frame: Frame): Frame[] {
     // Two wire shapes exist: {name:"estop"} (protocol fixture) and {estop:true} (SDK keyboard
-    // path); accept both, like the daemon does.
+    // path); accept both, like the daemon does. NOT "reset": the SDK's reset command travels as
+    // a control frame's `reset` field (handleControl), never as a command — listing it here
+    // implied an emulation that doesn't exist.
     const name =
       typeof frame.name === "string"
         ? frame.name
-        : ["estop", "reset_latch", "reset"].find((k) => frame[k] === true) ?? "";
+        : ["estop", "reset_latch"].find((k) => frame[k] === true) ?? "";
     if (name === "estop") {
       this.safety = "latched";
       this.latchReason = "estop";
@@ -226,7 +232,12 @@ export class MockDaemonSim {
       } else if (silence > this.watchdog.t_warn_ms) wd = "warn";
     }
 
-    if (this.safety !== "latched" && dt > 0) {
+    // Motion runs only when nothing is stopping it. Watchdog `stop` must halt EVERYTHING, not
+    // just the jog: an in-flight `action` that kept slewing to completion after the control link
+    // went silent would report `done` on the mock while a real robot froze mid-move — teaching
+    // link-loss recovery code the opposite of the truth. Pending actions are kept, not failed:
+    // they resume if control returns, and freeze meanwhile.
+    if (this.safety !== "latched" && wd !== "stop" && dt > 0) {
       this.integrateJog(dt);
       out.push(...this.slewActions(dt));
     }
@@ -249,13 +260,15 @@ export class MockDaemonSim {
         this.setJoint(mapped, this.st[mapped] + rate * this.jogRate * dt);
       }
     }
+    // Base velocities are re-commanded by every jog frame, so an ABSENT base key means "no base
+    // command" = stop — not "keep the last one". The SDK's keyboard path omits `base` entirely
+    // once no base key is held (teleop.ts jogTick), so treating absence as latch made a released
+    // key drive the base forever: the exact runaway the real daemon is built to prevent.
     const base = this.jog.base;
-    if (base && typeof base === "object") {
-      const b = base as Record<string, unknown>;
-      if ("x.vel" in this.st) this.st["x.vel"] = typeof b.linear === "number" ? b.linear : 0;
-      if ("theta.vel" in this.st) this.st["theta.vel"] = typeof b.angular === "number" ? b.angular : 0;
-      if (this.st["x.vel"] || this.st["theta.vel"]) this.moved.add("base");
-    }
+    const b = (base && typeof base === "object" ? base : {}) as Record<string, unknown>;
+    if ("x.vel" in this.st) this.st["x.vel"] = typeof b.linear === "number" ? b.linear : 0;
+    if ("theta.vel" in this.st) this.st["theta.vel"] = typeof b.angular === "number" ? b.angular : 0;
+    if (this.st["x.vel"] || this.st["theta.vel"]) this.moved.add("base");
     for (const lift of this.descriptor.aux ?? []) {
       const rate = this.jog[lift];
       if (typeof rate === "number" && rate) {
@@ -294,8 +307,11 @@ export class MockDaemonSim {
       if (key === "base") continue;
       currents[key.replace(/\.pos$/, "")] = 60 + Math.floor(this.noise() * 80);
     }
-    // A couple of idle holding currents so the field is never empty (matches real robots).
-    currents["right_arm_gripper"] ??= 20 + Math.floor(this.noise() * 20);
+    // One idle holding current so the field is never empty (real motors always draw something).
+    // Keyed off a joint the DESCRIPTOR actually has — a hardcoded name invented a phantom
+    // actuator on custom descriptors, which anything cross-checking currents against joints reads
+    // as a real motor.
+    if (this.idleCurrentMotor) currents[this.idleCurrentMotor] ??= 20 + Math.floor(this.noise() * 20);
     return {
       type: "telemetry",
       ts_ns: Math.round(nowMs * 1e6),

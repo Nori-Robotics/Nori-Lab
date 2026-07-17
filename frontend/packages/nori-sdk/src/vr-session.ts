@@ -608,6 +608,13 @@ export class VrSession {
           }
         }
 
+        // Feed the opening ramp the arms' current jaw positions (telemetry gripper.pos,
+        // 0 = closed .. 100 = open — same keys the 3D schematic's jaws read).
+        const gPos = (k: string) => {
+          const v = this.tel?.state[k];
+          return typeof v === "number" ? v : null;
+        };
+        this.mapper.setGripperPos(gPos("left_arm_gripper.pos"), gPos("right_arm_gripper.pos"));
         const res = this.mapper.map(vrFrame);
         // null = nothing engaged this frame -> hand the stream back to the keyboard.
         this.o.teleop.setExternalJog(res.jog);

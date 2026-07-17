@@ -1,0 +1,42 @@
+<!doctype html>
+<!--
+  NORI: Additive (SDK v1 mock mode). Browser smoke page for @nori/sdk/mock.
+  Vite serves this at /mock-smoke.html (dev only — not linked from the app, not part of a
+  production route). `npm run smoke:mock` drives it headless; open it directly to watch.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>@nori/sdk mock — browser smoke</title>
+    <style>
+      body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 24px; color: #111; }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      p.sub { color: #666; margin: 0 0 16px; }
+      #summary { font-weight: 700; font-size: 16px; margin: 12px 0; }
+      #summary.ok, li.ok b { color: #0a7a2f; }
+      #summary.bad, li.bad b { color: #b3261e; }
+      ul { list-style: none; padding: 0; }
+      li { padding: 6px 10px; border-left: 3px solid #ddd; margin-bottom: 4px; background: #fafafa; }
+      li.ok { border-left-color: #0a7a2f; }
+      li.bad { border-left-color: #b3261e; }
+      small { color: #b3261e; }
+      #video-host video { width: 320px; border: 1px solid #ddd; margin-top: 12px; }
+      @media (prefers-color-scheme: dark) {
+        body { background: #111; color: #eee; }
+        li { background: #1b1b1b; border-left-color: #333; }
+        p.sub { color: #999; }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>@nori/sdk mock — browser smoke</h1>
+    <p class="sub">
+      Runs RemoteTeleop against the in-page mock robot: real WebRTC, real handshake, real control
+      channel. No robot, no cloud, no network.
+    </p>
+    <div id="summary">starting…</div>
+    <ul id="results"></ul>
+    <div id="video-host"></div>
+    <script type="module" src="/src/nori/dev/mockSmoke.ts"></script>
+  </body>
+</html>

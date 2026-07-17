@@ -54,12 +54,17 @@ export function createLoopbackSignaling(opts?: LoopbackSignalingOptions): {
     bye?: () => void;
   } = {};
 
-  // Every delivery is deferred and dropped once the room is closed — mirrors a real transport
-  // where a message can't arrive after unsubscribe.
+  // Every delivery is deferred (queued macrotask) so ordering matches a real transport and a
+  // send is never synchronously re-entrant.
+  //
+  // `closed` is checked at SEND time, not delivery time: a message handed to the transport
+  // while the room was still open is already on its way and must still land. RemoteTeleop.stop()
+  // relies on exactly this — it calls sendBye() and close() in the same synchronous task
+  // (teleop.ts stop()), so a delivery-time check would drop every bye and the robot would never
+  // hear the operator leave. Sends made AFTER close are dropped, like a real unsubscribe.
   const deliver = (fn: () => void) => {
-    setTimeout(() => {
-      if (!closed) fn();
-    }, latency);
+    if (closed) return;
+    setTimeout(fn, latency);
   };
 
   const transport: SignalingTransport = {

@@ -7,7 +7,7 @@ import {
 } from "@nori/sdk";
 
 const clean = (over?: Partial<LinkSample>): LinkSample => ({
-  packetsDelta: 200, lossPct: 0, fps: 15, rttMs: 50, ...over,
+  packetsDelta: 200, lossPct: 0, fps: 15, rttMs: 50, frameHeight: 480, ...over,
 });
 
 describe("AbrController", () => {
@@ -90,12 +90,15 @@ describe("classifyQuality", () => {
 describe("VideoStatsProbe", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  const statsReport = (v: { received: number; lost: number; frames: number; rttS: number }) =>
+  const statsReport = (v: {
+    received: number; lost: number; frames: number; rttS: number; height?: number;
+  }) =>
     new Map<string, unknown>([
       ["pair", { type: "candidate-pair", selected: true, currentRoundTripTime: v.rttS }],
       ["video", {
         type: "inbound-rtp", kind: "video",
         packetsReceived: v.received, packetsLost: v.lost, framesDecoded: v.frames,
+        frameHeight: v.height ?? 480,
       }],
       ["audio", { type: "inbound-rtp", kind: "audio", packetsReceived: 1, packetsLost: 1 }],
     ]);
@@ -123,6 +126,7 @@ describe("VideoStatsProbe", () => {
     expect(second.packetsDelta).toBe(125);            // 100 received + 25 lost
     expect(second.lossPct).toBeCloseTo(20);           // 25 / 125
     expect(second.fps).toBeCloseTo(30);               // 30 frames / 1 s
+    expect(second.frameHeight).toBe(480);             // resolution-ladder rung observability
   });
 
   it("clamps a packetsLost revision (spec allows the cumulative count to go DOWN)", async () => {

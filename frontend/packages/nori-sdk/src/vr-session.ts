@@ -39,7 +39,8 @@ const UI_SCALE = 0.8;
 // read left-to-right: video | telemetry | robot. Unlike the video/HUD panels this is NOT a
 // textured plane — it's the real articulated model in the scene, so it has genuine stereo
 // depth: lean or step sideways and you see around it.
-//   X — HUD spans 0.85..1.45 (0.6 wide at x=1.15); this sits just outboard of it.
+//   X — HUD spans 0.85..1.35 (0.5 wide at x=1.10); this sits just outboard of it. (Both
+//       pulled inboard 2026-07-16 with the HUD shrink, so the whole cluster reads narrower.)
 //   Y — the model stands on y=0 and is ~1.5 units tall centred ~1.08, so scaling by
 //       ROBOT_SCALE and dropping it by ROBOT_Y centres it vertically on the panel row.
 //   Z — pushed toward the operator, OFF the panel plane, so it reads as a hologram in front
@@ -47,7 +48,7 @@ const UI_SCALE = 0.8;
 //       recenter — see serviceRecenter).
 //   YAW — the model faces +Z (at the operator); this yaws it to the same 3/4 view the desktop
 //       card frames, so you see the front and one flank instead of a flat head-on silhouette.
-const ROBOT_X = 1.8;
+const ROBOT_X = 1.55;
 const ROBOT_Y = -0.96;
 const ROBOT_Z = 0.35;
 const ROBOT_SCALE = 0.7;
@@ -61,6 +62,13 @@ const ROBOT_YAW = -0.6;
 // feel doesn't change between a 72 Hz and a 90 Hz headset.
 const ROBOT_SPIN_DEADZONE = 0.15; // ignore stick slop / resting thumb
 const ROBOT_SPIN_RATE = 2.2; // rad/s at full deflection (~2.9 s for a full turn)
+// The same stick's Y axis pushes/pulls the whole UI cluster (video + HUD + 3D robot) along
+// the head→panels line — stick up = further away, down = closer (matches the right stick's
+// up-is-forward). Complements recenter, which re-AIMS the cluster; the chosen distance
+// survives recenter (serviceRecenter reads panelDist).
+const PANEL_DIST_RATE = 1.2; // m/s at full deflection
+const PANEL_DIST_MIN = 0.9;  // never pulled into the operator's face
+const PANEL_DIST_MAX = 4.0;
 // Controls cheat-sheet: a card anchored to the left controller, revealed by GLANCING at it —
 // rotate your wrist so the controller's face turns toward you, like checking a watch. Hidden the
 // rest of the time, so it costs no screen space during teleop and spends no button.
@@ -69,7 +77,7 @@ const ROBOT_SPIN_RATE = 2.2; // rad/s at full deflection (~2.9 s for a full turn
 // controller to the head: hand held out to drive -> up axis points at the ceiling, dot ~0;
 // wrist rolled toward your face -> up axis swings toward you, dot -> 1. SHOW/HIDE differ
 // (hysteresis) so a hand hovering exactly at the threshold can't strobe the card.
-const CARD_UP = 0.17; // metres above the left controller — clear of the Recenter button (0.09)
+const CARD_UP = 0.17; // metres above the left controller — clear of the Recenter button (0.06)
 const CARD_W = 0.19;
 const CARD_H = 0.152; // 1.25 aspect, matches the 640x512 canvas
 const CARD_SHOW_DOT = 0.6;
@@ -79,7 +87,9 @@ const CARD_FADE_PER_S = 8; // opacity units/sec — fades instead of popping
 // controller, and fires when the right controller tip enters POKE_FIRE_R of it; it must
 // then leave POKE_REARM_R before it can fire again (hysteresis, no repeat-fire). NEAR_R
 // just drives the highlight.
-const RC_BTN_UP = 0.09;      // button offset above the left controller
+const RC_BTN_UP = 0.06;      // button offset above the left controller — low enough that its
+                             // top edge clears the controls card's bottom (card spans
+                             // 0.17 ± 0.061 scaled; at 0.09 the two overlapped)
 const RC_POKE_FIRE_R = 0.045;
 const RC_POKE_REARM_R = 0.08;
 const RC_POKE_NEAR_R = 0.11;
@@ -90,17 +100,21 @@ const RC_POKE_NEAR_R = 0.11;
 // constantly. Changes apply on the next mapped frame and are reported via onTuningChange
 // so the page can persist them alongside its sliders.
 const TUNE_UP = 0.17;        // metres above the right controller (mirrors CARD_UP)
-const TUNE_W = 0.24;
-const TUNE_H = 0.12;         // 2:1 aspect, matches the 512x256 canvas
+// Panel sized so its 640x256 canvas lands at ~3200 px/m — the same pixel density as the
+// controls card (640 px over 0.19 m), so the two wrist surfaces read at one text size.
+// Width is deliberately generous relative to the two rows: it spreads the − / + poke
+// zones apart (they were too easy to cross-poke at 0.16 m; 2026-07-16).
+const TUNE_W = 0.2;
+const TUNE_H = 0.08;         // 2.5:1 aspect, matches the 640x256 canvas
 const TUNE_SENS_STEP = 0.25; // one poke, on the web slider's 0.25..2 range
 const TUNE_GRIP_STEP = 0.1;  // one poke, on the web slider's 0.05..1 range
 // Poke zones in the panel plane's LOCAL metres (x right, y up, origin center):
 // row 0 = motion sensitivity, row 1 = gripper-open rate; dir = which way the poke steps.
 const TUNE_ZONES = [
-  { x: -(TUNE_W / 2 - 0.04), y: TUNE_H / 4, row: 0, dir: -1 },
-  { x: TUNE_W / 2 - 0.04, y: TUNE_H / 4, row: 0, dir: 1 },
-  { x: -(TUNE_W / 2 - 0.04), y: -TUNE_H / 4, row: 1, dir: -1 },
-  { x: TUNE_W / 2 - 0.04, y: -TUNE_H / 4, row: 1, dir: 1 },
+  { x: -(TUNE_W / 2 - 0.03), y: TUNE_H / 4, row: 0, dir: -1 },
+  { x: TUNE_W / 2 - 0.03, y: TUNE_H / 4, row: 0, dir: 1 },
+  { x: -(TUNE_W / 2 - 0.03), y: -TUNE_H / 4, row: 1, dir: -1 },
+  { x: TUNE_W / 2 - 0.03, y: -TUNE_H / 4, row: 1, dir: 1 },
 ];
 // gripper Present_Current -> rumble. Raw sign-magnitude ints; tune on hardware.
 // Tuned stronger 2026-07-02 (was hard to feel): lower the contact threshold, reach full
@@ -194,6 +208,9 @@ export class VrSession {
   // recenter: it's relative to the panel group, so re-aiming the cluster doesn't spin the robot.
   private robotYaw = ROBOT_YAW;
   private lastFrameAt = 0; // for the per-second spin rate
+  // Operator-chosen distance of the panel cluster (left stick Y). Recenter re-aims the
+  // cluster but keeps this distance.
+  private panelDist = PANEL_DIST;
   private session: XRSession | null = null;
   private currents: Record<string, number> = {};
   // Per-gripper adaptive idle-current baseline for haptics (see applyHaptics).
@@ -339,8 +356,10 @@ export class VrSession {
     video.position.set(0, 0, 0);
     group.add(video);
 
-    // Telemetry HUD panel to the right of the video (0.6 m wide, same height). A 2D canvas
-    // painted with the keyboard stats + grip-force bars, uploaded as a CanvasTexture.
+    // Telemetry HUD panel to the right of the video. 0.5x1.0 m — a uniform shrink of the
+    // original 0.6x1.2 (same 0.5 aspect as the 512x1024 canvas, so nothing distorts; text
+    // reads ~17% smaller) to keep the whole 2D cluster narrower. A 2D canvas painted with
+    // the keyboard stats + grip-force bars, uploaded as a CanvasTexture.
     const hudCanvas = document.createElement("canvas");
     hudCanvas.width = 512;
     hudCanvas.height = 1024; // 0.5 aspect -> matches a 0.6×1.2 panel
@@ -350,10 +369,10 @@ export class VrSession {
     hudTexture.colorSpace = THREE.SRGBColorSpace;
     this.hudTexture = hudTexture;
     const hud = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.6, 1.2),
+      new THREE.PlaneGeometry(0.5, 1.0),
       new THREE.MeshBasicMaterial({ map: hudTexture, transparent: true, side: THREE.DoubleSide })
     );
-    hud.position.set(1.15, 0, 0); // right of the 1.6 m video panel, small gap
+    hud.position.set(1.1, 0, 0); // right of the 1.6 m video panel, small gap
     group.add(hud);
     this.drawHud(); // paint once so it's not blank before the first telemetry frame
 
@@ -422,7 +441,7 @@ export class VrSession {
 
     // Sensitivity tuning panel — the card's right-wrist mirror (see TUNE_* constants).
     const tuneCanvas = document.createElement("canvas");
-    tuneCanvas.width = 512;
+    tuneCanvas.width = 640;
     tuneCanvas.height = 256;
     this.tuneCanvas = tuneCanvas;
     this.tuneCtx = tuneCanvas.getContext("2d");
@@ -457,7 +476,8 @@ export class VrSession {
     this.o.onLog(
       `${mode === "immersive-ar" ? "AR (passthrough)" : "VR"} session started — ` +
         "grip to engage clutch, B/Y & A/X = that arm's lift up/down, "
-          + "right stick = drive the base, left stick = spin the 3D robot, "
+          + "right stick = drive the base, left stick = spin the 3D robot (↔) "
+          + "/ move the UI closer-further (↕), "
           + "left stick-press = E-STOP, hold right stick-press = reset, "
           + "poke the Recenter button above your left hand to recenter the view, "
           + "glance at your right wrist for sensitivity tuning"
@@ -495,6 +515,7 @@ export class VrSession {
     this.panelGroup = null;
     this.robot = null;
     this.robotYaw = ROBOT_YAW; // next session starts from the default 3/4 view
+    this.panelDist = PANEL_DIST; // and from the default cluster distance
     this.lastFrameAt = 0;
     this.hudTexture = null;
     this.hudCanvas = null;
@@ -565,6 +586,26 @@ export class VrSession {
         const spinX = vrFrame.left?.thumbstick.x ?? 0;
         if (Math.abs(spinX) > ROBOT_SPIN_DEADZONE) {
           this.robotYaw += spinX * ROBOT_SPIN_RATE * dt;
+        }
+        // Left stick Y pushes/pulls the whole UI cluster (up = away, like the right stick's
+        // up-is-forward). Adjusts from the cluster's ACTUAL current distance — not the
+        // stored one — so it never snaps if the operator has walked since placing it.
+        const distY = vrFrame.left?.thumbstick.y ?? 0;
+        if (Math.abs(distY) > ROBOT_SPIN_DEADZONE && this.panelGroup) {
+          const head = new THREE.Vector3();
+          renderer.xr.getCamera().getWorldPosition(head);
+          const dir = this.panelGroup.position.clone().sub(head);
+          dir.y = 0;
+          if (dir.lengthSq() > 1e-6) {
+            const cur = dir.length();
+            dir.normalize();
+            this.panelDist = Math.min(
+              PANEL_DIST_MAX,
+              Math.max(PANEL_DIST_MIN, cur - distY * PANEL_DIST_RATE * dt),
+            );
+            this.panelGroup.position.setX(head.x + dir.x * this.panelDist);
+            this.panelGroup.position.setZ(head.z + dir.z * this.panelDist);
+          }
         }
 
         const res = this.mapper.map(vrFrame);
@@ -668,7 +709,9 @@ export class VrSession {
     fwd.y = 0;
     if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1); // looking straight up/down -> keep prior facing
     fwd.normalize();
-    group.position.set(p.x + fwd.x * PANEL_DIST, p.y, p.z + fwd.z * PANEL_DIST);
+    // panelDist, not the PANEL_DIST constant: recenter re-aims the cluster but keeps the
+    // distance the operator chose with the left stick.
+    group.position.set(p.x + fwd.x * this.panelDist, p.y, p.z + fwd.z * this.panelDist);
     // Face the operator: rotate the group so its panels' +Z (their front face) points back
     // toward the head, i.e. along -fwd. (yaw only; matches the initial fwd=(0,0,-1) -> yaw 0.)
     const yaw = Math.atan2(-fwd.x, -fwd.z);
@@ -879,24 +922,26 @@ export class VrSession {
       ["motion", this.tuning.sensitivity],
       ["grip open", this.tuning.gripperOpenRate],
     ];
+    // Font sizes track the controls card's 28-30px range — at this panel's matched pixel
+    // density that's the same physical text size on both wrists.
     TUNE_ZONES.forEach((z, i) => {
       const hot = i === this.tuneHotZone;
       ctx.fillStyle = hot ? "rgba(34,197,94,0.92)" : "rgba(51,65,85,0.95)";
       ctx.beginPath();
-      ctx.arc(px(z.x), py(z.y), 34, 0, Math.PI * 2);
+      ctx.arc(px(z.x), py(z.y), 28, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#f1f5f9";
-      ctx.font = "bold 48px system-ui, sans-serif";
+      ctx.font = "bold 40px system-ui, sans-serif";
       ctx.fillText(z.dir > 0 ? "+" : "−", px(z.x), py(z.y) + 2);
     });
     rows.forEach(([label, value], row) => {
       const y = py(row === 0 ? TUNE_H / 4 : -TUNE_H / 4);
       ctx.fillStyle = "#94a3b8";
       ctx.font = "bold 24px system-ui, sans-serif";
-      ctx.fillText(label.toUpperCase(), W / 2, y - 26);
+      ctx.fillText(label.toUpperCase(), W / 2, y - 22);
       ctx.fillStyle = "#e2e8f0";
-      ctx.font = "bold 40px system-ui, sans-serif";
-      ctx.fillText(`${Math.round(value * 100)}%`, W / 2, y + 16);
+      ctx.font = "bold 32px system-ui, sans-serif";
+      ctx.fillText(`${Math.round(value * 100)}%`, W / 2, y + 14);
     });
     ctx.textAlign = "start"; // restore shared-ctx defaults, same as drawRecenterButton
     if (this.tuneTexture) this.tuneTexture.needsUpdate = true;
@@ -930,11 +975,13 @@ export class VrSession {
       ["trigger", "that arm's gripper"],
       ["B/Y · A/X", "that arm's lift up / down"],
       ["right stick", "drive the base"],
-      ["left stick", "spin the 3D robot"],
+      ["left stick ↔", "spin the 3D robot"],
+      ["left stick ↕", "UI closer / further"],
       ["left press", "E-STOP"],
       ["right press", "hold = reset"],
       ["poke ⟳", "recenter the view"],
     ];
+    // 44 px pitch (was 48) so the ninth row still fits the 512-high canvas.
     let y = 108;
     for (const [key, what] of rows) {
       ctx.fillStyle = "#e2e8f0";
@@ -943,7 +990,7 @@ export class VrSession {
       ctx.fillStyle = "#cbd5e1";
       ctx.font = "28px system-ui, sans-serif";
       ctx.fillText(what, 250, y);
-      y += 48;
+      y += 44;
     }
     if (this.cardTexture) this.cardTexture.needsUpdate = true;
   }

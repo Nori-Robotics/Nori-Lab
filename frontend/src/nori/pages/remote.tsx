@@ -728,7 +728,7 @@ const Remote = () => {
                     value={settings.vrGripperOpen}
                     min={0.05}
                     max={1}
-                    title="How fast the gripper opens when the trigger is released (lower = more gradual)"
+                    title="How fast the gripper opens (closing always runs 1.5× this speed)"
                     onChange={(v) => set("vrGripperOpen", v)}
                   />
                 </div>
@@ -864,7 +864,7 @@ const Remote = () => {
             {/* Jog speed — persisted per browser, applied live to the running session. */}
             <div className="mb-3">
               <TuneSlider
-                label="key speed"
+                label="sensitivity"
                 value={settings.kbSpeed}
                 min={0.1}
                 max={1}

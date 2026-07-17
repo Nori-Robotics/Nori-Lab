@@ -117,8 +117,11 @@ Read this before filing a video issue:
   second and streams a bitrate target to the robot's encoder (sessions start ~600 kbps and ramp
   to the robot's ceiling on a clean link; on a congested one — hotspots especially — the picture
   softens instead of freezing or going black). The current link verdict is
-  `TelemetryView.videoNet` (`quality: good | degraded | bad`, plus loss/fps/RTT/target numbers).
-  Frame rate is never the degradation axis — 15 fps is held; quality-per-frame gives first.
+  `TelemetryView.videoNet` (`quality: good | degraded | bad`, plus loss/fps/RTT/target numbers
+  and `frameHeight`). Frame rate is never the degradation axis — 15 fps is held; quality-per-
+  frame gives first, and on deeply constrained links (target under ~250 kbps) the robot also
+  halves the encode resolution (`videoNet.frameHeight` drops, e.g. 480 → 240) so keyframes fit
+  the pipe — it steps back up automatically as the link recovers.
 
 ::: warning Verification status (v0)
 `setVideoEl`/`setAudioEl`, `pauseVideo`/`resumeVideo`, `captureFrame`/`snapshot`, and the

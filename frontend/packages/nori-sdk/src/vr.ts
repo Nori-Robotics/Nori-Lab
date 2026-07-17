@@ -94,13 +94,16 @@ const clamp1 = (v: number) => clamp(v, -1, 1);
 const VR_MAX_RATE = 0.7;
 const capRate = (v: number) => clamp(v, -VR_MAX_RATE, VR_MAX_RATE);
 
-// Gripper jog rates, per direction (2026-07-16). Still binary trigger>0.5, but no longer
-// full-rate both ways: at rate 1 a released trigger snapped the gripper fully open almost
-// instantly. Close stays full so grasps are snappy; open is slowed so release is gradual
-// (0.25 = ~4× longer to sweep fully open). The daemon multiplies rate by its per-tick step,
-// so these scale speed only — end positions are unchanged.
-const GRIPPER_CLOSE_RATE = 1.0;
-const GRIPPER_OPEN_RATE = 0.25;
+// Gripper rates (reworked 2026-07-16 after a hardware check). Binary trigger>0.5; through
+// the daemon's jog accumulator, + drives toward the reference's 45° target (jaws OPEN) and
+// − toward 0 (closed). The first cut of this had those two directions labeled backwards,
+// so the "open" tuning landed on the close direction and opening stayed full-rate.
+// OPEN is the user-tunable direction (it was the too-fast one); CLOSE always runs
+// GRIPPER_CLOSE_FACTOR× the open rate (capped at the daemon's full rate), regardless of
+// tuning. The daemon multiplies rate by its per-tick step, so these scale speed only —
+// end positions are unchanged.
+const GRIPPER_OPEN_RATE = 0.25;   // default open rate (fraction of full jog rate)
+const GRIPPER_CLOSE_FACTOR = 1.5; // close speed = open speed × this, whatever the tuning
 
 // User-tunable sensitivity (the web UI exposes these as sliders — VrJogMapper.setTuning).
 // Everything here scales the hardware-tuned constants above; the defaults reproduce them
@@ -111,14 +114,14 @@ export interface VrTuning {
   // same way the hand-tuned gain passes did; DELTA/PITCH/ROLL limits and VR_MAX_RATE still
   // cap top speed.
   sensitivity?: number;
-  gripperOpenRate?: number;  // fraction of the daemon's full jog rate, (0..1]
-  gripperCloseRate?: number;
+  // Fraction of the daemon's full jog rate for OPENING, (0..1]. Close is derived
+  // (GRIPPER_CLOSE_FACTOR× this, capped at 1) — deliberately not tunable on its own.
+  gripperOpenRate?: number;
 }
 type ResolvedTuning = Required<VrTuning>;
 const DEFAULT_TUNING: ResolvedTuning = {
   sensitivity: 1,
   gripperOpenRate: GRIPPER_OPEN_RATE,
-  gripperCloseRate: GRIPPER_CLOSE_RATE,
 };
 // Fill defaults + clamp. Shared by the mapper and the in-VR tuning panel (vr-session.ts),
 // so a value can never exceed the daemon's full jog rate or zero out, whichever UI set it.
@@ -126,11 +129,13 @@ export function resolveTuning(t?: VrTuning): Required<VrTuning> {
   return {
     sensitivity: clamp(t?.sensitivity ?? DEFAULT_TUNING.sensitivity, 0.1, 3),
     gripperOpenRate: clamp(t?.gripperOpenRate ?? DEFAULT_TUNING.gripperOpenRate, 0.05, 1),
-    gripperCloseRate: clamp(t?.gripperCloseRate ?? DEFAULT_TUNING.gripperCloseRate, 0.05, 1),
   };
 }
-const gripperRate = (trigger: number, t: ResolvedTuning) =>
-  trigger > 0.5 ? t.gripperCloseRate : -t.gripperOpenRate;
+// Trigger held = + = open (tunable); released = − = close (1.5× open, capped at full).
+const gripperRate = (trigger: number, t: ResolvedTuning) => {
+  const close = Math.min(1, t.gripperOpenRate * GRIPPER_CLOSE_FACTOR);
+  return trigger > 0.5 ? t.gripperOpenRate : -close;
+};
 
 // ---- wrist rates: per-frame BODY-FRAME angular increments -------------------
 // Deliberate deviation from XLeVR (2026-07-02). The reference
@@ -298,7 +303,7 @@ class HandState {
     for (const k of Object.keys(arm)) if (k !== "gripper") arm[k] = capRate(arm[k]);
 
     // Binary gripper trigger (reference: 45 if trigger>0.5 else 0). Through the daemon's
-    // jog accumulator/clamp, + drives toward closed and - toward open.
+    // jog accumulator/clamp, + drives toward the 45° target (jaws open), − toward 0 (closed).
     arm.gripper = gripperRate(f.trigger, tuning);
 
     return arm;

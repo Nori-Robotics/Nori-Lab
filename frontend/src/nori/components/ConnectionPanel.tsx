@@ -113,7 +113,8 @@ export function ConnectionSettings() {
         <div className="flex items-center gap-2">
           <Label htmlFor="token">Room token (your password)</Label>
           <HelpTip label="Forgot your room token?">
-            Forgotten? Contact Nori support to get it back.
+            The token that came with your Nori. Lost or forgotten? Contact Nori support to
+            get it back.
           </HelpTip>
         </div>
         <Input id="token" type="password" value={settings.token}

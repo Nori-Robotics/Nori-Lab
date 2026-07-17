@@ -26,6 +26,9 @@ export interface LinkSample {
   lossPct: number;      // lost / (received+lost) * 100 over the window
   fps: number | null;   // delivered framesDecoded/s (null until two samples exist)
   rttMs: number | null; // ICE candidate-pair currentRoundTripTime
+  // Decoded frame height (instantaneous, not differenced). Observability for the robot's
+  // resolution ladder: 480 = full rung, 240 = half rung on the default composite.
+  frameHeight: number | null;
 }
 
 export interface AbrConfig {
@@ -42,6 +45,7 @@ export interface VideoNetState {
   fps: number | null;
   rttMs: number | null;
   targetKbps: number;
+  frameHeight: number | null; // decoded height — shows the robot's resolution-ladder rung
   quality: "good" | "degraded" | "bad";
 }
 
@@ -112,11 +116,13 @@ export class VideoStatsProbe {
     let received: number | null = null;
     let lost = 0;
     let frames = 0;
+    let frameHeight: number | null = null;
 
     stats.forEach((r) => {
       const x = r as RTCStats & {
         selected?: boolean; nominated?: boolean; state?: string; currentRoundTripTime?: number;
         kind?: string; packetsReceived?: number; packetsLost?: number; framesDecoded?: number;
+        frameHeight?: number;
       };
       if (r.type === "candidate-pair" && (x.selected || (x.nominated && x.state === "succeeded"))) {
         if (typeof x.currentRoundTripTime === "number") rttMs = x.currentRoundTripTime * 1000;
@@ -125,6 +131,7 @@ export class VideoStatsProbe {
         if (typeof x.packetsReceived === "number") received = x.packetsReceived;
         if (typeof x.packetsLost === "number") lost = x.packetsLost;
         if (typeof x.framesDecoded === "number") frames = x.framesDecoded;
+        if (typeof x.frameHeight === "number") frameHeight = x.frameHeight;
       }
     });
 
@@ -133,7 +140,7 @@ export class VideoStatsProbe {
       // No video stream yet, or first call: record the baseline and report a no-information
       // sample (packetsDelta 0 -> the controller holds).
       if (received !== null) this.prev = { at: now, received, lost, frames };
-      return { packetsDelta: 0, lossPct: 0, fps: null, rttMs };
+      return { packetsDelta: 0, lossPct: 0, fps: null, rttMs, frameHeight };
     }
 
     const dt = Math.max(0.001, (now - this.prev.at) / 1000);
@@ -150,6 +157,7 @@ export class VideoStatsProbe {
       lossPct: total > 0 ? (dLost / total) * 100 : 0,
       fps: dFrames / dt,
       rttMs,
+      frameHeight,
     };
   }
 }
@@ -207,6 +215,7 @@ export class VideoQualityLoop {
       fps: s.fps === null ? null : Math.round(s.fps * 10) / 10,
       rttMs: s.rttMs === null ? null : Math.round(s.rttMs),
       targetKbps: target,
+      frameHeight: s.frameHeight,
       quality: classifyQuality(s),
     };
     this.opts.onState?.(this.last);

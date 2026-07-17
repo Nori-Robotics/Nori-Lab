@@ -35,14 +35,16 @@ function Stat({
   value: React.ReactNode;
   tone?: "default" | "good" | "warn" | "bad";
 }) {
-  // Tinted chips in the leader-setup palette: neutral tan, green/amber/red badges.
-  // The neutral fill is the darker #e5e1d2 (same tan as the rail-gauge track), NOT the card's own
-  // #f3f1e8 — chips in the default tone are the ones with no data yet (path / watchdog / temp
-  // before a connect), and cream-on-cream made them vanish exactly when the operator is looking
-  // for them. link + control never use this tone; they're always good/warn/bad.
+  // Tinted chips in the leader-setup palette: outlined neutral, green/amber/red badges.
+  // Default tone (no data yet — path / watchdog / temp before a connect) is fill-less: the
+  // card's own background with just the hairline outline marking the chip (the earlier tan
+  // fill #e5e1d2 read as unpleasant; 2026-07-16). The border is stronger than the tinted
+  // tones' /12 so an outline-only chip still registers. Good tone matches the "connected"
+  // status green (#8ab135 family) instead of the old cooler/bluer green, so healthy chips
+  // and the connected pill read as one signal.
   const toneClass = {
-    default: "border-[#14131a]/12 bg-[#e5e1d2] text-[#14131a]",
-    good: "border-[#4e9d55]/35 bg-[#e4f3e2] text-[#2a6b33]",
+    default: "border-[#14131a]/20 bg-transparent text-[#14131a]",
+    good: "border-[#8ab135]/40 bg-[#8ab135]/15 text-[#4d6a1e]",
     warn: "border-[#db9346]/35 bg-[#fdf1de] text-[#8a5a12]",
     bad: "border-[#d24a3d]/35 bg-[#fde7e4] text-[#a3271c]",
   }[tone];

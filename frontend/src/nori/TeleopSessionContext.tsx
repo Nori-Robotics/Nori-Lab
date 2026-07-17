@@ -44,7 +44,7 @@ export type Settings = {
   // VrJogMapper.setTuning. Defaults reproduce the hardware-tuned behavior exactly.
   kbSpeed: number;       // (0..1] fraction of the daemon's full per-tick step
   vrSensitivity: number; // multiplier on VR hand-motion response
-  vrGripperOpen: number; // (0..1] VR gripper opening rate (1 = instant legacy snap)
+  vrGripperOpen: number; // (0..1] VR gripper opening rate; close is always 1.5× this (capped)
 };
 
 const DEFAULTS: Settings = {

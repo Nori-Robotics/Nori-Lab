@@ -106,5 +106,7 @@ def act(req: ActRequest, authorization: Optional[str] = Header(None)) -> ActResp
     acts = out.actions
     if torch.is_tensor(acts):  # predict_action returns a CUDA tensor — move to host first
         acts = acts.detach().float().cpu().numpy()
-    actions = np.asarray(acts, dtype=np.float32).tolist()
-    return ActResponse(actions=actions)
+    acts = np.asarray(acts, dtype=np.float32)
+    if acts.ndim == 3 and acts.shape[0] == 1:  # (1, chunk, DOF) -> (chunk, DOF)
+        acts = acts[0]
+    return ActResponse(actions=acts.tolist())

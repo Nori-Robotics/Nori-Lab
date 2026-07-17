@@ -1,0 +1,7 @@
+# Installed on top of the HF Inference Endpoint base container (torch is already there).
+# PIN `transformers` to the version the MolmoAct2 model card specifies — the
+# checkpoint ships custom modeling code (trust_remote_code) that needs a matching base.
+transformers
+accelerate
+pillow
+numpy

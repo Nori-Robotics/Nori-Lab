@@ -62,4 +62,7 @@ class EndpointHandler:
                 normalize_language=True,
                 enable_cuda_graph=True,
             )
-        return {"actions": np.asarray(out.actions, dtype=np.float32).tolist()}
+        acts = out.actions
+        if torch.is_tensor(acts):  # predict_action returns a CUDA tensor — move to host first
+            acts = acts.detach().float().cpu().numpy()
+        return {"actions": np.asarray(acts, dtype=np.float32).tolist()}

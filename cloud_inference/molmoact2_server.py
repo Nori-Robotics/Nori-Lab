@@ -103,5 +103,8 @@ def act(req: ActRequest, authorization: Optional[str] = Header(None)) -> ActResp
             normalize_language=True,
             enable_cuda_graph=True,
         )
-    actions = np.asarray(out.actions, dtype=np.float32).tolist()
+    acts = out.actions
+    if torch.is_tensor(acts):  # predict_action returns a CUDA tensor — move to host first
+        acts = acts.detach().float().cpu().numpy()
+    actions = np.asarray(acts, dtype=np.float32).tolist()
     return ActResponse(actions=actions)

@@ -38,6 +38,13 @@ Call `resumeVideo()`.
 **No video element attached.** `setVideoEl(null)` detaches the sink. The robot is still sending;
 nothing is rendering it.
 
+**Black or freezing on a weak network (hotspots).** Check `TelemetryView.videoNet` (the **net**
+chip in the app): `degraded`/`bad` means the link is dropping packets and the SDK's adaptive
+bitrate loop is actively cutting the robot's encoder rate to keep frames flowing — expect a
+softer picture, not a black one. If the feed is black *and* `videoNet` shows heavy loss that
+never recovers, the link can't sustain even the ~150 kbps floor; move either end to a better
+network or a TURN relay path.
+
 ::: info 🚧 To write
 - What the robot-side logs look like in each of these cases, and how an operator gets at them.
 - The full `onConnState` sequence for a healthy connection, so people can tell *where* theirs

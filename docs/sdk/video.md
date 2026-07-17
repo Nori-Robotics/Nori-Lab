@@ -34,7 +34,9 @@ telemetry. A fresh session starts flowing at the defaults.
 
 ::: tip
 `setVideoQuality("low" | "normal")` changes **bitrate only** — bandwidth, not robot CPU.
-`pauseVideo()` is the control that actually saves robot power.
+`pauseVideo()` is the control that actually saves robot power. Note that while connected, the
+SDK's adaptive-bitrate loop re-asserts its own measured target every second, so a manual
+`setVideoQuality` value is transient by design.
 :::
 
 ## Grab a still frame
@@ -111,7 +113,12 @@ Read this before filing a video issue:
   encode pixels×fps directly hits the robot's power budget. Resolution and fps are tuned to
   measured hardware limits and will improve when the robot's supply hardware does. A
   live-switchable resolution API is designed and lands when that headroom exists.
-- **WAN delivery is typically ~15 fps.** The encoder doesn't send more than the link carries.
+- **Bitrate adapts to your link automatically.** The SDK measures loss/RTT/delivered-fps once a
+  second and streams a bitrate target to the robot's encoder (sessions start ~600 kbps and ramp
+  to the robot's ceiling on a clean link; on a congested one — hotspots especially — the picture
+  softens instead of freezing or going black). The current link verdict is
+  `TelemetryView.videoNet` (`quality: good | degraded | bad`, plus loss/fps/RTT/target numbers).
+  Frame rate is never the degradation axis — 15 fps is held; quality-per-frame gives first.
 
 ::: warning Verification status (v0)
 `setVideoEl`/`setAudioEl`, `pauseVideo`/`resumeVideo`, `captureFrame`/`snapshot`, and the

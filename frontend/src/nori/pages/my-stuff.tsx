@@ -448,7 +448,11 @@ const MyStuff = () => {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-base font-bold text-[#14131a]">{b.label}</p>
-                    <p className="mt-0.5 text-sm text-muted-foreground">Recorded {shortDate(b.created_at)}</p>
+                    <p className="mt-0.5 text-sm text-muted-foreground">
+                      {inCloud && b.finalized_at
+                        ? `Uploaded ${shortDate(b.finalized_at)}`
+                        : `Recorded ${shortDate(b.created_at)}`}
+                    </p>
                   </div>
                   <Pill tone={inCloud ? "leaf" : "secondary"}>
                     {inCloud ? "In cloud" : failed ? "Needs attention" : "Uploading…"}
@@ -471,7 +475,7 @@ const MyStuff = () => {
 
           {(robot?.bundles?.length ?? 0) === 0 && (
             <p className="rounded-[20px] border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-              No robot recordings yet. Record a session on the Remote page — episodes upload here automatically.
+              No robot recordings yet. Record a session on the Remote page. Episodes upload here automatically when the robot is idle (disconnected) and powered on.
             </p>
           )}
 

@@ -35,6 +35,7 @@ export function DatasetCaptureCard() {
   const [task, setTask] = useState("");
   const [busy, setBusy] = useState(false);        // start/stop round-trip in flight
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [previewNote, setPreviewNote] = useState<string>("");   // why a preview was empty
   const [episodeCount, setEpisodeCount] = useState(0);   // kept episodes this session
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -49,15 +50,21 @@ export function DatasetCaptureCard() {
     if (phase.kind !== "idle") setOpen(true);
   }, [phase.kind]);
 
-  // Free the preview object URL on change/unmount; drop any in-flight recording
-  // on unmount (the robot copy is unaffected).
+  // Revoke the review clip's object URL when we leave review / unmount.
+  useEffect(() => {
+    if (phase.kind !== "review" || !phase.url) return;
+    const url = phase.url;
+    return () => URL.revokeObjectURL(url);
+  }, [phase]);
+
+  // Drop any in-flight recording ONLY on unmount. This MUST NOT depend on
+  // `phase`: a phase-scoped cleanup fires on every transition and would cancel
+  // the recorder the instant Start episode sets phase→recording (that was the
+  // empty-preview bug — the recorder was killed ~ms after it started).
   useEffect(() => {
     const preview = previewRef.current;
-    return () => {
-      if (phase.kind === "review" && phase.url) URL.revokeObjectURL(phase.url);
-      preview.cancel();
-    };
-  }, [phase]);
+    return () => preview.cancel();
+  }, []);
 
   const startSession = useCallback(() => {
     if (!teleop) return;
@@ -93,7 +100,7 @@ export function DatasetCaptureCard() {
     } finally {
       setBusy(false);
     }
-  }, [teleop, busy, task]);
+  }, [teleop, busy]);
 
   const stopEpisode = useCallback(async () => {
     if (!teleop || busy) return;
@@ -104,6 +111,7 @@ export function DatasetCaptureCard() {
       // ALWAYS surface the Keep/Reject decision, even if the preview came back
       // empty (a null url just renders a "no preview" note) — the operator must
       // always get to reject a bad take, never have it silently kept.
+      setPreviewNote(blob ? "" : previewRef.current.diagnostic);
       setPhase({ kind: "review", url: blob ? URL.createObjectURL(blob) : null });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -183,8 +191,8 @@ export function DatasetCaptureCard() {
           {phase.kind === "idle" && (
             <>
               <p className="text-sm leading-relaxed text-[#6f6858]">
-                Record demonstrations of a task: each episode is saved on the robot at full
-                quality and will upload to Your Stuff when the robot is idle.
+                Record demonstrations of a task: each episode is saved on Nori at full
+                quality and will upload to My Stuff when powered on and idle (disconnected).
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <input
@@ -223,9 +231,8 @@ export function DatasetCaptureCard() {
                 </span>
               </div>
               <p className="rounded-md border border-[#14131a]/10 bg-white/50 px-3 py-2 text-xs text-[#6f6858]">
-                When you’re done recording, just <b>disconnect</b> and leave the robot
-                <b> powered on and idle</b> — your episodes upload to the cloud while it sits
-                idle. <b>Don’t turn it off</b> until they’ve finished uploading.
+                When you’re done recording, <b>disconnect</b> and leave the robot
+                <b> powered on and idle</b>. Your episodes will upload to the cloud automatically. <b>Don’t turn Nori off</b> until your data lands in My Stuff.
               </p>
             </>
           )}
@@ -259,9 +266,14 @@ export function DatasetCaptureCard() {
                   <track kind="captions" />
                 </video>
               ) : (
-                <p className="text-sm italic text-muted-foreground">
-                  Preview unavailable (short take or video paused) — the robot still recorded it.
-                </p>
+                <div className="space-y-1">
+                  <p className="text-sm italic text-muted-foreground">
+                    Preview unavailable — the robot still recorded it at full quality.
+                  </p>
+                  {previewNote && (
+                    <p className="font-mono text-[11px] text-muted-foreground/80">{previewNote}</p>
+                  )}
+                </div>
               )}
               <div className="flex flex-wrap items-center gap-3">
                 <Button onClick={keepEpisode} disabled={reviewBusy}>
@@ -271,7 +283,7 @@ export function DatasetCaptureCard() {
                   Reject
                 </Button>
                 <span className="text-xs text-[#6f6858]">
-                  Keep adds it to the session; Reject deletes the robot&apos;s copy too.
+                  Keep adds it to the session, reject deletes it.
                 </span>
               </div>
             </div>

@@ -22,6 +22,7 @@ import {
   type ConnectStatus,
   type ControlMode,
   type DaemonStatus,
+  type RecordState,
   type TelemetryView,
 } from "@nori/sdk";
 
@@ -408,6 +409,8 @@ export function CallBar({
   onLeave,
   onToggleMute,
   onToggleCamera,
+  record,
+  onToggleRecord,
 }: {
   call: CallState;
   running: boolean;
@@ -419,6 +422,10 @@ export function CallBar({
   onLeave: () => void;
   onToggleMute: () => void;
   onToggleCamera: () => void;
+  // W2.11 on-robot episode recording. Both optional so other CallBar call sites
+  // (and robots without the recorder) keep working — no record prop, no button.
+  record?: RecordState | null;
+  onToggleRecord?: () => void;
 }) {
   // Speaker icon toggles a compact inline slider; opening it widens the group so the
   // you/nori indicators shift slightly left.
@@ -483,9 +490,41 @@ export function CallBar({
             <MicOff className="mr-1 h-3 w-3" /> Robot muted: unmute on the robot
           </Badge>
         )}
+        {/* W2.11: recording state. While recording, show which episode; on a refusal
+            (disk low / recorder unreachable) show the reason instead of a dead button. */}
+        {record?.recording && (
+          <Badge variant="outline" className="whitespace-nowrap text-[10px]"
+            title={`Recording ${record.episode ?? ""} on the robot (${record.freeGb ?? "?"} GB free)`}>
+            <span className="mr-1 inline-block h-2 w-2 animate-pulse rounded-full bg-red-500" />
+            REC {record.episode ?? ""}
+          </Badge>
+        )}
+        {record?.error && !record.recording && (
+          <Badge variant="outline" className="whitespace-nowrap text-[10px]" title={record.error}>
+            recorder: {record.error}
+          </Badge>
+        )}
       </div>
 
       <div className="ml-auto flex flex-wrap items-center gap-2">
+        {/* W2.11 record toggle — outside the call gate: recording is about the DEMO,
+            not the audio call, so it must work with no call joined. Rendered only
+            when the page wires it (record prop present). */}
+        {onToggleRecord && record !== undefined && (
+          <Button
+            size="sm"
+            variant={record?.recording ? "destructive" : "secondary"}
+            onClick={onToggleRecord}
+            disabled={!running || !connected}
+            title={record?.recording
+              ? "Stop recording this episode on the robot"
+              : "Record this demo on the robot (full quality, for training)"}
+          >
+            <span className={cn("mr-1.5 inline-block h-2.5 w-2.5 rounded-full",
+              record?.recording ? "bg-white animate-pulse" : "bg-red-500")} />
+            {record?.recording ? "Stop rec" : "Record"}
+          </Button>
+        )}
         {!call.active ? (
           // Same Pill as the Keyboard / Leader arm / VR mode strip below — this is the audio
           // card's one action, and it sits in the same right-hand column, so it should read as

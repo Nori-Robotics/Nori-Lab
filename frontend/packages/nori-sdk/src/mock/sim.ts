@@ -140,8 +140,37 @@ export class MockDaemonSim {
     const t = frame.type;
     if (t === "control") return this.handleControl(frame, nowMs);
     if (t === "command") return this.handleCommand(frame);
-    // call / video / link / record / unknown: a real robot ignores unknown vocabulary too.
+    if (t === "record") return this.handleRecord(frame);
+    // call / video / link / unknown: a real robot ignores unknown vocabulary too.
     return [];
+  }
+
+  // W2.11 on-robot recorder emulation: the bridge relays {type:"record"} to the
+  // always-on recorder and answers with a record_status (recorder.py _status shape).
+  // Enough state to exercise the SDK's record()/onRecord path and a UI toggle.
+  private recEpisode: string | null = null;
+  private recSeq = 0;
+  private handleRecord(frame: Frame): Frame[] {
+    const status = (ok: boolean, error?: string): Frame => {
+      const s: Frame = { type: "record_status", ok, recording: this.recEpisode !== null,
+                         episode: this.recEpisode ?? undefined, free_gb: 42.0 };
+      if (error) s.error = error;
+      return s;
+    };
+    const action = frame.action;
+    if (action === "start") {
+      if (this.recEpisode !== null) return [status(false, "already recording")];
+      this.recSeq += 1;
+      this.recEpisode = `mock-session/episode-${String(this.recSeq).padStart(4, "0")}`;
+      return [status(true)];
+    }
+    if (action === "stop" || action === "discard") {
+      if (this.recEpisode === null) return [status(false, "not recording")];
+      this.recEpisode = null;
+      return [status(true)];
+    }
+    if (action === "status") return [status(true)];
+    return [status(false, `unknown action ${String(action)}`)];
   }
 
   private handleControl(frame: Frame, nowMs: number): Frame[] {

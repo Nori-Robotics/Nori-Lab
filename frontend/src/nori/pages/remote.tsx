@@ -89,7 +89,7 @@ const Remote = () => {
   // it no longer owns the RemoteTeleop instance and must NOT stop it on unmount.
   const {
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
-    connectStatus,
+    recordState, connectStatus,
     logLines, appendLog, settings, setSetting: set, connect, disconnect: sessionDisconnect,
     toggleControlMode, setCurrentsListener,
   } = useTeleopSession();
@@ -337,6 +337,24 @@ const Remote = () => {
   };
   const leaveCall = () => teleop?.leaveCall();
   const toggleMute = () => teleop?.setMicMuted(!call.micMuted);
+
+  // ---- on-robot episode recording (W2.11) ----------------------------------
+  // Start/stop the robot's recorder; the reply drives recordState (CallBar badge).
+  // The task label is what training sees — v1 uses a window prompt over a whole
+  // task-entry UI; recording works fine with the default label if cancelled.
+  const toggleRecord = () => {
+    if (recordState?.recording) {
+      teleop?.record("stop");
+    } else {
+      const task = window.prompt("What is this demo? (task label for training)", "") ?? "";
+      teleop?.record("start", task || undefined);
+    }
+  };
+  // Probe the recorder once per session so the Record button reflects reality
+  // (a recording-disabled robot answers "recorder unreachable" -> badge, not mystery).
+  useEffect(() => {
+    if (connState === "connected" && controlActive) teleop?.record("status");
+  }, [connState, controlActive, teleop]);
 
   // ---- clip audio (laptop file -> robot speaker; reuses the M3b downlink) ----
   const clipRef = useRef<ClipHandle | null>(null);
@@ -655,6 +673,8 @@ const Remote = () => {
               onToggleCamera={toggleCamera}
               volume={volume}
               onVolumeChange={setVolume}
+              record={recordState}
+              onToggleRecord={toggleRecord}
             />
           </div>
         </div>

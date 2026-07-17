@@ -263,3 +263,36 @@ describe("loopback signaling", () => {
     expect(byes).toBe(1);
   });
 });
+
+describe("MockDaemonSim record (W2.11 on-robot recorder emulation)", () => {
+  it("start/stop round-trips with record_status replies", () => {
+    const sim = new MockDaemonSim();
+    let out = sim.handleFrame({ type: "record", action: "status" }, 0);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ type: "record_status", ok: true, recording: false });
+
+    out = sim.handleFrame({ type: "record", action: "start", task: "fold" }, 0);
+    expect(out[0]).toMatchObject({ type: "record_status", ok: true, recording: true });
+    expect(String(out[0].episode)).toMatch(/episode-\d{4}$/);
+    expect(typeof out[0].free_gb).toBe("number");
+
+    out = sim.handleFrame({ type: "record", action: "start" }, 0);
+    expect(out[0]).toMatchObject({ ok: false, recording: true });
+    expect(String(out[0].error)).toContain("already recording");
+
+    out = sim.handleFrame({ type: "record", action: "stop" }, 0);
+    expect(out[0]).toMatchObject({ ok: true, recording: false });
+
+    out = sim.handleFrame({ type: "record", action: "stop" }, 0);
+    expect(out[0]).toMatchObject({ ok: false });
+    expect(String(out[0].error)).toContain("not recording");
+  });
+
+  it("discard behaves like stop and episode ids advance per start", () => {
+    const sim = new MockDaemonSim();
+    const first = sim.handleFrame({ type: "record", action: "start" }, 0)[0].episode;
+    sim.handleFrame({ type: "record", action: "discard" }, 0);
+    const second = sim.handleFrame({ type: "record", action: "start" }, 0)[0].episode;
+    expect(first).not.toEqual(second);
+  });
+});

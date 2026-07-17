@@ -826,15 +826,27 @@ export class RemoteTeleop {
   // {type:"call"} — never reaches the daemon, no nori-protocol change. The reply
   // arrives as onRecord / recordState(); a robot with recording disabled answers
   // {ok:false, error:"recorder unreachable"} within ~1 s rather than staying silent.
-  //  - "discard"      stops AND deletes the CURRENTLY-OPEN episode (abort mid-record).
-  //  - "discard_last" removes the WHOLE last-started session (all its chunks), whether
-  //                   still recording or already stopped — this is operator "Reject"
-  //                   after previewing: the full-quality copy never reaches the cloud.
-  //                   Safe because Reject happens while still connected, so the
-  //                   idle-gated shipper hasn't uploaded it yet.
-  record(action: "start" | "stop" | "discard" | "discard_last" | "status", task?: string) {
+  //
+  // Two-tier protocol (W2.11 one-bundle-per-session — a session ships as ONE
+  // raw_bundle holding N episodes):
+  //   session_start {task} -> episode_start -> episode_stop [-> episode_discard]
+  //     (repeat episodes) -> session_end (keep+ship) | session_discard (drop all)
+  //   - episode_discard: Reject the just-recorded episode (deletes its robot copy;
+  //     other kept episodes stay). Safe because Reject is while still connected, so
+  //     the idle-gated shipper hasn't uploaded the session yet.
+  //   - session_end: close the session; it uploads when the robot next idles.
+  // Legacy one-episode aliases (kept for the bench page / auto mode): start {task}
+  // = session_start+episode_start; stop = episode_stop+session_end; discard /
+  // discard_last = session_discard.
+  record(
+    action:
+      | "session_start" | "episode_start" | "episode_stop" | "episode_discard"
+      | "session_end" | "session_discard"
+      | "start" | "stop" | "discard" | "discard_last" | "status",
+    task?: string,
+  ) {
     const msg: Record<string, unknown> = { type: "record", action };
-    if (action === "start" && task) msg.task = task;
+    if ((action === "start" || action === "session_start") && task) msg.task = task;
     this.dcSend(msg);
   }
 

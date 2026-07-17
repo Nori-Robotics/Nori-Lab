@@ -166,10 +166,18 @@ def _dataset_info(d: Path) -> dict | None:
         "modified_at": time.strftime(
             "%Y-%m-%dT%H:%M:%SZ", time.gmtime(info_path.stat().st_mtime)
         ),
-        # Appendable by THIS capture pipeline = same feature surface the
-        # exporter produces (the composite remote view). The exporter still
-        # re-validates joints/fps at append time; this just filters the picker.
-        "appendable": "observation.images.remote" in features,
+        # Appendable = it's one of our capture datasets, i.e. it has at least one
+        # camera feature. Recognizes BOTH the legacy single-composite
+        # (observation.images.remote) AND the current per-camera format
+        # (observation.images.<role>) the exporter produces via _views_from_layout.
+        # resume() re-validates joints/fps/features at append time; this only
+        # filters the picker, so being permissive here is safe.
+        "appendable": any(
+            k.startswith("observation.images.")
+            and isinstance(v, dict)
+            and v.get("dtype") in ("video", "image")
+            for k, v in features.items()
+        ),
     }
 
 

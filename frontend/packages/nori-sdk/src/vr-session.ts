@@ -35,12 +35,20 @@ const PANEL_DIST = 2.0; // metres in front of the operator the panel cluster sit
 // Uniform shrink applied to the whole in-VR UI (video + HUD panel cluster + recenter button).
 // 0.8 = 80% of the original size; distance/anchoring are unchanged, panels just read smaller.
 const UI_SCALE = 0.8;
+// X shift applied to every cluster child (video, HUD, robot). The group ORIGIN is what
+// recenter puts dead ahead, but the content spans −0.8 (video's left edge) .. ~+1.85
+// (robot's far side) in group-local units — so without this, the operator faces the
+// video's center and the telemetry + robot hang far off to the right. −0.5 puts the
+// cluster's visual midpoint (not the video's) on the gaze line.
+const CLUSTER_X = -0.5;
 // The 3D robot schematic (C6), mounted to the RIGHT of the telemetry HUD so the instruments
 // read left-to-right: video | telemetry | robot. Unlike the video/HUD panels this is NOT a
 // textured plane — it's the real articulated model in the scene, so it has genuine stereo
 // depth: lean or step sideways and you see around it.
 //   X — HUD spans 0.85..1.35 (0.5 wide at x=1.10); this sits just outboard of it. (Both
 //       pulled inboard 2026-07-16 with the HUD shrink, so the whole cluster reads narrower.)
+//       All cluster x positions (video, HUD, this) get CLUSTER_X added at mount so the
+//       cluster centers on the gaze line — these constants stay in video-centered coords.
 //   Y — the model stands on y=0 and is ~1.5 units tall centred ~1.08, so scaling by
 //       ROBOT_SCALE and dropping it by ROBOT_Y centres it vertically on the panel row.
 //   Z — pushed toward the operator, OFF the panel plane, so it reads as a hologram in front
@@ -353,7 +361,7 @@ export class VrSession {
       new THREE.PlaneGeometry(1.6, 1.2),
       new THREE.MeshBasicMaterial({ map: texture, toneMapped: false, side: THREE.DoubleSide })
     );
-    video.position.set(0, 0, 0);
+    video.position.set(CLUSTER_X, 0, 0);
     group.add(video);
 
     // Telemetry HUD panel to the right of the video. 0.5x1.0 m — a uniform shrink of the
@@ -372,7 +380,7 @@ export class VrSession {
       new THREE.PlaneGeometry(0.5, 1.0),
       new THREE.MeshBasicMaterial({ map: hudTexture, transparent: true, side: THREE.DoubleSide })
     );
-    hud.position.set(1.1, 0, 0); // right of the 1.6 m video panel, small gap
+    hud.position.set(1.1 + CLUSTER_X, 0, 0); // right of the 1.6 m video panel, small gap
     group.add(hud);
     this.drawHud(); // paint once so it's not blank before the first telemetry frame
 
@@ -382,7 +390,7 @@ export class VrSession {
     // panel cluster here. Lit by the directional light added below (the hemisphere light alone
     // renders the MeshStandardMaterial links flat and shapeless).
     const robot = buildRobotModel({ showGrid: false });
-    robot.root.position.set(ROBOT_X, ROBOT_Y, ROBOT_Z);
+    robot.root.position.set(ROBOT_X + CLUSTER_X, ROBOT_Y, ROBOT_Z);
     robot.root.rotation.set(0, ROBOT_YAW, 0);
     robot.root.scale.setScalar(ROBOT_SCALE);
     group.add(robot.root);

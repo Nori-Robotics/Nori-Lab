@@ -108,6 +108,24 @@ def _resolve_fps(bundle: Path, override: int | None) -> int:
     return DEFAULT_FPS
 
 
+def _read_scope(bundle: Path) -> dict | None:
+    """The camera/arm scope stamped into nori_meta.json at promotion, or None for
+    a whole-robot policy. When present, {state_joints, action_joints, cameras}
+    name the exact joints the scoped policy reads/commands — the rollout selects
+    these out of the robot's full joint set so the client stays scope-agnostic."""
+    meta = bundle / "nori_meta.json"
+    if not meta.is_file():
+        return None
+    try:
+        with open(meta) as f:
+            scope = json.load(f).get("scope")
+        if isinstance(scope, dict) and scope.get("action_joints"):
+            return scope
+    except Exception:
+        logger.warning("[ROLLOUT] unreadable scope in nori_meta.json (%s)", bundle)
+    return None
+
+
 def _load_bundle(
     ref: str,
     joints: list[str],
@@ -179,21 +197,58 @@ def _load_bundle(
         if key == "action":
             action_dim = feat.shape[0]
 
-    if state_dim is not None and len(joints) != state_dim:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"policy expects a {state_dim}-dim state but this robot session "
-                f"has {len(joints)} joints ({joints}). This policy was likely "
-                "trained on a different robot configuration."
-            ),
-        )
-    if action_dim is not None and state_dim is not None and action_dim != state_dim:
-        # Unusual but possible; we can only name outputs we have names for.
-        raise HTTPException(
-            status_code=422,
-            detail=f"policy action dim ({action_dim}) != state dim ({state_dim}); unsupported in v1.",
-        )
+    # Scoped policies (camera/arm subset) name their own joints in nori_meta.json.
+    # The client always passes the FULL robot joint set; we select the scoped
+    # ones server-side, so the client stays scope-agnostic. The daemon safely
+    # holds the joints a scoped policy doesn't command (verified partial-action
+    # contract), so a one-arm policy leaves the other arm held/teleoperable.
+    scope = _read_scope(bundle)
+    if scope:
+        state_joints = list(scope.get("state_joints") or [])
+        action_joints = list(scope.get("action_joints") or [])
+        session_joints = set(joints)
+        missing = [
+            j for j in dict.fromkeys(state_joints + action_joints)
+            if j not in session_joints
+        ]
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"scoped policy needs joint(s) {missing} that this robot session "
+                    f"does not provide ({joints})."
+                ),
+            )
+        if state_dim is not None and len(state_joints) != state_dim:
+            raise HTTPException(
+                status_code=422,
+                detail=(f"bundle scope inconsistent: {len(state_joints)} state_joints "
+                        f"vs policy state dim {state_dim}."),
+            )
+        if action_dim is not None and len(action_joints) != action_dim:
+            raise HTTPException(
+                status_code=422,
+                detail=(f"bundle scope inconsistent: {len(action_joints)} action_joints "
+                        f"vs policy action dim {action_dim}."),
+            )
+    else:
+        state_joints = list(joints)
+        action_joints = list(joints)
+        if state_dim is not None and len(joints) != state_dim:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"policy expects a {state_dim}-dim state but this robot session "
+                    f"has {len(joints)} joints ({joints}). This policy was likely "
+                    "trained on a different robot configuration."
+                ),
+            )
+        if action_dim is not None and state_dim is not None and action_dim != state_dim:
+            # Unusual but possible; we can only name outputs we have names for.
+            raise HTTPException(
+                status_code=422,
+                detail=f"policy action dim ({action_dim}) != state dim ({state_dim}); unsupported in v1.",
+            )
 
     return {
         "ref": ref,
@@ -201,7 +256,9 @@ def _load_bundle(
         "pre": pre,
         "post": post,
         "device": device,
-        "joints": list(joints),
+        "joints": state_joints,          # order for the observation.state vector
+        "action_joints": action_joints,  # order for the returned action dict
+        "scoped": scope is not None,
         "image_shapes": image_shapes,
         "execution": execution,
         "fps": resolved_fps,
@@ -288,7 +345,8 @@ def rollout_act(body: ActBody):
         if not _session:
             raise HTTPException(status_code=409, detail="no policy loaded")
         policy = _session["policy"]
-        joints = _session["joints"]
+        joints = _session["joints"]                                   # state vector order
+        action_joints = _session.get("action_joints") or joints       # action dict order
         device = _session["device"]
 
         missing = [k for k in _session["image_shapes"] if k not in body.images]
@@ -321,20 +379,21 @@ def rollout_act(body: ActBody):
         global _act_dbg_counter
         _act_dbg_counter += 1
         if _act_dbg_counter % 15 == 0:
-            cur = [float(body.state.get(j, 0.0)) for j in joints]
+            cur = [float(body.state.get(j, 0.0)) for j in action_joints]
             dmax = max((abs(a - c) for a, c in zip(vec, cur)), default=0.0)
-            jmax = joints[max(range(len(vec)), key=lambda i: abs(vec[i] - cur[i]))] if vec else "-"
+            jmax = action_joints[max(range(len(vec)), key=lambda i: abs(vec[i] - cur[i]))] if vec else "-"
             cams = {k.split(".")[-1]: round(float(obs[k].mean().item()), 3) for k in _session["image_shapes"]}
             logger.info(
                 "[ROLLOUT-DBG] action max_delta=%.3f @%s (~0 => policy commanding NO motion) | cam means=%s (~0 => black feed)",
                 dmax, jmax, cams,
             )
-        if len(vec) != len(joints):
+        if len(vec) != len(action_joints):
             raise HTTPException(
                 status_code=500,
-                detail=f"policy produced {len(vec)} outputs for {len(joints)} joints",
+                detail=f"policy produced {len(vec)} outputs for {len(action_joints)} action joints",
             )
-        return {"action": {j: v for j, v in zip(joints, vec)}}
+        # Only the scoped joints are commanded; the daemon holds the rest.
+        return {"action": {j: v for j, v in zip(action_joints, vec)}}
 
 
 @router.post("/unload")

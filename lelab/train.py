@@ -48,6 +48,11 @@ class TrainingRequest(BaseModel):
     # NORI: pre-training policy display name (backend jobs.display_title).
     policy_name: str | None = None
 
+    # NORI: optional camera/arm scope {cameras:[...], actuators:[...]}. Forwarded
+    # verbatim to the backend DispatchRequest.scope by the nori_cloud runner;
+    # None => whole-robot, all-camera policy. Kept as a dict (JSON pass-through).
+    scope: dict | None = None
+
     # Core training parameters
     steps: int = 10000
     batch_size: int = 8

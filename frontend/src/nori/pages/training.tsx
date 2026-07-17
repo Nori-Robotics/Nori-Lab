@@ -1,7 +1,13 @@
-// NORI: Training. Dual-mode like LeLab's pages/Training.tsx: a config/launch form
-// at /nori/training, and a live monitor at /nori/training/:jobId. Reuses LeLab's
-// local job data path (@/lib/jobsApi — /jobs/*, no Nori JWT needed) for the monitor
-// and forwards the full config through startNoriTraining. Nori-styled throughout.
+// NORI: Training. Dual-mode: a config/launch form at /nori/training, and a live
+// monitor at /nori/training/:jobId where :jobId is the Nori-Backend job UUID.
+//
+// The monitor is keyed entirely off the backend UUID and backend endpoints
+// (GET /training/jobs/{uuid} + …/logs), so it works for EVERY durable job —
+// fresh, resumed-from-pause, and continued (extended) segments alike, without
+// needing a local LeLab job record. Live progress + the loss/LR curves are
+// reconstructed by parsing the log stream (parseMetrics), the same lines
+// lelab/jobs.py parses server-side. On (re)load it seeds only the last few log
+// lines (cheap); "Load full logs" fetches the whole history on demand.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -10,35 +16,41 @@ import { ArrowLeft, Loader2, Play, Square } from "lucide-react";
 import { useApi } from "@/contexts/ApiContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import Panel from "@/nori/components/Panel";
 
 import ConfigForm from "@/nori/components/training/ConfigForm";
 import DatasetSourcePicker from "@/nori/components/training/DatasetSourcePicker";
+import ScopePanel from "@/nori/components/training/ScopePanel";
 import {
   DEFAULT_TRAINING_CONFIG,
   type NoriTrainingFormState,
 } from "@/nori/components/training/types";
 import NoriTrainingStats from "@/nori/components/training/NoriTrainingStats";
 import NoriTrainingLogs from "@/nori/components/training/NoriTrainingLogs";
-import { startNoriTraining, getJobLogs as getBackendJobLogs } from "@/nori/api/client";
 import {
+  emptyMetrics,
+  foldMetrics,
+  type MetricPoint,
+} from "@/nori/components/training/parseMetrics";
+import {
+  startNoriTraining,
   getJob,
-  stopJob,
-  type JobRecord,
-  type LogLine,
-} from "@/lib/jobsApi";
+  getJobLogs,
+  stopTrainingJob,
+  type TrainingJob,
+} from "@/nori/api/client";
+import type { LogLine, TrainingMetrics } from "@/lib/jobsApi";
 
 const POLL_INTERVAL_MS = 1000;
 const MAX_LOG_LINES = 5000;
+const HISTORY_CAP = 2000;
+// On (re)load, seed the panel with just the last few lines; the rest streams in
+// live, and the full backlog is available via "Load full logs".
+const INITIAL_TAIL = 5;
+
+// Backend job status vocab.
+const STOPPABLE = new Set(["PENDING", "SCHEDULING", "RUNNING"]);
+const TERMINAL = new Set(["COMPLETED", "FAILED", "CANCELLED", "REJECTED"]);
 
 // -- Configuration mode --------------------------------------------------------
 
@@ -68,7 +80,9 @@ const ConfigurationMode = () => {
         timeout_seconds,
       );
       toast({ title: "Training dispatched", description: job.name });
-      navigate(`/nori/training/${job.id}`);
+      // Monitor by the BACKEND uuid so the page works identically to a
+      // resumed/continued job (and survives a lelab restart).
+      navigate(`/nori/training/${job.nori_job_uuid ?? job.id}`);
     } catch (e) {
       toast({
         title: "Couldn't start training",
@@ -100,6 +114,8 @@ const ConfigurationMode = () => {
 
       <DatasetSourcePicker config={config} updateConfig={updateConfig} />
 
+      <ScopePanel config={config} updateConfig={updateConfig} />
+
       <ConfigForm config={config} updateConfig={updateConfig} />
 
       <div className="flex justify-end">
@@ -130,68 +146,98 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  const [job, setJob] = useState<JobRecord | null>(null);
+  const [job, setJob] = useState<TrainingJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
+  const [metrics, setMetrics] = useState<TrainingMetrics>(emptyMetrics());
+  const [lossHistory, setLossHistory] = useState<MetricPoint[]>([]);
+  const [lrHistory, setLrHistory] = useState<MetricPoint[]>([]);
+  const [fullLoaded, setFullLoaded] = useState(false);
+  const [loadingFull, setLoadingFull] = useState(false);
   const logContainerRef = useRef<HTMLDivElement>(null);
 
-  // Poll the job + logs. Logs are read from Nori-Backend DIRECTLY via the app's
-  // LIVE session (auto-refreshing token) with offset tracking — not the local
-  // LeLab mirror, whose background streamer thread exits when the token captured
-  // at dispatch expires (or after repeated poll failures). That death is what
-  // froze the log panel mid-run ("stuck at N%"). This only changes where the UI
-  // reads logs; the running HF job is untouched.
+  // Log cursor + running metric accumulator (refs so the poll closure and the
+  // "load full" handler share one source of truth without stale captures).
+  const offsetRef = useRef(0);
+  const seededRef = useRef(false);
+  const terminalRef = useRef(false);
+  const accRef = useRef<{ metrics: TrainingMetrics; loss: MetricPoint[]; lr: MetricPoint[] }>({
+    metrics: emptyMetrics(),
+    loss: [],
+    lr: [],
+  });
+
+  const applyLines = useCallback((lines: string[]) => {
+    if (lines.length === 0) return;
+    const folded = foldMetrics(lines, accRef.current);
+    accRef.current = folded;
+    setMetrics(folded.metrics);
+    setLossHistory(folded.loss.slice(-HISTORY_CAP));
+    setLrHistory(folded.lr.slice(-HISTORY_CAP));
+  }, []);
+
+  const appendLogLines = useCallback((lines: string[]) => {
+    if (lines.length === 0) return;
+    const mapped: LogLine[] = lines.map((message) => ({ timestamp: 0, message }));
+    setLogs((prev) => {
+      const merged = [...prev, ...mapped];
+      return merged.length > MAX_LOG_LINES ? merged.slice(merged.length - MAX_LOG_LINES) : merged;
+    });
+  }, []);
+
+  // Poll job status + logs by backend UUID. Reset all state when jobId changes.
   useEffect(() => {
     let cancelled = false;
-    let offset = 0; // backend log cursor (next_offset); resets per jobId
-    let terminal = false;
-    // The route param `jobId` is the LOCAL LeLab job id; the backend logs
-    // endpoint needs the Nori-Backend UUID, which the job record carries as
-    // nori_job_uuid (captured at dispatch, persisted to disk → survives a
-    // lelab restart). Resolve it from getJob, then poll logs by UUID. (Passing
-    // the local id straight to the backend endpoint 500s — the bug this fixes.)
-    let backendUuid: string | null = null;
+    offsetRef.current = 0;
+    seededRef.current = false;
+    terminalRef.current = false;
+    accRef.current = { metrics: emptyMetrics(), loss: [], lr: [] };
+    setJob(null);
+    setError(null);
+    setLogs([]);
+    setMetrics(emptyMetrics());
+    setLossHistory([]);
+    setLrHistory([]);
+    setFullLoaded(false);
+
     const tick = async () => {
-      // 1. Job record first — carries nori_job_uuid + drives the header/stats.
+      // 1. Job record (status/header) — backend UUID, works for every job.
       try {
         const next = await getJob(baseUrl, fetchWithHeaders, jobId);
         if (cancelled) return;
         setJob(next);
-        if (next.nori_job_uuid) backendUuid = next.nori_job_uuid;
-      } catch {
-        /* keep last-known record + uuid */
+        if (TERMINAL.has(next.status)) terminalRef.current = true;
+      } catch (e) {
+        if (!cancelled) setError((prev) => prev ?? (e instanceof Error ? e.message : String(e)));
       }
-      // 2. Logs from Nori-Backend via the app's live session, keyed by the
-      //    backend UUID (not the local id). Independent of the local streamer.
-      if (!backendUuid) return;
+      // 2. Logs. First read seeds the tail cheaply; then stream from the cursor.
       try {
-        const res = await getBackendJobLogs(baseUrl, fetchWithHeaders, backendUuid, offset);
+        const res = seededRef.current
+          ? await getJobLogs(baseUrl, fetchWithHeaders, jobId, offsetRef.current)
+          : await getJobLogs(baseUrl, fetchWithHeaders, jobId, 0, INITIAL_TAIL);
         if (cancelled) return;
-        offset = res.next_offset ?? offset;
-        terminal = res.is_terminal;
+        seededRef.current = true;
+        offsetRef.current = res.next_offset ?? offsetRef.current;
+        if (res.is_terminal) terminalRef.current = true;
         if (res.lines.length > 0) {
-          const mapped: LogLine[] = res.lines.map((message) => ({ timestamp: 0, message }));
-          setLogs((prev) => {
-            const merged = [...prev, ...mapped];
-            return merged.length > MAX_LOG_LINES
-              ? merged.slice(merged.length - MAX_LOG_LINES)
-              : merged;
-          });
+          appendLogLines(res.lines);
+          applyLines(res.lines);
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       }
     };
-    tick();
+
+    void tick();
     const id = setInterval(() => {
-      if (cancelled || terminal) return;
-      tick();
+      if (cancelled || terminalRef.current) return;
+      void tick();
     }, POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [baseUrl, fetchWithHeaders, jobId]);
+  }, [baseUrl, fetchWithHeaders, jobId, applyLines, appendLogLines]);
 
   // Auto-scroll the log panel as new lines arrive.
   useEffect(() => {
@@ -200,16 +246,41 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
     }
   }, [logs]);
 
-  const handleStop = async () => {
-    if (!job) return;
-    if (!window.confirm("Stop watching this run? It keeps training on Nori.")) return;
+  // Fetch the ENTIRE log on demand and rebuild the curves from it.
+  const loadFullLogs = useCallback(async () => {
+    setLoadingFull(true);
     try {
-      const next = await stopJob(baseUrl, fetchWithHeaders, job.id);
-      setJob(next);
-      toast({ title: "Stopped watching" });
+      const res = await getJobLogs(baseUrl, fetchWithHeaders, jobId, 0);
+      offsetRef.current = res.next_offset ?? offsetRef.current;
+      setLogs(res.lines.slice(-MAX_LOG_LINES).map((message) => ({ timestamp: 0, message })));
+      // Rebuild histories from the full log so the chart backfills too.
+      accRef.current = { metrics: emptyMetrics(), loss: [], lr: [] };
+      const folded = foldMetrics(res.lines, accRef.current);
+      accRef.current = folded;
+      setMetrics(folded.metrics);
+      setLossHistory(folded.loss.slice(-HISTORY_CAP));
+      setLrHistory(folded.lr.slice(-HISTORY_CAP));
+      setFullLoaded(true);
     } catch (e) {
       toast({
-        title: "Couldn't stop",
+        title: "Couldn't load full logs",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingFull(false);
+    }
+  }, [baseUrl, fetchWithHeaders, jobId, toast]);
+
+  const handlePause = async () => {
+    if (!job) return;
+    if (!window.confirm("Pause this run? It checkpoints and stops; resume it later from Training history.")) return;
+    try {
+      const res = await stopTrainingJob(baseUrl, fetchWithHeaders, jobId);
+      toast({ title: "Pausing training", description: res.detail });
+    } catch (e) {
+      toast({
+        title: "Couldn't pause",
         description: e instanceof Error ? e.message : String(e),
         variant: "destructive",
       });
@@ -246,7 +317,16 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
     );
   }
 
-  const isRunning = job.state === "running";
+  const appliedSteps = (job.applied_config as { steps?: number } | null | undefined)?.steps;
+  const policyType = (job.applied_config as { policy_type?: string } | null | undefined)?.policy_type;
+  // Seed the progress denominator from the configured target until the first
+  // tqdm tick supplies it.
+  const shownMetrics: TrainingMetrics = {
+    ...metrics,
+    total_steps: metrics.total_steps || appliedSteps || 0,
+  };
+  const isStoppable = STOPPABLE.has(job.status);
+  const starting = !terminalRef.current && shownMetrics.current_step === 0;
 
   return (
     <section className="space-y-5">
@@ -255,29 +335,56 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold text-[#14131a]">{job.name}</h1>
+              <h1 className="text-xl font-semibold text-[#14131a]">{job.dataset_repo}</h1>
+              {policyType && (
+                <span className="rounded border border-[#14131a]/15 bg-[#14131a]/5 px-2 py-0.5 text-xs text-[#14131a]/70">
+                  {policyType}
+                </span>
+              )}
               <span className="rounded border border-[#b06a1c]/40 bg-[#b06a1c]/10 px-2 py-0.5 text-xs text-[#b06a1c]">
                 Nori cloud
               </span>
             </div>
             <p className="text-xs text-[#14131a]/60">
-              {job.state}
-              {job.error_message ? ` — ${job.error_message}` : ""}
+              {job.status}
+              {job.failure_reason ? ` — ${job.failure_reason}` : ""}
+              {job.final_cost_usd != null ? ` · $${job.final_cost_usd}` : ""}
             </p>
           </div>
-          {isRunning && (
+          {isStoppable && (
             <Button
-              onClick={handleStop}
+              onClick={handlePause}
               className="bg-red-500 text-white hover:bg-red-600"
             >
-              <Square className="mr-2 h-4 w-4" /> Stop watching
+              <Square className="mr-2 h-4 w-4" /> Pause
             </Button>
           )}
         </div>
       </Panel>
 
-      <NoriTrainingStats jobId={jobId} job={job} />
-      <NoriTrainingLogs logs={logs} logContainerRef={logContainerRef} />
+      <NoriTrainingStats
+        metrics={shownMetrics}
+        lossHistory={lossHistory}
+        lrHistory={lrHistory}
+        starting={starting}
+      />
+      <NoriTrainingLogs
+        logs={logs}
+        logContainerRef={logContainerRef}
+        headerAction={
+          !fullLoaded ? (
+            <Button variant="outline" size="sm" onClick={loadFullLogs} disabled={loadingFull}>
+              {loadingFull ? (
+                <>
+                  <Loader2 className="mr-2 h-3 w-3 animate-spin" /> Loading…
+                </>
+              ) : (
+                "Load full logs"
+              )}
+            </Button>
+          ) : undefined
+        }
+      />
     </section>
   );
 };

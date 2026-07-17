@@ -1,9 +1,8 @@
-// NORI: Additive file. Nori-styled training progress + loss/LR charts. Reuses
-// LeLab's metrics data path (GET /jobs/{id}/metrics-history seed + live append
-// from JobRecord.metrics) but renders in the warm Panel palette. Mirrors the
-// seeding logic in components/training/monitoring/MonitoringStats.tsx.
+// NORI: Nori-styled training progress + loss/LR charts. Pure renderer: the
+// monitor parses metrics + curve points from the backend log stream (works for
+// any job, including resumed/continued segments) and passes them in. Charts in
+// the warm Panel palette.
 
-import { useEffect, useRef, useState } from "react";
 import {
   Line,
   LineChart,
@@ -13,20 +12,18 @@ import {
   YAxis,
 } from "recharts";
 import Panel from "@/nori/components/Panel";
-import { useApi } from "@/contexts/ApiContext";
-import { getJobMetricsHistory, type JobRecord } from "@/lib/jobsApi";
+import type { TrainingMetrics } from "@/lib/jobsApi";
+import type { MetricPoint } from "@/nori/components/training/parseMetrics";
 
 interface NoriTrainingStatsProps {
-  jobId: string;
-  job: JobRecord | null;
+  metrics: TrainingMetrics | null;
+  lossHistory: MetricPoint[];
+  lrHistory: MetricPoint[];
+  /** True while the run is live but hasn't emitted its first progress tick. */
+  starting?: boolean;
 }
 
-interface Point {
-  step: number;
-  value: number;
-}
-
-const HISTORY_CAP = 2000;
+type Point = MetricPoint;
 
 const formatTime = (seconds: number): string => {
   const h = Math.floor(seconds / 3600);
@@ -35,72 +32,20 @@ const formatTime = (seconds: number): string => {
   return [h, m, s].map((n) => String(n).padStart(2, "0")).join(":");
 };
 
-const NoriTrainingStats = ({ jobId, job }: NoriTrainingStatsProps) => {
-  const { baseUrl, fetchWithHeaders } = useApi();
-  const [loss, setLoss] = useState<Point[]>([]);
-  const [lr, setLr] = useState<Point[]>([]);
-  const lastStepRef = useRef(0);
-
-  // Seed the curves from the persisted log on mount / job change.
-  useEffect(() => {
-    let cancelled = false;
-    getJobMetricsHistory(baseUrl, fetchWithHeaders, jobId)
-      .then((points) => {
-        if (cancelled || points.length === 0) return;
-        setLoss(
-          points
-            .filter((p) => p.loss != null)
-            .map((p) => ({ step: p.step, value: p.loss as number }))
-            .slice(-HISTORY_CAP),
-        );
-        setLr(
-          points
-            .filter((p) => p.lr != null)
-            .map((p) => ({ step: p.step, value: p.lr as number }))
-            .slice(-HISTORY_CAP),
-        );
-        lastStepRef.current = points[points.length - 1]?.step ?? 0;
-      })
-      .catch(() => {
-        // 404 / transient — live ticks will populate from empty.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [baseUrl, fetchWithHeaders, jobId]);
-
-  // Append new points from the live job metrics; reset if a new run restarts.
-  const m = job?.metrics;
-  useEffect(() => {
-    if (!m) return;
-    const step = m.current_step;
-    if (step < lastStepRef.current) {
-      setLoss([]);
-      setLr([]);
-    }
-    lastStepRef.current = step;
-    if (step > 0 && m.current_loss != null) {
-      const value = m.current_loss;
-      setLoss((prev) => {
-        const last = prev[prev.length - 1];
-        if (last && last.step === step) return prev;
-        return [...prev, { step, value }].slice(-HISTORY_CAP);
-      });
-    }
-    if (step > 0 && m.current_lr != null) {
-      const value = m.current_lr;
-      setLr((prev) => {
-        const last = prev[prev.length - 1];
-        if (last && last.step === step) return prev;
-        return [...prev, { step, value }].slice(-HISTORY_CAP);
-      });
-    }
-  }, [m?.current_step, m?.current_loss, m?.current_lr, m]);
+const NoriTrainingStats = ({
+  metrics,
+  lossHistory,
+  lrHistory,
+  starting,
+}: NoriTrainingStatsProps) => {
+  const m = metrics;
+  const loss = lossHistory;
+  const lr = lrHistory;
 
   const total = m?.total_steps ?? 0;
   const current = m?.current_step ?? 0;
-  const progress = total > 0 ? (current / total) * 100 : 0;
-  const isStarting = job?.state === "running" && total === 0;
+  const progress = total > 0 ? Math.min(100, (current / total) * 100) : 0;
+  const isStarting = !!starting && total === 0;
   const stepLabel = isStarting
     ? "Training starting…"
     : `${current.toLocaleString()} / ${total.toLocaleString()}`;

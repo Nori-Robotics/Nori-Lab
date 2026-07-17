@@ -694,6 +694,27 @@ export function listJobs(baseUrl: string, fetcher: Fetcher): Promise<TrainingJob
   });
 }
 
+/** Cameras + arms recorded in a dataset — populates the scope picker so it only
+ *  offers what was actually recorded. `datasetRef` omitted => the latest upload. */
+export interface DatasetScopeOptions {
+  cameras: string[];
+  arms: string[];
+  joints: string[];
+}
+export function getDatasetScopeOptions(
+  baseUrl: string,
+  fetcher: Fetcher,
+  datasetRef?: string
+): Promise<DatasetScopeOptions> {
+  const q = datasetRef ? `?dataset_ref=${encodeURIComponent(datasetRef)}` : "";
+  return noriRequest<DatasetScopeOptions>(
+    baseUrl,
+    fetcher,
+    `/nori/training/dataset-features${q}`,
+    { action: "Load dataset scope options" }
+  );
+}
+
 /** One of Nori's published open datasets (GET /nori/marketplace/datasets/public). */
 export interface PublicDataset {
   id: string;
@@ -757,17 +778,22 @@ export function getJob(baseUrl: string, fetcher: Fetcher, jobId: string): Promis
   );
 }
 
-/** GET /nori/training/jobs/{id}/logs?since= — poll ~2s; stop when is_terminal. */
+/** GET /nori/training/jobs/{id}/logs?since= — poll ~2s; stop when is_terminal.
+ * `tail` (only honored on a fresh read, since=0) returns just the last N lines
+ * but reports the true end as next_offset, so a reload seeds cheaply and then
+ * streams only new lines. Omit tail (or pass since>0) for the full log. */
 export function getJobLogs(
   baseUrl: string,
   fetcher: Fetcher,
   jobId: string,
-  since = 0
+  since = 0,
+  tail?: number
 ): Promise<TrainingJobLogs> {
+  const q = `since=${since}${tail != null ? `&tail=${tail}` : ""}`;
   return noriRequest<TrainingJobLogs>(
     baseUrl,
     fetcher,
-    `/nori/training/jobs/${encodeURIComponent(jobId)}/logs?since=${since}`,
+    `/nori/training/jobs/${encodeURIComponent(jobId)}/logs?${q}`,
     { action: "Load training logs" }
   );
 }

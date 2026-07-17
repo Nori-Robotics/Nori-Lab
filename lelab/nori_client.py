@@ -476,14 +476,25 @@ class NoriClient:
         """GET /training/jobs/{job_id}."""
         return self._request("GET", f"{API}/training/jobs/{job_id}")
 
-    def get_job_logs(self, job_id: str, since: int = 0) -> dict[str, Any]:
-        """GET /training/jobs/{job_id}/logs?since=<offset>.
+    def get_job_logs(self, job_id: str, since: int = 0, tail: int | None = None) -> dict[str, Any]:
+        """GET /training/jobs/{job_id}/logs?since=<offset>[&tail=<n>].
 
         Returns {lines, next_offset, job_status, is_terminal}. Client polls ~2s.
+        `tail` (fresh read only) returns just the last N lines but reports the
+        true end as next_offset — cheap seeding for the live monitor on reload.
         """
+        params: dict[str, Any] = {"since": since}
+        if tail is not None:
+            params["tail"] = tail
         return self._request(
-            "GET", f"{API}/training/jobs/{job_id}/logs", params={"since": since}
+            "GET", f"{API}/training/jobs/{job_id}/logs", params=params
         )
+
+    def get_dataset_features(self, dataset_ref: str | None = None) -> dict[str, Any]:
+        """GET /training/dataset-features[?dataset_ref=] — cameras/arms recorded
+        in the dataset, to populate the training scope picker."""
+        params = {"dataset_ref": dataset_ref} if dataset_ref else None
+        return self._request("GET", f"{API}/training/dataset-features", params=params)
 
     # -- dataset upload: 4-step presigned-S3 flow (Phase 4) ------------------------
 

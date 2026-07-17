@@ -295,4 +295,17 @@ describe("MockDaemonSim record (W2.11 on-robot recorder emulation)", () => {
     const second = sim.handleFrame({ type: "record", action: "start" }, 0)[0].episode;
     expect(first).not.toEqual(second);
   });
+
+  it("discard_last removes the last session after a stop (operator Reject)", () => {
+    const sim = new MockDaemonSim();
+    sim.handleFrame({ type: "record", action: "start", task: "reject me" }, 0);
+    let out = sim.handleFrame({ type: "record", action: "stop" }, 0);
+    expect(out[0]).toMatchObject({ ok: true, recording: false });
+    out = sim.handleFrame({ type: "record", action: "discard_last" }, 0);
+    expect(out[0]).toMatchObject({ ok: true, recording: false });
+    // Second discard_last is a clean no-op.
+    out = sim.handleFrame({ type: "record", action: "discard_last" }, 0);
+    expect(out[0]).toMatchObject({ ok: false });
+    expect(String(out[0].error)).toContain("nothing to discard");
+  });
 });

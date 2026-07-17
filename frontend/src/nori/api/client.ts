@@ -543,6 +543,36 @@ export function getLibrary(baseUrl: string, fetcher: Fetcher): Promise<Library> 
   return noriRequest<Library>(baseUrl, fetcher, "/nori/library", { action: "Load your library" });
 }
 
+/** One robot-recorded episode bundle (W2.11). Not trainable yet (needs assembly);
+ *  a read-only view of what the robot has recorded and where it is in its journey
+ *  to the cloud. `status`: PROMOTED = in your cloud; PENDING_UPLOAD/FINALIZING =
+ *  in flight; FAILED/PROMOTION_FAILED = needs attention. */
+export interface RawBundleEntry {
+  session_id: string;
+  label: string;
+  status: string;
+  hf_path_prefix: string | null;
+  episode_count: number | null;
+  frame_count: number | null;
+  created_at: string;
+  finalized_at: string | null;
+  failure_reason: string | null;
+}
+
+export interface RobotRecordings {
+  bundles: RawBundleEntry[];
+  /** Episodes recorded but not yet uploaded from the robot; null if unknown
+   *  (the robot hasn't reported recently / heartbeat table unavailable). */
+  on_robot_pending: number | null;
+}
+
+/** GET /nori/datasets/raw-bundles — the caller's robot recordings for My Stuff. */
+export function getRobotRecordings(baseUrl: string, fetcher: Fetcher): Promise<RobotRecordings> {
+  return noriRequest<RobotRecordings>(baseUrl, fetcher, "/nori/datasets/raw-bundles", {
+    action: "Load your robot recordings",
+  });
+}
+
 /** DELETE /nori/datasets/{id} — permanently delete a dataset (HF files + record).
  * Owner-scoped; 409 if the dataset is published to the community. */
 export function deleteDataset(

@@ -89,7 +89,7 @@ const Remote = () => {
   // it no longer owns the RemoteTeleop instance and must NOT stop it on unmount.
   const {
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
-    recordState, connectStatus,
+    connectStatus,
     logLines, appendLog, settings, setSetting: set, connect, disconnect: sessionDisconnect,
     toggleControlMode, setCurrentsListener,
   } = useTeleopSession();

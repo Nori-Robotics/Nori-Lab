@@ -826,8 +826,13 @@ export class RemoteTeleop {
   // {type:"call"} — never reaches the daemon, no nori-protocol change. The reply
   // arrives as onRecord / recordState(); a robot with recording disabled answers
   // {ok:false, error:"recorder unreachable"} within ~1 s rather than staying silent.
-  // "discard" stops AND deletes the in-flight episode (operator fumbled the demo).
-  record(action: "start" | "stop" | "discard" | "status", task?: string) {
+  //  - "discard"      stops AND deletes the CURRENTLY-OPEN episode (abort mid-record).
+  //  - "discard_last" removes the WHOLE last-started session (all its chunks), whether
+  //                   still recording or already stopped — this is operator "Reject"
+  //                   after previewing: the full-quality copy never reaches the cloud.
+  //                   Safe because Reject happens while still connected, so the
+  //                   idle-gated shipper hasn't uploaded it yet.
+  record(action: "start" | "stop" | "discard" | "discard_last" | "status", task?: string) {
     const msg: Record<string, unknown> = { type: "record", action };
     if (action === "start" && task) msg.task = task;
     this.dcSend(msg);

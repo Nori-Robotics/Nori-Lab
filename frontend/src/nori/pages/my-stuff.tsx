@@ -19,7 +19,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useApi } from "@/contexts/ApiContext";
-import { useNori } from "@/nori/NoriContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { PolicyRunner, EXECUTION_PRESETS, type PolicyRunPhase } from "@/nori/remote/policyRun";
 import {
@@ -27,18 +26,18 @@ import {
   deletePolicy,
   downloadPolicy,
   getLibrary,
+  getRobotRecordings,
   getTrainingEstimateParams,
   listLocalPolicies,
   renameTrainingJob,
   renameUploadLabel,
   setDatasetLock,
   setPolicyLock,
-  uploadDataset,
   type Library,
   type LibraryDataset,
   type LibraryPolicy,
+  type RobotRecordings,
 } from "@/nori/api/client";
-import { DatasetCapture, type CaptureDatasetEntry } from "@/nori/remote/datasetCapture";
 import { EpisodeReviewModal, type ReviewSource } from "@/nori/components/EpisodeReviewModal";
 
 // ---- small presentational bits -------------------------------------------
@@ -162,15 +161,15 @@ const EditableName = ({
 
 const MyStuff = () => {
   const { baseUrl, fetchWithHeaders } = useApi();
-  const { leLabAvailable } = useNori();
   const navigate = useNavigate();
 
   const [library, setLibrary] = useState<Library | null>(null);
-  const [local, setLocal] = useState<CaptureDatasetEntry[]>([]);
+  // W2.11 robot recordings (raw bundles) — replaces the legacy laptop-spool
+  // "On this laptop" datasets, which are no longer produced.
+  const [robot, setRobot] = useState<RobotRecordings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeRef, setActiveRef] = useState<string | null>(null); // hovered policy's source
-  const [uploading, setUploading] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<ReviewSource | null>(null); // dataset under review
   const [deleting, setDeleting] = useState<LibraryDataset | null>(null); // pending delete confirmation
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -188,11 +187,12 @@ const MyStuff = () => {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-    // local captures are best-effort (only when a LeLab spool is reachable)
+    // robot recordings are best-effort — a backend without the raw-bundle
+    // endpoint (or no robots yet) just shows an empty section, never an error.
     try {
-      setLocal(await DatasetCapture.listDatasets(baseUrl));
+      setRobot(await getRobotRecordings(baseUrl, fetchWithHeaders));
     } catch {
-      setLocal([]);
+      setRobot(null);
     }
     setLoading(false);
   }, [baseUrl, fetchWithHeaders]);
@@ -210,14 +210,6 @@ const MyStuff = () => {
     const unlinked = library.unlinked_policies.map((p) => ({ ...p, sourceRef: null, sourceLabel: null }));
     return [...linked, ...unlinked].sort((a, b) => b.created_at.localeCompare(a.created_at));
   }, [library]);
-
-  const onRenameLocal = useCallback(
-    async (oldId: string, next: string) => {
-      await DatasetCapture.renameDataset(baseUrl, oldId, next);
-      await load();
-    },
-    [baseUrl, load],
-  );
 
   const onDelete = useCallback(async () => {
     if (!deleting) return;
@@ -407,22 +399,6 @@ const MyStuff = () => {
     return Math.max(2, Math.min(97, Math.round((elapsed / (p.steps / rate)) * 100)));
   };
 
-  const onUpload = useCallback(
-    async (repoId: string) => {
-      setUploading(repoId);
-      try {
-        await uploadDataset(baseUrl, fetchWithHeaders, repoId, `${repoId} — from My Stuff`);
-        await load();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setUploading(null);
-      }
-    },
-    [baseUrl, fetchWithHeaders, load],
-  );
-
-
   if (loading) {
     return (
       <section className="flex items-center justify-center py-24 text-muted-foreground">
@@ -452,41 +428,60 @@ const MyStuff = () => {
       <div className="grid gap-8 lg:grid-cols-[1.35fr_1fr]">
         {/* -------- Datasets -------- */}
         <div className="space-y-3.5">
+          {/* Robot recordings (W2.11): full-quality episodes recorded on the robot
+              and uploaded to your cloud automatically. Not trainable until assembled
+              into a dataset — a read-only view of what the robot has captured. */}
           <div className="flex items-baseline justify-between">
-            <h2 className="text-lg font-bold tracking-tight text-[#14131a]">Datasets</h2>
-            <span className="font-mono text-xs text-muted-foreground">
-              {local.length + datasets.length} total
-            </span>
+            <h2 className="text-lg font-bold tracking-tight text-[#14131a]">Robot recordings</h2>
+            {robot?.on_robot_pending != null && robot.on_robot_pending > 0 && (
+              <span className="font-mono text-xs text-muted-foreground">
+                {robot.on_robot_pending} uploading from robot…
+              </span>
+            )}
           </div>
 
-          {/* local, not-yet-uploaded */}
-          {local.map((d) => (
-            <article key={`local-${d.repo_id}`} className={cardCls}>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <EditableName value={d.repo_id} onRename={(next) => onRenameLocal(d.repo_id, next)} />
-                  {d.robot_type && <p className="mt-0.5 text-sm text-muted-foreground">{d.robot_type}</p>}
+          {(robot?.bundles ?? []).map((b) => {
+            const inCloud = b.status === "PROMOTED";
+            const failed = b.status === "FAILED" || b.status === "PROMOTION_FAILED";
+            return (
+              <article key={b.session_id} className={cardCls}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-base font-bold text-[#14131a]">{b.label}</p>
+                    <p className="mt-0.5 text-sm text-muted-foreground">Recorded {shortDate(b.created_at)}</p>
+                  </div>
+                  <Pill tone={inCloud ? "leaf" : "secondary"}>
+                    {inCloud ? "In cloud" : failed ? "Needs attention" : "Uploading…"}
+                  </Pill>
                 </div>
-                <Pill tone="secondary">On this laptop</Pill>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-[#14131a]/80 [font-variant-numeric:tabular-nums]">
-                <span><b className="font-semibold text-[#14131a]">{fmt(d.episodes)}</b> episodes</span>
-                <span><b className="font-semibold text-[#14131a]">{fmt(d.frames)}</b> frames</span>
-                {d.fps && <span><b className="font-semibold text-[#14131a]">{d.fps}</b> fps</span>}
-              </div>
-              <p className="mt-3 border-t border-dashed border-border pt-2.5 text-[13px] italic text-muted-foreground">
-                Not uploaded yet — upload to train a policy on it.
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={() => setReviewing({ kind: "local", repoId: d.repo_id })}>
-                  Review episodes
-                </Button>
-                <Button size="sm" onClick={() => onUpload(d.repo_id)} disabled={uploading === d.repo_id}>
-                  {uploading === d.repo_id ? "Uploading…" : "Upload to cloud"}
-                </Button>
-              </div>
-            </article>
-          ))}
+                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-[#14131a]/80 [font-variant-numeric:tabular-nums]">
+                  {b.episode_count != null && <span><b className="font-semibold text-[#14131a]">{fmt(b.episode_count)}</b> episodes</span>}
+                  {b.frame_count != null && <span><b className="font-semibold text-[#14131a]">{fmt(b.frame_count)}</b> frames</span>}
+                </div>
+                <p className="mt-3 border-t border-dashed border-border pt-2.5 text-[13px] italic text-muted-foreground">
+                  {failed
+                    ? `Upload problem: ${b.failure_reason ?? "unknown"}`
+                    : inCloud
+                      ? "Full-quality copy is in your cloud. Training on robot recordings is coming soon."
+                      : "Uploading from the robot — this finishes while the robot is idle."}
+                </p>
+              </article>
+            );
+          })}
+
+          {(robot?.bundles?.length ?? 0) === 0 && (
+            <p className="rounded-[20px] border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+              No robot recordings yet. Record a session on the Remote page — episodes upload here automatically.
+            </p>
+          )}
+
+          {/* -------- Datasets (uploaded, trainable) -------- */}
+          <div className="flex items-baseline justify-between pt-4">
+            <h2 className="text-lg font-bold tracking-tight text-[#14131a]">Datasets</h2>
+            <span className="font-mono text-xs text-muted-foreground">
+              {datasets.length} total
+            </span>
+          </div>
 
           {/* uploaded, with lineage */}
           {datasets.map((d) => {
@@ -568,9 +563,9 @@ const MyStuff = () => {
             );
           })}
 
-          {local.length === 0 && datasets.length === 0 && (
+          {datasets.length === 0 && (
             <p className="rounded-[20px] border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-              Nothing here yet. Record a session on the Remote page to get started.
+              No trainable datasets yet. Robot recordings become trainable datasets once assembled.
             </p>
           )}
         </div>
@@ -804,11 +799,6 @@ const MyStuff = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      {!leLabAvailable && (
-        <p className="font-mono text-xs text-muted-foreground">
-          Local recordings aren't shown on the hosted app — open My Stuff in the desktop app to manage captures.
-        </p>
-      )}
     </section>
   );
 };

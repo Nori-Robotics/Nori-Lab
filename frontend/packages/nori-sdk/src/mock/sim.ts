@@ -149,6 +149,7 @@ export class MockDaemonSim {
   // always-on recorder and answers with a record_status (recorder.py _status shape).
   // Enough state to exercise the SDK's record()/onRecord path and a UI toggle.
   private recEpisode: string | null = null;
+  private recLastSession: string | null = null;  // for discard_last after a stop
   private recSeq = 0;
   private handleRecord(frame: Frame): Frame[] {
     const status = (ok: boolean, error?: string): Frame => {
@@ -162,11 +163,21 @@ export class MockDaemonSim {
       if (this.recEpisode !== null) return [status(false, "already recording")];
       this.recSeq += 1;
       this.recEpisode = `mock-session/episode-${String(this.recSeq).padStart(4, "0")}`;
+      this.recLastSession = this.recEpisode;
       return [status(true)];
     }
     if (action === "stop" || action === "discard") {
       if (this.recEpisode === null) return [status(false, "not recording")];
       this.recEpisode = null;
+      return [status(true)];
+    }
+    if (action === "discard_last") {
+      // Removes the last session whether open or already stopped.
+      if (this.recEpisode === null && this.recLastSession === null) {
+        return [status(false, "nothing to discard")];
+      }
+      this.recEpisode = null;
+      this.recLastSession = null;
       return [status(true)];
     }
     if (action === "status") return [status(true)];

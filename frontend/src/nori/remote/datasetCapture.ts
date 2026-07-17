@@ -165,6 +165,13 @@ export class DatasetCapture {
     if (this.episodeActive) return;
     const stream = teleop.videoStream();
     if (!stream) throw new Error("no video stream — is video enabled?");
+    // A stale stream (e.g. the pre-reconnect session's ended track) makes
+    // MediaRecorder never fire onstart — which used to hang the await below
+    // FOREVER with a dead-looking Start button. Fail fast and loud instead.
+    const track = stream.getVideoTracks()[0];
+    if (!track || track.readyState !== "live") {
+      throw new Error("video track is not live (stale session stream?) — reconnect and retry");
+    }
 
     const index = ++this.epIndex;
     const recorder = new MediaRecorder(stream, this.mime ? { mimeType: this.mime } : undefined);
@@ -188,9 +195,16 @@ export class DatasetCapture {
       });
     };
     // Episode start t_ms is stamped when the recorder ACTUALLY starts — this is
-    // the video's PTS zero, the anchor the exporter subtracts against.
-    const started = new Promise<void>((resolve) => {
+    // the video's PTS zero, the anchor the exporter subtracts against. Bounded
+    // wait: onstart not firing (recorder wedged on a bad stream) must surface as
+    // an error the card can show, never an unresponsive button.
+    const started = new Promise<void>((resolve, reject) => {
+      const deadline = setTimeout(
+        () => reject(new Error("video recorder did not start within 4 s (stale/paused stream?)")),
+        4000
+      );
       recorder.onstart = () => {
+        clearTimeout(deadline);
         void this.post(`/nori/capture/${this.captureId}/episode`, {
           index,
           event: "start",
@@ -201,7 +215,14 @@ export class DatasetCapture {
       };
     });
     recorder.start(TIMESLICE_MS);
-    await started;
+    try {
+      await started;
+    } catch (e) {
+      try { recorder.stop(); } catch { /* never started — nothing to stop */ }
+      this.recorder = null;
+      this.epIndex = index - 1; // roll the index back: this episode never existed
+      throw e;
+    }
     this.episodes.push({ index, task });
     this.episodeActive = true;
   }

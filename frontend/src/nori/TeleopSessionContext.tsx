@@ -22,6 +22,7 @@ import {
 } from "@nori/sdk";
 import { SupabaseSignaling } from "@nori/sdk/supabase";
 import { getSupabase } from "@/nori/auth/supabase";
+import { getAccessToken } from "@/nori/auth/session";
 import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
 import { getTurnCredentials } from "@/nori/api/client";
@@ -238,12 +239,16 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     let turnUrls = settings.turn.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
     let turnUser = settings.turnUser.trim();
     let turnCred = settings.turnCred.trim();
-    // §2.4 minted TURN creds: when enabled, fetch short-lived coturn credentials at
-    // session start instead of using the static typed/persisted ones. Shipped DARK
-    // (isTurnMintEnabled) until the relay is flipped to use-auth-secret — a minted cred
-    // would be rejected by a relay still on lt-cred-mech. ANY failure falls back to the
-    // configured creds, so this can never make connect worse than before.
-    if (isTurnMintEnabled()) {
+    // §2.4 minted TURN creds: fetch short-lived coturn credentials at session start
+    // instead of using the static typed/persisted ones. The relay cutover to
+    // use-auth-secret is done (2026-07-15), so minting is now driven by whether the
+    // operator is SIGNED IN — the mint endpoint (GET /api/v1/turn/credentials) needs a
+    // provisioned-customer JWT and 401s anonymously, so an anonymous LAN session (the
+    // hosted /nori/drive quick-start) correctly skips the fetch and stays on STUN. The
+    // isTurnMintEnabled() flag remains as a manual override for dev/testing. ANY failure
+    // falls back to the configured creds, so this can never make connect worse than before.
+    const signedIn = !!(await getAccessToken());
+    if (isTurnMintEnabled() || signedIn) {
       try {
         const c = await getTurnCredentials(baseUrl, fetchWithHeaders);
         turnUrls = c.urls;

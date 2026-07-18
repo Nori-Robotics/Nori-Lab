@@ -84,6 +84,31 @@ TeleopSessionProvider but **not** NoriLayout's nav or its auth redirect. It reus
 same `TeleopSessionContext.connect()` + `VrSession` as the Remote page (no parallel
 control path) — just trimmed to a headset-first room/token → Connect → Enter VR flow.
 
+### The 2D "drive it now" page — `/nori/drive` (added 2026-07-17)
+
+A keyboard-driven sibling of `/nori/vr` for devs who want to drive their own robot from a
+plain browser, no install (SDK v1 finalization item 5). `src/nori/pages/drive.tsx`,
+registered in `App.tsx` with the same provider pair, no `NoriLayout`, no auth gate. Reuses
+`TeleopSessionContext.connect()` + `RemoteTeleop` unchanged. Design + scope decisions are
+recorded in `../../NoriTeleop/docs/sdk_v1_finalization.md` item 5; the load-bearing ones:
+
+- **Route, not a standalone HTML entry** (Decision 1): reuses `TeleopSessionContext` rather
+  than adding a second `rollupOptions.input` build and reimplementing the connect path.
+- **Login-optional, LAN vs cross-network** (Decision 3): same-network drives anonymously
+  over STUN with room + token — no login. A **different** network needs the coturn relay,
+  whose mint endpoint (`GET /api/v1/turn/credentials`) requires a provisioned-customer JWT,
+  so the page offers an inline **sign-in**; a signed-in session unlocks minted TURN creds
+  automatically (the mint gate in `TeleopSessionContext` now keys on being signed in). ⚠️
+  Cross-network relies on **direct-backend mode** so the JWT reaches
+  `GET /api/v1/turn/credentials`: `VITE_NORI_BACKEND_URL` is already committed in
+  `vercel.json`, so verify it points at the live backend for this deploy (if unset, the
+  JWT never reaches the mint endpoint and cross-network silently falls back to STUN).
+- **Token still persists in localStorage plaintext** (Decision 2, *deferred hardening*):
+  reuses the shared `nori_remote_settings` blob for the crunch; acceptable for the current
+  small named-team audience, revisit before wider release.
+
+Open `https://<project>/nori/drive?room=<robot>` (+ optional `#token=`). No headset needed.
+
 ### Deploy to Vercel (first-timer)
 
 `vercel.json` (committed here) sets the Vite preset, `npm ci`, `dist` output, and the

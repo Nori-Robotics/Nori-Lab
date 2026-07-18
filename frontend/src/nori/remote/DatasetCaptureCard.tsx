@@ -92,7 +92,9 @@ export function DatasetCaptureCard() {
       // Browser preview FIRST: if the stream is stale/missing it throws here and
       // the robot never starts, so the two can't diverge.
       previewRef.current.start(stream);
-      teleop.record("episode_start");
+      // Task on episode_start too — recovers a dropped session_start (the robot
+      // auto-opens a session and keeps the task).
+      teleop.record("episode_start", task.trim() || "teleop session");
       setPhase({ kind: "recording" });
     } catch (e) {
       previewRef.current.cancel();
@@ -100,7 +102,7 @@ export function DatasetCaptureCard() {
     } finally {
       setBusy(false);
     }
-  }, [teleop, busy]);
+  }, [teleop, busy, task]);
 
   const stopEpisode = useCallback(async () => {
     if (!teleop || busy) return;

@@ -846,7 +846,12 @@ export class RemoteTeleop {
     task?: string,
   ) {
     const msg: Record<string, unknown> = { type: "record", action };
-    if ((action === "start" || action === "session_start") && task) msg.task = task;
+    // Task rides episode_start too: if session_start dropped on the unreliable
+    // control channel, the robot auto-opens a session on episode_start and needs
+    // the task from here so it isn't lost.
+    if ((action === "start" || action === "session_start" || action === "episode_start") && task) {
+      msg.task = task;
+    }
     this.dcSend(msg);
   }
 

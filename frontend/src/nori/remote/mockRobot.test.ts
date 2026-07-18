@@ -285,11 +285,11 @@ describe("MockDaemonSim record (W2.11 one-bundle-per-session emulation)", () => 
     expect(rec(sim, "session_end")).toMatchObject({ ok: true, session_open: false, recording: false });
   });
 
-  it("guards: episode_start needs a session; double session_start rejected", () => {
+  it("episode_start auto-opens a session (dropped session_start resilience)", () => {
     const sim = new MockDaemonSim();
-    expect(rec(sim, "episode_start")).toMatchObject({ ok: false });
-    expect(String(rec(sim, "episode_start").error)).toContain("no session open");
-    rec(sim, "session_start");
+    // No session_start first — a dropped one. episode_start opens one anyway.
+    expect(rec(sim, "episode_start")).toMatchObject({ ok: true, recording: true, session_open: true });
+    // A late/duplicate session_start on the now-open session is rejected.
     expect(String(rec(sim, "session_start").error)).toContain("session already open");
   });
 

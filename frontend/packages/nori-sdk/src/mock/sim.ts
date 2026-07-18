@@ -173,7 +173,9 @@ export class MockDaemonSim {
       return [status(true)];
     }
     if (a === "episode_start") {
-      if (!this.recSessionOpen) return [status(false, "no session open")];
+      // Resilience: auto-open a session if session_start was dropped (matches
+      // recorder.py _episode_start).
+      if (!this.recSessionOpen) { this.recSessionOpen = true; this.recKept = 0; }
       if (this.recEpisode !== null) return [status(false, "already recording an episode")];
       this.recSeq += 1;
       this.recEpisode = this.epId();

@@ -237,6 +237,21 @@ class NoriClient:
         acquisitions; the row is kept for audit)."""
         return self._request("DELETE", f"{API}/marketplace/policies/{ref}/publish")
 
+    def publish_dataset(self, upload_ref: str, title: str, description: str | None = None) -> dict[str, Any]:
+        """POST /marketplace/datasets/{upload_ref}/publish — publish one of the
+        caller's own promoted dataset uploads. Creates a pending_review listing
+        that auto-publishes after re-homing + the format gate. 403 without
+        publish_public consent, 409 if already published."""
+        return self._request(
+            "POST", f"{API}/marketplace/datasets/{upload_ref}/publish",
+            json={"title": title, "description": description},
+        )
+
+    def unpublish_dataset(self, upload_ref: str) -> dict[str, Any]:
+        """DELETE /marketplace/datasets/{upload_ref}/publish — instant, idempotent
+        takedown of the caller's active dataset listing (kept for audit)."""
+        return self._request("DELETE", f"{API}/marketplace/datasets/{upload_ref}/publish")
+
     def list_my_listings(self) -> Any:
         """GET /marketplace/my-listings — the caller's community submissions in
         every lifecycle state (pending_review/public/rejected/taken_down)."""

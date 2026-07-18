@@ -1177,6 +1177,18 @@ def nori_unpublish_policy(ref: str, request: Request):
     return _nori_proxy(lambda: client.unpublish_policy(ref))
 
 
+@app.post("/nori/marketplace/datasets/{upload_ref}/publish")
+def nori_publish_dataset(upload_ref: str, body: NoriPublishBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.publish_dataset(upload_ref, body.title, body.description))
+
+
+@app.delete("/nori/marketplace/datasets/{upload_ref}/publish")
+def nori_unpublish_dataset(upload_ref: str, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.unpublish_dataset(upload_ref))
+
+
 @app.get("/nori/marketplace/my-listings")
 def nori_my_listings(request: Request):
     client = _nori_client(request)

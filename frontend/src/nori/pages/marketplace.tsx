@@ -320,7 +320,10 @@ const Marketplace = () => {
   const myListingByJob = useMemo(() => {
     const m: Record<string, MyListing> = {};
     for (const l of [...myListings].reverse()) {
+      // Policies key on source_job_id; datasets have no job, so also key on the
+      // listing id (the catalog uses listing_id as the `ref` for own datasets).
       if (l.source_job_id) m[l.source_job_id] = l;
+      if (l.listing_id) m[l.listing_id] = l;
     }
     return m;
   }, [myListings]);

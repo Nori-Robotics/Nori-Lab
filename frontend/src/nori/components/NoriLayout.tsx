@@ -4,6 +4,7 @@
 
 import { useEffect } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Battery, BatteryLow } from "lucide-react";
 import { useNori } from "@/nori/NoriContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { openDocs } from "@/lib/docs";
@@ -23,6 +24,26 @@ const ConnectionChip = () => {
     <span className={cls} title="Connected. Manage the session on Home.">● {status}</span>
   ) : (
     <Link to="/nori" className={cls + " hover:opacity-80"} title="Connect on Home">● {status}</Link>
+  );
+};
+
+// Robot battery, shown beside the connection chip. battery_percent only rides the telemetry
+// stream, which only flows while connected — so this renders nothing until a session is up and
+// a reading has arrived (null = no monitor / reader down / voltage unknown).
+const BatteryChip = () => {
+  const { running, connState, tel } = useTeleopSession();
+  const connected = running && connState === "connected";
+  if (!connected || tel.batteryPercent == null) return null;
+  const pct = tel.batteryPercent;
+  const low = pct <= 15;
+  const cls =
+    "inline-flex items-center gap-1 rounded-full px-3 py-1 font-mono text-xs " +
+    (low ? "bg-[#d24a3d]/20 text-[#8f2318]" : "bg-[#8ab135]/25 text-[#4d6a1e]");
+  const Icon = low ? BatteryLow : Battery;
+  return (
+    <span className={cls} title="Robot battery">
+      <Icon className="h-3.5 w-3.5" /> {pct}%
+    </span>
   );
 };
 
@@ -89,7 +110,8 @@ const NoriLayout = () => {
               Docs ↗
             </button>
           </div>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <BatteryChip />
             <ConnectionChip />
           </div>
         </nav>

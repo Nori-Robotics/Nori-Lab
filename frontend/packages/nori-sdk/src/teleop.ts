@@ -93,6 +93,11 @@ export interface TelemetryView {
   // on disconnect) — this is how a UI shows "poor network, quality reduced" instead of letting
   // a black/frozen feed hide behind a green "connected" chip.
   videoNet: VideoNetState | null;
+  // Pack state-of-charge % (0-100), injected by the robot bridge into each telemetry frame
+  // (docs/battery_monitor_integration.md §5). null when the robot has no battery monitor, the
+  // reader is down, or the pack voltage is out of range — render "—", never 0%. Absent on old
+  // bridges -> stays null (graceful degradation, like robot_mic_live).
+  batteryPercent: number | null;
 }
 
 // A single object the on-Pi detector reports (nori-protocol perception.json $items). Fields
@@ -576,7 +581,7 @@ export class RemoteTeleop {
   // frame — keep last values so the readout doesn't flicker to 0.
   private tel: TelemetryView = {
     loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {},
-    state: {}, videoNet: null,
+    state: {}, videoNet: null, batteryPercent: null,
   };
   private stopped = false;
   // Latest world-state from the daemon perception process (Phase F). null until a frame arrives
@@ -1567,6 +1572,10 @@ export class RemoteTeleop {
         this.call.robotMicMuted = m.robot_local_mic_muted;
         this.emitCall();
       }
+      // Pack state-of-charge (battery_monitor_integration.md §5): number 0-100, or explicit
+      // null when unknown. Absent on old bridges -> leave the last value untouched.
+      if (typeof m.battery_percent === "number") this.tel.batteryPercent = m.battery_percent;
+      else if (m.battery_percent === null) this.tel.batteryPercent = null;
       this.o.onTelemetry({ ...this.tel });
     } else if (m.type === "perception") {
       this.ingestPerception(m);

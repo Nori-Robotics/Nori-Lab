@@ -248,6 +248,13 @@ export function TelemetryPanel({
       <Stat label="watchdog" value={tel.watchdog} tone={tel.watchdog === "-" ? "default" : "warn"} />
       <Stat label="temp" value={tel.tempC > 0 ? `${tel.tempC.toFixed(0)}°C` : "—"}
         tone={tel.tempC >= 80 ? "bad" : tel.tempC >= 70 ? "warn" : "default"} />
+      {/* Pack state-of-charge from the robot bridge (battery_monitor_integration.md §5). null =
+          no monitor / reader down / voltage unknown -> "—", never a scary 0%. Low thresholds
+          mirror the kiosk gauge (≤15% ≈ where the 6S SoC table nears the 22V floor). */}
+      <Stat label="battery"
+        value={tel.batteryPercent != null ? `${tel.batteryPercent}%` : "—"}
+        tone={tel.batteryPercent == null ? "default"
+          : tel.batteryPercent <= 15 ? "bad" : tel.batteryPercent <= 30 ? "warn" : "good"} />
       {inVr && <Stat label="mode" value="VR" tone="good" />}
     </div>
   );

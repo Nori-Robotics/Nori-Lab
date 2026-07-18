@@ -56,7 +56,7 @@ const teleop = new RemoteTeleop({
   arm: "right",             // which arm keyboard/jog drives
   onLog: (m) => console.log(m),
   onConnState: (s) => console.log("conn:", s),
-  onTelemetry: (t) => {     // live: loopHz, safety, tempC, per-joint state{}, lift height mm…
+  onTelemetry: (t) => {     // live: loopHz, safety, tempC, batteryPercent, per-joint state{}, lift height mm…
     console.log("safety:", t.safety, "state:", t.state);
   },
   onMode: (mode) => console.log("mode:", mode),
@@ -67,6 +67,13 @@ await teleop.start();       // subscribes, answers the robot's offer, opens the 
 ```
 
 Video now flows into your `<video>` element and `onTelemetry` fires ~50×/s.
+
+Each `TelemetryView` also carries **`batteryPercent`** — the robot's battery charge as a whole
+number from `0` to `100`. It is `null` when the robot has no battery monitor fitted, or when the
+charge can't currently be read; render a placeholder such as `—` in that case rather than `0%`.
+Treat it as an at-a-glance gauge, not a precise fuel level: it is derived from pack voltage and
+sags under load. The field is present only while a session is connected (telemetry only flows
+once connected).
 
 ## Develop without a robot (mock mode)
 

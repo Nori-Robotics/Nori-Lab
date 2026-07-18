@@ -94,11 +94,24 @@ def _decode(b64: str) -> np.ndarray:
     return np.asarray(img)
 
 
-@app.get("/health")
-def health() -> dict:
+def _status() -> dict:
     status = "ready" if _model is not None else ("error" if _load_error else "loading")
     return {"ok": _model is not None, "status": status, "error": _load_error,
             "repo": REPO_ID, "dtype": str(DTYPE)}
+
+
+@app.get("/")
+def root() -> dict:
+    # HuggingFace Docker Spaces route external traffic only after their readiness
+    # probe gets a 2xx on "/". Without this the app loads fine but the proxy 404s
+    # every request (incl. /health) and the Space auto-sleeps unused. Harmless
+    # elsewhere (AWS/Modal just get an extra liveness route).
+    return _status()
+
+
+@app.get("/health")
+def health() -> dict:
+    return _status()
 
 
 @app.post("/act", response_model=ActResponse)

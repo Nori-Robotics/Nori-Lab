@@ -33,8 +33,9 @@ export function AssembleModal({
   const [mode, setMode] = useState<"new" | "append">("new");
   const [name, setName] = useState("");
   const [targetId, setTargetId] = useState<string>(datasets[0]?.session_id ?? "");
-  const [phase, setPhase] = useState<"form" | "running" | "error">("form");
+  const [phase, setPhase] = useState<"form" | "running" | "error" | "done">("form");
   const [error, setError] = useState<string | null>(null);
+  const [doneNote, setDoneNote] = useState<string | null>(null); // e.g. skipped episodes
   const cancelled = useRef(false);
   useEffect(() => () => {
     cancelled.current = true;
@@ -62,7 +63,14 @@ export function AssembleModal({
         const job = await getAssemblyJob(baseUrl, fetchWithHeaders, assembly_job_id);
         if (job.status === "DONE") {
           onDone();
-          onClose();
+          // A note on a DONE job means some episodes were skipped (unusable) —
+          // show it so the user isn't surprised by a lower count; else just close.
+          if (job.failure_reason) {
+            setDoneNote(job.failure_reason);
+            setPhase("done");
+          } else {
+            onClose();
+          }
           return;
         }
         if (job.status === "FAILED") {
@@ -99,7 +107,20 @@ export function AssembleModal({
           temporally aligned and de-dropped during assembly.
         </p>
 
-        {running ? (
+        {phase === "done" ? (
+          <div className="mt-6">
+            <p className="font-medium text-nori-h14131a">Dataset ready ✓</p>
+            <p className="mt-2 rounded-lg bg-secondary px-3 py-2 text-sm text-muted-foreground">
+              Some episodes were left out because they can't be trained on (usually a camera
+              dropped out for several seconds):
+              <br />
+              <span className="text-nori-h14131a">{doneNote}</span>
+            </p>
+            <div className="mt-5 flex justify-end">
+              <Button onClick={onClose}>Done</Button>
+            </div>
+          </div>
+        ) : running ? (
           <div className="mt-6 flex flex-col items-center gap-3 py-6 text-center">
             <Loader2 className="h-6 w-6 animate-spin text-nori-h14131a" />
             <p className="text-sm text-muted-foreground">

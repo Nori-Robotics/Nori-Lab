@@ -150,13 +150,13 @@ export function AssembleModal({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Dataset name (optional)"
-                className="mt-4 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-nori-h14131a"
+                className="mt-4 w-full rounded-lg border border-border bg-background text-foreground px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus:border-nori-h14131a"
               />
             ) : (
               <select
                 value={targetId}
                 onChange={(e) => setTargetId(e.target.value)}
-                className="mt-4 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-nori-h14131a"
+                className="mt-4 w-full rounded-lg border border-border bg-background text-foreground px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus:border-nori-h14131a"
               >
                 {datasets.map((d) => (
                   <option key={d.session_id} value={d.session_id}>

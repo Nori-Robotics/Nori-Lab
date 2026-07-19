@@ -35,11 +35,11 @@ export function VrHandoff({ room, token }: { room: string; token: string }) {
   };
 
   return (
-    <div className="space-y-2 rounded-lg border border-[#14131a]/10 bg-background/60 p-3">
+    <div className="space-y-2 rounded-lg border border-nori-h14131a/10 bg-background/60 p-3">
       <p className="text-sm font-medium">On a headset? Open this on your Quest browser:</p>
       <div className="flex items-center gap-2">
         <code
-          className="min-w-0 flex-1 truncate rounded bg-[#14131a]/5 px-2 py-1.5 font-mono text-xs"
+          className="min-w-0 flex-1 truncate rounded bg-nori-h14131a/5 px-2 py-1.5 font-mono text-xs"
           title={url}
         >
           {url}
@@ -57,7 +57,7 @@ export function VrHandoff({ room, token }: { room: string; token: string }) {
         include access token (skip typing it on the headset)
       </label>
       {includeToken && (
-        <p className="text-xs text-[#a06a1e]">
+        <p className="text-xs text-nori-ha06a1e">
           Carries your access token in the URL fragment (kept out of server logs) — still,
           only open it on your own devices.
         </p>

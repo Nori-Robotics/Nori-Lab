@@ -149,3 +149,188 @@
     background-size: 22px 22px;
   }
 }
+
+/* --- Nori palette tokens (generated): light preserved exactly, dark derived --- */
+@layer base {
+  :root {
+    --nori-h0f0e0c: 40 11% 5%;
+    --nori-h14131a: 249 16% 9%;
+    --nori-h171512: 36 12% 8%;
+    --nori-h1e293b: 217 33% 17%;
+    --nori-h1f2937: 215 28% 17%;
+    --nori-h242019: 38 18% 12%;
+    --nori-h2a2833: 251 12% 18%;
+    --nori-h2a6b33: 128 44% 29%;
+    --nori-h2c2b3a: 244 15% 20%;
+    --nori-h2c5282: 213 49% 34%;
+    --nori-h2f7d5b: 154 45% 34%;
+    --nori-h34d399: 158 64% 52%;
+    --nori-h374151: 217 19% 27%;
+    --nori-h3d6ea5: 212 46% 44%;
+    --nori-h3f9a4c: 129 42% 43%;
+    --nori-h43a04e: 127 41% 45%;
+    --nori-h475569: 215 19% 35%;
+    --nori-h4d463a: 38 14% 26%;
+    --nori-h4d6a1e: 83 56% 27%;
+    --nori-h4e9d55: 125 34% 46%;
+    --nori-h5a5346: 39 12% 31%;
+    --nori-h5c5344: 38 15% 31%;
+    --nori-h5c564b: 39 10% 33%;
+    --nori-h6b6878: 251 7% 44%;
+    --nori-h6f6858: 42 12% 39%;
+    --nori-h799c2a: 78 58% 39%;
+    --nori-h7a4a13: 32 73% 28%;
+    --nori-h7a7060: 37 12% 43%;
+    --nori-h857b6b: 37 11% 47%;
+    --nori-h8a2f20: 8 62% 33%;
+    --nori-h8a5620: 31 62% 33%;
+    --nori-h8a5a12: 36 77% 31%;
+    --nori-h8ab135: 79 54% 45%;
+    --nori-h8f2318: 6 71% 33%;
+    --nori-h94a3b8: 215 20% 65%;
+    --nori-h9ca3af: 218 11% 65%;
+    --nori-ha06a1e: 35 68% 37%;
+    --nori-ha3271c: 5 71% 37%;
+    --nori-ha39887: 36 13% 58%;
+    --nori-hb03a29: 8 62% 43%;
+    --nori-hb05ffe: 271 99% 68%;
+    --nori-hb06a1c: 32 73% 40%;
+    --nori-hb4442e: 10 59% 44%;
+    --nori-hb9bfc9: 218 13% 76%;
+    --nori-hbfcf9f: 80 33% 72%;
+    --nori-hc0392b: 6 63% 46%;
+    --nori-hc97929: 30 66% 47%;
+    --nori-hcbd5e1: 213 27% 84%;
+    --nori-hcde8b5: 92 53% 81%;
+    --nori-hd24a3d: 5 62% 53%;
+    --nori-hd98b3d: 30 67% 55%;
+    --nori-hd9d1c5: 36 21% 81%;
+    --nori-hdb9346: 31 67% 57%;
+    --nori-hdf6dd4: 306 64% 65%;
+    --nori-he4f3e2: 113 41% 92%;
+    --nori-he5e1d2: 47 27% 86%;
+    --nori-hebe8db: 49 29% 89%;
+    --nori-hefe8d6: 43 44% 89%;
+    --nori-heff4ff: 221 100% 97%;
+    --nori-hf3f1e8: 49 31% 93%;
+    --nori-hf5f0e6: 40 43% 93%;
+    --nori-hf6f4eb: 49 38% 94%;
+    --nori-hf8f4ea: 43 50% 95%;
+    --nori-hfb923c: 27 96% 61%;
+    --nori-hfbecea: 7 68% 95%;
+    --nori-hfbfaf5: 50 43% 97%;
+    --nori-hfde7e4: 7 86% 94%;
+    --nori-hfdf1de: 37 89% 93%;
+    --nori-hfdf3e6: 34 85% 95%;
+    --nori-hff6b35: 16 100% 60%;
+    --nori-hffd4d4: 0 100% 92%;
+    --nori-hffdd44: 49 100% 63%;
+    --nori-hffe9a8: 45 100% 83%;
+    --nori-hfffdf7: 45 100% 98%;
+  }
+  .dark {
+    --nori-h0f0e0c: 40 11% 95%;
+    --nori-h14131a: 249 14% 95%;
+    --nori-h171512: 36 12% 95%;
+    --nori-h1e293b: 217 52% 56%;
+    --nori-h1f2937: 215 14% 93%;
+    --nori-h242019: 38 14% 94%;
+    --nori-h2a2833: 251 12% 93%;
+    --nori-h2a6b33: 128 52% 56%;
+    --nori-h2c2b3a: 244 14% 93%;
+    --nori-h2c5282: 213 52% 56%;
+    --nori-h2f7d5b: 154 52% 56%;
+    --nori-h34d399: 158 64% 56%;
+    --nori-h374151: 217 52% 56%;
+    --nori-h3d6ea5: 212 52% 56%;
+    --nori-h3f9a4c: 129 52% 56%;
+    --nori-h43a04e: 127 52% 56%;
+    --nori-h475569: 215 16% 66%;
+    --nori-h4d463a: 38 52% 56%;
+    --nori-h4d6a1e: 83 56% 56%;
+    --nori-h4e9d55: 125 52% 56%;
+    --nori-h5a5346: 39 14% 66%;
+    --nori-h5c5344: 38 16% 66%;
+    --nori-h5c564b: 39 12% 66%;
+    --nori-h6b6878: 251 9% 66%;
+    --nori-h6f6858: 42 14% 66%;
+    --nori-h799c2a: 78 58% 56%;
+    --nori-h7a4a13: 32 73% 56%;
+    --nori-h7a7060: 37 14% 66%;
+    --nori-h857b6b: 37 13% 66%;
+    --nori-h8a2f20: 8 62% 56%;
+    --nori-h8a5620: 31 62% 56%;
+    --nori-h8a5a12: 36 77% 56%;
+    --nori-h8ab135: 79 54% 56%;
+    --nori-h8f2318: 6 71% 56%;
+    --nori-h94a3b8: 215 16% 66%;
+    --nori-h9ca3af: 218 13% 66%;
+    --nori-ha06a1e: 35 68% 56%;
+    --nori-ha3271c: 5 71% 56%;
+    --nori-ha39887: 36 15% 66%;
+    --nori-hb03a29: 8 62% 56%;
+    --nori-hb05ffe: 271 88% 68%;
+    --nori-hb06a1c: 32 73% 56%;
+    --nori-hb4442e: 10 59% 56%;
+    --nori-hb9bfc9: 218 52% 70%;
+    --nori-hbfcf9f: 80 52% 70%;
+    --nori-hc0392b: 6 63% 56%;
+    --nori-hc97929: 30 66% 56%;
+    --nori-hcbd5e1: 213 27% 17%;
+    --nori-hcde8b5: 92 53% 17%;
+    --nori-hd24a3d: 5 62% 56%;
+    --nori-hd98b3d: 30 67% 56%;
+    --nori-hd9d1c5: 36 25% 17%;
+    --nori-hdb9346: 31 67% 57%;
+    --nori-hdf6dd4: 306 64% 65%;
+    --nori-he4f3e2: 113 41% 17%;
+    --nori-he5e1d2: 47 14% 22%;
+    --nori-hebe8db: 49 14% 19%;
+    --nori-hefe8d6: 43 44% 17%;
+    --nori-heff4ff: 221 55% 17%;
+    --nori-hf3f1e8: 49 14% 15%;
+    --nori-hf5f0e6: 40 43% 17%;
+    --nori-hf6f4eb: 49 14% 14%;
+    --nori-hf8f4ea: 43 50% 17%;
+    --nori-hfb923c: 27 88% 61%;
+    --nori-hfbecea: 7 55% 17%;
+    --nori-hfbfaf5: 50 43% 17%;
+    --nori-hfde7e4: 7 55% 17%;
+    --nori-hfdf1de: 37 55% 17%;
+    --nori-hfdf3e6: 34 55% 17%;
+    --nori-hff6b35: 16 88% 60%;
+    --nori-hffd4d4: 0 55% 17%;
+    --nori-hffdd44: 49 88% 63%;
+    --nori-hffe9a8: 45 55% 17%;
+    --nori-hfffdf7: 45 55% 17%;
+  }
+}
+
+/* --- Dark palette overrides (chosen 2026-07-19) ---
+   Neutral graphite cards + cleaner colored tints + brighter hero glows +
+   legible tag/accent. Unlayered so it wins over the generated .dark tokens.
+   Dark-only: light mode untouched. */
+.dark {
+  /* card elevation: neutral graphite */
+  --background: 240 5% 8%;
+  --card: 240 5% 13%;
+  --border: 240 5% 24%;
+  --nori-hfbfaf5: 240 5% 8%;
+  --nori-hf6f4eb: 240 5% 13%;
+  --nori-hf3f1e8: 240 5% 13%;
+  --nori-hf8f4ea: 240 5% 13%;
+  --nori-hf5f0e6: 240 5% 13%;
+  --nori-hfffdf7: 240 5% 18%;
+  --nori-hebe8db: 240 5% 24%;
+  /* colored tints: 4 feature cards (amber / slate / rose / sage) + hero glows */
+  --nori-hffe9a8: 38 44% 14%;      /* sticker  -> amber (Teleoperate + amber glow) */
+  --nori-hefe8d6: 216 26% 16%;     /* tan      -> slate-blue (code) */
+  --nori-hffd4d4: 6 36% 16%;       /* sticker2 -> rose (train) */
+  --nori-hbfcf9f: 96 24% 15%;      /* moss     -> sage (community) */
+  --nori-hcde8b5: 116 40% 25%;      /* leaf -> soft green hero glow (toned down) */     /* leaf     -> brighter green hero glow (bumped) */
+  --nori-hb9bfc9: 216 28% 18%;     /* steel    -> slate-blue */
+  /* tag/badge accent: deep gold so off-white pill text (ACT etc) is legible
+     (was bright custard 45 100% 83% -> off-white on it was invisible) */
+  --accent: 42 42% 18%;
+  --accent-foreground: 50 43% 97%;
+}

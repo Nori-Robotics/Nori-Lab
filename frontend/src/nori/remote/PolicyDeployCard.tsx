@@ -115,7 +115,7 @@ export function PolicyDeployCard() {
   const runnable = policies.filter((p) => p.runnable);
 
   return (
-    <div className={`rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pt-3 text-[#14131a] shadow-sm ${open ? "pb-4" : "pb-3"}`}>
+    <div className={`rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-4 pt-3 text-nori-h14131a shadow-sm ${open ? "pb-4" : "pb-3"}`}>
       <div
         role="button"
         tabIndex={0}
@@ -143,14 +143,14 @@ export function PolicyDeployCard() {
 
       {open && (
         <div className="mt-3 space-y-3">
-          <p className="text-sm leading-relaxed text-[#6f6858]">
+          <p className="text-sm leading-relaxed text-nori-h6f6858">
             Run a trained policy on your robot. It runs on this computer and streams only motor
             instructions to Nori.
           </p>
 
           {runnable.length > 0 && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-              <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">
+              <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">
                 {"// execution"}
               </span>
               <div className="flex flex-wrap items-center gap-1.5">
@@ -162,21 +162,21 @@ export function PolicyDeployCard() {
                     onClick={() => setMode(m)}
                     title={EXECUTION_MODE_LABELS[m].hint}
                     className={`rounded-full px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors disabled:opacity-50 ${
-                      mode === m ? "bg-[#b06a1c] text-white" : "bg-white/70 text-[#6f6858] hover:text-[#14131a]"
+                      mode === m ? "bg-nori-hb06a1c text-white dark:text-neutral-900" : "bg-white/70 text-nori-h6f6858 hover:text-nori-h14131a"
                     }`}
                   >
                     {EXECUTION_MODE_LABELS[m].label}
                   </button>
                 ))}
               </div>
-              <span className="min-w-0 flex-1 text-[11px] leading-snug text-[#6f6858]">
+              <span className="min-w-0 flex-1 text-[11px] leading-snug text-nori-h6f6858">
                 {EXECUTION_MODE_LABELS[mode].hint}
               </span>
             </div>
           )}
 
           {runnable.length === 0 ? (
-            <p className="text-sm text-[#6f6858]">
+            <p className="text-sm text-nori-h6f6858">
               No policies downloaded yet — install one from the Marketplace and it'll appear here,
               ready to deploy.
             </p>
@@ -187,14 +187,14 @@ export function PolicyDeployCard() {
                 return (
                   <li
                     key={p.ref}
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[#14131a]/10 py-1.5 first:border-t-0"
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-nori-h14131a/10 py-1.5 first:border-t-0"
                   >
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-[#14131a]" title={p.ref}>
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-nori-h14131a" title={p.ref}>
                       {nameFor(p.ref)}
                     </span>
                     {thisActive ? (
                       <>
-                        <span className="shrink-0 text-xs text-[#6f6858]">
+                        <span className="shrink-0 text-xs text-nori-h6f6858">
                           {phase.kind === "loading"
                             ? "loading…"
                             : `running · ${phase.kind === "running" ? phase.ticks : 0} ticks`}
@@ -225,11 +225,11 @@ export function PolicyDeployCard() {
           )}
 
           {phase.kind === "stopped" && (
-            <p className="text-xs text-[#6f6858]">Stopped — {phase.reason}</p>
+            <p className="text-xs text-nori-h6f6858">Stopped — {phase.reason}</p>
           )}
           {phase.kind === "error" && <p className="text-xs text-red-700">{phase.message}</p>}
           {!running && runnable.length > 0 && (
-            <p className="text-xs text-[#6f6858]">Connect to the robot first to deploy a policy.</p>
+            <p className="text-xs text-nori-h6f6858">Connect to the robot first to deploy a policy.</p>
           )}
         </div>
       )}

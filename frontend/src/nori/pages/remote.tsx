@@ -73,7 +73,7 @@ const TuneSlider = ({
       step={0.05}
       value={value}
       onChange={(e) => onChange(Number(e.target.value))}
-      className="h-1 min-w-0 flex-1 cursor-pointer accent-[#14131a]"
+      className="h-1 min-w-0 flex-1 cursor-pointer accent-nori-h14131a"
     />
     <span className="w-10 shrink-0 text-right font-mono text-[11px] text-muted-foreground">
       {Math.round(value * 100)}%
@@ -477,7 +477,7 @@ const Remote = () => {
       {!ready && (
         <p className="text-sm text-destructive">
           Nori auth/config not ready{noriError ? ` — ${noriError}` : " — sign in first (Supabase config comes from the laptop server)."}{" "}
-          <span className="text-[#6f6858]">(laptop server: {baseUrl})</span>
+          <span className="text-nori-h6f6858">(laptop server: {baseUrl})</span>
         </p>
       )}
 
@@ -494,7 +494,7 @@ const Remote = () => {
               <span
                 className={
                   "inline-flex h-9 items-center rounded-full px-3 font-mono text-xs " +
-                  (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]")
+                  (connected ? "bg-nori-h8ab135/25 text-nori-h4d6a1e" : "bg-nori-h14131a/8 text-nori-h857b6b")
                 }
               >
                 ● {status}
@@ -569,8 +569,8 @@ const Remote = () => {
           <PolicyDeployCard />
 
           {/* Single combined telemetry card: link/loop chips, then rail height, then grip force. */}
-          <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// telemetry</p>
+          <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-4 text-nori-h14131a shadow-sm">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// telemetry</p>
             <div className="mt-3">
               <TelemetryPanel
                 connState={running ? connState : "idle"}
@@ -602,12 +602,12 @@ const Remote = () => {
             robot's voice downlink on — --voice / NORI_SPEAKER). Always shown; disabled offline.
             Kept tight: in this 400px rail an active call fits on two rows, so joining doesn't
             shove the control cards down the page. */}
-        <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
+        <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-4 text-nori-h14131a shadow-sm">
           {/* Clip-to-speaker rides on the "// audio" eyebrow line — it's a one-off action, not
               part of the call, and parking it here keeps the call controls and the you/nori
               indicators together on the rows below. */}
           <div className="flex min-h-5 flex-wrap items-center gap-2">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// audio</p>
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// audio</p>
             <div className="ml-auto flex min-w-0 flex-nowrap items-center gap-2">
               {clipName ? (
                 <>
@@ -615,10 +615,10 @@ const Remote = () => {
                       Stop button in the same spot, so the whole row stays on one line. The name is
                       truncated (full name on hover) so a long filename can't push Stop off the row. */}
                   <span
-                    className="flex min-w-0 items-center gap-1 text-xs text-[#4d6a1e]"
+                    className="flex min-w-0 items-center gap-1 text-xs text-nori-h4d6a1e"
                     title={clipName}
                   >
-                    <span className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-[#8ab135]" />
+                    <span className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-nori-h8ab135" />
                     Clip <span className="max-w-[7rem] truncate font-medium">{clipName}</span> playing
                   </span>
                   <Button size="sm" variant="secondary" onClick={stopClip}>
@@ -627,11 +627,11 @@ const Remote = () => {
                 </>
               ) : (
                 <>
-                  <span className="text-xs text-[#857b6b]">Play clip</span>
+                  <span className="text-xs text-nori-h857b6b">Play clip</span>
                   <label
                     className={
-                      "rounded border border-[#14131a]/20 px-2 py-0.5 text-xs " +
-                      (connected ? "cursor-pointer hover:bg-[#14131a]/5" : "pointer-events-none opacity-50")
+                      "rounded border border-nori-h14131a/20 px-2 py-0.5 text-xs " +
+                      (connected ? "cursor-pointer hover:bg-nori-h14131a/5" : "pointer-events-none opacity-50")
                     }
                     title="Play an audio file out of the robot's speaker"
                   >
@@ -671,8 +671,8 @@ const Remote = () => {
         {/* Control-mode picker: which method drives the arms. All options are always shown
             (even when a headset / the leader arms aren't present); keyboard is the default. */}
         {/* min-h-16 = the collapsed control cards' 64px, so this strip lines up with them. */}
-        <div className="flex min-h-16 flex-wrap items-center gap-3 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 py-2 text-[#14131a] shadow-sm">
-          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// controls</p>
+        <div className="flex min-h-16 flex-wrap items-center gap-3 rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-4 py-2 text-nori-h14131a shadow-sm">
+          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// controls</p>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <Pill
               active={controlMode === "keyboard"}
@@ -700,7 +700,7 @@ const Remote = () => {
 
         {/* VR mode card: the headset entry point on supported devices, a plain hint otherwise. */}
         {controlMode === "vr" && (
-          <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pb-4 pt-3 text-[#14131a] shadow-sm">
+          <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-4 pb-4 pt-3 text-nori-h14131a shadow-sm">
             <div
               className="flex min-h-9 cursor-pointer items-center justify-between"
               onClick={() => setShowVrCard((v) => !v)}
@@ -721,7 +721,7 @@ const Remote = () => {
                       {inVr ? "In VR" : "Enter VR"}
                     </Button>
                     {!connected && (
-                      <span className="text-sm text-[#6f6858]">connect to the robot first</span>
+                      <span className="text-sm text-nori-h6f6858">connect to the robot first</span>
                     )}
                   </div>
                 )}
@@ -755,7 +755,7 @@ const Remote = () => {
         {/* Leader-arm hardware setup — the full leader-setup surface, embedded. Shown while
             leader mode is selected; usable offline (calibration doesn't need the session). */}
         {controlMode === "leader" && (
-          <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pb-4 pt-3 shadow-sm">
+          <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-4 pb-4 pt-3 shadow-sm">
             {/* Routing status: with ONE leader arm connected the driver solo-routes it to the
                 selected follower arm (the pills in the header) — say so, since otherwise a
                 left leader silently driving the right arm reads as a wiring bug. Also flag
@@ -764,7 +764,7 @@ const Remote = () => {
             {/* Live joint count + engagement — moved off the mode pill (which stays a plain
                 "Leader arm" label) into the card's status area, right below the pills. */}
             {leaderActive && (
-              <p className="mb-2 rounded bg-[#14131a]/5 px-2 py-1 text-xs font-medium text-[#4d463a]">
+              <p className="mb-2 rounded bg-nori-h14131a/5 px-2 py-1 text-xs font-medium text-nori-h4d463a">
                 {leaderCount}/{leaderSides.length === 1 ? 6 : 12} leader joints readable ·{" "}
                 {leaderEngaged
                   ? leaderSides.length === 1 ? `engaged → ${settings.arm} arm` : "engaged"
@@ -774,18 +774,18 @@ const Remote = () => {
             {/* Calibration health, summary only — the embedded Leader setup below lists the
                 per-joint details, so repeating them here just doubles the wall of text. */}
             {leaderActive && leaderWarnings.length > 0 && (
-              <p className="mb-2 rounded bg-[#d24a3d]/10 px-2 py-1 text-xs font-semibold text-[#8f2318]">
+              <p className="mb-2 rounded bg-nori-hd24a3d/10 px-2 py-1 text-xs font-semibold text-nori-h8f2318">
                 Calibration problems — recalibrate before engaging. Details in Leader setup below.
               </p>
             )}
             {leaderActive && leaderSides.length === 1 && (
-              <p className="mb-2 rounded bg-[#8ab135]/15 px-2 py-1 text-xs text-[#4d6a1e]">
+              <p className="mb-2 rounded bg-nori-h8ab135/15 px-2 py-1 text-xs text-nori-h4d6a1e">
                 One leader arm connected ({leaderSides[0]}) — {leaderEngaged ? "driving" : "will drive"} the{" "}
                 <strong>{settings.arm}</strong> follower arm. Use the arm pills to switch sides.
               </p>
             )}
             {leaderActive && leaderSides.length === 0 && (
-              <p className="mb-2 rounded bg-[#b06a1c]/15 px-2 py-1 text-xs text-[#7a4a13]">
+              <p className="mb-2 rounded bg-nori-hb06a1c/15 px-2 py-1 text-xs text-nori-h7a4a13">
                 Leader mode is on but no leader joints are readable — nothing is being sent to
                 the robot. Check the USB connection and that this machine has a leader
                 calibration for the configured ID.
@@ -809,7 +809,7 @@ const Remote = () => {
                   className={
                     leaderEngaged
                       ? "rounded-md"
-                      : "rounded-md bg-[#8ab135] text-foreground hover:bg-[#799c2a]"
+                      : "rounded-md bg-nori-h8ab135 text-foreground hover:bg-nori-h799c2a"
                   }
                   title={
                     !leaderActive
@@ -830,7 +830,7 @@ const Remote = () => {
               headerBelow={
                 /* Base + lift + commands stay on the keyboard while the leaders drive the
                    arms — keep those bindings visible right where leader driving happens. */
-                <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-3">
+                <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-3">
                   <BaseCommandLegend
                     wasd
                     hint="Base + lift stay on the keyboard while the leaders drive the arms; once engaged, WASD drives the base too (until then it still jogs the arm). Click the video first so keys register."
@@ -843,7 +843,7 @@ const Remote = () => {
 
         {/* Keyboard legend only shows for its own mode, like the VR and leader cards. */}
         {controlMode === "keyboard" && (
-        <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
+        <Card className="border-nori-h14131a/10 bg-nori-hf3f1e8 text-nori-h14131a">
           <CardHeader
             className={`cursor-pointer px-4 pt-3 ${showKeyboardCard ? "pb-0" : "pb-4"}`}
             onClick={() => setShowKeyboardCard((v) => !v)}
@@ -891,9 +891,9 @@ const Remote = () => {
         </Card>
         )}
 
-        <div className="rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-4 text-[#14131a] shadow-sm">
+        <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-4 text-nori-h14131a shadow-sm">
           <div className="flex items-baseline justify-between gap-3">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// 3d schematic</p>
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// 3d schematic</p>
             {!hasJointTelemetry(tel.state) && (
               <span className="text-[11px] text-muted-foreground">waiting for joint telemetry…</span>
             )}
@@ -903,7 +903,7 @@ const Remote = () => {
           </div>
         </div>
 
-        <Card className="border-[#14131a]/10 bg-[#f3f1e8] text-[#14131a]">
+        <Card className="border-nori-h14131a/10 bg-nori-hf3f1e8 text-nori-h14131a">
           <CardHeader
             className={`cursor-pointer px-4 pt-3 ${showLog ? "pb-0" : "pb-4"}`}
             onClick={() => setShowLog((v) => !v)}
@@ -917,7 +917,7 @@ const Remote = () => {
           <CardContent className="p-4 pt-3">
             <div
               ref={logRef}
-              className="max-h-96 min-h-44 overflow-auto whitespace-pre-wrap rounded border border-[#14131a]/10 bg-[#f3f1e8] p-2 font-mono text-xs"
+              className="max-h-96 min-h-44 overflow-auto whitespace-pre-wrap rounded border border-nori-h14131a/10 bg-nori-hf3f1e8 p-2 font-mono text-xs"
             >
               {logLines.length > 0 ? (
                 logLines.join("\n")

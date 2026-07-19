@@ -8,7 +8,7 @@ export function HelpTip({ label, children }: { label: string; children: React.Re
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button type="button" className="text-[#857b6b] hover:text-[#14131a]" aria-label={label}>
+        <button type="button" className="text-nori-h857b6b hover:text-nori-h14131a" aria-label={label}>
           <HelpCircle className="h-3.5 w-3.5" />
         </button>
       </TooltipTrigger>

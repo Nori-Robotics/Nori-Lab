@@ -256,7 +256,7 @@ const MarketplaceDetail = () => {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               maxLength={120}
-              className="min-w-0 flex-1 rounded-xl border border-input bg-background px-3 py-2 font-display text-[1.6rem] leading-tight focus:outline-none focus:shadow-[0_0_0_3px_#ffe9a8]"
+              className="min-w-0 flex-1 rounded-xl border border-input bg-background px-3 py-2 font-display text-[1.6rem] leading-tight focus:outline-none focus:shadow-[0_0_0_3px_hsl(var(--nori-hffe9a8))]"
             />
             <button
               type="button"

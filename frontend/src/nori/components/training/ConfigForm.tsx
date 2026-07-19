@@ -27,10 +27,10 @@ import type { NoriTrainingFormState } from "./types";
 import { FEASIBLE_POLICY_OPTIONS, DURATION_OPTIONS, UNLIMITED_DURATION_SECONDS } from "./types";
 
 // Warm-palette field styling, matching the Panel cream/ink language.
-const FIELD = "border-[#14131a]/15 bg-white text-[#14131a] rounded-md";
-const LABEL = "text-[#14131a]/70";
+const FIELD = "border-nori-h14131a/15 bg-white dark:bg-background text-nori-h14131a rounded-md";
+const LABEL = "text-nori-h14131a/70";
 const SUBHEAD =
-  "font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]";
+  "font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c";
 
 export interface ConfigFormProps {
   config: NoriTrainingFormState;
@@ -109,7 +109,7 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="mt-1 text-xs text-[#14131a]/50">
+              <p className="mt-1 text-xs text-nori-h14131a/50">
                 More architectures coming soon.
               </p>
             </div>
@@ -121,7 +121,7 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
                 className={`mt-1 ${FIELD}`}
               />
               {estimate && (
-                <p className="mt-1 text-xs text-[#14131a]/50">
+                <p className="mt-1 text-xs text-nori-h14131a/50">
                   Estimated training ≈ {estimate.fastMin}–{estimate.slowMin} min
                   {estimate.setupMin > 0 && (
                     <> (+ ~{estimate.setupMin} min setup, not billed to you)</>
@@ -144,7 +144,7 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
       {/* Compute */}
       <Panel eyebrow="compute" title="Where it runs">
         <div className="space-y-3">
-          <p className="text-sm text-[#14131a]/70">
+          <p className="text-sm text-nori-h14131a/70">
             Training runs on Nori cloud compute — no setup, no HuggingFace token
             needed. The trained policy is saved to your account when it finishes.
           </p>
@@ -169,21 +169,21 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
                 })}
               </SelectContent>
             </Select>
-            <p className="mt-1 text-xs text-[#14131a]/50">
+            <p className="mt-1 text-xs text-nori-h14131a/50">
               {maxDuration >= UNLIMITED_DURATION_SECONDS
                 ? "Your plan includes unlimited training duration."
                 : "Longer runs unlock on higher plans — Developer tier is unlimited."}
             </p>
             {estimate && !estimate.fits && (
               estParams?.resumable ? (
-                <p className="mt-2 rounded bg-[#3d6ea5]/10 px-2 py-1.5 text-xs text-[#2c5282]">
+                <p className="mt-2 rounded bg-nori-h3d6ea5/10 px-2 py-1.5 text-xs text-nori-h2c5282">
                   This training is longer than the selected duration (≈
                   {estimate.slowMin} min needed). It will pause safely when the
                   duration runs out and can be resumed later from where it left
                   off.
                 </p>
               ) : (
-                <p className="mt-2 rounded bg-[#b06a1c]/15 px-2 py-1.5 text-xs text-[#7a4a13]">
+                <p className="mt-2 rounded bg-nori-hb06a1c/15 px-2 py-1.5 text-xs text-nori-h7a4a13">
                   Won't finish in this duration: ≈{estimate.slowMin} min needed.
                   Dispatch will reject this — reduce steps to at most{" "}
                   {estimate.maxFittingSteps.toLocaleString()} or pick a longer
@@ -203,8 +203,8 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
           aria-expanded={advancedOpen}
           className="flex w-full items-center justify-between p-4 text-left"
         >
-          <span className="font-semibold text-[#14131a]">Advanced</span>
-          <span className="flex items-center gap-1 text-sm text-[#14131a]/60">
+          <span className="font-semibold text-nori-h14131a">Advanced</span>
+          <span className="flex items-center gap-1 text-sm text-nori-h14131a/60">
             {advancedOpen ? (
               <ChevronDown className="h-4 w-4" />
             ) : (
@@ -215,7 +215,7 @@ const ConfigForm = ({ config, updateConfig }: ConfigFormProps) => {
         </button>
 
         {advancedOpen && (
-          <div className="space-y-8 border-t border-[#14131a]/10 p-4">
+          <div className="space-y-8 border-t border-nori-h14131a/10 p-4">
             <section className="space-y-4">
               <h4 className={SUBHEAD}>Training</h4>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

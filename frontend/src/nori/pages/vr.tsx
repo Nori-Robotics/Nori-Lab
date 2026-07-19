@@ -146,7 +146,7 @@ export default function VrLanding() {
           <span
             className={
               "ml-auto inline-flex h-9 items-center rounded-full px-3 font-mono text-xs " +
-              (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]")
+              (connected ? "bg-nori-h8ab135/25 text-nori-h4d6a1e" : "bg-nori-h14131a/8 text-nori-h857b6b")
             }
           >
             ● {status}
@@ -247,7 +247,7 @@ export default function VrLanding() {
             ) : (
               <div className="space-y-4">
                 {xrSupported === false && (
-                  <p className="rounded-lg bg-[#14131a]/5 px-3 py-2 text-sm text-[#4d463a]">
+                  <p className="rounded-lg bg-nori-h14131a/5 px-3 py-2 text-sm text-nori-h4d463a">
                     No VR headset detected in this browser. You can see the video here — open this same
                     URL in a headset browser (e.g. Meta Quest) to enter VR.
                   </p>
@@ -261,14 +261,14 @@ export default function VrLanding() {
                   {inVr ? "In VR — put on your headset" : "Enter VR"}
                 </Button>
                 {/* Sensitivity — persisted in THIS (headset) browser, applied live while in VR. */}
-                <div className="space-y-2 rounded-lg bg-[#14131a]/5 px-3 py-2">
+                <div className="space-y-2 rounded-lg bg-nori-h14131a/5 px-3 py-2">
                   <label className="flex items-center gap-2 text-sm" title="How much the robot moves per hand movement (100% = default)">
                     <span className="w-20 text-muted-foreground">motion</span>
                     <input
                       type="range" min={0.25} max={2} step={0.05}
                       value={settings.vrSensitivity}
                       onChange={(e) => set("vrSensitivity", Number(e.target.value))}
-                      className="h-1 flex-1 cursor-pointer accent-[#14131a]"
+                      className="h-1 flex-1 cursor-pointer accent-nori-h14131a"
                     />
                     <span className="w-10 text-right font-mono text-xs">{Math.round(settings.vrSensitivity * 100)}%</span>
                   </label>
@@ -278,7 +278,7 @@ export default function VrLanding() {
                       type="range" min={0.05} max={1} step={0.05}
                       value={settings.vrGripperOpen}
                       onChange={(e) => set("vrGripperOpen", Number(e.target.value))}
-                      className="h-1 flex-1 cursor-pointer accent-[#14131a]"
+                      className="h-1 flex-1 cursor-pointer accent-nori-h14131a"
                     />
                     <span className="w-10 text-right font-mono text-xs">{Math.round(settings.vrGripperOpen * 100)}%</span>
                   </label>

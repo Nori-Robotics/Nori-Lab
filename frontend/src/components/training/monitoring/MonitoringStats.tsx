@@ -177,28 +177,28 @@ const MonitoringStats: React.FC<MonitoringStatsProps> = ({
                   >
                     <XAxis
                       dataKey="step"
-                      tick={{ fill: '#94a3b8', fontSize: 11 }}
-                      stroke="#475569"
+                      tick={{ fill: 'hsl(var(--nori-h94a3b8))', fontSize: 11 }}
+                      stroke="hsl(var(--nori-h475569))"
                     />
                     <YAxis
-                      tick={{ fill: '#94a3b8', fontSize: 11 }}
-                      stroke="#475569"
+                      tick={{ fill: 'hsl(var(--nori-h94a3b8))', fontSize: 11 }}
+                      stroke="hsl(var(--nori-h475569))"
                       width={48}
                     />
                     <Tooltip
                       contentStyle={{
-                        background: '#1e293b',
-                        border: '1px solid #475569',
+                        background: 'hsl(var(--nori-h1e293b))',
+                        border: '1px solid hsl(var(--nori-h475569))',
                         borderRadius: 8,
                       }}
-                      labelStyle={{ color: '#cbd5e1' }}
-                      itemStyle={{ color: '#34d399' }}
+                      labelStyle={{ color: 'hsl(var(--nori-hcbd5e1))' }}
+                      itemStyle={{ color: 'hsl(var(--nori-h34d399))' }}
                       formatter={(v: number) => v.toFixed(4)}
                     />
                     <Line
                       type="monotone"
                       dataKey="loss"
-                      stroke="#34d399"
+                      stroke="hsl(var(--nori-h34d399))"
                       strokeWidth={2}
                       dot={false}
                       isAnimationActive={false}
@@ -238,29 +238,29 @@ const MonitoringStats: React.FC<MonitoringStatsProps> = ({
                   >
                     <XAxis
                       dataKey="step"
-                      tick={{ fill: '#94a3b8', fontSize: 11 }}
-                      stroke="#475569"
+                      tick={{ fill: 'hsl(var(--nori-h94a3b8))', fontSize: 11 }}
+                      stroke="hsl(var(--nori-h475569))"
                     />
                     <YAxis
-                      tick={{ fill: '#94a3b8', fontSize: 11 }}
-                      stroke="#475569"
+                      tick={{ fill: 'hsl(var(--nori-h94a3b8))', fontSize: 11 }}
+                      stroke="hsl(var(--nori-h475569))"
                       width={48}
                       tickFormatter={(v: number) => v.toExponential(0)}
                     />
                     <Tooltip
                       contentStyle={{
-                        background: '#1e293b',
-                        border: '1px solid #475569',
+                        background: 'hsl(var(--nori-h1e293b))',
+                        border: '1px solid hsl(var(--nori-h475569))',
                         borderRadius: 8,
                       }}
-                      labelStyle={{ color: '#cbd5e1' }}
-                      itemStyle={{ color: '#fb923c' }}
+                      labelStyle={{ color: 'hsl(var(--nori-hcbd5e1))' }}
+                      itemStyle={{ color: 'hsl(var(--nori-hfb923c))' }}
                       formatter={(v: number) => v.toExponential(2)}
                     />
                     <Line
                       type="monotone"
                       dataKey="lr"
-                      stroke="#fb923c"
+                      stroke="hsl(var(--nori-hfb923c))"
                       strokeWidth={2}
                       dot={false}
                       isAnimationActive={false}

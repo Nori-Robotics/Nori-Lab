@@ -126,19 +126,19 @@ const MetricChart = ({
           <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
             <XAxis
               dataKey="step"
-              tick={{ fill: "#14131a99", fontSize: 11 }}
-              stroke="#14131a33"
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+              stroke="hsl(var(--border))"
             />
             <YAxis
-              tick={{ fill: "#14131a99", fontSize: 11 }}
-              stroke="#14131a33"
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+              stroke="hsl(var(--border))"
               width={48}
               tickFormatter={yTickFormat}
             />
             <Tooltip
               contentStyle={{
                 background: "hsl(var(--nori-hf6f4eb))",
-                border: "1px solid #14131a33",
+                border: "1px solid hsl(var(--border))",
                 borderRadius: 8,
               }}
               labelStyle={{ color: "hsl(var(--nori-h14131a))" }}

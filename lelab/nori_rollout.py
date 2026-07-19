@@ -359,7 +359,7 @@ def _cloud_load(body: LoadBody) -> dict:
     if not instruction:
         raise HTTPException(status_code=422,
                             detail="a cloud VLA needs an instruction (natural-language task)")
-    views = body.views or _env_views() or ["observation.images.remote"]
+    views = body.views or _env_views() or cloudmod.DEFAULT_CLOUD_VIEWS
     fps = body.fps if (body.fps and body.fps > 0) else _env_fps()
     # Joint mapping: the model's 6-DoF output maps to ONE arm's keys, in the
     # model's canonical order (arm_keys). Validate those keys exist in the live

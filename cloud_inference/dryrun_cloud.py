@@ -39,13 +39,80 @@ def _frame(shade: int) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
+def _tensor_to_jpeg_b64(t) -> str:
+    import io as _io
+    import numpy as np
+    from PIL import Image
+    arr = t.detach().cpu().numpy() if hasattr(t, "detach") else np.asarray(t)
+    if arr.ndim == 3 and arr.shape[0] in (1, 3):          # CHW -> HWC
+        arr = np.transpose(arr, (1, 2, 0))
+    if arr.dtype != np.uint8:                              # float [0,1] -> uint8
+        arr = (np.clip(arr, 0, 1) * 255).astype(np.uint8) if arr.max() <= 1.0 else arr.astype(np.uint8)
+    buf = _io.BytesIO()
+    Image.fromarray(arr).save(buf, "JPEG", quality=85)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def replay_dataset(args, endpoint, token) -> int:
+    """EXPERIMENTAL (run in the lelab env — needs lerobot + a local capture).
+    Replays a recorded episode's REAL overhead+front frames through the cloud
+    policy and reports the per-joint open-loop error between the model's first
+    predicted action and the human-demonstrated action. A big error means either
+    a domain gap (Nori cameras vs the model's training views) or a mapping bug."""
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    ds = LeRobotDataset(args.dataset)
+    feats = ds.meta.features
+    state_names = feats["observation.state"]["names"]
+    action_names = feats["action"]["names"]
+    view_keys = args.views_keys or list(cr.DEFAULT_CLOUD_VIEWS)
+    missing = [v for v in view_keys if v not in feats]
+    if missing:
+        print(f"dataset lacks view(s) {missing}; has image features: "
+              f"{[k for k in feats if k.startswith('observation.images.')]}")
+        return 2
+    keys = cr.arm_keys(args.arm)
+    ep = args.episode
+    lo = int(ds.episode_data_index["from"][ep].item())
+    hi = int(ds.episode_data_index["to"][ep].item())
+    roll = cr.CloudRollout(endpoint=endpoint, token=token, instruction=args.instruction,
+                           action_keys=keys, num_steps=args.num_steps, bounds=cr.MOLMOACT2_BOUNDS)
+    print(f"replaying {args.dataset} ep{ep} frames [{lo},{hi}) | arm={args.arm} | views={view_keys}")
+    errs = []
+    for i in range(lo, hi):
+        fr = ds[i]
+        state = dict(zip(state_names, fr["observation.state"].tolist()))
+        imgs = [_tensor_to_jpeg_b64(fr[v]) for v in view_keys]
+        out = roll.serve(imgs, [state[k] for k in keys])
+        if out["action"] is None:
+            time.sleep(0.1)
+            continue
+        rec = dict(zip(action_names, fr["action"].tolist()))
+        errs.append([abs(out["action"][k] - rec[k]) for k in keys])
+    if not errs:
+        print("no predictions collected")
+        return 1
+    import statistics
+    print(f"\nframes scored: {len(errs)} | clamps={roll.status()['clamps']}")
+    print("per-joint mean |predicted - demonstrated| (degrees):")
+    for j, k in enumerate(keys):
+        col = [e[j] for e in errs]
+        print(f"  {k.replace(args.arm+'_arm_','').replace('.pos',''):<14} "
+              f"mean {statistics.mean(col):6.2f}  max {max(col):6.2f}")
+    print("\nlower is better; large errors => domain gap (cameras) or mapping issue.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--arm", default=os.environ.get("NORI_INFER_ARM", "left"))
     ap.add_argument("--instruction", default="pick up the red cup")
     ap.add_argument("--num-steps", type=int, default=10)
-    ap.add_argument("--views", type=int, default=2, help="how many camera views to send")
+    ap.add_argument("--views", type=int, default=2, help="how many synthetic views to send")
     ap.add_argument("--drain", type=int, default=30, help="actions to pull from the queue")
+    ap.add_argument("--dataset", default=None, help="replay a real capture (repo_id/path)")
+    ap.add_argument("--episode", type=int, default=0, help="episode index for --dataset replay")
+    ap.add_argument("--views-keys", nargs="*", default=None,
+                    help="image feature keys to send (default: overhead+front)")
     args = ap.parse_args()
 
     endpoint = cr.infer_url()
@@ -53,6 +120,9 @@ def main() -> int:
     if not endpoint or not token:
         print("set NORI_INFER_URL and ~/.nori_infer_token (or NORI_INFER_TOKEN)")
         return 2
+
+    if args.dataset:
+        return replay_dataset(args, endpoint, token)
 
     keys = cr.arm_keys(args.arm)
     print(f"endpoint : {endpoint}")

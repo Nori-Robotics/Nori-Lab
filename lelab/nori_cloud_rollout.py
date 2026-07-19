@@ -66,6 +66,16 @@ MOLMOACT2_BOUNDS = [
 ]
 
 
+# MolmoAct2 was trained on TWO external workspace views (a "top" and a "side"
+# RealSense) and is camera-ORDER-invariant ("random camera order is acceptable").
+# Nori's external/scene tiles are "overhead" and "front"; the "left_wrist" /
+# "right_wrist" tiles are egocentric/onboard — the wrong domain for this
+# checkpoint. So default to the two scene tiles (order doesn't matter). A session
+# without these tiles (single-composite) fails loudly at the client, listing the
+# tiles it does have — set `views` explicitly or NORI_INFER_VIEWS to override.
+DEFAULT_CLOUD_VIEWS = ["observation.images.overhead", "observation.images.front"]
+
+
 def arm_keys(arm: str) -> list[str]:
     """The 6 Nori telemetry/action keys for one arm, ordered to MATCH the model's
     output order (NOT Nori's alphabetical sort). Nori is bimanual with keys like

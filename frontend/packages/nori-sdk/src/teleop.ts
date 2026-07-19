@@ -350,7 +350,9 @@ export interface CallState {
 // recording disabled or the recorder service is down — a definite no, not silence).
 export interface RecordState {
   ok: boolean;
-  recording: boolean;
+  recording: boolean;    // an episode is actively capturing right now
+  sessionOpen?: boolean; // a session is open (may be between episodes, not capturing)
+  episodesKept?: number; // episodes kept in the open session so far
   episode?: string;      // "<session>/<episode-NNNN>" while recording
   freeGb?: number;       // spool disk headroom on the robot
   error?: string;
@@ -1727,6 +1729,8 @@ export class RemoteTeleop {
       ok: m.ok === true,
       recording: m.recording === true,
     };
+    if (m.session_open === true) s.sessionOpen = true;
+    if (typeof m.episodes_kept === "number") s.episodesKept = m.episodes_kept;
     if (typeof m.episode === "string" && m.episode) s.episode = m.episode;
     if (typeof m.free_gb === "number") s.freeGb = m.free_gb;
     if (typeof m.error === "string" && m.error) s.error = m.error;

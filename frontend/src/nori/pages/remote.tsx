@@ -11,6 +11,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
 import { type ArmSide, type CameraViewHandle } from "@nori/sdk";
@@ -89,7 +93,7 @@ const Remote = () => {
   // it no longer owns the RemoteTeleop instance and must NOT stop it on unmount.
   const {
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
-    connectStatus,
+    connectStatus, recordState,
     logLines, appendLog, settings, setSetting: set, connect, disconnect: sessionDisconnect,
     toggleControlMode, setCurrentsListener,
   } = useTeleopSession();
@@ -240,6 +244,23 @@ const Remote = () => {
     setInVr(false);
     await sessionDisconnect();
   }, [sessionDisconnect]);
+
+  // Disconnecting with a training session still open would auto-close it on the robot
+  // (camera silence, ~5 s) — but the operator may not realize a session is live, so
+  // confirm first. "Finish and save" closes the session cleanly (session_end) so it
+  // ships immediately; "Return" cancels the disconnect. A guard on sessionOpen means
+  // a normal (no-session) disconnect is unaffected.
+  const [confirmFinish, setConfirmFinish] = useState(false);
+  const sessionOpen = recordState?.sessionOpen ?? false;
+  const requestDisconnect = useCallback(() => {
+    if (sessionOpen) setConfirmFinish(true);
+    else void disconnect();
+  }, [sessionOpen, disconnect]);
+  const finishAndDisconnect = useCallback(() => {
+    teleop?.record("session_end");   // immediate clean finish (vs. the ~5 s silence auto-close)
+    setConfirmFinish(false);
+    void disconnect();
+  }, [teleop, disconnect]);
 
   // Enter the immersive (AR-passthrough) headset session on top of the live link. Reuses
   // the same RemoteTeleop + video element; VR feeds `jog` exactly like the keyboard.
@@ -500,7 +521,7 @@ const Remote = () => {
                 ● {status}
               </span>
               {running ? (
-                <Button size="sm" variant="destructive" onClick={disconnect}>Disconnect</Button>
+                <Button size="sm" variant="destructive" onClick={requestDisconnect}>Disconnect</Button>
               ) : (
                 <Button size="sm" variant="secondary" onClick={connect} disabled={connecting}>
                   {connecting ? "Connecting…" : "Connect"}
@@ -508,6 +529,26 @@ const Remote = () => {
               )}
             </div>
           </div>
+
+          <AlertDialog open={confirmFinish} onOpenChange={setConfirmFinish}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Finished recording dataset?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  You still have a training session open{
+                    recordState?.episodesKept
+                      ? ` with ${recordState.episodesKept} episode${recordState.episodesKept === 1 ? "" : "s"} saved`
+                      : ""
+                  }. Finish it before you disconnect — your episodes upload to My Stuff once
+                  the robot is idle. Keep Nori powered on until they land.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Return</AlertDialogCancel>
+                <AlertDialogAction onClick={finishAndDisconnect}>Finish and save</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           {/* Connection banner: what the connect attempt is doing, or why it failed + the remedy.
               Every connect failure used to land ONLY in the collapsed "Robot logs" box.
               settingsTo: the call settings live on Home, so settings-shaped failures (wrong/
@@ -658,6 +699,7 @@ const Remote = () => {
               running={running}
               connected={connState === "connected"}
               m6={m6}
+              recording={recordState?.recording ?? false}
               onJoin={joinCall}
               onLeave={leaveCall}
               onToggleMute={toggleMute}

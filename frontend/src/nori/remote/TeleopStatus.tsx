@@ -415,6 +415,7 @@ export function CallBar({
   onLeave,
   onToggleMute,
   onToggleCamera,
+  recording = false,
 }: {
   call: CallState;
   running: boolean;
@@ -426,6 +427,7 @@ export function CallBar({
   onLeave: () => void;
   onToggleMute: () => void;
   onToggleCamera: () => void;
+  recording?: boolean; // robot recorder capturing an episode — joining a call is blocked
 }) {
   // Speaker icon toggles a compact inline slider; opening it widens the group so the
   // you/nori indicators shift slightly left.
@@ -494,17 +496,41 @@ export function CallBar({
 
       <div className="ml-auto flex flex-wrap items-center gap-2">
         {!call.active ? (
-          // Same Pill as the Keyboard / Leader arm / VR mode strip below — this is the audio
-          // card's one action, and it sits in the same right-hand column, so it should read as
-          // the same kind of control rather than a differently-shaped button.
-          <Pill
-            onClick={onJoin}
-            disabled={!running || !connected}
-            title="Capture your mic and join the two-way audio call"
-            className="inline-flex items-center"
-          >
-            <Phone className="mr-2 h-4 w-4" /> Join call
-          </Pill>
+          recording ? (
+            // Recording a training dataset: a call starting mid-capture risks the P10S amp's
+            // inrush tripping USB over-current and browning out the cameras (rpi5/media/README.md
+            // "USB power budget"), which would corrupt the take — so block it and say why.
+            // A native title won't show on a disabled control, so use the (?) HelpTip tooltip
+            // pattern with the trigger on the wrapping span (a disabled Pill can't emit hover).
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex" tabIndex={0}>
+                  <Pill
+                    disabled
+                    aria-disabled
+                    className="inline-flex items-center pointer-events-none opacity-50"
+                  >
+                    <Phone className="mr-2 h-4 w-4" /> Join call
+                  </Pill>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-64 text-xs">
+                Call is disabled while recording training datasets.
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            // Same Pill as the Keyboard / Leader arm / VR mode strip below — this is the audio
+            // card's one action, and it sits in the same right-hand column, so it should read as
+            // the same kind of control rather than a differently-shaped button.
+            <Pill
+              onClick={onJoin}
+              disabled={!running || !connected}
+              title="Capture your mic and join the two-way audio call"
+              className="inline-flex items-center"
+            >
+              <Phone className="mr-2 h-4 w-4" /> Join call
+            </Pill>
+          )
         ) : (
           <>
             <Button size="sm" variant="destructive" onClick={onLeave} title="Leave the audio call">

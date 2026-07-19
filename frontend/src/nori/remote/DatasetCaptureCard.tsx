@@ -232,10 +232,18 @@ export function DatasetCaptureCard() {
                   drive the robot through the task, then stop to review it
                 </span>
               </div>
-              <p className="rounded-md border border-nori-h14131a/10 bg-white/50 px-3 py-2 text-xs text-nori-h6f6858">
-                When you’re done recording, <b>disconnect</b> and leave the robot
-                <b> powered on and idle</b>. Your episodes will upload to the cloud automatically. <b>Don’t turn Nori off</b> until your data lands in My Stuff.
-              </p>
+              <div className="rounded-md border border-amber-400/50 bg-amber-50/70 px-3 py-2 text-xs text-nori-h6f6858">
+                <p className="font-semibold text-amber-900">
+                  {episodeCount > 0
+                    ? `${episodeCount} episode${episodeCount === 1 ? "" : "s"} saved on Nori — not uploaded yet.`
+                    : "Episodes save on Nori as you record — nothing uploads yet."}
+                </p>
+                <p className="mt-1">
+                  To upload to My Stuff, <b>Finish session</b> (or just <b>disconnect</b>), then leave
+                  Nori <b>powered on and idle</b>. <b>Don’t turn Nori off</b> until your data lands in
+                  My Stuff.
+                </p>
+              </div>
             </>
           )}
 

@@ -162,7 +162,7 @@ export function PolicyDeployCard() {
                     onClick={() => setMode(m)}
                     title={EXECUTION_MODE_LABELS[m].hint}
                     className={`rounded-full px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors disabled:opacity-50 ${
-                      mode === m ? "bg-nori-hb06a1c text-white dark:text-neutral-900" : "bg-white/70 text-nori-h6f6858 hover:text-nori-h14131a"
+                      mode === m ? "bg-nori-hb06a1c text-white dark:text-neutral-900" : "bg-white/70 dark:bg-white/10 text-nori-h6f6858 hover:text-nori-h14131a"
                     }`}
                   >
                     {EXECUTION_MODE_LABELS[m].label}

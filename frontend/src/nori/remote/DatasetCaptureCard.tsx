@@ -198,7 +198,7 @@ export function DatasetCaptureCard() {
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <input
-                  className="h-9 flex-1 rounded-md border border-nori-h14131a/15 bg-white/70 px-3 text-sm"
+                  className="h-9 flex-1 rounded-md border border-nori-h14131a/15 bg-white/70 dark:bg-white/10 px-3 text-sm"
                   placeholder="task for this session (e.g. pick up the red cube)"
                   maxLength={200}
                   value={task}
@@ -232,8 +232,8 @@ export function DatasetCaptureCard() {
                   drive the robot through the task, then stop to review it
                 </span>
               </div>
-              <div className="rounded-md border border-amber-400/50 bg-amber-50/70 px-3 py-2 text-xs text-nori-h6f6858">
-                <p className="font-semibold text-amber-900">
+              <div className="rounded-md border border-amber-400/50 bg-amber-50/70 px-3 py-2 text-xs text-nori-h6f6858 dark:border-amber-500/30 dark:bg-amber-500/10">
+                <p className="font-semibold text-amber-900 dark:text-amber-300">
                   {episodeCount > 0
                     ? `${episodeCount} episode${episodeCount === 1 ? "" : "s"} saved on Nori — not uploaded yet.`
                     : "Episodes save on Nori as you record — nothing uploads yet."}

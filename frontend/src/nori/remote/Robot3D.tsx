@@ -34,7 +34,7 @@ function RobotModelMesh({ state, activeArm }: { state: Record<string, number>; a
 
 export function Robot3D({ state, activeArm }: { state: Record<string, number>; activeArm: ArmSide }) {
   return (
-    <div className="relative h-64 w-full overflow-hidden rounded-md border bg-[#f6f4eb]">
+    <div className="relative h-64 w-full overflow-hidden rounded-md border bg-nori-hf6f4eb">
       {/* Longer lens: lower fov + camera pulled back proportionally (~1.5x) for a flatter,
           less distorted view. maxDistance on the OrbitControls below must stay >= the start
           distance or the controls clamp the camera back in on first interaction. */}

@@ -442,7 +442,7 @@ const Recording = () => {
 
   const phaseColor =
     currentPhase === "recording"
-      ? { dot: "bg-red-500", pill: "bg-red-500/15 text-red-700", timer: "text-green-600", bar: "bg-green-500", button: "bg-[#8ab135] hover:bg-[#799c2a]" }
+      ? { dot: "bg-red-500", pill: "bg-red-500/15 text-red-700", timer: "text-green-600", bar: "bg-green-500", button: "bg-nori-h8ab135 hover:bg-nori-h799c2a" }
       : currentPhase === "resetting"
       ? { dot: "bg-orange-500", pill: "bg-orange-500/15 text-orange-700", timer: "text-orange-600", bar: "bg-orange-500", button: "bg-orange-500 hover:bg-orange-600" }
       : { dot: "bg-muted", pill: "bg-muted/15 text-muted-foreground", timer: "text-muted-foreground", bar: "bg-muted", button: "bg-muted" };

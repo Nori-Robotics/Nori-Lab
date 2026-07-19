@@ -40,9 +40,9 @@ const TIER_LABELS: Record<string, string> = {
 /** Thin usage bar: green under the soft line, amber near it, red at the cap. */
 const UsageBar = ({ used, allowed }: { used: number; allowed: number }) => {
   const frac = allowed > 0 ? Math.min(1, used / allowed) : 0;
-  const color = frac >= 1 ? "#c0392b" : frac >= 0.66 ? "#d98b3d" : "#8ab135";
+  const color = frac >= 1 ? "hsl(var(--nori-hc0392b))" : frac >= 0.66 ? "hsl(var(--nori-hd98b3d))" : "hsl(var(--nori-h8ab135))";
   return (
-    <div className="mt-1 h-1.5 w-full rounded bg-[#14131a]/10">
+    <div className="mt-1 h-1.5 w-full rounded bg-nori-h14131a/10">
       <div
         className="h-1.5 rounded"
         style={{ width: `${Math.round(frac * 100)}%`, backgroundColor: color }}
@@ -53,8 +53,8 @@ const UsageBar = ({ used, allowed }: { used: number; allowed: number }) => {
 
 const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
   <div className="flex justify-between gap-4 py-1.5 text-sm">
-    <span className="text-[#5c564b]">{label}</span>
-    <span className="text-right font-medium text-[#14131a]">{value}</span>
+    <span className="text-nori-h5c564b">{label}</span>
+    <span className="text-right font-medium text-nori-h14131a">{value}</span>
   </div>
 );
 
@@ -142,7 +142,7 @@ const Account = () => {
         </Button>
       </div>
 
-      <Panel eyebrow="account" title="Profile" bodyClassName="divide-y divide-[#14131a]/10">
+      <Panel eyebrow="account" title="Profile" bodyClassName="divide-y divide-nori-h14131a/10">
         <Row label="Email" value={customer.email ?? "—"} />
         <Row
           label="Plan"
@@ -166,8 +166,8 @@ const Account = () => {
         >
           <div>
             <div className="flex justify-between gap-4 text-sm">
-              <span className="text-[#5c564b]">Training compute</span>
-              <span className="font-medium text-[#14131a]">
+              <span className="text-nori-h5c564b">Training compute</span>
+              <span className="font-medium text-nori-h14131a">
                 {fmtSeconds(
                   billing.compute.consumed_seconds_this_month +
                     billing.compute.reserved_seconds_this_month
@@ -186,8 +186,8 @@ const Account = () => {
 
           <div>
             <div className="flex justify-between gap-4 text-sm">
-              <span className="text-[#5c564b]">Assistant tokens (today)</span>
-              <span className="font-medium text-[#14131a]">
+              <span className="text-nori-h5c564b">Assistant tokens (today)</span>
+              <span className="font-medium text-nori-h14131a">
                 {fmtTokens(billing.agent_tokens.used_today)} /{" "}
                 {fmtTokens(billing.agent_tokens.allowed_today)}
               </span>
@@ -202,8 +202,8 @@ const Account = () => {
             billing.agent_tokens.allowed_per_month != null && (
               <div>
                 <div className="flex justify-between gap-4 text-sm">
-                  <span className="text-[#5c564b]">Assistant tokens (this month)</span>
-                  <span className="font-medium text-[#14131a]">
+                  <span className="text-nori-h5c564b">Assistant tokens (this month)</span>
+                  <span className="font-medium text-nori-h14131a">
                     {fmtTokens(billing.agent_tokens.used_this_month)} /{" "}
                     {fmtTokens(billing.agent_tokens.allowed_per_month)}
                   </span>
@@ -216,7 +216,7 @@ const Account = () => {
             )}
 
           {billing.agent_tokens.hard_capped && (
-            <p className="text-xs font-medium text-[#c0392b]">
+            <p className="text-xs font-medium text-nori-hc0392b">
               Assistant budget exhausted — resets {billing.agent_tokens.used_this_month != null
                 ? "daily and monthly (UTC)"
                 : "at midnight UTC"}.
@@ -224,7 +224,7 @@ const Account = () => {
           )}
 
           {billing.billing_tier === "free" && (
-            <p className="pt-1 text-xs text-[#5c564b]">
+            <p className="pt-1 text-xs text-nori-h5c564b">
               Free plan{billing.limits
                 ? ` — training jobs up to ${Math.round(
                     billing.limits.max_job_timeout_seconds / 60
@@ -237,7 +237,7 @@ const Account = () => {
         <Panel
           eyebrow="account"
           title="Compute allowance"
-          bodyClassName="divide-y divide-[#14131a]/10"
+          bodyClassName="divide-y divide-nori-h14131a/10"
         >
           <Row label="Allowed" value={fmtSeconds(customer.allowed_seconds)} />
           <Row label="Consumed" value={fmtSeconds(customer.consumed_seconds)} />
@@ -247,20 +247,20 @@ const Account = () => {
 
       <Panel eyebrow="account" title={paired.length > 1 ? "Robots" : "Robot"}>
         {paired.length > 0 ? (
-          <div className="divide-y divide-[#14131a]/10">
+          <div className="divide-y divide-nori-h14131a/10">
             {paired.map((r) => {
               const s = r.robot_serial_number;
               const active = activeRobotSerial ? s === activeRobotSerial : r.is_active;
               return (
                 <div key={s} className="flex items-center justify-between gap-4 py-1.5 text-sm">
-                  <span className="min-w-0 truncate font-mono text-[#14131a]">
+                  <span className="min-w-0 truncate font-mono text-nori-h14131a">
                     {s}
                     {r.nickname ? (
-                      <span className="ml-2 font-sans text-xs text-[#5c564b]">{r.nickname}</span>
+                      <span className="ml-2 font-sans text-xs text-nori-h5c564b">{r.nickname}</span>
                     ) : null}
                   </span>
                   {active && (
-                    <span className="shrink-0 rounded bg-[#8ab135]/25 px-2 py-0.5 text-xs font-medium text-[#4d6a1e]">
+                    <span className="shrink-0 rounded bg-nori-h8ab135/25 px-2 py-0.5 text-xs font-medium text-nori-h4d6a1e">
                       Connected
                     </span>
                   )}
@@ -275,9 +275,9 @@ const Account = () => {
           </div>
         ) : (
           <div className="flex items-center justify-between gap-4">
-            <span className="text-sm text-[#5c564b]">No robot paired yet</span>
+            <span className="text-sm text-nori-h5c564b">No robot paired yet</span>
             <Button size="sm" onClick={() => navigate("/nori/pairing")}
-              className="rounded-md bg-[#d98b3d] text-foreground hover:bg-[#c97929]">
+              className="rounded-md bg-nori-hd98b3d text-foreground hover:bg-nori-hc97929">
               Pair a robot
             </Button>
           </div>

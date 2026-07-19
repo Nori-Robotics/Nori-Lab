@@ -335,17 +335,17 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold text-[#14131a]">{job.dataset_repo}</h1>
+              <h1 className="text-xl font-semibold text-nori-h14131a">{job.dataset_repo}</h1>
               {policyType && (
-                <span className="rounded border border-[#14131a]/15 bg-[#14131a]/5 px-2 py-0.5 text-xs text-[#14131a]/70">
+                <span className="rounded border border-nori-h14131a/15 bg-nori-h14131a/5 px-2 py-0.5 text-xs text-nori-h14131a/70">
                   {policyType}
                 </span>
               )}
-              <span className="rounded border border-[#b06a1c]/40 bg-[#b06a1c]/10 px-2 py-0.5 text-xs text-[#b06a1c]">
+              <span className="rounded border border-nori-hb06a1c/40 bg-nori-hb06a1c/10 px-2 py-0.5 text-xs text-nori-hb06a1c">
                 Nori cloud
               </span>
             </div>
-            <p className="text-xs text-[#14131a]/60">
+            <p className="text-xs text-nori-h14131a/60">
               {job.status}
               {job.failure_reason ? ` — ${job.failure_reason}` : ""}
               {job.final_cost_usd != null ? ` · $${job.final_cost_usd}` : ""}

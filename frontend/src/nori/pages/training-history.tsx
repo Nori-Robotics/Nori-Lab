@@ -20,7 +20,7 @@ import {
 const statusTone = (s: string) => {
   const low = s.toLowerCase();
   if (/(succeed|success|complete|promot|done)/.test(low)) return "text-green-600";
-  if (/paused/.test(low)) return "text-[#b06a1c] font-semibold";
+  if (/paused/.test(low)) return "text-nori-hb06a1c font-semibold";
   if (/(fail|error|cancel)/.test(low)) return "text-destructive";
   return "text-muted-foreground";
 };
@@ -180,7 +180,7 @@ const TrainingHistory = () => {
                 <div className="flex items-center justify-between gap-4">
                   <CardTitle className="text-sm font-medium">
                     {job.dataset_repo}
-                    <span className="ml-2 text-xs font-normal text-[#b06a1c]">view live ↗</span>
+                    <span className="ml-2 text-xs font-normal text-nori-hb06a1c">view live ↗</span>
                   </CardTitle>
                   <span className="flex items-center gap-2">
                     <span className={`text-xs ${statusTone(job.status)}`}>

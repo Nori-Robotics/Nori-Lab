@@ -94,7 +94,7 @@ export const InstallProgress: React.FC<InstallProgressProps> = ({
           </div>
           <Button
             onClick={onInstall}
-            className="bg-[#8ab135] hover:bg-[#799c2a] text-white font-semibold"
+            className="bg-nori-h8ab135 hover:bg-nori-h799c2a text-white dark:text-neutral-900 font-semibold"
           >
             Install Now
           </Button>

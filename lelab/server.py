@@ -1138,9 +1138,14 @@ def nori_acquire_policy(listing_id: str, request: Request):
     return _nori_proxy(lambda: client.acquire_policy(listing_id))
 
 
-@app.get("/nori/marketplace/policies/{ref}/details")
+@app.get("/nori/marketplace/policies/{ref}")
 def nori_policy_details(ref: str, request: Request):
-    """Full detail view for one policy (class, provenance, file manifest)."""
+    """Full detail view for one policy (class, provenance, file manifest).
+
+    Path mirrors the backend's GET /marketplace/policies/{ref} and the frontend
+    client (getPolicyDetails), which both use the BARE path — not /details. The
+    proxy route had drifted to /{ref}/details, so localhost 404'd on every
+    marketplace detail open while prod (direct-to-backend) worked."""
     client = _nori_client(request)
     return _nori_proxy(lambda: client.get_policy_details(ref))
 

@@ -104,7 +104,7 @@ const ScopePanel = ({ config, updateConfig }: ScopePanelProps) => {
 
   return (
     <Panel eyebrow="scope" title="Policy scope (optional)">
-      <p className="mb-3 text-xs text-[#14131a]/60">
+      <p className="mb-3 text-xs text-nori-h14131a/60">
         Target the policy at specific arms and cameras. Fewer, well-placed
         cameras mean faster on-laptop inference and less overfitting. Leave as
         “Whole robot” to train on everything recorded.
@@ -112,7 +112,7 @@ const ScopePanel = ({ config, updateConfig }: ScopePanelProps) => {
 
       {/* Arms */}
       <div className="mb-4">
-        <div className="mb-1.5 text-xs font-semibold text-[#14131a]/70">Arms</div>
+        <div className="mb-1.5 text-xs font-semibold text-nori-h14131a/70">Arms</div>
         <div className="flex flex-wrap gap-2">
           {armOptions.map((opt) => {
             const active = arm === opt.key;
@@ -125,8 +125,8 @@ const ScopePanel = ({ config, updateConfig }: ScopePanelProps) => {
                 className={[
                   "rounded-md border px-3 py-1.5 text-sm transition-colors",
                   active
-                    ? "border-[#b06a1c] bg-[#b06a1c]/10 text-[#b06a1c] font-semibold"
-                    : "border-[#14131a]/15 text-[#14131a]/70 hover:border-[#14131a]/30",
+                    ? "border-nori-hb06a1c bg-nori-hb06a1c/10 text-nori-hb06a1c font-semibold"
+                    : "border-nori-h14131a/15 text-nori-h14131a/70 hover:border-nori-h14131a/30",
                   opt.disabled ? "cursor-not-allowed opacity-40" : "",
                 ].join(" ")}
               >
@@ -139,16 +139,16 @@ const ScopePanel = ({ config, updateConfig }: ScopePanelProps) => {
 
       {/* Cameras */}
       <div>
-        <div className="mb-1.5 text-xs font-semibold text-[#14131a]/70">
+        <div className="mb-1.5 text-xs font-semibold text-nori-h14131a/70">
           Cameras{" "}
-          <span className="font-normal text-[#14131a]/40">
+          <span className="font-normal text-nori-h14131a/40">
             {selectedCams.length === 0 ? "(all recorded)" : `(${selectedCams.length} selected)`}
           </span>
         </div>
         {loading ? (
-          <div className="text-xs text-[#14131a]/40">Loading dataset cameras…</div>
+          <div className="text-xs text-nori-h14131a/40">Loading dataset cameras…</div>
         ) : cameras.length === 0 ? (
-          <div className="text-xs text-[#14131a]/40">
+          <div className="text-xs text-nori-h14131a/40">
             No camera metadata for this dataset — the policy will use all recorded cameras.
           </div>
         ) : (
@@ -163,8 +163,8 @@ const ScopePanel = ({ config, updateConfig }: ScopePanelProps) => {
                   className={[
                     "rounded-md border px-3 py-1.5 text-sm transition-colors",
                     on
-                      ? "border-[#2f7d5b] bg-[#2f7d5b]/10 text-[#2f7d5b] font-semibold"
-                      : "border-[#14131a]/15 text-[#14131a]/70 hover:border-[#14131a]/30",
+                      ? "border-nori-h2f7d5b bg-nori-h2f7d5b/10 text-nori-h2f7d5b font-semibold"
+                      : "border-nori-h14131a/15 text-nori-h14131a/70 hover:border-nori-h14131a/30",
                   ].join(" ")}
                 >
                   {on ? "✓ " : ""}

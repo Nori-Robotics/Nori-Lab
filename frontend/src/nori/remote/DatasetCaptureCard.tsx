@@ -157,7 +157,7 @@ export function DatasetCaptureCard() {
   })();
 
   return (
-    <div className={`rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pt-3 text-[#14131a] shadow-sm ${open ? "pb-4" : "pb-3"}`}>
+    <div className={`rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-4 pt-3 text-nori-h14131a shadow-sm ${open ? "pb-4" : "pb-3"}`}>
       <div
         role="button"
         tabIndex={0}
@@ -192,13 +192,13 @@ export function DatasetCaptureCard() {
           {/* ---- no session: choose a task and start ---- */}
           {phase.kind === "idle" && (
             <>
-              <p className="text-sm leading-relaxed text-[#6f6858]">
+              <p className="text-sm leading-relaxed text-nori-h6f6858">
                 Record demonstrations of a task: each episode is saved on Nori at full
                 quality and will upload to My Stuff when powered on and idle (disconnected).
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <input
-                  className="h-9 flex-1 rounded-md border border-[#14131a]/15 bg-white/70 px-3 text-sm"
+                  className="h-9 flex-1 rounded-md border border-nori-h14131a/15 bg-white/70 px-3 text-sm"
                   placeholder="task for this session (e.g. pick up the red cube)"
                   maxLength={200}
                   value={task}
@@ -208,7 +208,7 @@ export function DatasetCaptureCard() {
                   Start session
                 </Button>
               </div>
-              {!connected && <p className="text-sm text-[#6f6858]">connect to the robot first</p>}
+              {!connected && <p className="text-sm text-nori-h6f6858">connect to the robot first</p>}
             </>
           )}
 
@@ -216,9 +216,9 @@ export function DatasetCaptureCard() {
           {phase.kind === "session" && (
             <>
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm text-[#14131a]">
+                <p className="text-sm text-nori-h14131a">
                   Session: <span className="font-semibold">{task.trim() || "teleop session"}</span>
-                  <span className="ml-2 text-[#6f6858]">· {episodeCount} kept</span>
+                  <span className="ml-2 text-nori-h6f6858">· {episodeCount} kept</span>
                 </p>
                 <Button size="sm" variant="ghost" onClick={finishSession}>
                   Finish session
@@ -228,11 +228,11 @@ export function DatasetCaptureCard() {
                 <Button onClick={startEpisode} disabled={busy || !connected}>
                   {busy ? "Starting…" : "Start episode"}
                 </Button>
-                <span className="text-sm text-[#6f6858]">
+                <span className="text-sm text-nori-h6f6858">
                   drive the robot through the task, then stop to review it
                 </span>
               </div>
-              <p className="rounded-md border border-[#14131a]/10 bg-white/50 px-3 py-2 text-xs text-[#6f6858]">
+              <p className="rounded-md border border-nori-h14131a/10 bg-white/50 px-3 py-2 text-xs text-nori-h6f6858">
                 When you’re done recording, <b>disconnect</b> and leave the robot
                 <b> powered on and idle</b>. Your episodes will upload to the cloud automatically. <b>Don’t turn Nori off</b> until your data lands in My Stuff.
               </p>
@@ -245,7 +245,7 @@ export function DatasetCaptureCard() {
               <Button onClick={() => void stopEpisode()} variant="destructive" disabled={busy}>
                 {busy ? "Stopping…" : "Stop episode"}
               </Button>
-              <span className="text-sm text-[#6f6858]">
+              <span className="text-sm text-nori-h6f6858">
                 recording episode {episodeCount + 1} of “{task.trim() || "teleop session"}”
               </span>
             </div>
@@ -254,12 +254,12 @@ export function DatasetCaptureCard() {
           {/* ---- review the just-stopped episode ---- */}
           {phase.kind === "review" && (
             <div className="space-y-3">
-              <p className="text-sm font-medium text-[#14131a]">Keep this episode?</p>
+              <p className="text-sm font-medium text-nori-h14131a">Keep this episode?</p>
               {phase.url ? (
                 <video
                   key={phase.url}
                   src={phase.url}
-                  className="w-full max-w-md rounded-md border border-[#14131a]/15 bg-black"
+                  className="w-full max-w-md rounded-md border border-nori-h14131a/15 bg-black"
                   controls
                   loop
                   autoPlay
@@ -284,7 +284,7 @@ export function DatasetCaptureCard() {
                 <Button onClick={rejectEpisode} variant="destructive" disabled={reviewBusy}>
                   Reject
                 </Button>
-                <span className="text-xs text-[#6f6858]">
+                <span className="text-xs text-nori-h6f6858">
                   Keep adds it to the session, reject deletes it.
                 </span>
               </div>
@@ -293,7 +293,7 @@ export function DatasetCaptureCard() {
 
           {/* robot recorder status — always visible while a session is open */}
           {inSession && (
-            <p className="text-xs text-[#6f6858]">
+            <p className="text-xs text-nori-h6f6858">
               robot recorder:{" "}
               {recordState?.recording && (
                 <span className="mr-1 inline-block h-2 w-2 animate-pulse rounded-full bg-red-500 align-middle" />

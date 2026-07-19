@@ -126,20 +126,20 @@ const MetricsPanel: React.FC<MetricsPanelProps> = ({
                     <h3 className="text-sm text-foreground font-medium mb-2">Sensor {index + 3}</h3>
                     <ResponsiveContainer width="100%" height="90%">
                       <LineChart data={sensorData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--nori-h374151))" />
                         <XAxis hide />
-                        <YAxis fontSize={12} stroke="#9CA3AF" />
+                        <YAxis fontSize={12} stroke="hsl(var(--nori-h9ca3af))" />
                         <Tooltip
                           contentStyle={{
-                            backgroundColor: '#1F2937',
-                            border: '1px solid #374151',
+                            backgroundColor: 'hsl(var(--nori-h1f2937))',
+                            border: '1px solid hsl(var(--nori-h374151))',
                             color: '#fff'
                           }}
                         />
                         <Line
                           type="monotone"
                           dataKey={sensor}
-                          stroke={index % 2 === 1 ? '#ff6b35' : '#ffdd44'}
+                          stroke={index % 2 === 1 ? 'hsl(var(--nori-hff6b35))' : 'hsl(var(--nori-hffdd44))'}
                           strokeWidth={2}
                           dot={false}
                         />
@@ -158,20 +158,20 @@ const MetricsPanel: React.FC<MetricsPanelProps> = ({
                   <h3 className="text-sm text-foreground font-medium mb-2">Motor {index + 1}</h3>
                   <ResponsiveContainer width="100%" height="80%">
                     <LineChart data={motorData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--nori-h374151))" />
                       <XAxis hide />
-                      <YAxis fontSize={12} stroke="#9CA3AF" />
+                      <YAxis fontSize={12} stroke="hsl(var(--nori-h9ca3af))" />
                       <Tooltip
                         contentStyle={{
-                          backgroundColor: '#1F2937',
-                          border: '1px solid #374151',
+                          backgroundColor: 'hsl(var(--nori-h1f2937))',
+                          border: '1px solid hsl(var(--nori-h374151))',
                           color: '#fff'
                         }}
                       />
                       <Line
                         type="monotone"
                         dataKey={motor}
-                        stroke={index % 2 === 0 ? '#ff6b35' : '#ffdd44'}
+                        stroke={index % 2 === 0 ? 'hsl(var(--nori-hff6b35))' : 'hsl(var(--nori-hffdd44))'}
                         strokeWidth={2}
                         dot={false}
                       />

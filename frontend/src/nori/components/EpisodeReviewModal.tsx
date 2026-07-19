@@ -141,7 +141,7 @@ export function EpisodeReviewModal({
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
             <p className="eyebrow">Review episodes{isCloud ? " · cloud" : ""}</p>
-            <h2 className="text-xl font-bold text-[#14131a]">{title}</h2>
+            <h2 className="text-xl font-bold text-nori-h14131a">{title}</h2>
           </div>
           {cameras.length > 1 && (
             <div className="flex items-center gap-1 rounded-full bg-secondary p-1">
@@ -150,7 +150,7 @@ export function EpisodeReviewModal({
                   key={c}
                   onClick={() => setCamera(c)}
                   className={`rounded-full px-3 py-1 font-mono text-[11px] transition-colors ${
-                    camera === c ? "bg-card text-[#14131a] shadow-soft" : "text-muted-foreground hover:text-[#14131a]"
+                    camera === c ? "bg-card text-nori-h14131a shadow-soft" : "text-muted-foreground hover:text-nori-h14131a"
                   }`}
                 >
                   {c}
@@ -198,7 +198,7 @@ export function EpisodeReviewModal({
                         />
                       ) : (
                         <button
-                          className="group flex h-full w-full items-center justify-center text-[#14131a]/60 hover:text-[#14131a]"
+                          className="group flex h-full w-full items-center justify-center text-nori-h14131a/60 hover:text-nori-h14131a"
                           onClick={() => setPlaying((s) => new Set(s).add(ep.index))}
                           aria-label={`Play episode ${ep.index}`}
                         >
@@ -222,7 +222,7 @@ export function EpisodeReviewModal({
                     </div>
                     <div className="flex items-center justify-between gap-2 px-2.5 py-2">
                       <div className="min-w-0">
-                        <p className="font-mono text-xs text-[#14131a]">ep {ep.index}</p>
+                        <p className="font-mono text-xs text-nori-h14131a">ep {ep.index}</p>
                         <p className="truncate text-[11px] text-muted-foreground">
                           {ep.duration_s}s · {ep.length}fr
                         </p>
@@ -233,7 +233,7 @@ export function EpisodeReviewModal({
                             type="checkbox"
                             checked={isMarked}
                             onChange={() => toggleMark(ep.index)}
-                            className="accent-[#b03a29]"
+                            className="accent-nori-hb03a29"
                           />
                           cut
                         </label>

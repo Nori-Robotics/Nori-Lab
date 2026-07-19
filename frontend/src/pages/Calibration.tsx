@@ -7,12 +7,12 @@ const Calibration = () => {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-[#0f0e0c] text-[#f8f4ea]">
+    <div className="min-h-screen bg-nori-h0f0e0c text-nori-hf8f4ea">
       <div className="mx-auto max-w-7xl px-3 py-3 sm:px-4">
         <Button
           variant="ghost"
           onClick={() => navigate(-1)}
-          className="mb-3 rounded-md border border-[#f5f0e6]/10 bg-[#171512] text-[#d9d1c5] hover:bg-[#242019] hover:text-[#f8f4ea]"
+          className="mb-3 rounded-md border border-nori-hf5f0e6/10 bg-nori-h171512 text-nori-hd9d1c5 hover:bg-nori-h242019 hover:text-nori-hf8f4ea"
         >
           <ArrowLeft className="mr-2 h-4 w-4" />
           back

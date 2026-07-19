@@ -134,7 +134,7 @@ export default function DrivePage() {
           <span
             className={
               "ml-auto inline-flex h-9 items-center rounded-full px-3 font-mono text-xs " +
-              (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]")
+              (connected ? "bg-nori-h8ab135/25 text-nori-h4d6a1e" : "bg-nori-h14131a/8 text-nori-h857b6b")
             }
           >
             ● {status}
@@ -317,7 +317,7 @@ export default function DrivePage() {
                     type="range" min={0.05} max={1} step={0.05}
                     value={settings.kbSpeed}
                     onChange={(e) => set("kbSpeed", Number(e.target.value))}
-                    className="h-1 flex-1 cursor-pointer accent-[#14131a]"
+                    className="h-1 flex-1 cursor-pointer accent-nori-h14131a"
                   />
                   <span className="w-10 text-right font-mono text-xs">{Math.round(settings.kbSpeed * 100)}%</span>
                 </label>

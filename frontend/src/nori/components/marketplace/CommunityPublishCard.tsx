@@ -34,7 +34,7 @@ type Kind = "policy" | "dataset";
 type DatasetSource = "nori" | "import";
 
 const FIELD =
-  "w-full rounded-xl border border-input bg-background px-3 py-2 text-[14px] focus:outline-none focus:shadow-[0_0_0_3px_#ffe9a8]";
+  "w-full rounded-xl border border-input bg-background px-3 py-2 text-[14px] focus:outline-none focus:shadow-[0_0_0_3px_hsl(var(--nori-hffe9a8))]";
 
 const SummaryRow = ({ label, value }: { label: string; value: string }) => (
   <div className="flex items-baseline justify-between gap-4 py-0.5">

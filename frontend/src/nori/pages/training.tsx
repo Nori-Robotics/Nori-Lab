@@ -212,16 +212,30 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
       }
       // 2. Logs. First read seeds the tail cheaply; then stream from the cursor.
       try {
-        const res = seededRef.current
-          ? await getJobLogs(baseUrl, fetchWithHeaders, jobId, offsetRef.current)
-          : await getJobLogs(baseUrl, fetchWithHeaders, jobId, 0, INITIAL_TAIL);
+        // First read pulls the ENTIRE log so the loss/LR charts show the full
+        // curve from step 0 on enter/reload; the log PANEL still shows only the
+        // last INITIAL_TAIL lines (the full backlog stays available on demand).
+        // Later polls stream new lines from the cursor.
+        const firstRead = !seededRef.current;
+        const res = firstRead
+          ? await getJobLogs(baseUrl, fetchWithHeaders, jobId, 0)
+          : await getJobLogs(baseUrl, fetchWithHeaders, jobId, offsetRef.current);
         if (cancelled) return;
         seededRef.current = true;
         offsetRef.current = res.next_offset ?? offsetRef.current;
         if (res.is_terminal) terminalRef.current = true;
         if (res.lines.length > 0) {
-          appendLogLines(res.lines);
-          applyLines(res.lines);
+          applyLines(res.lines); // fold ALL (first read) / the new lines → charts
+          if (firstRead) {
+            // Charts now hold the full curve; show only the tail in the panel.
+            setLogs(
+              res.lines
+                .slice(-INITIAL_TAIL)
+                .map((message) => ({ timestamp: 0, message })),
+            );
+          } else {
+            appendLogLines(res.lines);
+          }
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));

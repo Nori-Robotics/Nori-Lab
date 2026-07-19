@@ -22,6 +22,7 @@ Deploy + test: see README.md in this directory.
 import base64
 import io
 import os
+import secrets
 import threading
 from typing import Optional
 
@@ -37,6 +38,10 @@ NORM_TAG = os.environ.get("MOLMOACT_NORM_TAG", "so100_so101_molmoact2")
 AUTH_TOKEN = os.environ.get("NORI_INFER_TOKEN")  # REQUIRED — the rollout sends it
 # bf16 fits <16GB (A10G/L4). Set MOLMOACT_BF16=0 to run fp32 (~26GB, needs L40S/48GB).
 DTYPE = torch.bfloat16 if os.environ.get("MOLMOACT_BF16", "1") == "1" else torch.float32
+# Defensive caps: a valid-token caller can't burn unbounded GPU via a huge solver
+# step count or a flood of images (the endpoint is public, token-gated).
+MAX_NUM_STEPS = 50
+MAX_IMAGES = 6
 
 app = FastAPI(title="nori-molmoact2")
 _model = None
@@ -116,13 +121,16 @@ def health() -> dict:
 
 @app.post("/act", response_model=ActResponse)
 def act(req: ActRequest, authorization: Optional[str] = Header(None)) -> ActResponse:
-    if authorization != f"Bearer {AUTH_TOKEN}":
+    # Constant-time compare so a bad token can't be recovered via response timing.
+    # Checked BEFORE any model work so unauthenticated calls never touch the GPU.
+    if not authorization or not secrets.compare_digest(authorization, f"Bearer {AUTH_TOKEN}"):
         raise HTTPException(status_code=401, detail="bad or missing bearer token")
     if _model is None:
         detail = f"model load failed: {_load_error}" if _load_error else "model not loaded yet"
         raise HTTPException(status_code=503, detail=detail)
-    if len(req.images) < 1:
-        raise HTTPException(status_code=422, detail="need at least one camera image")
+    if not 1 <= len(req.images) <= MAX_IMAGES:
+        raise HTTPException(status_code=422, detail=f"need 1..{MAX_IMAGES} camera images")
+    num_steps = max(1, min(int(req.num_steps), MAX_NUM_STEPS))  # clamp GPU cost
     images = [_decode(b) for b in req.images]
     state = np.asarray(req.state, dtype=np.float32)
     with _lock, torch.no_grad():
@@ -133,7 +141,7 @@ def act(req: ActRequest, authorization: Optional[str] = Header(None)) -> ActResp
             state=state,
             norm_tag=NORM_TAG,
             inference_action_mode="continuous",
-            num_steps=req.num_steps,
+            num_steps=num_steps,
             normalize_language=True,
             enable_cuda_graph=True,
         )

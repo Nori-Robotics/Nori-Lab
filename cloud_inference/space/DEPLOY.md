@@ -43,7 +43,7 @@ model. After upload, finish in the UI (Path B steps 2-3).
 First boot downloads ~21GB. Poll health (no auth needed):
 
 ```bash
-curl -s https://noribotics-molmoact2-space.hf.space/health
+curl -s https://norirobotics-molmoact2-space.hf.space/health
 # {"ok":false,"status":"loading",...}  ->  {"ok":true,"status":"ready",...}
 ```
 
@@ -51,7 +51,7 @@ Smoke-test `/act` (needs the token; keep it out of shell history — read from a
 
 ```bash
 TOKEN=$(cat ~/.nori_infer_token)   # or your secret manager
-curl -s https://noribotics-molmoact2-space.hf.space/act \
+curl -s https://norirobotics-molmoact2-space.hf.space/act \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"images":["<b64-jpeg>","<b64-jpeg>"],"state":[0,0,0,0,0,0],
        "instruction":"pick up the red cup","num_steps":10}'

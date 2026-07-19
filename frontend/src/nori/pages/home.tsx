@@ -78,7 +78,7 @@ const Home = () => {
   return (
   <section>
     {/* HERO — the marketplace-style wash: dot grid + pastel blobs behind a display headline. */}
-    <div className="relative overflow-hidden rounded-[24px] border border-[#14131a]/10 bg-background px-5 py-6 md:px-8 md:py-7">
+    <div className="relative overflow-hidden rounded-[24px] border border-nori-h14131a/10 bg-background px-5 py-6 md:px-8 md:py-7">
       <div className="dot-grid pointer-events-none absolute inset-0 opacity-60" aria-hidden />
       <div
         className="pointer-events-none absolute -left-16 -top-16 h-48 w-48 rounded-full bg-leaf opacity-70 blur-3xl"
@@ -112,7 +112,7 @@ const Home = () => {
         session. Merged into a single row so the feature cards below stay above the fold. The image
         spans the full card height on the right; session settings drop full-width below the row. */}
     <FadeIn delay={200}>
-    <div className="mt-4 rounded-[24px] border border-[#14131a]/10 bg-background">
+    <div className="mt-4 rounded-[24px] border border-nori-h14131a/10 bg-background">
       <div className="flex items-stretch gap-6">
         <div className="min-w-0 flex-1 p-6 md:pl-8">
           <span className="eyebrow">{paired ? "// your robot" : "// get set up"}</span>
@@ -169,7 +169,7 @@ const Home = () => {
         <FadeIn key={f.n} delay={260 + i * 80} className="h-full">
         <Link
           to={f.to}
-          className={`group flex h-full flex-col rounded-[24px] border border-[#14131a]/10 p-6 transition-[transform,box-shadow] duration-200 ease-bounce hover:-translate-y-1 hover:shadow-pop ${f.tint}`}
+          className={`group flex h-full flex-col rounded-[24px] border border-nori-h14131a/10 p-6 transition-[transform,box-shadow] duration-200 ease-bounce hover:-translate-y-1 hover:shadow-pop ${f.tint}`}
         >
           <span className="w-fit rounded-full border border-ink/20 bg-background px-2.5 py-0.5 font-mono text-[11px] font-semibold tracking-[0.14em] text-ink">
             {f.n}
@@ -188,7 +188,7 @@ const Home = () => {
         social links out to GitHub / Discord / X. Light border to match the rest of the page; it
         stands apart from the feature trio by being a full-width leaf band with social pills. */}
     <FadeIn delay={200}>
-    <div className="mt-6 rounded-[24px] border border-[#14131a]/10 bg-moss p-6 md:px-8 md:py-8">
+    <div className="mt-6 rounded-[24px] border border-nori-h14131a/10 bg-moss p-6 md:px-8 md:py-8">
       <span className="eyebrow text-ink">{"// devs first"}</span>
       <h2 className="mt-3 font-display text-[1.7rem] font-normal leading-[1.05] tracking-tight text-ink">
         Built to be built on.

@@ -237,7 +237,7 @@ export const DetailRow = ({ label, value }: { label: string; value: string }) =>
 );
 
 const LISTING_STATUS_TINT: Record<string, string> = {
-  pending_review: "bg-[#d98b3d]/25 text-[#8a5620]",
+  pending_review: "bg-nori-hd98b3d/25 text-nori-h8a5620",
   public: "bg-leaf text-ink",
   rejected: "bg-destructive/15 text-destructive",
   taken_down: "bg-paper-3 text-muted-foreground",
@@ -533,7 +533,7 @@ const Marketplace = () => {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="search policies — pick, pour, fold…"
           aria-label="Search policies"
-          className="block w-full rounded-full border border-input bg-background px-6 py-3 pl-12 font-mono text-[14px] text-foreground placeholder:text-muted-foreground transition-shadow focus:outline-none focus:shadow-[0_0_0_3px_#ffe9a8]"
+          className="block w-full rounded-full border border-input bg-background px-6 py-3 pl-12 font-mono text-[14px] text-foreground placeholder:text-muted-foreground transition-shadow focus:outline-none focus:shadow-[0_0_0_3px_hsl(var(--nori-hffe9a8))]"
         />
         <svg
           aria-hidden

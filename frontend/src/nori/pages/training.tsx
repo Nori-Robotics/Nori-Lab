@@ -255,12 +255,12 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold text-[#14131a]">{job.name}</h1>
-              <span className="rounded border border-[#b06a1c]/40 bg-[#b06a1c]/10 px-2 py-0.5 text-xs text-[#b06a1c]">
+              <h1 className="text-xl font-semibold text-nori-h14131a">{job.name}</h1>
+              <span className="rounded border border-nori-hb06a1c/40 bg-nori-hb06a1c/10 px-2 py-0.5 text-xs text-nori-hb06a1c">
                 Nori cloud
               </span>
             </div>
-            <p className="text-xs text-[#14131a]/60">
+            <p className="text-xs text-nori-h14131a/60">
               {job.state}
               {job.error_message ? ` — ${job.error_message}` : ""}
             </p>

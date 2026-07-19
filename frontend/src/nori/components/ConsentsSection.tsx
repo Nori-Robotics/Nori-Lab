@@ -88,14 +88,14 @@ const ConsentsSection = () => {
       <h2 className="text-lg font-semibold">Consents</h2>
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <Panel eyebrow="consents" title="Data usage" bodyClassName="divide-y divide-[#14131a]/10">
+      <Panel eyebrow="consents" title="Data usage" bodyClassName="divide-y divide-nori-h14131a/10">
           {CONSENT_DEFS.map((def) => {
             const active = activeOf(def.type);
             return (
               <div key={def.type} className="flex items-center justify-between gap-4 py-3">
                 <div>
-                  <p className="text-sm font-medium text-[#14131a]">{def.label}</p>
-                  <p className="text-xs text-[#5c564b]">{def.desc}</p>
+                  <p className="text-sm font-medium text-nori-h14131a">{def.label}</p>
+                  <p className="text-xs text-nori-h5c564b">{def.desc}</p>
                 </div>
                 <Button
                   size="sm"
@@ -126,7 +126,7 @@ const ConsentsSection = () => {
           <Button size="sm" variant="destructive" onClick={requestDeletion}>
             Request deletion
           </Button>
-          {delStatus && <p className="text-xs text-[#857b6b]">{delStatus}</p>}
+          {delStatus && <p className="text-xs text-nori-h857b6b">{delStatus}</p>}
       </Panel>
     </div>
   );

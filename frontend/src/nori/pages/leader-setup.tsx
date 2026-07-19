@@ -65,11 +65,11 @@ const MANUAL_READY_SPAN_TICKS: Record<string, number> = {
   gripper: 300,
 };
 const FIELD_CLASS =
-  "h-10 rounded-md border-[#14131a]/12 bg-[#fffdf7] text-[#14131a] placeholder:text-[#a39887] focus-visible:ring-[#d98b3d]";
+  "h-10 rounded-md border-nori-h14131a/12 bg-nori-hfffdf7 text-nori-h14131a placeholder:text-nori-ha39887 focus-visible:ring-nori-hd98b3d";
 const OUTLINE_BUTTON_CLASS =
-  "rounded-md border-[#14131a]/12 bg-[#fffdf7] text-[#14131a] hover:bg-[#ebe8db] hover:text-[#14131a]";
-const SELECT_CONTENT_CLASS = "border-[#14131a]/12 bg-[#fffdf7] text-[#14131a]";
-const SELECT_ITEM_CLASS = "focus:bg-[#ebe8db] focus:text-[#14131a]";
+  "rounded-md border-nori-h14131a/12 bg-nori-hfffdf7 text-nori-h14131a hover:bg-nori-hebe8db hover:text-nori-h14131a";
+const SELECT_CONTENT_CLASS = "border-nori-h14131a/12 bg-nori-hfffdf7 text-nori-h14131a";
+const SELECT_ITEM_CLASS = "focus:bg-nori-hebe8db focus:text-nori-h14131a";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -147,10 +147,10 @@ function StatusPill({
   children: React.ReactNode;
 }) {
   const colors = {
-    green: "border-[#4e9d55]/35 bg-[#e4f3e2] text-[#2a6b33]",
-    amber: "border-[#db9346]/35 bg-[#fdf1de] text-[#8a5a12]",
-    red: "border-[#d24a3d]/35 bg-[#fde7e4] text-[#a3271c]",
-    neutral: "border-[#14131a]/12 bg-[#f3f1e8] text-[#5c564b]",
+    green: "border-nori-h4e9d55/35 bg-nori-he4f3e2 text-nori-h2a6b33",
+    amber: "border-nori-hdb9346/35 bg-nori-hfdf1de text-nori-h8a5a12",
+    red: "border-nori-hd24a3d/35 bg-nori-hfde7e4 text-nori-ha3271c",
+    neutral: "border-nori-h14131a/12 bg-nori-hf3f1e8 text-nori-h5c564b",
   };
   return (
     <span className={`inline-flex h-7 items-center gap-2 rounded-md border px-2.5 text-xs font-medium ${colors[tone]}`}>
@@ -181,11 +181,11 @@ function LeaderPane({
   }));
 
   return (
-    <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
+    <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold tracking-normal">{side} leader</h2>
         <StatusPill tone={visible === 6 ? "green" : visible > 0 ? "amber" : "red"}>
-          <span className={`h-2 w-2 rounded-full ${visible === 6 ? "bg-[#3f9a4c]" : visible > 0 ? "bg-[#db9346]" : "bg-[#d24a3d]"}`} />
+          <span className={`h-2 w-2 rounded-full ${visible === 6 ? "bg-nori-h3f9a4c" : visible > 0 ? "bg-nori-hdb9346" : "bg-nori-hd24a3d"}`} />
           {visible}/6
         </StatusPill>
       </div>
@@ -199,29 +199,29 @@ function LeaderPane({
             ? manualJointReady(manualStatus, side, joint)
             : completedManualSide === side || autoJointComplete(autoStatus, side);
           return (
-            <div key={joint} className="grid min-h-11 grid-cols-[minmax(0,1fr)_2.75rem_2.75rem] items-center gap-1.5 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-2 py-2">
+            <div key={joint} className="grid min-h-11 grid-cols-[minmax(0,1fr)_2.75rem_2.75rem] items-center gap-1.5 rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-2 py-2">
               <div className="min-w-0">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate font-mono text-xs text-[#14131a]">{joint}</span>
+                    <span className="truncate font-mono text-xs text-nori-h14131a">{joint}</span>
                     {calibrationComplete && (
-                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[#4e9d55]/50 bg-[#e4f3e2] text-[#2a6b33]">
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-nori-h4e9d55/50 bg-nori-he4f3e2 text-nori-h2a6b33">
                         <Check className="h-3 w-3" />
                       </span>
                     )}
                   </div>
-                  <span className={`h-2 w-2 rounded-full ${motor?.ok ? "bg-[#43a04e]" : "bg-[#d24a3d]"}`} />
+                  <span className={`h-2 w-2 rounded-full ${motor?.ok ? "bg-nori-h43a04e" : "bg-nori-hd24a3d"}`} />
                 </div>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#e5e1d2]">
-                  <div className="h-full rounded-full bg-[#d98b3d]" style={{ width: `${pct}%` }} />
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-nori-he5e1d2">
+                  <div className="h-full rounded-full bg-nori-hd98b3d" style={{ width: `${pct}%` }} />
                 </div>
               </div>
               <div className="text-right font-mono text-xs">
-                <div className="text-[10px] uppercase text-[#857b6b]">raw</div>
+                <div className="text-[10px] uppercase text-nori-h857b6b">raw</div>
                 <div>{raw == null ? "--" : Math.round(raw)}</div>
               </div>
               <div className="text-right font-mono text-xs">
-                <div className="text-[10px] uppercase text-[#857b6b]">deg</div>
+                <div className="text-[10px] uppercase text-nori-h857b6b">deg</div>
                 <div>{target == null ? "--" : target.toFixed(1)}</div>
               </div>
             </div>
@@ -449,16 +449,16 @@ const LeaderSetup = ({
   // hardcoded "live". No port -> not polling; port but no frame yet -> connecting; frames
   // flowing -> live (green once both arms show all 6 motors); read error -> paused.
   const liveStatus: { tone: "green" | "amber" | "red" | "neutral"; dot: string; label: string } = liveError
-    ? { tone: "red", dot: "bg-[#d24a3d]", label: "paused" }
+    ? { tone: "red", dot: "bg-nori-hd24a3d", label: "paused" }
     : !portReady
-      ? { tone: "neutral", dot: "bg-[#a39887]", label: "no leader bus" }
+      ? { tone: "neutral", dot: "bg-nori-ha39887", label: "no leader bus" }
       : liveFrame
         ? {
             tone: bothVisible ? "green" : "amber",
-            dot: bothVisible ? "bg-[#3f9a4c]" : "bg-[#db9346]",
+            dot: bothVisible ? "bg-nori-h3f9a4c" : "bg-nori-hdb9346",
             label: `live · ${formatAge(lastLiveAt)}`,
           }
-        : { tone: "amber", dot: "bg-[#db9346]", label: "connecting…" };
+        : { tone: "amber", dot: "bg-nori-hdb9346", label: "connecting…" };
   const calibrationBusy = Boolean(manualStatus?.active || autoStatus?.active);
   const manualActiveSide = manualStatus?.session?.side ?? calibrationSide;
   const manualReady = manualSideReady(manualStatus, manualActiveSide);
@@ -480,16 +480,16 @@ const LeaderSetup = ({
       <section
         className={
           embedded
-            ? "text-[#14131a]"
-            : "min-h-[calc(100vh-2rem)] rounded-md bg-[#fbfaf5] px-4 py-5 text-[#14131a] sm:px-5"
+            ? "text-nori-h14131a"
+            : "min-h-[calc(100vh-2rem)] rounded-md bg-nori-hfbfaf5 px-4 py-5 text-nori-h14131a sm:px-5"
         }
       >
         {/* Same translucent fill as the VR card's "On a headset?" sub-panel (VrHandoff): both are
             a nested note inside the cream control card, so they should sit at the same depth
             rather than one reading as near-white. */}
-        <Alert className="border-[#14131a]/10 bg-background/60 text-[#14131a]">
+        <Alert className="border-nori-h14131a/10 bg-background/60 text-nori-h14131a">
           <AlertTitle>Leader driving isn’t available on the web app</AlertTitle>
-          <AlertDescription className="text-[#5c5344]">
+          <AlertDescription className="text-nori-h5c5344">
             Leader arm connection and calibration are only available in the desktop
             app over USB connection. Use a VR headset for remote driving over web, or open Nori Lab on
             the computer the arms are plugged into.
@@ -503,8 +503,8 @@ const LeaderSetup = ({
     <section
       className={
         embedded
-          ? "space-y-4 text-[#14131a]"
-          : "min-h-[calc(100vh-2rem)] space-y-5 rounded-md bg-[#fbfaf5] px-4 py-5 text-[#14131a] sm:px-5"
+          ? "space-y-4 text-nori-h14131a"
+          : "min-h-[calc(100vh-2rem)] space-y-5 rounded-md bg-nori-hfbfaf5 px-4 py-5 text-nori-h14131a sm:px-5"
       }
     >
       {embedded ? (
@@ -549,9 +549,9 @@ const LeaderSetup = ({
       ) : (
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-2">
-            <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#7a7060]">// Teleoperation</p>
+            <p className="font-mono text-xs uppercase tracking-[0.18em] text-nori-h7a7060">// Teleoperation</p>
             <h1 className="text-4xl font-semibold tracking-normal sm:text-5xl">Leader setup</h1>
-            <p className="max-w-2xl text-sm text-[#6f6858]">nori l2 dual leader calibration</p>
+            <p className="max-w-2xl text-sm text-nori-h6f6858">nori l2 dual leader calibration</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <StatusPill tone={liveStatus.tone}>
@@ -572,14 +572,14 @@ const LeaderSetup = ({
       <>
 
       {(error || liveError) && (
-        <Alert className="border-[#d24a3d]/35 bg-[#fde7e4] text-[#8f2318]">
+        <Alert className="border-nori-hd24a3d/35 bg-nori-hfde7e4 text-nori-h8f2318">
           <AlertTitle>{error ? "setup needs attention" : "live read paused"}</AlertTitle>
           <AlertDescription>{error || liveError}</AlertDescription>
         </Alert>
       )}
 
       {(liveFrame?.warnings?.length ?? 0) > 0 && (
-        <Alert className="border-[#db9346]/35 bg-[#fdf1de] text-[#8a5a12]">
+        <Alert className="border-nori-hdb9346/35 bg-nori-hfdf1de text-nori-h8a5a12">
           <AlertTitle>calibration needs attention</AlertTitle>
           <AlertDescription>
             <ul className="list-disc space-y-0.5 pl-4">
@@ -589,10 +589,10 @@ const LeaderSetup = ({
         </Alert>
       )}
 
-      <div className="rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-3 shadow-sm">
+      <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-3 shadow-sm">
         <div className={embedded ? "grid gap-3" : "grid gap-3 lg:grid-cols-2 lg:items-end"}>
           <div className="space-y-1.5">
-            <Label htmlFor="leader-port" className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#7a7060]">
+            <Label htmlFor="leader-port" className="font-mono text-[11px] uppercase tracking-[0.14em] text-nori-h7a7060">
               shared usb
             </Label>
             <div className="flex gap-2">
@@ -614,7 +614,7 @@ const LeaderSetup = ({
               </Button>
             </div>
             {noArmFound && !portReady && busy == null && (
-              <p className="text-xs leading-relaxed text-[#8a5a12]">
+              <p className="text-xs leading-relaxed text-nori-h8a5a12">
                 No leader arm found. Check that it’s plugged in with a{" "}
                 <span className="font-medium">data</span> USB cable (some cables only charge)
                 and connected <span className="font-medium">directly</span> to the computer,
@@ -624,7 +624,7 @@ const LeaderSetup = ({
           </div>
           {/* Calibration id + save share a line, mirroring the usb + auto pattern above. */}
           <div className="space-y-1.5">
-            <Label htmlFor="calibration-id" className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#7a7060]">
+            <Label htmlFor="calibration-id" className="font-mono text-[11px] uppercase tracking-[0.14em] text-nori-h7a7060">
               calibration
             </Label>
             <div className="flex gap-2">
@@ -649,7 +649,7 @@ const LeaderSetup = ({
         </div>
       </div>
 
-      <Card className="rounded-md border-[#14131a]/10 bg-[#f6f4eb] text-[#14131a] shadow-sm">
+      <Card className="rounded-md border-nori-h14131a/10 bg-nori-hf6f4eb text-nori-h14131a shadow-sm">
         <CardContent className="space-y-4 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-semibold">calibrate leader</h2>
@@ -663,7 +663,7 @@ const LeaderSetup = ({
               offsets from that pose, so it must match the follower's zero/ready pose —
               and the SAME pose on every recalibration. */}
           {calibrationMode === "manual" && (
-            <p className="rounded bg-[#ebe8db] px-2 py-1 text-xs text-[#5c564b]">
+            <p className="rounded bg-nori-hebe8db px-2 py-1 text-xs text-nori-h5c564b">
               Hold the leader in its <strong>zero pose</strong> (matching the follower arm&apos;s
               zero/ready pose) when you press <strong>start</strong> — that pose is captured as the
               zero reference for every joint. Use the same pose each time you recalibrate, or the
@@ -675,7 +675,7 @@ const LeaderSetup = ({
               reloads — say so explicitly, since a running session is why the start
               button is disabled ("why won't it let me start?"). */}
           {manualStatus?.active && (
-            <p className="rounded bg-[#db9346]/15 px-2 py-1 text-xs text-[#8a5a12]">
+            <p className="rounded bg-nori-hdb9346/15 px-2 py-1 text-xs text-nori-h8a5a12">
               A manual calibration session for the <strong>{manualActiveSide}</strong> leader is
               already running (it persists across page reloads). Sweep each joint until every
               row shows a checkmark, then press <strong>finish</strong> — or{" "}
@@ -683,7 +683,7 @@ const LeaderSetup = ({
             </p>
           )}
           {autoStatus?.active && (
-            <p className="rounded bg-[#db9346]/15 px-2 py-1 text-xs text-[#8a5a12]">
+            <p className="rounded bg-nori-hdb9346/15 px-2 py-1 text-xs text-nori-h8a5a12">
               Auto calibration is running — wait for it to complete or press stop before
               starting a new session.
             </p>
@@ -692,7 +692,7 @@ const LeaderSetup = ({
           {/* Row 1: side + mode side by side. Row 2: all the actions on one line. */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#7a7060]">side</Label>
+              <Label className="font-mono text-[11px] uppercase tracking-[0.14em] text-nori-h7a7060">side</Label>
               <Select value={calibrationSide} onValueChange={(value) => setCalibrationSide(value as LeaderSide)} disabled={calibrationBusy}>
                 <SelectTrigger className={FIELD_CLASS}><SelectValue /></SelectTrigger>
                 <SelectContent className={SELECT_CONTENT_CLASS}>
@@ -705,8 +705,8 @@ const LeaderSetup = ({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#7a7060]">mode</Label>
-              <div className="grid h-10 grid-cols-2 rounded-md border border-[#14131a]/12 bg-[#fffdf7] p-1">
+              <Label className="font-mono text-[11px] uppercase tracking-[0.14em] text-nori-h7a7060">mode</Label>
+              <div className="grid h-10 grid-cols-2 rounded-md border border-nori-h14131a/12 bg-nori-hfffdf7 p-1">
                 {CALIBRATION_MODES.map((mode) => (
                   <button
                     key={mode}
@@ -715,8 +715,8 @@ const LeaderSetup = ({
                     disabled={calibrationBusy}
                     className={`rounded px-2 text-sm ${
                       calibrationMode === mode
-                        ? "bg-[#d98b3d] text-foreground"
-                        : "text-[#5c564b] hover:bg-[#ebe8db] hover:text-[#14131a]"
+                        ? "bg-nori-hd98b3d text-foreground"
+                        : "text-nori-h5c564b hover:bg-nori-hebe8db hover:text-nori-h14131a"
                     }`}
                   >
                     {mode}
@@ -747,7 +747,7 @@ const LeaderSetup = ({
                 );
               }}
               disabled={busy != null || calibrationBusy || !portReady || (calibrationMode === "auto" && !autoConfirmed)}
-              className="rounded-md bg-[#d98b3d] text-foreground hover:bg-[#c97929]"
+              className="rounded-md bg-nori-hd98b3d text-foreground hover:bg-nori-hc97929"
             >
               {calibrationMode === "manual" ? <Crosshair className="mr-2 h-4 w-4" /> : <Gauge className="mr-2 h-4 w-4" />}
               start
@@ -763,7 +763,7 @@ const LeaderSetup = ({
                     })
                   }
                   disabled={busy != null || !manualStatus?.active || !manualReady}
-                  className="rounded-md bg-[#8ab135] text-foreground hover:bg-[#799c2a]"
+                  className="rounded-md bg-nori-h8ab135 text-foreground hover:bg-nori-h799c2a"
                 >
                   <Save className="mr-2 h-4 w-4" />
                   finish
@@ -792,7 +792,7 @@ const LeaderSetup = ({
                   <StopCircle className="mr-2 h-4 w-4" />
                   stop
                 </Button>
-                <label className="flex min-h-10 items-center gap-2 rounded-md border border-[#14131a]/10 bg-[#f6f4eb] px-3 text-sm text-[#5c564b]">
+                <label className="flex min-h-10 items-center gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb px-3 text-sm text-nori-h5c564b">
                   <Checkbox
                     checked={autoConfirmed}
                     onCheckedChange={(value) => setAutoConfirmed(value === true)}

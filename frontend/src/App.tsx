@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "@/contexts/ThemeContext";
+import { ThemeToggle } from "@/nori/components/ThemeToggle";
 import { UrdfProvider } from "@/contexts/UrdfContext";
 import { DragAndDropProvider } from "@/contexts/DragAndDropContext";
 import { Toaster } from "@/components/ui/toaster";
@@ -52,6 +53,7 @@ function App() {
                   <BrowserRouter>
                     <TeleopStopNotice />
                       <UpdateNotice />
+                      <ThemeToggle />
                       <Routes>
                         {/* NORI: start on the Nori app; the upstream LeLab landing lives at /lelab. */}
                         <Route path="/" element={<Navigate to="/nori" replace />} />

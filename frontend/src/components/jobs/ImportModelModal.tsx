@@ -95,7 +95,7 @@ const ImportModelModal: React.FC<Props> = ({ open, onOpenChange, onImported }) =
             <Button
               onClick={handleSubmit}
               disabled={!source.trim() || submitting}
-              className="bg-[#8ab135] hover:bg-[#799c2a] text-white px-8 disabled:opacity-40"
+              className="bg-nori-h8ab135 hover:bg-nori-h799c2a text-white px-8 disabled:opacity-40"
             >
               {submitting ? (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />

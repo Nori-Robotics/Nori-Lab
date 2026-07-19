@@ -22,7 +22,7 @@ import { listJobs as listLeLabJobs } from "@/lib/jobsApi";
 const statusTone = (s: string) => {
   const low = s.toLowerCase();
   if (/(succeed|success|complete|promot|done)/.test(low)) return "text-green-600";
-  if (/paused/.test(low)) return "text-[#b06a1c] font-semibold";
+  if (/paused/.test(low)) return "text-nori-hb06a1c font-semibold";
   if (/(fail|error|cancel)/.test(low)) return "text-destructive";
   return "text-muted-foreground";
 };
@@ -224,7 +224,7 @@ const TrainingHistory = () => {
                     el.scrollIntoView({ behavior: "smooth", block: "center" });
                   }
                 }}
-                className={openId === job.id ? "ring-2 ring-[#b06a1c]/50" : undefined}
+                className={openId === job.id ? "ring-2 ring-nori-hb06a1c/50" : undefined}
               >
                 <CardHeader
                   className="cursor-pointer"
@@ -238,7 +238,7 @@ const TrainingHistory = () => {
                     <CardTitle className="text-sm font-medium">
                       {job.dataset_repo}
                       {localId && (
-                        <span className="ml-2 text-xs font-normal text-[#b06a1c]">
+                        <span className="ml-2 text-xs font-normal text-nori-hb06a1c">
                           view live ↗
                         </span>
                       )}

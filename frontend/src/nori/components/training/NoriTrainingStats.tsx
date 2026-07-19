@@ -110,19 +110,19 @@ const NoriTrainingStats = ({ jobId, job }: NoriTrainingStatsProps) => {
     <div className="space-y-4">
       <Panel eyebrow="progress">
         <div className="mb-3 flex items-baseline justify-between">
-          <div className="text-base font-semibold text-[#14131a]">
+          <div className="text-base font-semibold text-nori-h14131a">
             {stepLabel}
           </div>
-          <div className="text-sm text-[#14131a]/60">
-            ETA <span className="font-semibold text-[#14131a]">{eta}</span>
+          <div className="text-sm text-nori-h14131a/60">
+            ETA <span className="font-semibold text-nori-h14131a">{eta}</span>
           </div>
         </div>
-        <div className="relative h-8 w-full overflow-hidden rounded-md border border-[#14131a]/10 bg-white">
+        <div className="relative h-8 w-full overflow-hidden rounded-md border border-nori-h14131a/10 bg-white">
           <div
-            className="h-full bg-[#b06a1c] transition-[width] duration-500"
+            className="h-full bg-nori-hb06a1c transition-[width] duration-500"
             style={{ width: `${progress}%` }}
           />
-          <div className="absolute inset-0 flex items-center justify-center text-sm font-semibold tabular-nums text-[#14131a] drop-shadow-sm">
+          <div className="absolute inset-0 flex items-center justify-center text-sm font-semibold tabular-nums text-nori-h14131a drop-shadow-sm">
             {isStarting ? "warming up…" : `${progress.toFixed(1)}%`}
           </div>
         </div>
@@ -133,14 +133,14 @@ const NoriTrainingStats = ({ jobId, job }: NoriTrainingStatsProps) => {
           title="Loss"
           reading={m?.current_loss?.toFixed(4) ?? "—"}
           data={loss}
-          color="#2f7d5b"
+          color="hsl(var(--nori-h2f7d5b))"
           format={(v) => v.toFixed(4)}
         />
         <MetricChart
           title="Learning rate"
           reading={m?.current_lr?.toExponential(2) ?? "—"}
           data={lr}
-          color="#b06a1c"
+          color="hsl(var(--nori-hb06a1c))"
           format={(v) => v.toExponential(2)}
           yTickFormat={(v) => v.toExponential(0)}
         />
@@ -167,13 +167,13 @@ const MetricChart = ({
   yTickFormat,
 }: MetricChartProps) => (
   <Panel>
-    <div className="mb-2 text-sm font-semibold text-[#14131a]">
+    <div className="mb-2 text-sm font-semibold text-nori-h14131a">
       {title}{" "}
-      <span className="font-normal text-[#14131a]/50">({reading})</span>
+      <span className="font-normal text-nori-h14131a/50">({reading})</span>
     </div>
     <div className="h-48">
       {data.length === 0 ? (
-        <div className="flex h-full items-center justify-center text-sm text-[#14131a]/50">
+        <div className="flex h-full items-center justify-center text-sm text-nori-h14131a/50">
           Waiting for first metric tick…
         </div>
       ) : (
@@ -192,11 +192,11 @@ const MetricChart = ({
             />
             <Tooltip
               contentStyle={{
-                background: "#f6f4eb",
+                background: "hsl(var(--nori-hf6f4eb))",
                 border: "1px solid #14131a33",
                 borderRadius: 8,
               }}
-              labelStyle={{ color: "#14131a" }}
+              labelStyle={{ color: "hsl(var(--nori-h14131a))" }}
               itemStyle={{ color }}
               formatter={(v: number) => format(v)}
             />

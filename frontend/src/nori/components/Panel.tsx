@@ -21,12 +21,12 @@ export function Panel({
   return (
     <div
       className={cn(
-        "rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm",
+        "rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm",
         className,
       )}
     >
       {eyebrow && (
-        <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">
+        <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">
           // {eyebrow}
         </p>
       )}

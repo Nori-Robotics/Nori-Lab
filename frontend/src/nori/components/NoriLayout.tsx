@@ -18,7 +18,7 @@ const ConnectionChip = () => {
     : connecting ? "connecting…" : running ? connState : "not connected";
   const cls =
     "rounded-full px-3 py-1 font-mono text-xs " +
-    (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]");
+    (connected ? "bg-nori-h8ab135/25 text-nori-h4d6a1e" : "bg-nori-h14131a/8 text-nori-h857b6b");
   return connected ? (
     <span className={cls} title="Connected. Manage the session on Home.">● {status}</span>
   ) : (

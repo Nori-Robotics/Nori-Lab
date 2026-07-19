@@ -67,10 +67,10 @@ function DatasetRow({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[#14131a]/10 py-1.5 first:border-t-0">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-nori-h14131a/10 py-1.5 first:border-t-0">
       {editing ? (
         <input
-          className="h-7 min-w-0 flex-1 rounded border border-[#14131a]/20 bg-white px-2 font-mono text-xs"
+          className="h-7 min-w-0 flex-1 rounded border border-nori-h14131a/20 bg-white px-2 font-mono text-xs"
           value={draft}
           disabled={busy}
           autoFocus
@@ -89,7 +89,7 @@ function DatasetRow({
           {entry.repo_id}
         </span>
       )}
-      <span className="shrink-0 text-xs text-[#6f6858]">
+      <span className="shrink-0 text-xs text-nori-h6f6858">
         {entry.episodes} ep · {entry.frames} frames
         {entry.fps ? ` · ${entry.fps} fps` : ""} · {entry.modified_at.slice(0, 10)}
       </span>
@@ -328,7 +328,7 @@ export function DatasetCaptureCard() {
   const busy = phase.kind === "exporting" || phase.kind === "uploading";
 
   return (
-    <div className={`rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pt-3 text-[#14131a] shadow-sm ${open ? "pb-4" : "pb-3"}`}>
+    <div className={`rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-4 pt-3 text-nori-h14131a shadow-sm ${open ? "pb-4" : "pb-3"}`}>
       <div
         role="button"
         tabIndex={0}
@@ -362,7 +362,7 @@ export function DatasetCaptureCard() {
 
       {open && (
       <div className="mt-3 space-y-3">
-        <p className="text-sm leading-relaxed text-[#6f6858]">
+        <p className="text-sm leading-relaxed text-nori-h6f6858">
           Record sessions of teleoperation to train your Nori to do the task autonomously. After
           recording enough episodes, go to the Training page to start creating a policy.
         </p>
@@ -385,17 +385,17 @@ export function DatasetCaptureCard() {
               </Pill>
               {dest.mode === "new" ? (
                 <input
-                  className="h-9 min-w-48 flex-1 rounded-md border border-[#14131a]/15 bg-white/70 px-3 font-mono text-sm"
+                  className="h-9 min-w-48 flex-1 rounded-md border border-nori-h14131a/15 bg-white/70 px-3 font-mono text-sm"
                   placeholder="dataset name (optional — timestamped if empty)"
                   maxLength={120}
                   value={dest.name}
                   onChange={(e) => setDest({ mode: "new", name: e.target.value })}
                 />
               ) : appendable.length === 0 ? (
-                <span className="text-sm text-[#6f6858]">no capture datasets yet — record a new one first</span>
+                <span className="text-sm text-nori-h6f6858">no capture datasets yet — record a new one first</span>
               ) : (
                 <select
-                  className="h-9 min-w-48 flex-1 rounded-md border border-[#14131a]/15 bg-white/70 px-2 font-mono text-sm"
+                  className="h-9 min-w-48 flex-1 rounded-md border border-nori-h14131a/15 bg-white/70 px-2 font-mono text-sm"
                   value={dest.mode === "append" ? dest.repoId : ""}
                   onChange={(e) => setDest({ mode: "append", repoId: e.target.value })}
                 >
@@ -414,7 +414,7 @@ export function DatasetCaptureCard() {
               >
                 Record session
               </Button>
-              <span className="text-sm text-[#6f6858]">
+              <span className="text-sm text-nori-h6f6858">
                 {!running
                   ? "connect to the robot first"
                   : dest.mode === "append" && appendTarget
@@ -429,12 +429,12 @@ export function DatasetCaptureCard() {
           // At-capture review: play back the just-recorded episode; Accept adds
           // it to the dataset, Reject discards it. No other controls until chosen.
           <div className="space-y-3">
-            <p className="text-sm font-medium text-[#14131a]">Keep this episode?</p>
+            <p className="text-sm font-medium text-nori-h14131a">Keep this episode?</p>
             {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
             <video
               key={review.url}
               src={review.url}
-              className="w-full max-w-md rounded-md border border-[#14131a]/15 bg-black"
+              className="w-full max-w-md rounded-md border border-nori-h14131a/15 bg-black"
               controls
               loop
               autoPlay
@@ -447,7 +447,7 @@ export function DatasetCaptureCard() {
               <Button onClick={() => void rejectEpisode()} variant="destructive" disabled={reviewBusy}>
                 {reviewBusy ? "Discarding…" : "Reject"}
               </Button>
-              <span className="text-xs text-[#6f6858]">
+              <span className="text-xs text-nori-h6f6858">
                 Accepted episodes join the dataset; rejected ones are discarded.
               </span>
             </div>
@@ -458,7 +458,7 @@ export function DatasetCaptureCard() {
           <>
             <div className="flex flex-wrap items-center gap-2">
               <input
-                className="h-9 flex-1 rounded-md border border-[#14131a]/15 bg-white/70 px-3 text-sm"
+                className="h-9 flex-1 rounded-md border border-nori-h14131a/15 bg-white/70 px-3 text-sm"
                 placeholder="task description (e.g. pick up the red cube)"
                 maxLength={200}
                 value={task}
@@ -484,7 +484,7 @@ export function DatasetCaptureCard() {
         )}
 
         {phase.kind === "exporting" && (
-          <p className="text-sm text-[#6f6858]">
+          <p className="text-sm text-nori-h6f6858">
             Assembling LeRobot dataset (video decode + encode — this can take a few minutes)…
           </p>
         )}
@@ -505,13 +505,13 @@ export function DatasetCaptureCard() {
                 <Button onClick={uploadToCloud} disabled={phase.kind === "uploading"}>
                   {phase.kind === "uploading" ? "Uploading…" : "Upload to cloud"}
                 </Button>
-                <span className="text-xs text-[#6f6858]">
+                <span className="text-xs text-nori-h6f6858">
                   backend-mediated, lands private in your assigned HF repo
                 </span>
               </div>
             )}
             {phase.kind === "uploaded" && (
-              <p className="text-xs text-[#6f6858]">
+              <p className="text-xs text-nori-h6f6858">
                 Train on it from the Training page — it's now your latest upload.
               </p>
             )}
@@ -543,7 +543,7 @@ export function DatasetCaptureCard() {
           <div className="pt-1">
             <button
               type="button"
-              className="text-xs font-medium text-[#6f6858] underline-offset-2 hover:underline"
+              className="text-xs font-medium text-nori-h6f6858 underline-offset-2 hover:underline"
               onClick={() => setListOpen((v) => !v)}
             >
               {listOpen ? "▾" : "▸"} your datasets ({datasets.length})

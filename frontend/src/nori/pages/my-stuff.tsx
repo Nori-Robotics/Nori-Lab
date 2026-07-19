@@ -114,7 +114,7 @@ const EditableName = ({
   if (!editing) {
     return (
       <span className="group/name inline-flex items-center gap-1.5">
-        <p className="text-base font-bold text-[#14131a]">{value}</p>
+        <p className="text-base font-bold text-nori-h14131a">{value}</p>
         <button
           type="button"
           aria-label="Rename"
@@ -453,7 +453,7 @@ const MyStuff = () => {
         {/* -------- Datasets -------- */}
         <div className="space-y-3.5">
           <div className="flex items-baseline justify-between">
-            <h2 className="text-lg font-bold tracking-tight text-[#14131a]">Datasets</h2>
+            <h2 className="text-lg font-bold tracking-tight text-nori-h14131a">Datasets</h2>
             <span className="font-mono text-xs text-muted-foreground">
               {local.length + datasets.length} total
             </span>
@@ -469,10 +469,10 @@ const MyStuff = () => {
                 </div>
                 <Pill tone="secondary">On this laptop</Pill>
               </div>
-              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-[#14131a]/80 [font-variant-numeric:tabular-nums]">
-                <span><b className="font-semibold text-[#14131a]">{fmt(d.episodes)}</b> episodes</span>
-                <span><b className="font-semibold text-[#14131a]">{fmt(d.frames)}</b> frames</span>
-                {d.fps && <span><b className="font-semibold text-[#14131a]">{d.fps}</b> fps</span>}
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
+                <span><b className="font-semibold text-nori-h14131a">{fmt(d.episodes)}</b> episodes</span>
+                <span><b className="font-semibold text-nori-h14131a">{fmt(d.frames)}</b> frames</span>
+                {d.fps && <span><b className="font-semibold text-nori-h14131a">{d.fps}</b> fps</span>}
               </div>
               <p className="mt-3 border-t border-dashed border-border pt-2.5 text-[13px] italic text-muted-foreground">
                 Not uploaded yet — upload to train a policy on it.
@@ -500,7 +500,7 @@ const MyStuff = () => {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     {d.locked ? (
-                      <p className="text-base font-bold text-[#14131a]">{d.label}</p>
+                      <p className="text-base font-bold text-nori-h14131a">{d.label}</p>
                     ) : (
                       <EditableName value={d.label} onRename={(next) => onRenameUpload(d.session_id, next)} />
                     )}
@@ -514,17 +514,17 @@ const MyStuff = () => {
                     <Pill tone="leaf">Uploaded</Pill>
                   )}
                 </div>
-                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-[#14131a]/80 [font-variant-numeric:tabular-nums]">
-                  {d.episode_count != null && <span><b className="font-semibold text-[#14131a]">{fmt(d.episode_count)}</b> episodes</span>}
-                  {d.frame_count != null && <span><b className="font-semibold text-[#14131a]">{fmt(d.frame_count)}</b> frames</span>}
+                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
+                  {d.episode_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(d.episode_count)}</b> episodes</span>}
+                  {d.frame_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(d.frame_count)}</b> frames</span>}
                 </div>
-                <div className="mt-3 border-t border-dashed border-border pt-2.5 text-[13px] text-[#14131a]/70">
+                <div className="mt-3 border-t border-dashed border-border pt-2.5 text-[13px] text-nori-h14131a/70">
                   {d.policies.length === 0 ? (
                     <span className="italic text-muted-foreground">No policies trained yet.</span>
                   ) : (
                     <span>
-                      <span className="font-semibold text-[#b06a1c]">→</span>{" "}
-                      Trained <b className="font-semibold text-[#14131a]">{live} live {live === 1 ? "policy" : "policies"}</b>
+                      <span className="font-semibold text-nori-hb06a1c">→</span>{" "}
+                      Trained <b className="font-semibold text-nori-h14131a">{live} live {live === 1 ? "policy" : "policies"}</b>
                       {d.policies.length > live ? ` · ${d.policies.length} runs` : ""}
                     </span>
                   )}
@@ -578,7 +578,7 @@ const MyStuff = () => {
         {/* -------- Policies -------- */}
         <div className="space-y-3.5">
           <div className="flex items-baseline justify-between">
-            <h2 className="text-lg font-bold tracking-tight text-[#14131a]">Policies</h2>
+            <h2 className="text-lg font-bold tracking-tight text-nori-h14131a">Policies</h2>
             <span className="font-mono text-xs text-muted-foreground">{allPolicies.length} total</span>
           </div>
 
@@ -612,7 +612,7 @@ const MyStuff = () => {
                       onRename={(next) => onRenamePolicy(p.job_id, next)}
                     />
                   ) : (
-                    <p className="text-base font-bold text-[#14131a]">
+                    <p className="text-base font-bold text-nori-h14131a">
                       {p.title ?? p.sourceLabel ?? "Policy"}
                     </p>
                   )}
@@ -627,11 +627,11 @@ const MyStuff = () => {
                 </div>
                 <Pill tone={STATE_TONE[p.state]}>{STATE_LABEL[p.state]}</Pill>
               </div>
-              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-[#14131a]/80 [font-variant-numeric:tabular-nums]">
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
                 {p.state === "paused" && p.steps_done != null && p.steps != null ? (
-                  <span><b className="font-semibold text-[#14131a]">{fmt(p.steps_done)}</b> / {fmt(p.steps)} steps</span>
+                  <span><b className="font-semibold text-nori-h14131a">{fmt(p.steps_done)}</b> / {fmt(p.steps)} steps</span>
                 ) : p.steps != null ? (
-                  <span><b className="font-semibold text-[#14131a]">{fmt(p.steps)}</b> steps</span>
+                  <span><b className="font-semibold text-nori-h14131a">{fmt(p.steps)}</b> steps</span>
                 ) : null}
                 {p.promoted_at && <span>Promoted {shortDate(p.promoted_at)}</span>}
                 {p.final_cost_usd != null && <span>${p.final_cost_usd.toFixed(2)}</span>}
@@ -652,20 +652,20 @@ const MyStuff = () => {
                             : `~${pct}% (estimated)`}
                       </span>
                     </div>
-                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#14131a]/10">
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-nori-h14131a/10">
                       <div
-                        className="h-full rounded-full bg-[#b06a1c] transition-[width] duration-1000"
+                        className="h-full rounded-full bg-nori-hb06a1c transition-[width] duration-1000"
                         style={{ width: `${pct ?? 2}%` }}
                       />
                     </div>
                   </div>
                 );
               })()}
-              <div className="mt-3 border-t border-dashed border-border pt-2.5 text-[13px] text-[#14131a]/70">
+              <div className="mt-3 border-t border-dashed border-border pt-2.5 text-[13px] text-nori-h14131a/70">
                 {p.sourceLabel ? (
                   <span>
                     <span className="font-mono text-xs text-muted-foreground">Trained from</span>{" "}
-                    <span className="font-mono text-[13px] text-[#14131a]">◆ {p.sourceLabel}</span>
+                    <span className="font-mono text-[13px] text-nori-h14131a">◆ {p.sourceLabel}</span>
                   </span>
                 ) : (
                   <span className="font-mono text-xs text-muted-foreground">Source dataset not recorded</span>

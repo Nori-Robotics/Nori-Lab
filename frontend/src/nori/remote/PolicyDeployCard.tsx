@@ -20,6 +20,7 @@ import {
   type ExecutionMode,
   type PolicyRunPhase,
 } from "@/nori/remote/policyRun";
+import { CloudDeploySection } from "@/nori/remote/CloudDeploySection";
 
 // A policy ref looks like "NoriRobotics/customer-xxxx:job-uuid" or a slug — show
 // a readable tail for the compact row.
@@ -231,6 +232,10 @@ export function PolicyDeployCard() {
           {!running && runnable.length > 0 && (
             <p className="text-xs text-[#6f6858]">Connect to the robot first to deploy a policy.</p>
           )}
+
+          {/* Cloud VLA (MolmoAct2) — remote inference, own runner. Separate
+              component so a restyle of this card doesn't collide with it. */}
+          <CloudDeploySection />
         </div>
       )}
     </div>

@@ -384,6 +384,7 @@ def _cloud_load(body: LoadBody) -> dict:
     except Exception as e:
         raise HTTPException(status_code=502,
                             detail=f"cloud endpoint {endpoint} unreachable: {type(e).__name__}: {e}")
+    calib = cloudmod.load_calibration(arm)  # per-joint convention remap, or None
     roll = cloudmod.CloudRollout(
         endpoint=endpoint,
         token=token,
@@ -391,6 +392,7 @@ def _cloud_load(body: LoadBody) -> dict:
         action_keys=akeys,
         num_steps=body.num_steps or cloudmod.DEFAULT_NUM_STEPS,
         bounds=cloudmod.MOLMOACT2_BOUNDS,
+        calib=calib,
     )
     with _lock:
         _session.clear()
@@ -405,13 +407,14 @@ def _cloud_load(body: LoadBody) -> dict:
             "fps": fps,
             "instruction": instruction,
         })
-    logger.info("[ROLLOUT] cloud load %s -> %s (arm=%s, views=%s, fps=%d, endpoint=%s)",
-                body.ref, endpoint, arm, views, fps, health.get("status"))
+    logger.info("[ROLLOUT] cloud load %s -> %s (arm=%s, views=%s, fps=%d, calib=%s, endpoint=%s)",
+                body.ref, endpoint, arm, views, fps, "on" if calib else "off", health.get("status"))
     return {
         "ref": body.ref,
         "provider": "cloud",
         "device": "cloud",
         "arm": arm,
+        "calibrated": calib is not None,
         "action_joints": akeys,
         "joints": list(body.joints),
         # empty shapes: the client only needs the KEYS to know which tiles to grab;

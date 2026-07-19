@@ -76,6 +76,36 @@ MOLMOACT2_BOUNDS = [
 DEFAULT_CLOUD_VIEWS = ["observation.images.overhead", "observation.images.front"]
 
 
+def load_calibration(arm: str) -> Optional[dict]:
+    """Optional per-joint affine that reconciles Nori's joint convention with the
+    SO-100/101 convention MolmoAct2 was trained on. Applied FORWARD to the state
+    (state_model = A*state_nori + B) and INVERSE to the action (action_nori =
+    (action_model - B)/A). Derived by cloud_inference/derive_calibration.py from a
+    reference capture + the model's norm_stats — a live check showed it cuts the
+    open-loop error ~10x (20.9deg -> 2.1deg), so the embodiment gap is mostly a
+    linear convention difference, not a deep domain gap.
+
+    Source: NORI_INFER_CALIB (a JSON path) or ~/.nori_joint_calib.json. JSON is
+    either {"A":[6],"B":[6]} (model joint order) or {"left":{...},"right":{...}}.
+    Returns {"A","B"} for `arm`, or None (calibration disabled — raw pass-through)."""
+    path = os.environ.get("NORI_INFER_CALIB")
+    p = Path(path) if path else (Path.home() / ".nori_joint_calib.json")
+    if not p.is_file():
+        return None
+    try:
+        d = json.loads(p.read_text())
+        cal = d.get(arm, d)
+        A = [float(x) for x in cal["A"]]
+        B = [float(x) for x in cal["B"]]
+    except Exception as e:
+        logger.warning("[CLOUD-ROLLOUT] unreadable calibration %s (%s)", p, e)
+        return None
+    if len(A) != 6 or len(B) != 6 or any(abs(a) < 1e-6 for a in A):
+        logger.warning("[CLOUD-ROLLOUT] calibration A/B must be length 6 with non-zero A")
+        return None
+    return {"A": A, "B": B}
+
+
 def arm_keys(arm: str) -> list[str]:
     """The 6 Nori telemetry/action keys for one arm, ordered to MATCH the model's
     output order (NOT Nori's alphabetical sort). Nori is bimanual with keys like
@@ -123,6 +153,7 @@ class CloudRollout:
         watermark: int = REFILL_WATERMARK,
         max_queue: int = MAX_QUEUE,
         bounds: Optional[list[tuple[float, float]]] = None,
+        calib: Optional[dict] = None,
         caller: Optional[Callable[[list[str], list[float]], list[list[float]]]] = None,
     ):
         self.endpoint = endpoint.rstrip("/")
@@ -135,6 +166,11 @@ class CloudRollout:
         if bounds is not None and len(bounds) != self.action_dim:
             raise ValueError("bounds length must equal action_keys length")
         self.bounds = bounds  # optional coarse clamp (daemon does the real clamp)
+        # calib {"A","B"}: per-joint affine reconciling Nori<->SO-100/101 convention
+        # (forward on state, inverse on action). None = raw pass-through.
+        if calib is not None and (len(calib["A"]) != self.action_dim or len(calib["B"]) != self.action_dim):
+            raise ValueError("calib A/B length must equal action_keys length")
+        self.calib = calib
         self.num_steps = int(num_steps)
         self.watermark = int(watermark)
         self.max_queue = int(max_queue)
@@ -158,8 +194,11 @@ class CloudRollout:
         when the buffer is low. Raises CloudRolloutError only when there is
         nothing to serve AND the last refill failed."""
         trigger = False
+        # Forward-calibrate the raw Nori state into the model's convention BEFORE
+        # it's sent (state_model = A*state_nori + B); the queued actions come back
+        # in model space and are inverse-calibrated on the way out.
         with self._lock:
-            self._pending_obs = (list(images), [float(s) for s in state])
+            self._pending_obs = (list(images), self._cal_forward([float(s) for s in state]))
             if len(self._queue) <= self.watermark and not self._inflight:
                 self._inflight = True
                 trigger = True
@@ -171,7 +210,8 @@ class CloudRollout:
         if trigger:
             threading.Thread(target=self._refill, name="cloud-refill", daemon=True).start()
         if action is not None:
-            action = self._clamp(action)
+            action = self._clamp(action)          # model-space bounds (guard) first
+            action = self._cal_inverse(action)    # then model -> Nori convention
             # Name-based map: action[i] is action_keys[i], which is built in the
             # model's canonical joint order (arm_keys) — so the RIGHT joint gets
             # the RIGHT value regardless of Nori's alphabetical telemetry sort.
@@ -179,6 +219,18 @@ class CloudRollout:
         if err:
             raise CloudRolloutError(err)
         return {"action": None, "queue": qlen, "warming": True}
+
+    def _cal_forward(self, state: list[float]) -> list[float]:
+        """Nori state -> model convention (A*s + B)."""
+        if not self.calib:
+            return state
+        return [a * s + b for s, a, b in zip(state, self.calib["A"], self.calib["B"])]
+
+    def _cal_inverse(self, action: list[float]) -> list[float]:
+        """Model action -> Nori convention ((a - B)/A)."""
+        if not self.calib:
+            return action
+        return [(v - b) / a for v, a, b in zip(action, self.calib["A"], self.calib["B"])]
 
     def _clamp(self, action: list[float]) -> list[float]:
         if not self.bounds:

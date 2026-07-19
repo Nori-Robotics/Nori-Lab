@@ -173,6 +173,57 @@ def test_transient_error_then_recovery():
     assert roll.serve(["i"], [0.0] * 6)["action"] is not None
 
 
+CALIB = {"A": [2.0, 1.18, 1.5, 1.2, 1.0, 0.54], "B": [-16.8, 158.7, 23.7, 64.6, -8.7, -1.0]}
+
+
+def test_calibration_round_trip():
+    r = cr.CloudRollout(endpoint="http://x", token="t", instruction="go",
+                        action_keys=cr.arm_keys("left"), calib=CALIB, caller=lambda i, s: [[0]*6])
+    x = [5.0, -97.0, 50.0, 10.0, -2.0, 40.0]
+    back = r._cal_inverse(r._cal_forward(x))
+    assert all(abs(a - b) < 1e-6 for a, b in zip(back, x))
+
+
+def test_serve_inverse_calibrates_action():
+    # model returns 45 for shoulder_lift -> Nori (45 - 158.7)/1.18
+    r = cr.CloudRollout(endpoint="http://x", token="t", instruction="go",
+                        action_keys=cr.arm_keys("left"), calib=CALIB,
+                        caller=lambda i, s: [[0, 45.0, 0, 0, 0, 0]] * 4)
+    r.serve(["i"], [0.0] * 6)
+    assert _wait(lambda: roll_q(r))
+    act = r.serve(["i"], [0.0] * 6)["action"]
+    assert abs(act["left_arm_shoulder_lift.pos"] - (45.0 - 158.7) / 1.18) < 1e-3
+
+
+def test_forward_calibrates_state_sent():
+    sent = {}
+
+    def cap(i, s):
+        sent["s"] = s
+        return [[0, 45.0, 0, 0, 0, 0]] * 4
+
+    r = cr.CloudRollout(endpoint="http://x", token="t", instruction="go",
+                        action_keys=cr.arm_keys("left"), calib=CALIB, caller=cap)
+    r.serve(["i"], [0.0, -97.0, 0, 0, 0, 0])
+    assert _wait(lambda: "s" in sent)
+    assert abs(sent["s"][1] - (1.18 * -97.0 + 158.7)) < 1e-3   # forward: A*s+B
+
+
+def test_load_calibration_roundtrips(tmp_path, monkeypatch):
+    f = tmp_path / "cal.json"
+    f.write_text('{"arm":"left","A":[1,1,1,1,1,1],"B":[0,1,2,3,4,5]}')
+    monkeypatch.setenv("NORI_INFER_CALIB", str(f))
+    c = cr.load_calibration("left")
+    assert c["B"] == [0, 1, 2, 3, 4, 5]
+    # zero A is rejected
+    f.write_text('{"A":[0,1,1,1,1,1],"B":[0,0,0,0,0,0]}')
+    assert cr.load_calibration("left") is None
+
+
+def roll_q(r):
+    return r.status()["queue"] > 0
+
+
 def test_state_passed_through_to_caller():
     seen = {}
 

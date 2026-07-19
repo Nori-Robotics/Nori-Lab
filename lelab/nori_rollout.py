@@ -33,6 +33,7 @@
 import base64
 import json
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -40,6 +41,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from . import nori_cloud_rollout as cloudmod
 from .utils import config
 
 logger = logging.getLogger(__name__)
@@ -247,12 +249,98 @@ class LoadBody(BaseModel):
     # fps (nori_meta.json), falling back to DEFAULT_FPS. ACT should execute at
     # the fps it was trained on.
     fps: int | None = None
+    # --- cloud VLA fields (provider="cloud"); ignored by the local ACT path ---
+    #   provider    — "local" (an installed ACT bundle) or "cloud" (a remote VLA
+    #                 endpoint, e.g. MolmoAct2 on a HF Space / AWS g5).
+    #   instruction — natural-language task the VLA is conditioned on (required for cloud).
+    #   num_steps   — flow-matching integration steps (latency <-> quality).
+    #   views       — image feature keys the browser should grab & send, in the
+    #                 order the model expects them; omit to use NORI_INFER_VIEWS
+    #                 or the single composite feed.
+    provider: str = "local"
+    instruction: str | None = None
+    num_steps: int | None = None
+    views: list[str] | None = None
+
+
+def _env_views() -> list[str] | None:
+    raw = os.environ.get("NORI_INFER_VIEWS", "").strip()
+    parsed = [v.strip() for v in raw.split(",") if v.strip()]
+    return parsed or None
+
+
+def _env_fps(default: int = 15) -> int:
+    try:
+        v = int(os.environ.get("NORI_INFER_FPS", str(default)))
+        return v if v > 0 else default
+    except ValueError:
+        return default
+
+
+def _cloud_load(body: LoadBody) -> dict:
+    """Set up a cloud-VLA rollout session: no local weights — just an endpoint,
+    a bearer token, and a chunk queue. The browser loop is identical to the
+    local path (it grabs the returned `image_keys` and POSTs /act each tick)."""
+    endpoint = cloudmod.infer_url()
+    token = cloudmod.infer_token()
+    if not endpoint:
+        raise HTTPException(status_code=503,
+                            detail="cloud inference not configured — set NORI_INFER_URL")
+    if not token:
+        raise HTTPException(status_code=503,
+                            detail="cloud inference token missing — set NORI_INFER_TOKEN or ~/.nori_infer_token")
+    instruction = (body.instruction or "").strip()
+    if not instruction:
+        raise HTTPException(status_code=422,
+                            detail="a cloud VLA needs an instruction (natural-language task)")
+    views = body.views or _env_views() or ["observation.images.remote"]
+    fps = body.fps if (body.fps and body.fps > 0) else _env_fps()
+    # Fail fast on an unreachable endpoint; a not-yet-"ready" Space is fine (this
+    # also wakes a sleeping Space — refills retry until the model finishes loading).
+    try:
+        health = cloudmod.health_check(endpoint)
+    except Exception as e:
+        raise HTTPException(status_code=502,
+                            detail=f"cloud endpoint {endpoint} unreachable: {type(e).__name__}: {e}")
+    roll = cloudmod.CloudRollout(
+        endpoint=endpoint,
+        token=token,
+        instruction=instruction,
+        joints=body.joints,
+        num_steps=body.num_steps or cloudmod.DEFAULT_NUM_STEPS,
+    )
+    with _lock:
+        _session.clear()
+        _session.update({
+            "mode": "cloud",
+            "ref": body.ref,
+            "cloud": roll,
+            "joints": list(body.joints),
+            "views": list(views),
+            "fps": fps,
+            "instruction": instruction,
+        })
+    logger.info("[ROLLOUT] cloud load %s -> %s (views=%s, fps=%d, endpoint=%s)",
+                body.ref, endpoint, views, fps, health.get("status"))
+    return {
+        "ref": body.ref,
+        "provider": "cloud",
+        "device": "cloud",
+        "joints": list(body.joints),
+        # empty shapes: the client only needs the KEYS to know which tiles to grab;
+        # the cloud server resizes frames itself (VLA processor).
+        "image_keys": {v: [] for v in views},
+        "fps": fps,
+        "endpoint_status": health.get("status"),
+    }
 
 
 @router.post("/load")
 def rollout_load(body: LoadBody):
     if not body.joints:
         raise HTTPException(status_code=422, detail="joints list is empty — is telemetry flowing?")
+    if body.provider == "cloud":
+        return _cloud_load(body)
     with _lock:
         _session.clear()
         sess = _load_bundle(
@@ -280,6 +368,29 @@ class ActBody(BaseModel):
     images: dict[str, str] = {}
 
 
+def _cloud_act(body: ActBody) -> dict:
+    """Serve one action from the cloud chunk queue (lock already held). Maps the
+    browser's {featureKey: dataURL} dict to the ordered view list the model wants,
+    then hands off to CloudRollout.serve() (fast: pop + maybe kick an async refill)."""
+    roll: cloudmod.CloudRollout = _session["cloud"]
+    views: list[str] = _session["views"]
+    joints: list[str] = _session["joints"]
+    missing = [v for v in views if v not in body.images]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"cloud policy needs image feature(s) {missing} — not supplied by the client.",
+        )
+    images = [body.images[v] for v in views]
+    state = [float(body.state.get(j, 0.0)) for j in joints]
+    try:
+        return roll.serve(images, state)
+    except cloudmod.CloudRolloutError as e:
+        # buffer empty AND last refill failed -> 503 so the browser's failure
+        # watchdog stops the rollout (it counts non-2xx toward its 5-strike halt).
+        raise HTTPException(status_code=503, detail=f"cloud inference unavailable: {e}")
+
+
 @router.post("/act")
 def rollout_act(body: ActBody):
     import torch
@@ -287,6 +398,8 @@ def rollout_act(body: ActBody):
     with _lock:
         if not _session:
             raise HTTPException(status_code=409, detail="no policy loaded")
+        if _session.get("mode") == "cloud":
+            return _cloud_act(body)
         policy = _session["policy"]
         joints = _session["joints"]
         device = _session["device"]
@@ -350,6 +463,15 @@ def rollout_status():
     with _lock:
         if not _session:
             return {"loaded": None}
+        if _session.get("mode") == "cloud":
+            return {
+                "loaded": _session["ref"],
+                "provider": "cloud",
+                "device": "cloud",
+                "joints": _session["joints"],
+                "image_keys": list(_session["views"]),
+                "cloud": _session["cloud"].status(),
+            }
         return {
             "loaded": _session["ref"],
             "device": _session["device"],

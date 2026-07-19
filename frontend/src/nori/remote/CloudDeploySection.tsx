@@ -67,14 +67,14 @@ export function CloudDeploySection() {
   const stop = useCallback(() => void runnerRef.current?.stop(), []);
 
   return (
-    <div className="space-y-2 border-t border-[#14131a]/10 pt-3">
+    <div className="space-y-2 border-t border-nori-h14131a/10 pt-3">
       <div className="flex items-center gap-2">
-        <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">
+        <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">
           {"// cloud VLA (MolmoAct2)"}
         </span>
         {busy && <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-red-500" />}
       </div>
-      <p className="text-xs leading-relaxed text-[#6f6858]">
+      <p className="text-xs leading-relaxed text-nori-h6f6858">
         Runs a remote vision-language model. Type a task, pick the arm, and it drives that arm from
         the cloud (the other arm is held). Experimental — validate behavior before trusting it.
       </p>
@@ -85,11 +85,11 @@ export function CloudDeploySection() {
         disabled={busy}
         onChange={(e) => setInstruction(e.target.value)}
         placeholder="Task, e.g. “pick up the red cup”"
-        className="w-full rounded-md border border-[#14131a]/15 bg-white/70 px-3 py-1.5 text-sm text-[#14131a] placeholder:text-[#b3ac9c] focus:outline-none focus:ring-1 focus:ring-[#b06a1c] disabled:opacity-50"
+        className="w-full rounded-md border border-nori-h14131a/15 bg-white/70 dark:bg-white/10 px-3 py-1.5 text-sm text-nori-h14131a placeholder:text-nori-h857b6b focus:outline-none focus:ring-1 focus:ring-nori-hb06a1c disabled:opacity-50"
       />
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#6f6858]">arm</span>
+        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-nori-h6f6858">arm</span>
         <div className="flex gap-1.5">
           {(["left", "right"] as const).map((a) => (
             <button
@@ -98,7 +98,7 @@ export function CloudDeploySection() {
               disabled={busy}
               onClick={() => setArm(a)}
               className={`rounded-full px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors disabled:opacity-50 ${
-                arm === a ? "bg-[#b06a1c] text-white" : "bg-white/70 text-[#6f6858] hover:text-[#14131a]"
+                arm === a ? "bg-nori-hb06a1c text-white dark:text-neutral-900" : "bg-white/70 dark:bg-white/10 text-nori-h6f6858 hover:text-nori-h14131a"
               }`}
             >
               {a}
@@ -107,7 +107,7 @@ export function CloudDeploySection() {
         </div>
         <div className="ml-auto flex items-center gap-2">
           {busy && (
-            <span className="text-xs text-[#6f6858]">
+            <span className="text-xs text-nori-h6f6858">
               {phase.kind === "loading"
                 ? "loading…"
                 : `${observeOnly ? "observing" : "driving"} · ${phase.kind === "running" ? phase.ticks : 0} ticks`}
@@ -130,20 +130,20 @@ export function CloudDeploySection() {
         </div>
       </div>
 
-      <label className="flex items-center gap-2 text-xs text-[#6f6858]">
+      <label className="flex items-center gap-2 text-xs text-nori-h6f6858">
         <input
           type="checkbox"
           checked={observeOnly}
           disabled={busy}
           onChange={(e) => setObserveOnly(e.target.checked)}
-          className="h-3.5 w-3.5 accent-[#b06a1c]"
+          className="h-3.5 w-3.5 accent-nori-hb06a1c"
         />
         Observe only — log predicted actions, don&apos;t move the robot (recommended for the first run)
       </label>
 
-      {phase.kind === "stopped" && <p className="text-xs text-[#6f6858]">Stopped — {phase.reason}</p>}
+      {phase.kind === "stopped" && <p className="text-xs text-nori-h6f6858">Stopped — {phase.reason}</p>}
       {phase.kind === "error" && <p className="text-xs text-red-700">{phase.message}</p>}
-      {!running && <p className="text-xs text-[#6f6858]">Connect to the robot first.</p>}
+      {!running && <p className="text-xs text-nori-h6f6858">Connect to the robot first.</p>}
     </div>
   );
 }

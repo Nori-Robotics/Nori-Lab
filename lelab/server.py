@@ -1177,6 +1177,18 @@ def nori_unpublish_policy(ref: str, request: Request):
     return _nori_proxy(lambda: client.unpublish_policy(ref))
 
 
+@app.post("/nori/marketplace/datasets/{upload_ref}/publish")
+def nori_publish_dataset(upload_ref: str, body: NoriPublishBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.publish_dataset(upload_ref, body.title, body.description))
+
+
+@app.delete("/nori/marketplace/datasets/{upload_ref}/publish")
+def nori_unpublish_dataset(upload_ref: str, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.unpublish_dataset(upload_ref))
+
+
 @app.get("/nori/marketplace/my-listings")
 def nori_my_listings(request: Request):
     client = _nori_client(request)
@@ -1368,9 +1380,17 @@ def nori_get_job(job_id: str, request: Request):
 
 
 @app.get("/nori/training/jobs/{job_id}/logs")
-def nori_get_job_logs(job_id: str, request: Request, since: int = 0):
+def nori_get_job_logs(job_id: str, request: Request, since: int = 0, tail: int | None = None):
     client = _nori_client(request)
-    return _nori_proxy(lambda: client.get_job_logs(job_id, since=since))
+    return _nori_proxy(lambda: client.get_job_logs(job_id, since=since, tail=tail))
+
+
+@app.get("/nori/training/dataset-features")
+def nori_dataset_features(request: Request, dataset_ref: str | None = None):
+    """Camera/arm options for the training scope picker (data-driven from the
+    selected dataset's features). dataset_ref omitted => the latest upload."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.get_dataset_features(dataset_ref))
 
 
 # NORI: pairing + consents + deletion (Phase 6).

@@ -30,6 +30,7 @@ import MarketplaceDetail from "@/nori/pages/marketplace-detail";
 import TrainingHistory from "@/nori/pages/training-history";
 import Remote from "@/nori/pages/remote";
 import VrLanding from "@/nori/pages/vr";
+import DrivePage from "@/nori/pages/drive";
 import LeaderSetup from "@/nori/pages/leader-setup";
 import NoriCoding from "@/nori/pages/coding";
 import NoriAgent from "@/nori/pages/agent";
@@ -76,6 +77,19 @@ function App() {
                             <NoriProvider>
                               <TeleopSessionProvider>
                                 <VrLanding />
+                              </TeleopSessionProvider>
+                            </NoriProvider>
+                          }
+                        />
+                        {/* Hosted 2D "drive it now" quick-start — same providers, no NoriLayout
+                            nav, no auth gate (LAN driving needs only public config + room + token;
+                            an optional sign-in unlocks cross-network relay). See DEPLOY_FRONTEND.md. */}
+                        <Route
+                          path="/nori/drive"
+                          element={
+                            <NoriProvider>
+                              <TeleopSessionProvider>
+                                <DrivePage />
                               </TeleopSessionProvider>
                             </NoriProvider>
                           }

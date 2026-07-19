@@ -18,10 +18,11 @@ import React, {
 import {
   RemoteTeleop,
   type ArmSide, type CallState, type ConnectStatus, type ControlMode, type DaemonStatus,
-  type TelemetryView,
+  type RecordState, type TelemetryView,
 } from "@nori/sdk";
 import { SupabaseSignaling } from "@nori/sdk/supabase";
 import { getSupabase } from "@/nori/auth/supabase";
+import { getAccessToken } from "@/nori/auth/session";
 import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
 import { getTurnCredentials } from "@/nori/api/client";
@@ -69,7 +70,7 @@ function loadSettings(): Settings {
 
 const EMPTY_TEL: TelemetryView = {
   loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {},
-  state: {}, videoNet: null,
+  state: {}, videoNet: null, batteryPercent: null,
 };
 
 const EMPTY_CALL: CallState = {
@@ -91,6 +92,9 @@ export interface TeleopSessionValue {
   // Distinguishes "robot online but daemon down/restarting/refusing" from a healthy session —
   // connState alone cannot (the media bridge stays connected while the daemon is dead).
   daemonStatus: DaemonStatus | null;
+  // On-robot episode recorder state (W2.11 record_status replies), null until the first
+  // reply — recording-disabled robots answer {ok:false, error:"recorder unreachable"}.
+  recordState: RecordState | null;
   // What the connect attempt is doing, and why it failed if it did (see ConnectStatus in the SDK).
   // connState is the raw WebRTC state and is "idle" for the whole waiting-for-the-robot window,
   // so it cannot answer "what is wrong" — this can.
@@ -132,6 +136,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
   const [stale, setStale] = useState(false);
   const [call, setCall] = useState<CallState>(EMPTY_CALL);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
+  const [recordState, setRecordState] = useState<RecordState | null>(null);
   const [connectStatus, setConnectStatus] = useState<ConnectStatus>({ phase: "idle" });
   const [logLines, setLogLines] = useState<string[]>([]);
   const [settings, setSettings] = useState<Settings>(loadSettings);
@@ -229,16 +234,21 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     setConnecting(true);
     setLogLines([]);
     setDaemonStatus(null);
+    setRecordState(null);
     setConnectStatus({ phase: "joining" });
     let turnUrls = settings.turn.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
     let turnUser = settings.turnUser.trim();
     let turnCred = settings.turnCred.trim();
-    // §2.4 minted TURN creds: when enabled, fetch short-lived coturn credentials at
-    // session start instead of using the static typed/persisted ones. Shipped DARK
-    // (isTurnMintEnabled) until the relay is flipped to use-auth-secret — a minted cred
-    // would be rejected by a relay still on lt-cred-mech. ANY failure falls back to the
-    // configured creds, so this can never make connect worse than before.
-    if (isTurnMintEnabled()) {
+    // §2.4 minted TURN creds: fetch short-lived coturn credentials at session start
+    // instead of using the static typed/persisted ones. The relay cutover to
+    // use-auth-secret is done (2026-07-15), so minting is now driven by whether the
+    // operator is SIGNED IN — the mint endpoint (GET /api/v1/turn/credentials) needs a
+    // provisioned-customer JWT and 401s anonymously, so an anonymous LAN session (the
+    // hosted /nori/drive quick-start) correctly skips the fetch and stays on STUN. The
+    // isTurnMintEnabled() flag remains as a manual override for dev/testing. ANY failure
+    // falls back to the configured creds, so this can never make connect worse than before.
+    const signedIn = !!(await getAccessToken());
+    if (isTurnMintEnabled() || signedIn) {
       try {
         const c = await getTurnCredentials(baseUrl, fetchWithHeaders);
         turnUrls = c.urls;
@@ -290,6 +300,8 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
       // Daemon health transitions (the SDK already appends them to the log; this drives the
       // banner/chip so "daemon down/restarting" never reads as random dead control).
       onDaemonStatus: setDaemonStatus,
+      // On-robot recorder replies (W2.11) — drives the CallBar record control.
+      onRecord: setRecordState,
       // The connect-phase machine — drives the connection banner.
       onConnectStatus: setConnectStatus,
       // The handshake ack. It was never wired, so a robot that REFUSED the session (accepted:false)
@@ -337,6 +349,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     setTel(EMPTY_TEL);
     setCall(EMPTY_CALL);
     setDaemonStatus(null);  // health is per-session; don't show a stale banner next connect
+    setRecordState(null);   // same: recorder state is a per-session probe
     setConnectStatus({ phase: "idle" });
   }, []);
 
@@ -345,12 +358,12 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
 
   const value = useMemo<TeleopSessionValue>(() => ({
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
-    connectStatus,
+    recordState, connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
   }), [
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
-    connectStatus,
+    recordState, connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
   ]);

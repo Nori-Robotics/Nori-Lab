@@ -263,3 +263,49 @@ describe("loopback signaling", () => {
     expect(byes).toBe(1);
   });
 });
+
+describe("MockDaemonSim record (W2.11 one-bundle-per-session emulation)", () => {
+  const rec = (sim: MockDaemonSim, action: string, task?: string) =>
+    sim.handleFrame({ type: "record", action, ...(task ? { task } : {}) }, 0)[0];
+
+  it("session -> multiple episodes -> end, with record_status replies", () => {
+    const sim = new MockDaemonSim();
+    expect(rec(sim, "status")).toMatchObject({ type: "record_status", ok: true, recording: false, session_open: false });
+
+    expect(rec(sim, "session_start", "fold")).toMatchObject({ ok: true, session_open: true, recording: false });
+    // episode 1
+    let out = rec(sim, "episode_start");
+    expect(out).toMatchObject({ ok: true, recording: true });
+    expect(String(out.episode)).toMatch(/episode-\d{4}$/);
+    expect(rec(sim, "episode_stop")).toMatchObject({ ok: true, recording: false, episodes_kept: 1 });
+    // episode 2
+    rec(sim, "episode_start");
+    expect(rec(sim, "episode_stop")).toMatchObject({ ok: true, episodes_kept: 2 });
+    // end the session
+    expect(rec(sim, "session_end")).toMatchObject({ ok: true, session_open: false, recording: false });
+  });
+
+  it("episode_start auto-opens a session (dropped session_start resilience)", () => {
+    const sim = new MockDaemonSim();
+    // No session_start first — a dropped one. episode_start opens one anyway.
+    expect(rec(sim, "episode_start")).toMatchObject({ ok: true, recording: true, session_open: true });
+    // A late/duplicate session_start on the now-open session is rejected.
+    expect(String(rec(sim, "session_start").error)).toContain("session already open");
+  });
+
+  it("episode_discard drops the just-stopped episode, keeps the rest", () => {
+    const sim = new MockDaemonSim();
+    rec(sim, "session_start", "task");
+    rec(sim, "episode_start"); rec(sim, "episode_stop");   // kept 1
+    rec(sim, "episode_start"); rec(sim, "episode_stop");   // kept 2
+    expect(rec(sim, "episode_discard")).toMatchObject({ ok: true, episodes_kept: 1 });
+    expect(rec(sim, "status")).toMatchObject({ episodes_kept: 1, session_open: true });
+  });
+
+  it("legacy start/stop aliases still round-trip one-episode sessions", () => {
+    const sim = new MockDaemonSim();
+    expect(rec(sim, "start", "legacy")).toMatchObject({ ok: true, recording: true });
+    expect(rec(sim, "stop")).toMatchObject({ ok: true, recording: false, session_open: false });
+    expect(rec(sim, "stop")).toMatchObject({ ok: false });   // nothing open
+  });
+});

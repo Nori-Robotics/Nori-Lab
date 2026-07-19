@@ -56,7 +56,7 @@ const teleop = new RemoteTeleop({
   arm: "right",             // which arm keyboard/jog drives
   onLog: (m) => console.log(m),
   onConnState: (s) => console.log("conn:", s),
-  onTelemetry: (t) => {     // live: loopHz, safety, tempC, per-joint state{}, lift height mm…
+  onTelemetry: (t) => {     // live: loopHz, safety, tempC, batteryPercent, per-joint state{}, lift height mm…
     console.log("safety:", t.safety, "state:", t.state);
   },
   onMode: (mode) => console.log("mode:", mode),
@@ -68,12 +68,19 @@ await teleop.start();       // subscribes, answers the robot's offer, opens the 
 
 Video now flows into your `<video>` element and `onTelemetry` fires ~50×/s.
 
+Each `TelemetryView` also carries **`batteryPercent`** — the robot's battery charge as a whole
+number from `0` to `100`. It is `null` when the robot has no battery monitor fitted, or when the
+charge can't currently be read; render a placeholder such as `—` in that case rather than `0%`.
+Treat it as an at-a-glance gauge, not a precise fuel level: it is derived from pack voltage and
+sags under load. The field is present only while a session is connected (telemetry only flows
+once connected).
+
 ## Develop without a robot (mock mode)
 
 `@nori/sdk/mock` ships a fake robot so you can build and CI-test **with zero hardware, zero
 cloud, and zero network** — no Supabase, no credentials, no robot time. Swap only the
 signaling option; everything else is the identical SDK path (real WebRTC in-page, real
-handshake/ack, real frame parsing), so code developed against the mock talks to a real robot
+handshake/ack, real frame parsing), so code developed against the mock talks to a real Nori
 by changing one line:
 
 ```ts
@@ -99,28 +106,21 @@ await teleop.start();                     // connects in ~a second, telemetry + 
 What the mock gives you:
 
 - **A drivable robot**: jog (keyboard/`setExternalJog`), absolute `sendAction` targets with the
-  full `accepted → active → done|clamped|blocked` action-status lifecycle, range clamping
-  (clamp-don't-reject, like the daemon), `estop`/`reset_latch` latching, and an arrival-keyed
-  watchdog that stops motion when your control frames go silent — so your error handling is
-  testable, not just your happy path.
+  full `accepted -> active -> done|clamped|blocked` action-status lifecycle, range clamping
+  (clamp-don't-reject, like the daemon), `estop`/`reset_latch` latching, and an arrival-keyedwatchdog that stops motion when your control frames go silent — so your error handling is testable, not just your happy path.
 - **Test-pattern video**: a canvas-drawn composite honoring the `camera_layout` grid, so
   `videoStream()`, `cameraView(role)`, `captureFrame`/`snapshot(role)` all work. Tiles move
   when you jog (a dot tracks `shoulder_pan`), so "is my view wired up" is answerable by eye.
 - **The real handshake**: `onReady`/`robotInfo()` deliver a descriptor (12 joints, 4 cameras,
-  ranges) shaped exactly like the golden fixture; pass `token:` to `createMockRobot` to
+  ranges) shaped exactly like a real robot's; pass `token:` to `createMockRobot` to
   exercise the HMAC auth path (wrong token → the real nack/`bad_access_code` flow).
 - **Determinism for CI**: the simulation core (`MockDaemonSim`) is pure and seeded — no
   `Date.now`/`Math.random` — and can be driven tick-by-tick in Node unit tests without any
   browser at all (`sim.handleFrame(...)` / `sim.tick(ms)`).
 
-The mock speaks the same room handshake as the real robot (`robot_here` + nonce → HMAC `ready`
-→ offer, with rate-limited nack/announce), so the auth path you code against is the real one.
+The mock speaks the same room handshake as the real robot (`robot_here` + nonce -> HMAC `ready` -> offer, with rate-limited nack/announce), so the auth path you code against is the real one.
 
-Honest limits (v1): no audio tracks (`joinCall()` degrades to local-only), no perception frames
-(use `injectPerception()`), motion is *plausible, not kinematically true* — cylindrical dofs
-nudge a fixed joint mapping so telemetry visibly responds. Never use mock trajectories to
-validate motion or train anything. `createMockRobot()` needs a browser (WebRTC + canvas);
-`MockDaemonSim` alone runs anywhere.
+Honest limits (v1): no audio tracks (`joinCall()` degrades to local-only), no perception frames (use `injectPerception()`), motion is *plausible, not kinematically true* — cylindrical dofs nudge a fixed joint mapping so telemetry visibly responds. Never use mock trajectories to validate motion or train anything. `createMockRobot()` needs a browser (WebRTC + canvas); `MockDaemonSim` alone runs anywhere.
 
 Two gotchas worth knowing (they apply to real robots too, so the mock reproduces them):
 
@@ -261,7 +261,7 @@ arrive in the handshake — you can read them, not set them.
 **Stalls are deliberately NOT a safety state.** When a joint is pushed against something, the
 robot cuts torque **on that joint only** and keeps everything else running; it self-clears when
 you jog the stalled joint *away* from the obstruction. You'll see it as an `action_status`
-with `reason: "stall:<joint>"` (Phase E), not as a global stop. Reason strings follow the
+with `reason: "stall:<joint>"`, not as a global stop. Reason strings follow the
 pattern `"<cause>:<detail>"` — e.g. `"stall:right_arm_elbow_flex"`, `"estop:button"`.
 
 **The three commands** (`command(...)` on `RemoteTeleop`, also bound to keys):
@@ -318,7 +318,7 @@ const wrist = await teleop.snapshot(500, "left_wrist");     // one tile, or null
 const over  = await teleop.captureFrame("image/jpeg", 0.7, "overhead");
 ```
 
-⚠️ **Unknown role → `null`, never the full composite.** Deliberate: if your caller labeled the
+⚠️ **Unknown role -> `null`, never the full composite.** Deliberate: if your caller labeled the
 frame (e.g. told a vision model "this is left_wrist"), a silent fallback would hand it a mislabeled
 image. On `null` with a role set, report the valid roles (`cameraLayoutInfo()?.tiles`) instead.
 Single-camera robots send no layout, so any `role` returns `null` there — use the bare calls.
@@ -387,13 +387,12 @@ teleop.start();                                  // video appears in the element
   `pauseVideo()` is the control that actually saves robot power.
 - WAN delivery is typically ~15 fps; the encoder doesn't send more than the link carries.
 
-> **Verification status (v0):** `setVideoEl`/`setAudioEl`, `pauseVideo`/`resumeVideo`,
-> `captureFrame`/`snapshot`, and the P4.6 additions (`videoStream`, `cameraView`) are
-> implemented and typecheck/build-clean, but **pending on-robot verification** (encoder power
-> drop + clean keyframe resume + frame grab + tile-crop against a real composite). The inbound
-> video feed itself is hardware-verified and stable.
+> **Status:** `setVideoEl`/`setAudioEl`, `pauseVideo`/`resumeVideo`, `captureFrame`/`snapshot`,
+> `videoStream`, and `cameraView` are implemented and typecheck/build-clean, but **pending
+> on-robot verification** (encoder power drop + clean keyframe resume + frame grab + tile-crop
+> against a real composite). The inbound video feed itself is hardware-verified and stable.
 
-## Perception — structured world-state (Phase F)
+## Perception — structured world-state
 
 Separate from the video track (human eyes) and the one-shot LLM-vision still: `perceive()` returns
 the latest **structured** detections from the daemon's on-Pi perception process, so a *running*
@@ -412,12 +411,12 @@ Subscribe instead of polling with the `onPerception` option. `objects: []` is an
 seen" — distinct from `null` ("no frame"). Frames ride the control channel (`type:"perception"`,
 nori-protocol `perception.json`).
 
-> **Verification status (v0):** the SDK parse/cache/`perceive()`/`injectPerception()` surface is
-> implemented and unit-tested, but the **on-Pi detector that emits `perception` frames does not exist
-> yet** — `perceive()` returns `null` on real hardware today. `injectPerception()` feeds synthetic
-> frames through the same path for development. See `docs/phase_f_perception.md`.
+> **Status:** the SDK parse/cache/`perceive()`/`injectPerception()` surface is implemented and
+> unit-tested, but the **on-robot detector that emits `perception` frames does not exist yet** —
+> `perceive()` returns `null` on real hardware today. `injectPerception()` feeds synthetic frames
+> through the same path for development.
 
-## Action completion (Phase E)
+## Action completion
 
 Tag an absolute move with an `action_id` and the daemon reports its lifecycle back
 (`accepted → active → done | clamped | blocked | timeout`), so a script can await what *actually*
@@ -431,14 +430,85 @@ const status = await teleop.awaitAction(id, { timeoutMs: 5000 });
 ```
 
 `actionStatus(id)` returns the latest status seen (any state) — the executor uses it to detect whether
-the daemon is participating. `awaitAction` self-resolves to a synthetic `timeout` if the daemon
-predates Phase E, so it never hangs; `onActionStatus` streams every transition for logging. The
-executor's `nori.moveTo(...)` uses all of this internally and returns the daemon's verdict.
+the daemon is participating. `awaitAction` self-resolves to a synthetic `timeout` if the daemon is an
+older build without action completion, so it never hangs; `onActionStatus` streams every transition
+for logging. The executor's `nori.moveTo(...)` uses all of this internally and returns the daemon's verdict.
 
-> **Verification status (v0):** SDK + executor implemented and unit-tested. The daemon that emits
-> `action_status` is built + selftest-covered but **must be deployed to the robot**, and the tolerances
-> tuned on hardware; until then `moveTo` transparently falls back to its client-side heuristic. See
-> `docs/phase_e_action_completion.md`.
+> **Status:** SDK + executor implemented and unit-tested. The daemon that emits `action_status`
+> is built but **not yet deployed to every robot**, with tolerances still being tuned on hardware;
+> until a robot has it, `moveTo` transparently falls back to its client-side heuristic.
+
+## Recording training data (on-robot episodes)
+
+`record(...)` drives the robot's **on-robot recorder** — the part of the robot that spools
+**full-quality** frames + full-rate telemetry + your commanded actions for policy training.
+
+> **This is not a client-side capture.** What you're watching over WebRTC is a degraded
+> viewfinder (a low-res, network-throttled composite); it is deliberately never training data.
+> `record()` tells the *robot* to capture the good stuff locally. **Where the data goes:** when
+> you close a session and the robot next goes idle, it uploads to **your own private Hugging
+> Face dataset repo** — nothing is downloaded to your machine, and the live stream is never
+> stored. This is on-robot and cloud-bound by design; you drive it, you don't hold it.
+
+Recording is **opt-in per unit** (enabled at provisioning). A unit with recording turned off,
+or whose recorder is down, replies `{ok:false, error:"recorder unreachable"}` within ~1 s — a
+definite "no", never silence — so `record("status")` on connect is the cheap "can this unit
+record?" probe. The reply arrives via the `onRecord` option or `recordState()`.
+
+```ts
+const teleop = new RemoteTeleop({
+  /* ...options as above... */
+  onRecord: (s) => {
+    if (!s.ok) return void console.warn("recorder:", s.error);   // e.g. "recorder unreachable"
+    console.log(s.recording ? `recording ${s.episode}` : "idle", `· ${s.freeGb ?? "?"} GB free`);
+  },
+});
+
+teleop.record("status");            // probe on connect (recordState() is null until the first reply)
+
+// One SESSION = one shippable dataset = N EPISODES (demos). Curate as you go:
+teleop.record("session_start", "fold the towel");  // open the dataset with a task label
+teleop.record("episode_start");     // ...drive a demo...
+teleop.record("episode_stop");      // keep this episode in the session
+// teleop.record("episode_discard");// ...or reject the one you just recorded (others stay)
+teleop.record("episode_start");     // next demo...
+teleop.record("episode_stop");
+teleop.record("session_end");       // close + keep; uploads when the robot next idles
+// teleop.record("session_discard");// or throw the whole session away
+```
+
+**Actions** (`record(action, task?)` — `task` is read only on `session_start`/`start`):
+
+| action | effect |
+|---|---|
+| `session_start` | Open a session (one dataset/bundle) with a `task` label; no episode yet. |
+| `episode_start` | Begin an episode (one demo) in the open session. |
+| `episode_stop` | Finalize the current episode, keeping it in the session. |
+| `episode_discard` | Drop the just-stopped (or in-progress) episode; other kept episodes stay. |
+| `session_end` | Close and keep the session; it uploads when the robot next idles. |
+| `session_discard` | Drop the whole open session. |
+| `status` | Query only, no state change — the "can this unit record?" probe. |
+| `start` / `stop` / `discard` | Legacy one-episode aliases (`start`{task} = `session_start`+`episode_start`; `stop` = `episode_stop`+`session_end`; `discard` = `session_discard`). |
+
+**`RecordState`** (the reply, one per command, via `onRecord` / `recordState()`):
+
+| Field | Meaning |
+|---|---|
+| `ok` | Command succeeded. `false` (with `error`) on refusal or an unreachable recorder. |
+| `recording` | An episode is currently recording. |
+| `episode` | `"<session>/episode-NNNN"` while recording (absent otherwise). |
+| `freeGb` | Spool disk headroom on the robot. |
+| `error` | Present only when `ok:false` — e.g. `"recorder unreachable"`, `"session already open"`, or a disk-low refusal. |
+
+Discovery today is by probe (`record("status")` → `ok` vs `recorder unreachable`); a future
+protocol bump advertises `record` as a capability in the handshake descriptor so you can
+show/hide the feature without probing.
+
+> **Status:** the SDK command surface and its round-trip against the robot recorder are
+> **bench-validated** — `session_start`/`episode_*`/`session_end`/`status` round-trip, and a
+> recording-disabled unit returns `recorder unreachable` within ~1 s. The full path to a
+> *trainable* dataset in your Hugging Face repo (idle-gated upload + off-robot assembly into a
+> LeRobotDataset) is **landing**; until then, recorded sessions accumulate as raw bundles.
 
 ## Streaming audio to the robot speaker
 
@@ -479,18 +549,15 @@ src.onended = () => { void teleop.sendClipAudio(null); ctx.close(); }; // hand u
 - **Output level is capped ON THE ROBOT** (self-defending — you don't have to trust the client):
   the robot clamps downlink playback to `NORI_SPEAKER_GAIN` (default **0.7**) with a `volume`
   element before the sink, so no track you send can overdrive the speaker. This exists because a
-  near-full-scale clip drives the speaker amp + hardware-AEC reference far harder than call
-  speech; on a full-speed USB DSP speakerphone (MV-SILICON P10S) that browned the device out into
-  a **mid-stream USB re-enumeration** (`alsasink … device has been disconnected` spam). Quiet call
-  voice never triggered it. You *may* still attenuate client-side (defense-in-depth), but the
-  guarantee lives on the robot; for loud playback also prefer a powered USB hub + a robust speaker.
+  near-full-scale clip drives the speaker amp far harder than call speech and can brown out some
+  USB speaker hardware mid-stream. You *may* still attenuate client-side (defense-in-depth), but
+  the guarantee lives on the robot; for loud playback also prefer a powered USB hub + a robust speaker.
 - **Speaker device must be name-stable** — set `NORI_SPEAKER` to a **dmix alias (`nori_out`) or
   `hw:CARD=<name>`, never `hw:<number>`**. A device that re-enumerates comes back as a *new*
   card number, so a numbered device is unrecoverable after any reset.
 
-> The fork ships a reference implementation of all of the above (fetch/decode/gain-cap +
-> lifecycle) in `NoriLeLab/frontend/src/nori/remote/audioClip.ts` (`playAudioUrl` /
-> `playAudioFile`, default gain `0.7`).
+> The code sample above is the reference pattern (fetch/decode, gain-cap at `0.7`, and uplink
+> lifecycle) — copy it as your starting point.
 
 ## VR (`@nori/sdk/vr`)
 

@@ -4,9 +4,11 @@
 
 import { useState, type SVGProps, type ReactElement } from "react";
 import { Link } from "react-router-dom";
+import { Battery, BatteryLow } from "lucide-react";
 import { FadeIn } from "@/nori/components/FadeIn";
 import { ConnectionControls, ConnectionSettings, ConnectionStatus } from "@/nori/components/ConnectionPanel";
 import { useNori } from "@/nori/NoriContext";
+import { useTeleopSession } from "@/nori/TeleopSessionContext";
 
 // Brand glyphs for the dev card's social links. lucide dropped most brand icons, so these are
 // the official simple-icons paths, inline as currentColor SVGs (inherit the link's text color).
@@ -37,6 +39,27 @@ const SOCIALS: { label: string; href: string; Icon: (p: SVGProps<SVGSVGElement>)
 function modelFromSerial(serial: string): string {
   const m = /^NORI-(L\d+)/i.exec(serial.trim());
   return m ? `Nori ${m[1].toUpperCase()}` : "Nori L2";
+}
+
+// Robot battery pill for the "your robot" card. battery_percent only rides the telemetry stream,
+// which only flows once connected — so the card shows nothing here when idle (its serial line
+// reads normally), and the pill appears next to the serial once a live session reports a reading.
+function BatteryPill() {
+  const { running, connState, tel } = useTeleopSession();
+  const connected = running && connState === "connected";
+  if (!connected || tel.batteryPercent == null) return null;
+  const pct = tel.batteryPercent;
+  const low = pct <= 15;
+  const Icon = low ? BatteryLow : Battery;
+  const cls =
+    "ml-2 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 font-mono text-[12px] font-semibold tracking-[0.08em] " +
+    (low ? "bg-[#d24a3d]/15 text-[#8f2318]" : "bg-[#8ab135]/20 text-[#4d6a1e]");
+  return (
+    <span className={cls} title="Robot battery">
+      <Icon className="h-3.5 w-3.5" />
+      {pct}%
+    </span>
+  );
 }
 
 const FEATURES: {
@@ -123,7 +146,8 @@ const Home = () => {
             <p className="mt-3 text-[14px] leading-relaxed text-ink-2">
               <span className="rounded-full border border-ink/20 bg-background px-2.5 py-0.5 font-mono text-[12px] font-semibold tracking-[0.08em] text-ink">
                 {serial}
-              </span>{" "}
+              </span>
+              <BatteryPill />{" "}
               is linked to this account and ready to connect.{" "}
               <Link to="/nori/pairing" className="font-semibold text-ink underline-offset-2 hover:underline">
                 manage pairing →

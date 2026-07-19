@@ -4,6 +4,14 @@
 import type { NoriTrainingConfig } from "@/nori/api/client";
 import { PARKED_TRAINING_DEFAULTS } from "./parkedConfig";
 
+/** Camera/arm scope for a policy (backend DispatchRequest.scope). Empty/omitted
+ *  fields => whole robot / all cameras. `actuators` are "left"|"right" (or
+ *  "both"/"whole"); `cameras` are short names from the dataset's features. */
+export type TrainingScope = {
+  actuators?: string[];
+  cameras?: string[];
+};
+
 /** Form state: the full LeLab config + Nori-only duration + dataset selection. */
 export type NoriTrainingFormState = NoriTrainingConfig & {
   timeout_seconds: number;
@@ -16,6 +24,8 @@ export type NoriTrainingFormState = NoriTrainingConfig & {
   /** Name the resulting policy BEFORE training (backend `policy_name` →
    *  jobs.display_title). Renameable later from My Stuff at any stage. */
   policy_name?: string;
+  /** Optional camera/arm scope; undefined => whole-robot, all-camera policy. */
+  scope?: TrainingScope;
 };
 
 /** Feasible policy options shown in the form — classes VERIFIED end-to-end in
@@ -62,6 +72,7 @@ export const DEFAULT_TRAINING_CONFIG: NoriTrainingFormState = {
   dataset_ref: undefined,
   open_dataset_id: undefined,
   policy_name: undefined,
+  scope: undefined,
 };
 
 /** The keys the backend `DispatchRequest` actually honors. Everything else in
@@ -79,6 +90,7 @@ export const HONORED_DISPATCH_KEYS = [
   "dataset_ref",
   "open_dataset_id",
   "policy_name",
+  "scope",
 ] as const;
 
 /** Build the backend dispatch body from form state: only the honored fields,
@@ -100,5 +112,9 @@ export function toDispatchBody(c: NoriTrainingFormState): Record<string, unknown
   if (c.open_dataset_id) body.open_dataset_id = c.open_dataset_id;
   else if (c.dataset_ref) body.dataset_ref = c.dataset_ref;
   if (c.policy_name?.trim()) body.policy_name = c.policy_name.trim();
+  // Scope only when it actually narrows something (empty => whole robot).
+  if (c.scope && ((c.scope.actuators?.length ?? 0) > 0 || (c.scope.cameras?.length ?? 0) > 0)) {
+    body.scope = c.scope;
+  }
   return body;
 }

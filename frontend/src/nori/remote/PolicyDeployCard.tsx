@@ -145,7 +145,7 @@ export function PolicyDeployCard() {
         <div className="mt-3 space-y-3">
           <p className="text-sm leading-relaxed text-[#6f6858]">
             Run a trained policy on your robot. It runs on this computer and streams only motor
-            instructions to the arm — nothing executes on the robot itself.
+            instructions to Nori.
           </p>
 
           {runnable.length > 0 && (

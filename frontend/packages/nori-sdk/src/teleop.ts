@@ -93,6 +93,11 @@ export interface TelemetryView {
   // on disconnect) — this is how a UI shows "poor network, quality reduced" instead of letting
   // a black/frozen feed hide behind a green "connected" chip.
   videoNet: VideoNetState | null;
+  // Pack state-of-charge % (0-100), injected by the robot bridge into each telemetry frame
+  // (docs/battery_monitor_integration.md §5). null when the robot has no battery monitor, the
+  // reader is down, or the pack voltage is out of range — render "—", never 0%. Absent on old
+  // bridges -> stays null (graceful degradation, like robot_mic_live).
+  batteryPercent: number | null;
 }
 
 // A single object the on-Pi detector reports (nori-protocol perception.json $items). Fields
@@ -338,6 +343,19 @@ export interface CallState {
   cameraOn: boolean;     // M6 (gated): operator camera is sending
 }
 
+// W2.11 on-robot episode recording: the reply to a record() command, relayed by the
+// bridge from the robot's always-on recorder ({type:"record_status"} frames). Null
+// until the first reply — record({action:"status"}) on connect is the cheap probe.
+// `error` covers both refusals (disk low) and "recorder unreachable" (robot has
+// recording disabled or the recorder service is down — a definite no, not silence).
+export interface RecordState {
+  ok: boolean;
+  recording: boolean;
+  episode?: string;      // "<session>/<episode-NNNN>" while recording
+  freeGb?: number;       // spool disk headroom on the robot
+  error?: string;
+}
+
 export interface RemoteTeleopOptions {
   // Out-of-band signaling transport (SDP/ICE + room handshake). The fork injects a
   // SupabaseSignaling; an external SDK consumer supplies their own. See signaling.ts.
@@ -401,6 +419,9 @@ export interface RemoteTeleopOptions {
   // instead if you only need it at use-time. Check info.accepted / info.versionMismatch here
   // if you want to surface handshake problems in your own UI (the SDK already logs them).
   onReady?: (info: RobotInfo) => void;
+  // Optional: on-robot episode recording state (W2.11) — fires on every record_status
+  // reply to a record() command. Poll recordState() for the latest value at use-time.
+  onRecord?: (s: RecordState) => void;
 }
 
 // Two schemes; 'm' toggles. Default = CYLINDRICAL (the rpi4 feel).
@@ -560,7 +581,7 @@ export class RemoteTeleop {
   // frame — keep last values so the readout doesn't flicker to 0.
   private tel: TelemetryView = {
     loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {},
-    state: {}, videoNet: null,
+    state: {}, videoNet: null, batteryPercent: null,
   };
   private stopped = false;
   // Latest world-state from the daemon perception process (Phase F). null until a frame arrives
@@ -580,6 +601,7 @@ export class RemoteTeleop {
   // Composite camera layout from the bridge (Phase F vision), null until it arrives / single-cam.
   private cameraLayoutRaw: CameraLayout | null = null;
   private daemonStat: DaemonStatus | null = null;   // latest daemon_status (bridge health frame)
+  private recStat: RecordState | null = null;       // latest record_status (W2.11 recorder reply)
   // The parsed handshake ack (P4.1). null until the daemon's ack arrives; refreshed on every
   // daemon (re)connect (a fresh offer means a fresh session, and the daemon re-acks).
   private ackInfo: RobotInfo | null = null;
@@ -801,6 +823,41 @@ export class RemoteTeleop {
     this.dcSend(typeof quality === "number"
       ? { type: "video", bitrate: quality }
       : { type: "video", quality });
+  }
+
+  // W2.11 on-robot episode recording: drive the robot's always-on recorder (the Pi
+  // spools full-quality frames + telemetry + actions for policy training — NOT the
+  // degraded live stream you're watching). Bridge-intercepted like {type:"video"}/
+  // {type:"call"} — never reaches the daemon, no nori-protocol change. The reply
+  // arrives as onRecord / recordState(); a robot with recording disabled answers
+  // {ok:false, error:"recorder unreachable"} within ~1 s rather than staying silent.
+  //
+  // Two-tier protocol (W2.11 one-bundle-per-session — a session ships as ONE
+  // raw_bundle holding N episodes):
+  //   session_start {task} -> episode_start -> episode_stop [-> episode_discard]
+  //     (repeat episodes) -> session_end (keep+ship) | session_discard (drop all)
+  //   - episode_discard: Reject the just-recorded episode (deletes its robot copy;
+  //     other kept episodes stay). Safe because Reject is while still connected, so
+  //     the idle-gated shipper hasn't uploaded the session yet.
+  //   - session_end: close the session; it uploads when the robot next idles.
+  // Legacy one-episode aliases (kept for the bench page / auto mode): start {task}
+  // = session_start+episode_start; stop = episode_stop+session_end; discard /
+  // discard_last = session_discard.
+  record(
+    action:
+      | "session_start" | "episode_start" | "episode_stop" | "episode_discard"
+      | "session_end" | "session_discard"
+      | "start" | "stop" | "discard" | "discard_last" | "status",
+    task?: string,
+  ) {
+    const msg: Record<string, unknown> = { type: "record", action };
+    // Task rides episode_start too: if session_start dropped on the unreliable
+    // control channel, the robot auto-opens a session on episode_start and needs
+    // the task from here so it isn't lost.
+    if ((action === "start" || action === "session_start" || action === "episode_start") && task) {
+      msg.task = task;
+    }
+    this.dcSend(msg);
   }
 
 
@@ -1278,6 +1335,9 @@ export class RemoteTeleop {
       robotAudio: false, robotMicLive: false, robotMicMuted: false, cameraOn: false,
     };
     this.emitCall();
+    // Recorder knowledge is stale once disconnected (auto mode stops on camera
+    // silence anyway) — a fresh session re-probes with record("status").
+    this.recStat = null;
     if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
     if (this.jogTimer) { clearInterval(this.jogTimer); this.jogTimer = null; }
     this.clearWaitDeadline();
@@ -1512,6 +1572,10 @@ export class RemoteTeleop {
         this.call.robotMicMuted = m.robot_local_mic_muted;
         this.emitCall();
       }
+      // Pack state-of-charge (battery_monitor_integration.md §5): number 0-100, or explicit
+      // null when unknown. Absent on old bridges -> leave the last value untouched.
+      if (typeof m.battery_percent === "number") this.tel.batteryPercent = m.battery_percent;
+      else if (m.battery_percent === null) this.tel.batteryPercent = null;
       this.o.onTelemetry({ ...this.tel });
     } else if (m.type === "perception") {
       this.ingestPerception(m);
@@ -1521,6 +1585,8 @@ export class RemoteTeleop {
       this.ingestCameraLayout(m);
     } else if (m.type === "daemon_status") {
       this.ingestDaemonStatus(m);
+    } else if (m.type === "record_status") {
+      this.ingestRecordStatus(m);
     } else if (m.type === "ack") {
       this.ingestAck(m);
     } else if (m.type === "error") {
@@ -1651,6 +1717,29 @@ export class RemoteTeleop {
   // bridge, or the control channel just opened).
   daemonStatus(): DaemonStatus | null {
     return this.daemonStat;
+  }
+
+  // W2.11: coerce a record_status reply (fields per rpi5/media/recorder.py _status),
+  // cache it, notify. Replies are direct answers to record() commands — no dedupe
+  // (a repeated "status" probe legitimately returns the same state, and free_gb drifts).
+  private ingestRecordStatus(m: Record<string, unknown>) {
+    const s: RecordState = {
+      ok: m.ok === true,
+      recording: m.recording === true,
+    };
+    if (typeof m.episode === "string" && m.episode) s.episode = m.episode;
+    if (typeof m.free_gb === "number") s.freeGb = m.free_gb;
+    if (typeof m.error === "string" && m.error) s.error = m.error;
+    this.recStat = s;
+    this.log(s.error ? `recorder: ${s.error}`
+      : s.recording ? `recording ${s.episode ?? ""} (${s.freeGb ?? "?"} GB free)`
+      : "recorder idle");
+    this.o.onRecord?.(s);
+  }
+
+  // The latest recorder reply, or null if none yet (never asked, or a pre-W2.11 robot).
+  recordState(): RecordState | null {
+    return this.recStat;
   }
 
   // A one-line description of the composite layout for the LLM vision prompt, or null if unknown.

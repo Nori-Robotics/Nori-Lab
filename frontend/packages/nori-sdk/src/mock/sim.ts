@@ -140,8 +140,80 @@ export class MockDaemonSim {
     const t = frame.type;
     if (t === "control") return this.handleControl(frame, nowMs);
     if (t === "command") return this.handleCommand(frame);
-    // call / video / link / record / unknown: a real robot ignores unknown vocabulary too.
+    if (t === "record") return this.handleRecord(frame);
+    // call / video / link / unknown: a real robot ignores unknown vocabulary too.
     return [];
+  }
+
+  // W2.11 on-robot recorder emulation: the bridge relays {type:"record"} to the
+  // always-on recorder and answers with a record_status (recorder.py _status shape).
+  // Enough state to exercise the SDK's record()/onRecord path and a UI toggle.
+  // Two-tier session/episode emulation (W2.11 one-bundle-per-session).
+  private recSessionOpen = false;
+  private recEpisode: string | null = null;   // open episode id, or null
+  private recKept = 0;                         // episodes kept in the open session
+  private recSeq = 0;
+  private handleRecord(frame: Frame): Frame[] {
+    const status = (ok: boolean, error?: string): Frame => {
+      const s: Frame = {
+        type: "record_status", ok, recording: this.recEpisode !== null,
+        session_open: this.recSessionOpen, episode: this.recEpisode ?? undefined,
+        episodes_kept: this.recKept, free_gb: 42.0,
+      };
+      if (error) s.error = error;
+      return s;
+    };
+    const a = frame.action;
+    // --- session/episode protocol ---
+    if (a === "session_start" || a === "start") {
+      if (this.recSessionOpen) return [status(false, "session already open")];
+      this.recSessionOpen = true;
+      this.recKept = 0;
+      if (a === "start") { this.recSeq += 1; this.recEpisode = this.epId(); }  // alias
+      return [status(true)];
+    }
+    if (a === "episode_start") {
+      // Resilience: auto-open a session if session_start was dropped (matches
+      // recorder.py _episode_start).
+      if (!this.recSessionOpen) { this.recSessionOpen = true; this.recKept = 0; }
+      if (this.recEpisode !== null) return [status(false, "already recording an episode")];
+      this.recSeq += 1;
+      this.recEpisode = this.epId();
+      return [status(true)];
+    }
+    if (a === "episode_stop") {
+      if (this.recEpisode === null) return [status(false, "not recording an episode")];
+      this.recEpisode = null;
+      this.recKept += 1;
+      return [status(true)];
+    }
+    if (a === "episode_discard") {
+      if (!this.recSessionOpen) return [status(false, "no session open")];
+      if (this.recEpisode !== null) this.recEpisode = null;  // drop in-progress
+      else if (this.recKept > 0) this.recKept -= 1;          // drop just-stopped
+      else return [status(false, "no episode to discard")];
+      return [status(true)];
+    }
+    if (a === "session_end" || a === "stop") {
+      if (!this.recSessionOpen) return [status(false, "no session open")];
+      if (a === "stop" && this.recEpisode !== null) { this.recEpisode = null; this.recKept += 1; }
+      this.recSessionOpen = false;
+      this.recEpisode = null;
+      return [status(true)];
+    }
+    if (a === "session_discard" || a === "discard" || a === "discard_last") {
+      if (!this.recSessionOpen) return [status(false, "nothing to discard")];
+      this.recSessionOpen = false;
+      this.recEpisode = null;
+      this.recKept = 0;
+      return [status(true)];
+    }
+    if (a === "status") return [status(true)];
+    return [status(false, `unknown action ${String(a)}`)];
+  }
+
+  private epId(): string {
+    return `mock-session/episode-${String(this.recSeq).padStart(4, "0")}`;
   }
 
   private handleControl(frame: Frame, nowMs: number): Frame[] {

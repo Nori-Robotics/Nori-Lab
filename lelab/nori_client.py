@@ -237,6 +237,21 @@ class NoriClient:
         acquisitions; the row is kept for audit)."""
         return self._request("DELETE", f"{API}/marketplace/policies/{ref}/publish")
 
+    def publish_dataset(self, upload_ref: str, title: str, description: str | None = None) -> dict[str, Any]:
+        """POST /marketplace/datasets/{upload_ref}/publish — publish one of the
+        caller's own promoted dataset uploads. Creates a pending_review listing
+        that auto-publishes after re-homing + the format gate. 403 without
+        publish_public consent, 409 if already published."""
+        return self._request(
+            "POST", f"{API}/marketplace/datasets/{upload_ref}/publish",
+            json={"title": title, "description": description},
+        )
+
+    def unpublish_dataset(self, upload_ref: str) -> dict[str, Any]:
+        """DELETE /marketplace/datasets/{upload_ref}/publish — instant, idempotent
+        takedown of the caller's active dataset listing (kept for audit)."""
+        return self._request("DELETE", f"{API}/marketplace/datasets/{upload_ref}/publish")
+
     def list_my_listings(self) -> Any:
         """GET /marketplace/my-listings — the caller's community submissions in
         every lifecycle state (pending_review/public/rejected/taken_down)."""
@@ -476,14 +491,25 @@ class NoriClient:
         """GET /training/jobs/{job_id}."""
         return self._request("GET", f"{API}/training/jobs/{job_id}")
 
-    def get_job_logs(self, job_id: str, since: int = 0) -> dict[str, Any]:
-        """GET /training/jobs/{job_id}/logs?since=<offset>.
+    def get_job_logs(self, job_id: str, since: int = 0, tail: int | None = None) -> dict[str, Any]:
+        """GET /training/jobs/{job_id}/logs?since=<offset>[&tail=<n>].
 
         Returns {lines, next_offset, job_status, is_terminal}. Client polls ~2s.
+        `tail` (fresh read only) returns just the last N lines but reports the
+        true end as next_offset — cheap seeding for the live monitor on reload.
         """
+        params: dict[str, Any] = {"since": since}
+        if tail is not None:
+            params["tail"] = tail
         return self._request(
-            "GET", f"{API}/training/jobs/{job_id}/logs", params={"since": since}
+            "GET", f"{API}/training/jobs/{job_id}/logs", params=params
         )
+
+    def get_dataset_features(self, dataset_ref: str | None = None) -> dict[str, Any]:
+        """GET /training/dataset-features[?dataset_ref=] — cameras/arms recorded
+        in the dataset, to populate the training scope picker."""
+        params = {"dataset_ref": dataset_ref} if dataset_ref else None
+        return self._request("GET", f"{API}/training/dataset-features", params=params)
 
     # -- dataset upload: 4-step presigned-S3 flow (Phase 4) ------------------------
 

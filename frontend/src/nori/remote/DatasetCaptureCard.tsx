@@ -1,331 +1,160 @@
-// NORI: Additive file. The browser-catcher UI — a card on the Remote page that
-// records the live session into a LeRobot dataset (see datasetCapture.ts for the
-// pipeline; lelab/browser_capture.py for the spool it feeds).
+// "Record training dataset" card on the Remote page (W2.11).
 //
-// Lifecycle the card walks the operator through:
-//   pick destination (new dataset [name] | add to existing) → record session →
-//   [episode start … episode stop]×N → export → upload to cloud
+// Records to the ROBOT, not the laptop. The full-quality training copy is made
+// on the robot (rpi5/media/recorder.py: full-res frames + 50 Hz state + actions)
+// and ships itself to the cloud once the robot idles (docs/offline_recorder_
+// design.md). Recorded episodes appear on My Stuff ("Robot recordings").
 //
-// Also the local dataset manager: lists the cache datasets (episodes/frames/
-// date) with inline rename — the operator's view of "what have I recorded".
-//
-// Renders nothing when the spool isn't reachable (hosted LeLab-free app) and
-// disables itself until a session is connected with video available.
+// UX — a two-tier SESSION → EPISODES flow, matching how you collect data:
+//   1. Start a session with a task label (the grouping key; all its episodes
+//      share it, and assembly groups by it into one LeRobot dataset).
+//   2. Within the session, record episodes one at a time: Start episode → drive
+//      → Stop episode → EPHEMERAL in-browser preview (the degraded live view —
+//      all the laptop has) → Keep or Reject. Reject deletes the robot's copy too
+//      (record("discard_last")) before it can upload.
+//   3. Finish the session when done.
+// Each episode is one robot start/stop; Keep leaves it to ship, Reject discards
+// it on the robot. The card never spools to the laptop (contrast datasetCapture.ts).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Pill } from "@/components/ui/pill";
-import { useApi } from "@/contexts/ApiContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
-import { uploadDataset, type MaybeDeduplicated } from "@/nori/api/client";
-import { DatasetCapture, type CaptureDatasetEntry } from "@/nori/remote/datasetCapture";
+import { EphemeralEpisodeRecorder } from "@/nori/remote/episodePreview";
 
 type Phase =
-  | { kind: "idle" }
-  | { kind: "capturing" }
-  | { kind: "exporting" }
-  | { kind: "exported"; repoId: string; appended: boolean }
-  | { kind: "uploading"; repoId: string }
-  | { kind: "uploaded"; repoId: string; wasDuplicate: boolean }
-  | { kind: "error"; message: string };
-
-type Destination = { mode: "new"; name: string } | { mode: "append"; repoId: string };
-
-// One row of the "your datasets" list, with inline rename. Rename is a local
-// cache operation; failures (name taken, bad chars) surface inline.
-function DatasetRow({
-  entry,
-  disabled,
-  onRename,
-}: {
-  entry: CaptureDatasetEntry;
-  disabled: boolean;
-  onRename: (oldId: string, newId: string) => Promise<void>;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(entry.repo_id);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const commit = async () => {
-    const next = draft.trim();
-    if (!next || next === entry.repo_id) {
-      setEditing(false);
-      setErr(null);
-      return;
-    }
-    setBusy(true);
-    try {
-      await onRename(entry.repo_id, next);
-      setEditing(false);
-      setErr(null);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[#14131a]/10 py-1.5 first:border-t-0">
-      {editing ? (
-        <input
-          className="h-7 min-w-0 flex-1 rounded border border-[#14131a]/20 bg-white px-2 font-mono text-xs"
-          value={draft}
-          disabled={busy}
-          autoFocus
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") void commit();
-            if (e.key === "Escape") {
-              setEditing(false);
-              setDraft(entry.repo_id);
-              setErr(null);
-            }
-          }}
-        />
-      ) : (
-        <span className="min-w-0 flex-1 truncate font-mono text-xs" title={entry.repo_id}>
-          {entry.repo_id}
-        </span>
-      )}
-      <span className="shrink-0 text-xs text-[#6f6858]">
-        {entry.episodes} ep · {entry.frames} frames
-        {entry.fps ? ` · ${entry.fps} fps` : ""} · {entry.modified_at.slice(0, 10)}
-      </span>
-      {editing ? (
-        <span className="flex shrink-0 gap-1">
-          <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => void commit()} disabled={busy}>
-            {busy ? "…" : "Save"}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2 text-xs"
-            disabled={busy}
-            onClick={() => {
-              setEditing(false);
-              setDraft(entry.repo_id);
-              setErr(null);
-            }}
-          >
-            Cancel
-          </Button>
-        </span>
-      ) : (
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 shrink-0 px-2 text-xs"
-          disabled={disabled}
-          onClick={() => setEditing(true)}
-        >
-          rename
-        </Button>
-      )}
-      {err && <span className="w-full text-xs text-red-700">{err}</span>}
-    </div>
-  );
-}
+  | { kind: "idle" }                              // no session
+  | { kind: "session" }                           // session open, between episodes
+  | { kind: "recording" }                         // an episode is recording
+  | { kind: "review"; url: string | null };       // just-stopped episode awaiting Keep/Reject
 
 export function DatasetCaptureCard() {
-  const { baseUrl, fetchWithHeaders } = useApi();
-  const { teleop, running, settings, setTelemetryListener, setControlSentListener } =
-    useTeleopSession();
+  const { teleop, running, connState, recordState } = useTeleopSession();
+  const connected = running && connState === "connected";
 
-  const [available, setAvailable] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [task, setTask] = useState("");
-  const [episodeOn, setEpisodeOn] = useState(false);
-  const [episodeCount, setEpisodeCount] = useState(0);
-  // After Stop episode, the just-recorded clip awaits Accept/Reject before it
-  // counts toward the dataset. `url` is an object URL for the preview <video>.
-  const [review, setReview] = useState<{ index: number; url: string } | null>(null);
+  const [busy, setBusy] = useState(false);        // start/stop round-trip in flight
   const [reviewBusy, setReviewBusy] = useState(false);
-  const captureRef = useRef<DatasetCapture | null>(null);
-
-  // Collapsed by default, like Robot logs — recording is an occasional task and the card is tall.
+  const [previewNote, setPreviewNote] = useState<string>("");   // why a preview was empty
+  const [episodeCount, setEpisodeCount] = useState(0);   // kept episodes this session
+  const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
 
-  // Destination for this session's episodes, chosen up front. The dataset
-  // list doubles as the append picker's source and the rename manager.
-  const [dest, setDest] = useState<Destination>({ mode: "new", name: "" });
-  const [datasets, setDatasets] = useState<CaptureDatasetEntry[]>([]);
-  const [listOpen, setListOpen] = useState(false);
+  const previewRef = useRef<EphemeralEpisodeRecorder>(new EphemeralEpisodeRecorder());
 
-  const refreshDatasets = useCallback(() => {
-    DatasetCapture.listDatasets(baseUrl)
-      .then(setDatasets)
-      .catch(() => setDatasets([]));
-  }, [baseUrl]);
+  const recording = phase.kind === "recording";
+  const inSession = phase.kind !== "idle";
 
-  useEffect(() => {
-    let alive = true;
-    void DatasetCapture.available(baseUrl).then((ok) => {
-      if (!alive) return;
-      setAvailable(ok);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [baseUrl]);
-
-  useEffect(() => {
-    if (available) refreshDatasets();
-  }, [available, refreshDatasets]);
-
-  // Tear down listeners (and any dangling capture) when the card unmounts.
-  useEffect(
-    () => () => {
-      setTelemetryListener(null);
-      setControlSentListener(null);
-      void captureRef.current?.abort();
-    },
-    [setTelemetryListener, setControlSentListener]
-  );
-
-  // Anything other than idle means a capture, export or upload is live and the operator needs the
-  // controls (Stop episode, Finish & export) — never leave those buried behind a collapsed header.
-  // Only forces it open on the transition, so the card can still be collapsed again afterwards.
+  // Keep the controls visible whenever a session is open.
   useEffect(() => {
     if (phase.kind !== "idle") setOpen(true);
   }, [phase.kind]);
 
-  // Free the review clip's object URL when it changes or the card unmounts.
+  // Revoke the review clip's object URL when we leave review / unmount.
   useEffect(() => {
-    return () => {
-      if (review) URL.revokeObjectURL(review.url);
-    };
-  }, [review]);
+    if (phase.kind !== "review" || !phase.url) return;
+    const url = phase.url;
+    return () => URL.revokeObjectURL(url);
+  }, [phase]);
 
-  const appendable = datasets.filter((d) => d.appendable);
-  const appendTarget =
-    dest.mode === "append" ? appendable.find((d) => d.repo_id === dest.repoId) : undefined;
-
-  const beginCapture = useCallback(async () => {
-    if (!teleop) return;
-    const capture = new DatasetCapture(baseUrl);
-    try {
-      await capture.begin(teleop, settings.room);
-    } catch (e) {
-      setPhase({ kind: "error", message: e instanceof Error ? e.message : String(e) });
-      return;
-    }
-    captureRef.current = capture;
-    setTelemetryListener(capture.onTelemetry);
-    setControlSentListener(capture.onControlSent);
-    setEpisodeCount(0);
-    setEpisodeOn(false);
-    setPhase({ kind: "capturing" });
-  }, [teleop, baseUrl, settings.room, setTelemetryListener, setControlSentListener]);
-
-  const toggleEpisode = useCallback(async () => {
-    const capture = captureRef.current;
-    if (!capture || !teleop) return;
-    try {
-      if (episodeOn) {
-        // Stop, then hand the clip to the Accept/Reject review — it does NOT
-        // count toward the dataset until Accepted.
-        const res = await capture.episodeStop();
-        setEpisodeOn(false);
-        if (res) setReview({ index: res.index, url: URL.createObjectURL(res.blob) });
-      } else {
-        await capture.episodeStart(teleop, task.trim() || "teleop session");
-        setEpisodeOn(true);
-      }
-    } catch (e) {
-      setPhase({ kind: "error", message: e instanceof Error ? e.message : String(e) });
-    }
-  }, [episodeOn, task, teleop]);
-
-  const acceptEpisode = useCallback(() => {
-    setReview((r) => {
-      if (r) URL.revokeObjectURL(r.url);
-      return null;
-    });
-    setEpisodeCount((n) => n + 1);
+  // Drop any in-flight recording ONLY on unmount. This MUST NOT depend on
+  // `phase`: a phase-scoped cleanup fires on every transition and would cancel
+  // the recorder the instant Start episode sets phase→recording (that was the
+  // empty-preview bug — the recorder was killed ~ms after it started).
+  useEffect(() => {
+    const preview = previewRef.current;
+    return () => preview.cancel();
   }, []);
 
-  const rejectEpisode = useCallback(async () => {
-    if (!review) return;
+  const startSession = useCallback(() => {
+    if (!teleop) return;
+    setEpisodeCount(0);
+    setError(null);
+    // Opens ONE robot session dir; every episode below goes into it and the whole
+    // session ships as one bundle (W2.11 one-bundle-per-session).
+    teleop.record("session_start", task.trim() || "teleop session");
+    setPhase({ kind: "session" });
+  }, [teleop, task]);
+
+  const finishSession = useCallback(() => {
+    // Close the robot session — it uploads (as one bundle) when the robot idles.
+    teleop?.record("session_end");
+    setPhase({ kind: "idle" });
+  }, [teleop]);
+
+  const startEpisode = useCallback(() => {
+    if (!teleop || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const stream = teleop.videoStream();
+      if (!stream) throw new Error("no video stream — is video enabled?");
+      // Browser preview FIRST: if the stream is stale/missing it throws here and
+      // the robot never starts, so the two can't diverge.
+      previewRef.current.start(stream);
+      // Task on episode_start too — recovers a dropped session_start (the robot
+      // auto-opens a session and keeps the task).
+      teleop.record("episode_start", task.trim() || "teleop session");
+      setPhase({ kind: "recording" });
+    } catch (e) {
+      previewRef.current.cancel();
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [teleop, busy, task]);
+
+  const stopEpisode = useCallback(async () => {
+    if (!teleop || busy) return;
+    setBusy(true);
+    try {
+      teleop.record("episode_stop");
+      const blob = await previewRef.current.stop();
+      // ALWAYS surface the Keep/Reject decision, even if the preview came back
+      // empty (a null url just renders a "no preview" note) — the operator must
+      // always get to reject a bad take, never have it silently kept.
+      setPreviewNote(blob ? "" : previewRef.current.diagnostic);
+      setPhase({ kind: "review", url: blob ? URL.createObjectURL(blob) : null });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setPhase({ kind: "session" });
+    } finally {
+      setBusy(false);
+    }
+  }, [teleop, busy]);
+
+  const keepEpisode = useCallback(() => {
+    if (phase.kind === "review" && phase.url) URL.revokeObjectURL(phase.url);
+    setEpisodeCount((n) => n + 1);
+    setPhase({ kind: "session" });
+  }, [phase]);
+
+  const rejectEpisode = useCallback(() => {
+    if (phase.kind !== "review") return;
     setReviewBusy(true);
     try {
-      await captureRef.current?.discardEpisode(review.index);
-      URL.revokeObjectURL(review.url);
-      setReview(null);
-    } catch (e) {
-      setPhase({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+      // Delete just this episode's robot copy; other kept episodes in the session
+      // stay. Safe: still connected, so the idle-gated shipper hasn't shipped the
+      // session yet (recorder.py _episode_discard).
+      teleop?.record("episode_discard");
+      if (phase.url) URL.revokeObjectURL(phase.url);
+      setPhase({ kind: "session" });
     } finally {
       setReviewBusy(false);
     }
-  }, [review]);
+  }, [phase, teleop]);
 
-  const finishCapture = useCallback(async () => {
-    const capture = captureRef.current;
-    if (!capture) return;
-    setTelemetryListener(null);
-    setControlSentListener(null);
-    setPhase({ kind: "exporting" });
-    const appended = dest.mode === "append";
-    try {
-      const { repoId } = await capture.finish(
-        15,
-        dest.mode === "new" ? dest.name.trim() : "",
-        dest.mode === "append" ? dest.repoId : ""
-      );
-      captureRef.current = null;
-      setPhase({ kind: "exported", repoId, appended });
-      refreshDatasets();
-    } catch (e) {
-      captureRef.current = null;
-      setPhase({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+  // Robot recorder status line (record_status replies via onRecord).
+  const robotLine = (() => {
+    if (recordState === null) return "no reply yet";
+    if (recordState.recording) {
+      return `recording ${recordState.episode ?? ""}${
+        recordState.freeGb !== undefined ? ` · ${recordState.freeGb} GB free` : ""
+      }`;
     }
-  }, [dest, setTelemetryListener, setControlSentListener, refreshDatasets]);
-
-  const abortCapture = useCallback(async () => {
-    setTelemetryListener(null);
-    setControlSentListener(null);
-    await captureRef.current?.abort();
-    captureRef.current = null;
-    setEpisodeOn(false);
-    setEpisodeCount(0);
-    setReview(null);
-    setPhase({ kind: "idle" });
-  }, [setTelemetryListener, setControlSentListener]);
-
-  const uploadToCloud = useCallback(async () => {
-    if (phase.kind !== "exported") return;
-    const repoId = phase.repoId;
-    setPhase({ kind: "uploading", repoId });
-    try {
-      const session = await uploadDataset(baseUrl, fetchWithHeaders, repoId, "Remote-session browser capture");
-      setPhase({
-        kind: "uploaded",
-        repoId,
-        wasDuplicate: !!(session as MaybeDeduplicated).deduplicated,
-      });
-    } catch (e) {
-      setPhase({
-        kind: "error",
-        message: `upload of ${repoId} failed: ${e instanceof Error ? e.message : String(e)}`,
-      });
-    }
-  }, [phase, baseUrl, fetchWithHeaders]);
-
-  const renameDataset = useCallback(
-    async (oldId: string, newId: string) => {
-      await DatasetCapture.renameDataset(baseUrl, oldId, newId);
-      // Keep an append selection pointing at the renamed dataset.
-      setDest((d) => (d.mode === "append" && d.repoId === oldId ? { ...d, repoId: newId } : d));
-      refreshDatasets();
-    },
-    [baseUrl, refreshDatasets]
-  );
-
-  if (!available) return null;
-
-  const capturing = phase.kind === "capturing";
-  const busy = phase.kind === "exporting" || phase.kind === "uploading";
+    if (recordState.error) return `unavailable (${recordState.error})`;
+    return "ready — a full-quality copy records with each episode";
+  })();
 
   return (
     <div className={`rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-4 pt-3 text-[#14131a] shadow-sm ${open ? "pb-4" : "pb-3"}`}>
@@ -344,16 +173,14 @@ export function DatasetCaptureCard() {
       >
         <h3 className="text-base font-semibold leading-none tracking-tight">
           Record training dataset
-          {/* The live dot and the episode count stay in the header while collapsed — a recording
-              in progress must never be invisible just because the card is shut. */}
-          {capturing && (
+          {recording && (
             <span className="ml-2 inline-block h-2 w-2 animate-pulse rounded-full bg-red-500 align-middle" />
           )}
         </h3>
         <span className="flex items-center gap-3 text-sm font-normal text-muted-foreground">
-          {capturing && (
+          {inSession && (
             <span className="text-xs">
-              {episodeCount} episode{episodeCount === 1 ? "" : "s"} saved
+              {episodeCount} episode{episodeCount === 1 ? "" : "s"} kept
             </span>
           )}
           {open ? "▲ hide" : "▼ show"}
@@ -361,203 +188,121 @@ export function DatasetCaptureCard() {
       </div>
 
       {open && (
-      <div className="mt-3 space-y-3">
-        <p className="text-sm leading-relaxed text-[#6f6858]">
-          Record sessions of teleoperation to train your Nori to do the task autonomously. After
-          recording enough episodes, go to the Training page to start creating a policy.
-        </p>
-        {phase.kind === "idle" && (
-          <>
-            {/* Destination: a brand-new dataset, or new episodes appended to a
-                previous session's dataset (same joints; exporter re-validates). */}
-            <div className="flex flex-wrap items-center gap-2">
-              <Pill size="sm" active={dest.mode === "new"} onClick={() => setDest({ mode: "new", name: "" })}>
-                New dataset
-              </Pill>
-              <Pill
-                size="sm"
-                active={dest.mode === "append"}
-                onClick={() =>
-                  setDest({ mode: "append", repoId: appendable[0]?.repo_id ?? "" })
-                }
-              >
-                Add to existing
-              </Pill>
-              {dest.mode === "new" ? (
+        <div className="mt-3 space-y-3">
+          {/* ---- no session: choose a task and start ---- */}
+          {phase.kind === "idle" && (
+            <>
+              <p className="text-sm leading-relaxed text-[#6f6858]">
+                Record demonstrations of a task: each episode is saved on Nori at full
+                quality and will upload to My Stuff when powered on and idle (disconnected).
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
                 <input
-                  className="h-9 min-w-48 flex-1 rounded-md border border-[#14131a]/15 bg-white/70 px-3 font-mono text-sm"
-                  placeholder="dataset name (optional — timestamped if empty)"
-                  maxLength={120}
-                  value={dest.name}
-                  onChange={(e) => setDest({ mode: "new", name: e.target.value })}
+                  className="h-9 flex-1 rounded-md border border-[#14131a]/15 bg-white/70 px-3 text-sm"
+                  placeholder="task for this session (e.g. pick up the red cube)"
+                  maxLength={200}
+                  value={task}
+                  onChange={(e) => setTask(e.target.value)}
                 />
-              ) : appendable.length === 0 ? (
-                <span className="text-sm text-[#6f6858]">no capture datasets yet — record a new one first</span>
-              ) : (
-                <select
-                  className="h-9 min-w-48 flex-1 rounded-md border border-[#14131a]/15 bg-white/70 px-2 font-mono text-sm"
-                  value={dest.mode === "append" ? dest.repoId : ""}
-                  onChange={(e) => setDest({ mode: "append", repoId: e.target.value })}
-                >
-                  {appendable.map((d) => (
-                    <option key={d.repo_id} value={d.repo_id}>
-                      {d.repo_id} ({d.episodes} ep)
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <Button
-                onClick={beginCapture}
-                disabled={!running || !teleop || (dest.mode === "append" && !appendTarget)}
-              >
-                Record session
-              </Button>
-              <span className="text-sm text-[#6f6858]">
-                {!running
-                  ? "connect to the robot first"
-                  : dest.mode === "append" && appendTarget
-                    ? `episodes will be added to ${appendTarget.repo_id}`
-                    : "captures video + joint state from this session into a LeRobot dataset"}
-              </span>
-            </div>
-          </>
-        )}
-
-        {capturing && review && (
-          // At-capture review: play back the just-recorded episode; Accept adds
-          // it to the dataset, Reject discards it. No other controls until chosen.
-          <div className="space-y-3">
-            <p className="text-sm font-medium text-[#14131a]">Keep this episode?</p>
-            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-            <video
-              key={review.url}
-              src={review.url}
-              className="w-full max-w-md rounded-md border border-[#14131a]/15 bg-black"
-              controls
-              loop
-              autoPlay
-              muted
-            />
-            <div className="flex flex-wrap items-center gap-3">
-              <Button onClick={acceptEpisode} disabled={reviewBusy}>
-                Accept
-              </Button>
-              <Button onClick={() => void rejectEpisode()} variant="destructive" disabled={reviewBusy}>
-                {reviewBusy ? "Discarding…" : "Reject"}
-              </Button>
-              <span className="text-xs text-[#6f6858]">
-                Accepted episodes join the dataset; rejected ones are discarded.
-              </span>
-            </div>
-          </div>
-        )}
-
-        {capturing && !review && (
-          <>
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                className="h-9 flex-1 rounded-md border border-[#14131a]/15 bg-white/70 px-3 text-sm"
-                placeholder="task description (e.g. pick up the red cube)"
-                maxLength={200}
-                value={task}
-                disabled={episodeOn}
-                onChange={(e) => setTask(e.target.value)}
-              />
-              <Button onClick={toggleEpisode} variant={episodeOn ? "destructive" : "default"}>
-                {episodeOn ? "Stop episode" : "Start episode"}
-              </Button>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <Button onClick={finishCapture} disabled={episodeOn || episodeCount === 0}>
-                {dest.mode === "append" ? "Finish & add episodes" : "Finish & export"}
-              </Button>
-              <Button onClick={abortCapture} variant="ghost" disabled={episodeOn}>
-                Discard
-              </Button>
-              {captureRef.current?.lastError && (
-                <span className="text-xs text-red-700">spool: {captureRef.current.lastError}</span>
-              )}
-            </div>
-          </>
-        )}
-
-        {phase.kind === "exporting" && (
-          <p className="text-sm text-[#6f6858]">
-            Assembling LeRobot dataset (video decode + encode — this can take a few minutes)…
-          </p>
-        )}
-
-        {(phase.kind === "exported" || phase.kind === "uploading" || phase.kind === "uploaded") && (
-          <div className="space-y-2">
-            <p className="text-sm">
-              {phase.kind === "exported" && phase.appended ? "Episodes added to " : "Dataset "}
-              <span className="font-mono text-xs">{phase.repoId}</span>{" "}
-              {phase.kind === "uploaded"
-                ? phase.wasDuplicate
-                  ? "already in your cloud (unchanged since last upload) ✓"
-                  : "uploaded to your cloud repo ✓"
-                : "saved locally."}
-            </p>
-            {phase.kind !== "uploaded" && (
-              <div className="flex items-center gap-3">
-                <Button onClick={uploadToCloud} disabled={phase.kind === "uploading"}>
-                  {phase.kind === "uploading" ? "Uploading…" : "Upload to cloud"}
+                <Button onClick={startSession} disabled={!connected || !task.trim()}>
+                  Start session
                 </Button>
-                <span className="text-xs text-[#6f6858]">
-                  backend-mediated, lands private in your assigned HF repo
+              </div>
+              {!connected && <p className="text-sm text-[#6f6858]">connect to the robot first</p>}
+            </>
+          )}
+
+          {/* ---- session open, between episodes ---- */}
+          {phase.kind === "session" && (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-[#14131a]">
+                  Session: <span className="font-semibold">{task.trim() || "teleop session"}</span>
+                  <span className="ml-2 text-[#6f6858]">· {episodeCount} kept</span>
+                </p>
+                <Button size="sm" variant="ghost" onClick={finishSession}>
+                  Finish session
+                </Button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button onClick={startEpisode} disabled={busy || !connected}>
+                  {busy ? "Starting…" : "Start episode"}
+                </Button>
+                <span className="text-sm text-[#6f6858]">
+                  drive the robot through the task, then stop to review it
                 </span>
               </div>
-            )}
-            {phase.kind === "uploaded" && (
-              <p className="text-xs text-[#6f6858]">
-                Train on it from the Training page — it's now your latest upload.
+              <p className="rounded-md border border-[#14131a]/10 bg-white/50 px-3 py-2 text-xs text-[#6f6858]">
+                When you’re done recording, <b>disconnect</b> and leave the robot
+                <b> powered on and idle</b>. Your episodes will upload to the cloud automatically. <b>Don’t turn Nori off</b> until your data lands in My Stuff.
               </p>
-            )}
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setPhase({ kind: "idle" });
-                refreshDatasets();
-              }}
-              disabled={busy}
-            >
-              Record another
-            </Button>
-          </div>
-        )}
+            </>
+          )}
 
-        {phase.kind === "error" && (
-          <div className="space-y-2">
-            <p className="text-sm text-red-700">{phase.message}</p>
-            <Button variant="ghost" onClick={abortCapture}>
-              Reset
-            </Button>
-          </div>
-        )}
+          {/* ---- an episode is recording ---- */}
+          {phase.kind === "recording" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={() => void stopEpisode()} variant="destructive" disabled={busy}>
+                {busy ? "Stopping…" : "Stop episode"}
+              </Button>
+              <span className="text-sm text-[#6f6858]">
+                recording episode {episodeCount + 1} of “{task.trim() || "teleop session"}”
+              </span>
+            </div>
+          )}
 
-        {/* Local dataset manager — visible while idle so renames can't race an
-            active export (the backend refuses those anyway). */}
-        {phase.kind === "idle" && datasets.length > 0 && (
-          <div className="pt-1">
-            <button
-              type="button"
-              className="text-xs font-medium text-[#6f6858] underline-offset-2 hover:underline"
-              onClick={() => setListOpen((v) => !v)}
-            >
-              {listOpen ? "▾" : "▸"} your datasets ({datasets.length})
-            </button>
-            {listOpen && (
-              <div className="mt-1">
-                {datasets.map((d) => (
-                  <DatasetRow key={d.repo_id} entry={d} disabled={busy} onRename={renameDataset} />
-                ))}
+          {/* ---- review the just-stopped episode ---- */}
+          {phase.kind === "review" && (
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-[#14131a]">Keep this episode?</p>
+              {phase.url ? (
+                <video
+                  key={phase.url}
+                  src={phase.url}
+                  className="w-full max-w-md rounded-md border border-[#14131a]/15 bg-black"
+                  controls
+                  loop
+                  autoPlay
+                  muted
+                >
+                  <track kind="captions" />
+                </video>
+              ) : (
+                <div className="space-y-1">
+                  <p className="text-sm italic text-muted-foreground">
+                    Preview unavailable — the robot still recorded it at full quality.
+                  </p>
+                  {previewNote && (
+                    <p className="font-mono text-[11px] text-muted-foreground/80">{previewNote}</p>
+                  )}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-3">
+                <Button onClick={keepEpisode} disabled={reviewBusy}>
+                  Keep
+                </Button>
+                <Button onClick={rejectEpisode} variant="destructive" disabled={reviewBusy}>
+                  Reject
+                </Button>
+                <span className="text-xs text-[#6f6858]">
+                  Keep adds it to the session, reject deletes it.
+                </span>
               </div>
-            )}
-          </div>
-        )}
-      </div>
+            </div>
+          )}
+
+          {/* robot recorder status — always visible while a session is open */}
+          {inSession && (
+            <p className="text-xs text-[#6f6858]">
+              robot recorder:{" "}
+              {recordState?.recording && (
+                <span className="mr-1 inline-block h-2 w-2 animate-pulse rounded-full bg-red-500 align-middle" />
+              )}
+              {robotLine}
+            </p>
+          )}
+          {error && <p className="text-sm text-red-700">{error}</p>}
+        </div>
       )}
     </div>
   );

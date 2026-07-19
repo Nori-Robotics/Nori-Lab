@@ -543,6 +543,36 @@ export function getLibrary(baseUrl: string, fetcher: Fetcher): Promise<Library> 
   return noriRequest<Library>(baseUrl, fetcher, "/nori/library", { action: "Load your library" });
 }
 
+/** One robot-recorded episode bundle (W2.11). Not trainable yet (needs assembly);
+ *  a read-only view of what the robot has recorded and where it is in its journey
+ *  to the cloud. `status`: PROMOTED = in your cloud; PENDING_UPLOAD/FINALIZING =
+ *  in flight; FAILED/PROMOTION_FAILED = needs attention. */
+export interface RawBundleEntry {
+  session_id: string;
+  label: string;
+  status: string;
+  hf_path_prefix: string | null;
+  episode_count: number | null;
+  frame_count: number | null;
+  created_at: string;
+  finalized_at: string | null;
+  failure_reason: string | null;
+}
+
+export interface RobotRecordings {
+  bundles: RawBundleEntry[];
+  /** Episodes recorded but not yet uploaded from the robot; null if unknown
+   *  (the robot hasn't reported recently / heartbeat table unavailable). */
+  on_robot_pending: number | null;
+}
+
+/** GET /nori/datasets/raw-bundles — the caller's robot recordings for My Stuff. */
+export function getRobotRecordings(baseUrl: string, fetcher: Fetcher): Promise<RobotRecordings> {
+  return noriRequest<RobotRecordings>(baseUrl, fetcher, "/nori/datasets/raw-bundles", {
+    action: "Load your robot recordings",
+  });
+}
+
 /** DELETE /nori/datasets/{id} — permanently delete a dataset (HF files + record).
  * Owner-scoped; 409 if the dataset is published to the community. */
 export function deleteDataset(
@@ -664,6 +694,27 @@ export function listJobs(baseUrl: string, fetcher: Fetcher): Promise<TrainingJob
   });
 }
 
+/** Cameras + arms recorded in a dataset — populates the scope picker so it only
+ *  offers what was actually recorded. `datasetRef` omitted => the latest upload. */
+export interface DatasetScopeOptions {
+  cameras: string[];
+  arms: string[];
+  joints: string[];
+}
+export function getDatasetScopeOptions(
+  baseUrl: string,
+  fetcher: Fetcher,
+  datasetRef?: string
+): Promise<DatasetScopeOptions> {
+  const q = datasetRef ? `?dataset_ref=${encodeURIComponent(datasetRef)}` : "";
+  return noriRequest<DatasetScopeOptions>(
+    baseUrl,
+    fetcher,
+    `/nori/training/dataset-features${q}`,
+    { action: "Load dataset scope options" }
+  );
+}
+
 /** One of Nori's published open datasets (GET /nori/marketplace/datasets/public). */
 export interface PublicDataset {
   id: string;
@@ -727,17 +778,22 @@ export function getJob(baseUrl: string, fetcher: Fetcher, jobId: string): Promis
   );
 }
 
-/** GET /nori/training/jobs/{id}/logs?since= — poll ~2s; stop when is_terminal. */
+/** GET /nori/training/jobs/{id}/logs?since= — poll ~2s; stop when is_terminal.
+ * `tail` (only honored on a fresh read, since=0) returns just the last N lines
+ * but reports the true end as next_offset, so a reload seeds cheaply and then
+ * streams only new lines. Omit tail (or pass since>0) for the full log. */
 export function getJobLogs(
   baseUrl: string,
   fetcher: Fetcher,
   jobId: string,
-  since = 0
+  since = 0,
+  tail?: number
 ): Promise<TrainingJobLogs> {
+  const q = `since=${since}${tail != null ? `&tail=${tail}` : ""}`;
   return noriRequest<TrainingJobLogs>(
     baseUrl,
     fetcher,
-    `/nori/training/jobs/${encodeURIComponent(jobId)}/logs?since=${since}`,
+    `/nori/training/jobs/${encodeURIComponent(jobId)}/logs?${q}`,
     { action: "Load training logs" }
   );
 }

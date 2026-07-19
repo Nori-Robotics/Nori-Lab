@@ -338,6 +338,15 @@ const Remote = () => {
   const leaveCall = () => teleop?.leaveCall();
   const toggleMute = () => teleop?.setMicMuted(!call.micMuted);
 
+  // ---- on-robot episode recording (W2.11) ----------------------------------
+  // The controls live in DatasetCaptureCard ("Record training dataset") — episode
+  // start/stop there drives BOTH the browser catcher and the robot's recorder.
+  // This page only probes once per session so the card reflects reality (a
+  // recording-disabled robot answers "recorder unreachable", not silence).
+  useEffect(() => {
+    if (connState === "connected" && controlActive) teleop?.record("status");
+  }, [connState, controlActive, teleop]);
+
   // ---- clip audio (laptop file -> robot speaker; reuses the M3b downlink) ----
   const clipRef = useRef<ClipHandle | null>(null);
   // The name of the clip currently streaming to the robot speaker, or null when none is. Doubles

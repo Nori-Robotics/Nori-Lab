@@ -91,6 +91,11 @@ class NoriCloudJobRunner:
         open_dataset_id = getattr(config, "open_dataset_id", None)
         if open_dataset_id:
             body["open_dataset_id"] = open_dataset_id
+        # Camera/arm scope (nested dict) — forwarded verbatim; the backend
+        # resolves it against the dataset features and stamps nori_meta.json.
+        scope = getattr(config, "scope", None)
+        if scope and (scope.get("cameras") or scope.get("actuators")):
+            body["scope"] = scope
         return body
 
     def start(self, job_id: str, config: TrainingRequest, output_dir: str) -> None:

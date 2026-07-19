@@ -46,7 +46,7 @@ const MAX_LOG_LINES = 5000;
 const HISTORY_CAP = 2000;
 // On (re)load, seed the panel with just the last few lines; the rest streams in
 // live, and the full backlog is available via "Load full logs".
-const INITIAL_TAIL = 5;
+const INITIAL_TAIL = 20;
 
 // Backend job status vocab.
 const STOPPABLE = new Set(["PENDING", "SCHEDULING", "RUNNING"]);

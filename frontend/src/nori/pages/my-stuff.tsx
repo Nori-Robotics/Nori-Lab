@@ -388,15 +388,27 @@ const MyStuff = () => {
     return <Button size="sm" onClick={() => runOnRobot(jobId)}>{label}</Button>;
   };
 
-  /** Estimated % complete for a RUNNING policy: elapsed-since-first-RUNNING
-   *  minus container setup, over steps/typical-rate. Clamped, labeled ~. */
-  const trainingProgress = (p: { run_started_at: string | null; steps: number | null; policy_type: string | null }): number | null => {
+  /** % complete for a RUNNING policy. Prefers the REAL reported progress
+   *  (steps_done/steps — the backend monitor writes the live step from the log
+   *  stream) and only falls back to the clock estimate until the first step
+   *  arrives. `real` drives whether the label shows "~…% (estimated)". */
+  const trainingProgress = (p: {
+    run_started_at: string | null;
+    steps: number | null;
+    steps_done: number | null;
+    policy_type: string | null;
+  }): { pct: number; real: boolean } | null => {
+    // Real progress once a step count has been reported.
+    if (p.steps != null && p.steps > 0 && p.steps_done != null && p.steps_done > 0) {
+      return { pct: Math.max(2, Math.min(99, Math.round((p.steps_done / p.steps) * 100))), real: true };
+    }
+    // Fallback: elapsed-since-first-RUNNING minus setup, over steps/typical-rate.
     if (!estimate || !p.run_started_at || !p.steps) return null;
     const rate = estimate.rates[p.policy_type ?? ""]?.typical;
     if (!rate) return null;
     const elapsed = (Date.now() - new Date(p.run_started_at).getTime()) / 1000 - estimate.setup;
-    if (elapsed <= 0) return 2; // still in container setup
-    return Math.max(2, Math.min(97, Math.round((elapsed / (p.steps / rate)) * 100)));
+    if (elapsed <= 0) return { pct: 2, real: false }; // still in container setup
+    return { pct: Math.max(2, Math.min(97, Math.round((elapsed / (p.steps / rate)) * 100))), real: false };
   };
 
   if (loading) {
@@ -636,7 +648,7 @@ const MyStuff = () => {
                 {p.final_cost_usd != null && <span>${p.final_cost_usd.toFixed(2)}</span>}
               </div>
               {inFlight && (() => {
-                const pct = trainingProgress(p);
+                const prog = trainingProgress(p);
                 return (
                   <div className="mt-2.5">
                     <div className="flex items-baseline justify-between">
@@ -644,17 +656,19 @@ const MyStuff = () => {
                         training
                       </span>
                       <span className="font-mono text-[11px] text-muted-foreground">
-                        {pct === null
+                        {prog === null
                           ? "starting…"
-                          : pct <= 2
+                          : prog.pct <= 2
                             ? "setting up…"
-                            : `~${pct}% (estimated)`}
+                            : prog.real
+                              ? `${prog.pct}%`
+                              : `~${prog.pct}% (estimated)`}
                       </span>
                     </div>
                     <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-nori-h14131a/10">
                       <div
                         className="h-full rounded-full bg-nori-hb06a1c transition-[width] duration-1000"
-                        style={{ width: `${pct ?? 2}%` }}
+                        style={{ width: `${prog?.pct ?? 2}%` }}
                       />
                     </div>
                   </div>

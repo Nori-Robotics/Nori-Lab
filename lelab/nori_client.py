@@ -477,6 +477,55 @@ class NoriClient:
         so only this listing is proxied."""
         return self._request("GET", f"{API}/library/datasets/{session_id}/episodes")
 
+    # --- Recording -> dataset assembly (raw_bundle promotion) --------------
+    def list_raw_bundles(self) -> dict[str, Any]:
+        """GET /datasets/raw-bundles — the caller's robot recordings (raw_bundle
+        sessions) + on-robot pending count, for the My Stuff 'Robot recordings' list
+        and the assemble picker."""
+        return self._request("GET", f"{API}/datasets/raw-bundles")
+
+    def assemble_dataset(
+        self,
+        sources: list[str],
+        mode: str = "new",
+        target_dataset_session_id: str | None = None,
+        name: str | None = None,
+    ) -> dict[str, Any]:
+        """POST /datasets/assemble — enqueue an assembly of the given recordings into
+        a NEW dataset or APPEND them to an existing one. Returns {assembly_job_id,
+        status}; poll get_assembly_job."""
+        return self._request("POST", f"{API}/datasets/assemble", json={
+            "sources": sources,
+            "mode": mode,
+            "target_dataset_session_id": target_dataset_session_id,
+            "name": name,
+        })
+
+    def get_assembly_job(self, assembly_job_id: str) -> dict[str, Any]:
+        """GET /datasets/assemble/{id} — poll one assembly job
+        {id, status, mode, failure_reason, result_dataset_session_id, created_at}."""
+        return self._request("GET", f"{API}/datasets/assemble/{assembly_job_id}")
+
+    def dataset_sessions(self, dataset_session_id: str) -> dict[str, Any]:
+        """GET /datasets/{id}/sessions — provenance sessions of an assembled dataset
+        {sessions: [{session_key, recorded_at, task, episode_count, ...}]}."""
+        return self._request("GET", f"{API}/datasets/{dataset_session_id}/sessions")
+
+    def delete_dataset_session(self, dataset_session_id: str, session_key: str) -> dict[str, Any]:
+        """DELETE /datasets/{id}/sessions/{session_key} — bulk-delete a session's
+        episodes (enqueues a reindex-safe rebuild). Returns {assembly_job_id, status}."""
+        return self._request(
+            "DELETE", f"{API}/datasets/{dataset_session_id}/sessions/{session_key}"
+        )
+
+    def delete_dataset_episodes(self, dataset_session_id: str, episode_indices: list[int]) -> dict[str, Any]:
+        """POST /datasets/{id}/delete-episodes — delete individual episodes by index
+        (enqueues a reindex-safe rebuild). Returns {assembly_job_id, status}."""
+        return self._request(
+            "POST", f"{API}/datasets/{dataset_session_id}/delete-episodes",
+            json={"episode_indices": episode_indices},
+        )
+
     def get_estimate_params(self) -> dict[str, Any]:
         """GET /training/estimate-params — per-policy steps/s + setup seconds +
         tier max duration + the pause/resume capability flag. Constants for

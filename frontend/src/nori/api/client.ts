@@ -573,6 +573,97 @@ export function getRobotRecordings(baseUrl: string, fetcher: Fetcher): Promise<R
   });
 }
 
+/** An assembly job (recording -> flat LeRobot dataset). Enqueued by /assemble and
+ *  the session/episode delete rebuilds; poll getAssemblyJob until terminal. */
+export interface AssemblyJob {
+  id: string;
+  status: "PENDING" | "ASSEMBLING" | "DONE" | "FAILED";
+  mode: "new" | "append" | "rebuild";
+  failure_reason: string | null;
+  result_dataset_session_id: string | null;
+  created_at: string;
+}
+
+/** POST /nori/datasets/assemble — turn robot recordings into a trainable dataset
+ *  (a NEW one, or APPEND onto an existing dataset). Returns the job to poll. */
+export function assembleDataset(
+  baseUrl: string,
+  fetcher: Fetcher,
+  args: { sources: string[]; mode: "new" | "append"; targetDatasetSessionId?: string | null; name?: string | null }
+): Promise<{ assembly_job_id: string; status: string }> {
+  return noriRequest(baseUrl, fetcher, "/nori/datasets/assemble", {
+    method: "POST",
+    body: {
+      sources: args.sources,
+      mode: args.mode,
+      target_dataset_session_id: args.targetDatasetSessionId ?? null,
+      name: args.name ?? null,
+    },
+    action: "Assemble dataset",
+  });
+}
+
+/** GET /nori/datasets/assemble/{id} — poll one assembly job. */
+export function getAssemblyJob(baseUrl: string, fetcher: Fetcher, jobId: string): Promise<AssemblyJob> {
+  return noriRequest<AssemblyJob>(baseUrl, fetcher, `/nori/datasets/assemble/${encodeURIComponent(jobId)}`, {
+    action: "Check assembly status",
+  });
+}
+
+/** One recording session that contributed episodes to an assembled dataset —
+ *  the unit you can filter by or bulk-delete. */
+export interface DatasetProvenanceSession {
+  session_key: string;
+  recorded_at: string | null;
+  task: string | null;
+  episode_count: number;
+  source_raw_session_id: string | null;
+  created_at: string;
+}
+
+/** GET /nori/datasets/{id}/sessions — provenance sessions of an assembled dataset. */
+export function getDatasetSessions(
+  baseUrl: string,
+  fetcher: Fetcher,
+  datasetSessionId: string
+): Promise<{ sessions: DatasetProvenanceSession[] }> {
+  return noriRequest(baseUrl, fetcher, `/nori/datasets/${encodeURIComponent(datasetSessionId)}/sessions`, {
+    action: "Load dataset sessions",
+  });
+}
+
+/** DELETE /nori/datasets/{id}/sessions/{key} — bulk-delete a whole session's
+ *  episodes. Enqueues a reindex-safe rebuild; returns the job to poll. */
+export function deleteDatasetSession(
+  baseUrl: string,
+  fetcher: Fetcher,
+  datasetSessionId: string,
+  sessionKey: string
+): Promise<{ assembly_job_id: string; status: string }> {
+  return noriRequest(
+    baseUrl,
+    fetcher,
+    `/nori/datasets/${encodeURIComponent(datasetSessionId)}/sessions/${encodeURIComponent(sessionKey)}`,
+    { method: "DELETE", action: "Delete session" }
+  );
+}
+
+/** POST /nori/datasets/{id}/delete-episodes — delete individual episodes by index.
+ *  Enqueues a reindex-safe rebuild; returns the job to poll. */
+export function deleteDatasetEpisodes(
+  baseUrl: string,
+  fetcher: Fetcher,
+  datasetSessionId: string,
+  episodeIndices: number[]
+): Promise<{ assembly_job_id: string; status: string }> {
+  return noriRequest(
+    baseUrl,
+    fetcher,
+    `/nori/datasets/${encodeURIComponent(datasetSessionId)}/delete-episodes`,
+    { method: "POST", body: { episode_indices: episodeIndices }, action: "Delete episodes" }
+  );
+}
+
 /** DELETE /nori/datasets/{id} — permanently delete a dataset (HF files + record).
  * Owner-scoped; 409 if the dataset is published to the community. */
 export function deleteDataset(

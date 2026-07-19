@@ -39,6 +39,7 @@ import {
   type RobotRecordings,
 } from "@/nori/api/client";
 import { EpisodeReviewModal, type ReviewSource } from "@/nori/components/EpisodeReviewModal";
+import { AssembleModal } from "@/nori/components/AssembleModal";
 
 // ---- small presentational bits -------------------------------------------
 
@@ -171,6 +172,8 @@ const MyStuff = () => {
   const [error, setError] = useState<string | null>(null);
   const [activeRef, setActiveRef] = useState<string | null>(null); // hovered policy's source
   const [reviewing, setReviewing] = useState<ReviewSource | null>(null); // dataset under review
+  const [picked, setPicked] = useState<Set<string>>(new Set()); // recordings selected to assemble
+  const [assembleOpen, setAssembleOpen] = useState(false);
   const [deleting, setDeleting] = useState<LibraryDataset | null>(null); // pending delete confirmation
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
@@ -210,6 +213,21 @@ const MyStuff = () => {
     const unlinked = library.unlinked_policies.map((p) => ({ ...p, sourceRef: null, sourceLabel: null }));
     return [...linked, ...unlinked].sort((a, b) => b.created_at.localeCompare(a.created_at));
   }, [library]);
+
+  const togglePick = useCallback((id: string) => {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Append targets = the caller's existing promoted datasets.
+  const datasetOptions = useMemo(
+    () => (library?.datasets ?? []).map((d) => ({ session_id: d.session_id, label: d.label })),
+    [library],
+  );
 
   const onDelete = useCallback(async () => {
     if (!deleting) return;
@@ -456,15 +474,29 @@ const MyStuff = () => {
             const inCloud = b.status === "PROMOTED";
             const failed = b.status === "FAILED" || b.status === "PROMOTION_FAILED";
             return (
-              <article key={b.session_id} className={cardCls}>
+              <article
+                key={b.session_id}
+                className={`${cardCls}${picked.has(b.session_id) ? " ring-2 ring-nori-h14131a" : ""}`}
+              >
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-base font-bold text-nori-h14131a">{b.label}</p>
-                    <p className="mt-0.5 text-sm text-muted-foreground">
-                      {inCloud && b.finalized_at
-                        ? `Uploaded ${shortDate(b.finalized_at)}`
-                        : `Recorded ${shortDate(b.created_at)}`}
-                    </p>
+                  <div className="flex min-w-0 items-start gap-3">
+                    {inCloud && (
+                      <input
+                        type="checkbox"
+                        checked={picked.has(b.session_id)}
+                        onChange={() => togglePick(b.session_id)}
+                        className="mt-1 h-4 w-4 shrink-0 accent-nori-h14131a"
+                        aria-label={`Select ${b.label}`}
+                      />
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-base font-bold text-nori-h14131a">{b.label}</p>
+                      <p className="mt-0.5 text-sm text-muted-foreground">
+                        {inCloud && b.finalized_at
+                          ? `Uploaded ${shortDate(b.finalized_at)}`
+                          : `Recorded ${shortDate(b.created_at)}`}
+                      </p>
+                    </div>
                   </div>
                   <Pill tone={inCloud ? "leaf" : "secondary"}>
                     {inCloud ? "In cloud" : failed ? "Needs attention" : "Uploading…"}
@@ -478,12 +510,28 @@ const MyStuff = () => {
                   {failed
                     ? `Upload problem: ${b.failure_reason ?? "unknown"}`
                     : inCloud
-                      ? "Full-quality copy is in your cloud. Training on robot recordings is coming soon."
+                      ? "Full-quality copy is in your cloud. Select it to assemble a trainable dataset."
                       : "Uploading from the robot — this finishes while the robot is idle."}
                 </p>
               </article>
             );
           })}
+
+          {picked.size > 0 && (
+            <div className="sticky bottom-3 z-10 flex items-center justify-between gap-3 rounded-2xl border border-nori-h14131a bg-card/95 px-4 py-3 shadow-lg backdrop-blur">
+              <span className="text-sm font-medium text-nori-h14131a">
+                {picked.size} recording{picked.size === 1 ? "" : "s"} selected
+              </span>
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setPicked(new Set())}>
+                  Clear
+                </Button>
+                <Button size="sm" onClick={() => setAssembleOpen(true)}>
+                  Assemble into dataset
+                </Button>
+              </div>
+            </div>
+          )}
 
           {(robot?.bundles?.length ?? 0) === 0 && (
             <p className="rounded-[20px] border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
@@ -732,6 +780,18 @@ const MyStuff = () => {
 
       {reviewing && (
         <EpisodeReviewModal source={reviewing} onClose={() => setReviewing(null)} onChanged={load} />
+      )}
+
+      {assembleOpen && (
+        <AssembleModal
+          sources={[...picked]}
+          datasets={datasetOptions}
+          onClose={() => setAssembleOpen(false)}
+          onDone={() => {
+            setPicked(new Set());
+            void load();
+          }}
+        />
       )}
 
       <AlertDialog

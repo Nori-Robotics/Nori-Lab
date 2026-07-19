@@ -41,8 +41,8 @@ import {
 import { listDatasets } from "@/lib/replayApi";
 import type { NoriTrainingFormState } from "./types";
 
-const LABEL = "text-[#14131a]/70";
-const FIELD = "border-[#14131a]/15 bg-white text-[#14131a] rounded-md";
+const LABEL = "text-nori-h14131a/70";
+const FIELD = "border-nori-h14131a/15 bg-white dark:bg-background text-nori-h14131a rounded-md";
 const LATEST = "__latest__"; // sentinel for "use my latest promoted upload"
 
 type SourceKind = "nori" | "hf" | "open";
@@ -221,26 +221,26 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
             </Select>
 
             {selectedNori && (
-              <div className="mt-3 rounded-xl border border-[#14131a]/12 bg-[#14131a]/[0.02] px-3.5 py-2.5">
+              <div className="mt-3 rounded-xl border border-nori-h14131a/12 bg-nori-h14131a/[0.02] px-3.5 py-2.5">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-semibold text-[#14131a]">
+                  <span className="text-sm font-semibold text-nori-h14131a">
                     {selectedNori.label}
                   </span>
                   {isLatest && (
-                    <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#b06a1c]">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-nori-hb06a1c">
                       latest
                     </span>
                   )}
                 </div>
                 {selectedNori.source === "community" ? (
-                  <p className="mt-1 text-xs text-[#14131a]/55">
+                  <p className="mt-1 text-xs text-nori-h14131a/55">
                     Acquired from the marketplace.
                   </p>
                 ) : selectedNori.episodeCount != null || selectedNori.frameCount != null ? (
-                  <p className="mt-1 text-xs tabular-nums text-[#14131a]/60">
+                  <p className="mt-1 text-xs tabular-nums text-nori-h14131a/60">
                     {selectedNori.episodeCount != null && (
                       <>
-                        <b className="font-semibold text-[#14131a]">
+                        <b className="font-semibold text-nori-h14131a">
                           {selectedNori.episodeCount.toLocaleString()}
                         </b>{" "}
                         {selectedNori.episodeCount === 1 ? "episode" : "episodes"}
@@ -251,7 +251,7 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
                       " · "}
                     {selectedNori.frameCount != null && (
                       <>
-                        <b className="font-semibold text-[#14131a]">
+                        <b className="font-semibold text-nori-h14131a">
                           {selectedNori.frameCount.toLocaleString()}
                         </b>{" "}
                         frames
@@ -259,17 +259,17 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
                     )}
                   </p>
                 ) : (
-                  <p className="mt-1 text-xs text-[#14131a]/45">
+                  <p className="mt-1 text-xs text-nori-h14131a/45">
                     Episode counts weren't recorded for this upload.
                   </p>
                 )}
-                <p className="mt-0.5 text-[11px] text-[#14131a]/40">
+                <p className="mt-0.5 text-[11px] text-nori-h14131a/40">
                   Uploaded {new Date(selectedNori.createdAt).toLocaleDateString()}
                 </p>
               </div>
             )}
 
-            <p className="mt-2 text-xs text-[#14131a]/50">
+            <p className="mt-2 text-xs text-nori-h14131a/50">
               Datasets stored in your Nori account — uploaded from your robot,
               imported from this laptop or your HF account (Import tab), or acquired from the
               marketplace (shown as “Community · …”).
@@ -279,7 +279,7 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
 
         {source === "hf" && (
           <div className="space-y-3">
-            <p className="text-sm text-[#14131a]/70">
+            <p className="text-sm text-nori-h14131a/70">
               Bring a dataset into your Nori account: one recorded on this laptop
               (marked <span className="font-mono text-xs">local</span>) or one from your
               personal Hugging Face account (marked <span className="font-mono text-xs">HF</span>).
@@ -287,7 +287,7 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
               copies it — it then appears under Nori cloud and trains from there.
             </p>
             {hosted ? (
-              <p className="rounded-md border border-[#14131a]/10 bg-[#14131a]/[0.03] px-3 py-2 text-sm text-[#14131a]/60">
+              <p className="rounded-md border border-nori-h14131a/10 bg-nori-h14131a/[0.03] px-3 py-2 text-sm text-nori-h14131a/60">
                 Importing needs the desktop app — the datasets live on your laptop's
                 disk or in your personal HF account, and only the desktop app can
                 read them to copy into Nori.
@@ -347,14 +347,14 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
 
         {source === "open" && (
           <div className="space-y-2">
-            <p className="text-sm text-[#14131a]/70">
+            <p className="text-sm text-nori-h14131a/70">
               Public datasets published by Nori — train a policy before you've
               recorded anything of your own.
             </p>
             {!openLoaded ? (
-              <p className="text-sm text-[#14131a]/50">Loading…</p>
+              <p className="text-sm text-nori-h14131a/50">Loading…</p>
             ) : openDatasets.length === 0 ? (
-              <p className="text-sm text-[#14131a]/50">No open datasets published yet.</p>
+              <p className="text-sm text-nori-h14131a/50">No open datasets published yet.</p>
             ) : (
               <div className="space-y-2">
                 {openDatasets.map((d) => {
@@ -366,29 +366,29 @@ const DatasetSourcePicker = ({ config, updateConfig }: DatasetSourcePickerProps)
                       onClick={() => selectOpen(d.id)}
                       className={`block w-full rounded-xl border px-3 py-2 text-left transition-colors ${
                         active
-                          ? "border-[#14131a] bg-[#14131a]/[0.04]"
-                          : "border-[#14131a]/15 bg-white hover:bg-[#14131a]/[0.02]"
+                          ? "border-nori-h14131a bg-nori-h14131a/[0.04]"
+                          : "border-nori-h14131a/15 bg-white dark:bg-background hover:bg-nori-h14131a/[0.02]"
                       }`}
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-sm font-semibold text-[#14131a]">{d.title}</span>
+                        <span className="text-sm font-semibold text-nori-h14131a">{d.title}</span>
                         {d.license && (
-                          <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-[#14131a]/50">
+                          <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-nori-h14131a/50">
                             {d.license}
                           </span>
                         )}
                       </div>
                       {d.description && (
-                        <p className="mt-0.5 text-xs text-[#14131a]/60">{d.description}</p>
+                        <p className="mt-0.5 text-xs text-nori-h14131a/60">{d.description}</p>
                       )}
-                      <p className="mt-0.5 font-mono text-[11px] text-[#14131a]/40">{d.hf_repo}</p>
+                      <p className="mt-0.5 font-mono text-[11px] text-nori-h14131a/40">{d.hf_repo}</p>
                     </button>
                   );
                 })}
               </div>
             )}
             {config.open_dataset_id === undefined && openDatasets.length > 0 && (
-              <p className="text-xs text-[#14131a]/50">Pick a dataset to train on it.</p>
+              <p className="text-xs text-nori-h14131a/50">Pick a dataset to train on it.</p>
             )}
           </div>
         )}

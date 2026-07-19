@@ -266,7 +266,7 @@ const Coding = () => {
           <span
             className={
               "inline-flex h-9 items-center rounded-full px-3 font-mono text-xs " +
-              (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]")
+              (connected ? "bg-nori-h8ab135/25 text-nori-h4d6a1e" : "bg-nori-h14131a/8 text-nori-h857b6b")
             }
           >
             ● {status}
@@ -282,13 +282,13 @@ const Coding = () => {
       <div className="grid h-[calc(100vh-12rem)] grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Left: LLM prompt (codegen — D3, not wired yet) + run output log */}
         <div className="flex h-full min-h-0 flex-col gap-4">
-          <div className="flex flex-1 min-h-0 flex-col gap-2 rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
-            <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// prompt</span>
+          <div className="flex flex-1 min-h-0 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
+            <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// prompt</span>
             <Textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Describe what the robot should do…"
-              className="flex-1 resize-none border-[#14131a]/12 bg-[#fffdf7]"
+              className="flex-1 resize-none border-nori-h14131a/12 bg-nori-hfffdf7"
             />
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between gap-2">
@@ -308,7 +308,7 @@ const Coding = () => {
                 </div>
                 <Button size="sm" onClick={generate} disabled={generating || !prompt.trim()}
                   title="Generate a routine with Claude and drop it into the editor"
-                  className="rounded-md bg-[#d98b3d] text-foreground hover:bg-[#c97929]">
+                  className="rounded-md bg-nori-hd98b3d text-foreground hover:bg-nori-hc97929">
                   {generating ? "Generating…" : "Generate"}
                 </Button>
               </div>
@@ -328,11 +328,11 @@ const Coding = () => {
                           : "camera layout — e.g. 'left tile = front cam; right tile = right-arm wrist cam'"
                       }
                       title="Which camera tile is which view/arm. Auto-detected from the robot in composite mode; type to override."
-                      className="flex-1 rounded border border-[#14131a]/20 bg-[#fffdf7] px-2 py-1 text-[11px]"
+                      className="flex-1 rounded border border-nori-h14131a/20 bg-nori-hfffdf7 px-2 py-1 text-[11px]"
                     />
                     {lastFrame && (
                       <img src={lastFrame} alt="last frame sent to Claude" title="what Claude saw"
-                        className="h-12 w-auto rounded border border-[#14131a]/20" />
+                        className="h-12 w-auto rounded border border-nori-h14131a/20" />
                     )}
                   </div>
                   {teleop?.cameraLayout() && !cameraLayout.trim() && (
@@ -344,18 +344,18 @@ const Coding = () => {
               )}
             </div>
           </div>
-          <div className="flex flex-1 min-h-0 flex-col gap-2 rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
-            <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// run output</span>
-            <div ref={outRef} className="flex-1 overflow-y-auto whitespace-pre-wrap rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-3 font-mono text-xs text-[#5a5346]">
+          <div className="flex flex-1 min-h-0 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
+            <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// run output</span>
+            <div ref={outRef} className="flex-1 overflow-y-auto whitespace-pre-wrap rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 font-mono text-xs text-nori-h5a5346">
               {output.length > 0 ? output.join("\n") : "Run output + nori.log() appear here."}
             </div>
           </div>
         </div>
 
         {/* Right: code editor + run / stop / e-stop */}
-        <div className="flex h-full min-h-0 flex-col gap-2 rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
-          <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// code</span>
-          <div className="flex-1 min-h-0 overflow-hidden rounded-md border border-[#14131a]/12">
+        <div className="flex h-full min-h-0 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
+          <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// code</span>
+          <div className="flex-1 min-h-0 overflow-hidden rounded-md border border-nori-h14131a/12">
             <CodeMirror
               value={generating ? streamBuffer : code}
               onChange={setScriptSource}
@@ -373,7 +373,7 @@ const Coding = () => {
             <div className="flex items-center gap-2">
               {!scriptRunning ? (
                 <Button size="sm" onClick={run} disabled={!connected}
-                  className="rounded-md bg-[#8ab135] text-foreground hover:bg-[#799c2a]">
+                  className="rounded-md bg-nori-h8ab135 text-foreground hover:bg-nori-h799c2a">
                   <Play className="mr-2 h-4 w-4" /> Run
                 </Button>
               ) : (

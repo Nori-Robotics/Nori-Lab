@@ -191,7 +191,7 @@ const Agent = () => {
             <p className="text-sm text-muted-foreground">autonomous look→act→look · supervise with live video on Remote · E-STOP below</p>
           </div>
           <div className="flex items-center gap-3">
-            <span className={"inline-flex h-9 items-center rounded-full px-3 font-mono text-xs " + (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]")}>
+            <span className={"inline-flex h-9 items-center rounded-full px-3 font-mono text-xs " + (connected ? "bg-nori-h8ab135/25 text-nori-h4d6a1e" : "bg-nori-h14131a/8 text-nori-h857b6b")}>
               ● {status}
             </span>
             {!connected && (
@@ -205,13 +205,13 @@ const Agent = () => {
         <div className="grid h-[calc(100vh-12rem)] grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Left: goal + controls */}
           <div className="flex h-full min-w-0 min-h-0 flex-col gap-4">
-            <div className="flex flex-col gap-2 rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
-              <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// goal</span>
+            <div className="flex flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
+              <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// goal</span>
               <Textarea
                 value={goal}
                 onChange={(e) => setGoal(e.target.value)}
                 placeholder="Describe the goal, e.g. 'nudge the base toward the cup in the overhead tile'…"
-                className="min-h-[96px] resize-none border-[#14131a]/12 bg-[#fffdf7]"
+                className="min-h-[96px] resize-none border-nori-h14131a/12 bg-nori-hfffdf7"
                 disabled={running}
               />
               <div className="flex items-center justify-between gap-2">
@@ -224,7 +224,7 @@ const Agent = () => {
                 <div className="flex items-center gap-2">
                   {!running ? (
                     <Button size="sm" onClick={start} disabled={!connected || !goal.trim()}
-                      className="rounded-md bg-[#8ab135] text-foreground hover:bg-[#799c2a]">
+                      className="rounded-md bg-nori-h8ab135 text-foreground hover:bg-nori-h799c2a">
                       <Play className="mr-2 h-4 w-4" /> Start
                     </Button>
                   ) : (
@@ -243,7 +243,7 @@ const Agent = () => {
                 <span>· ~{usage.outTokens} tok out</span>
                 {usage.inTokens > 0 && <span>· {usage.inTokens} ctx</span>}
                 {daily && (
-                  <span className={budgetWarn ? "font-semibold text-[#b4442e]" : ""}>
+                  <span className={budgetWarn ? "font-semibold text-nori-hb4442e" : ""}>
                     · today {fmtTokens(daily.spent)} tok
                   </span>
                 )}
@@ -253,22 +253,22 @@ const Agent = () => {
             {/* Soft "high token usage" note — the per-customer daily cap is enforced by the backend;
                 this warns as you approach it. Past the hard cap, turns return 429 and the loop ends. */}
             {budgetWarn && daily?.warn != null && (
-              <div className="flex flex-col gap-1 rounded-md border border-[#b4442e]/40 bg-[#fbecea] p-3 text-[11px] text-[#8a2f20] shadow-sm">
-                <span className="font-mono uppercase tracking-[0.18em] text-[#b4442e]">// high token usage</span>
+              <div className="flex flex-col gap-1 rounded-md border border-nori-hb4442e/40 bg-nori-hfbecea p-3 text-[11px] text-nori-h8a2f20 shadow-sm">
+                <span className="font-mono uppercase tracking-[0.18em] text-nori-hb4442e">// high token usage</span>
                 <span>You've used {fmtTokens(daily.spent)} agent tokens today (past the {fmtTokens(daily.warn)} heads-up mark){daily.allowed != null ? ` of a ${fmtTokens(daily.allowed)} daily limit` : ""}. Approaching the cap — turns stop once it's reached.</span>
               </div>
             )}
 
             {/* Confirm-before-first-motion banner */}
             {pendingMotion && (
-              <div className="flex flex-col gap-2 rounded-md border border-[#d98b3d]/50 bg-[#fdf3e6] p-4 shadow-sm">
-                <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// approve first motion?</span>
-                <code className="block break-all rounded bg-[#fffdf7] px-2 py-1 text-[11px] text-[#5a5346]">
+              <div className="flex flex-col gap-2 rounded-md border border-nori-hd98b3d/50 bg-nori-hfdf3e6 p-4 shadow-sm">
+                <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// approve first motion?</span>
+                <code className="block break-all rounded bg-nori-hfffdf7 px-2 py-1 text-[11px] text-nori-h5a5346">
                   {pendingMotion.name}({JSON.stringify(pendingMotion.input ?? {})})
                 </code>
                 <div className="flex items-center gap-2">
                   <Button size="sm" onClick={() => confirmResolveRef.current?.(true)}
-                    className="rounded-md bg-[#8ab135] text-foreground hover:bg-[#799c2a]">
+                    className="rounded-md bg-nori-h8ab135 text-foreground hover:bg-nori-h799c2a">
                     <Check className="mr-2 h-4 w-4" /> Approve
                   </Button>
                   <Button size="sm" variant="secondary" onClick={() => confirmResolveRef.current?.(false)}>
@@ -280,9 +280,9 @@ const Agent = () => {
           </div>
 
           {/* Right: transcript */}
-          <div className="flex h-full min-w-0 min-h-0 flex-col gap-2 rounded-md border border-[#14131a]/10 bg-[#f6f4eb] p-4 text-[#14131a] shadow-sm">
-            <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#b06a1c]">// transcript</span>
-            <div ref={scrollRef} className="flex-1 min-w-0 space-y-2 overflow-y-auto overflow-x-hidden rounded-md border border-[#14131a]/10 bg-[#f3f1e8] p-3 text-xs text-[#5a5346]">
+          <div className="flex h-full min-w-0 min-h-0 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
+            <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// transcript</span>
+            <div ref={scrollRef} className="flex-1 min-w-0 space-y-2 overflow-y-auto overflow-x-hidden rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 text-xs text-nori-h5a5346">
               {rows.length === 0 ? (
                 <span className="font-mono text-muted-foreground">The agent's reasoning, tool calls, and frames appear here.</span>
               ) : rows.map((r, i) => <TranscriptRow key={i} row={r} />)}
@@ -299,26 +299,26 @@ const TranscriptRow = ({ row }: { row: Row }) => {
   // can't push the transcript into a wide horizontal scroll.
   switch (row.kind) {
     case "goal":
-      return <div className="whitespace-pre-wrap break-words font-mono text-[11px] text-[#b06a1c]">▸ goal: {row.text}</div>;
+      return <div className="whitespace-pre-wrap break-words font-mono text-[11px] text-nori-hb06a1c">▸ goal: {row.text}</div>;
     case "say":
       return <div className="whitespace-pre-wrap break-words">{row.text}</div>;
     case "call":
       return (
-        <div className="whitespace-pre-wrap break-all font-mono text-[11px] text-[#4d6a1e]">
+        <div className="whitespace-pre-wrap break-all font-mono text-[11px] text-nori-h4d6a1e">
           → {row.tool}({compactArgs(row.input)})
         </div>
       );
     case "result":
       if (row.imageDataUrl) {
-        return <img src={row.imageDataUrl} alt="frame the agent looked at" className="max-h-40 w-auto rounded border border-[#14131a]/20" />;
+        return <img src={row.imageDataUrl} alt="frame the agent looked at" className="max-h-40 w-auto rounded border border-nori-h14131a/20" />;
       }
       return (
-        <div className={"whitespace-pre-wrap break-all font-mono text-[11px] " + (row.ok ? "text-[#857b6b]" : "text-[#b4442e]")}>
+        <div className={"whitespace-pre-wrap break-all font-mono text-[11px] " + (row.ok ? "text-nori-h857b6b" : "text-nori-hb4442e")}>
           {row.ok ? "↳ " : "✗ "}{row.text ?? "ok"}
         </div>
       );
     case "end":
-      return <div className="whitespace-pre-wrap break-words font-mono text-[11px] font-semibold text-[#b06a1c]">{END_LABEL[row.reason]}{row.detail ? ` — ${row.detail}` : ""}</div>;
+      return <div className="whitespace-pre-wrap break-words font-mono text-[11px] font-semibold text-nori-hb06a1c">{END_LABEL[row.reason]}{row.detail ? ` — ${row.detail}` : ""}</div>;
   }
 };
 

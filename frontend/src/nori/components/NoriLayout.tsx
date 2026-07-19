@@ -19,7 +19,7 @@ const ConnectionChip = () => {
     : connecting ? "connecting…" : running ? connState : "not connected";
   const cls =
     "rounded-full px-3 py-1 font-mono text-xs " +
-    (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]");
+    (connected ? "bg-nori-h8ab135/25 text-nori-h4d6a1e" : "bg-nori-h14131a/8 text-nori-h857b6b");
   return connected ? (
     <span className={cls} title="Connected. Manage the session on Home.">● {status}</span>
   ) : (
@@ -38,7 +38,7 @@ const BatteryChip = () => {
   const low = pct <= 15;
   const cls =
     "inline-flex items-center gap-1 rounded-full px-3 py-1 font-mono text-xs " +
-    (low ? "bg-[#d24a3d]/20 text-[#8f2318]" : "bg-[#8ab135]/25 text-[#4d6a1e]");
+    (low ? "bg-nori-hd24a3d/20 text-nori-h8f2318" : "bg-nori-h8ab135/25 text-nori-h4d6a1e");
   const Icon = low ? BatteryLow : Battery;
   return (
     <span className={cls} title="Robot battery">

@@ -1118,6 +1118,70 @@ def nori_set_dataset_lock(session_id: str, body: NoriLockBody, request: Request)
     return _nori_proxy(lambda: client.set_dataset_lock(session_id, body.locked))
 
 
+# NORI: recording -> dataset assembly (raw_bundle promotion). The container-side
+# assembly is airgapped + worker-driven; the frontend only enqueues + polls jobs
+# and reads/edits provenance, so these are thin proxies.
+@app.get("/nori/datasets/raw-bundles")
+def nori_list_raw_bundles(request: Request):
+    """The caller's robot recordings + on-robot pending count (My Stuff)."""
+    client = _nori_client(request)
+    return _nori_proxy(client.list_raw_bundles)
+
+
+class NoriAssembleBody(BaseModel):
+    sources: list[str]
+    mode: str = "new"
+    target_dataset_session_id: str | None = None
+    name: str | None = None
+
+
+@app.post("/nori/datasets/assemble")
+def nori_assemble_dataset(body: NoriAssembleBody, request: Request):
+    """Enqueue assembling recordings into a new dataset or appending to an existing one."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.assemble_dataset(
+        body.sources, body.mode, body.target_dataset_session_id, body.name))
+
+
+@app.get("/nori/datasets/assemblies/active")
+def nori_active_assemblies(request: Request):
+    """In-flight assembly jobs (for the 'Assembling' dataset badge + new-dataset placeholder)."""
+    client = _nori_client(request)
+    return _nori_proxy(client.active_assemblies)
+
+
+@app.get("/nori/datasets/assemble/{assembly_job_id}")
+def nori_get_assembly_job(assembly_job_id: str, request: Request):
+    """Poll one assembly job's status."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.get_assembly_job(assembly_job_id))
+
+
+@app.get("/nori/datasets/{dataset_session_id}/sessions")
+def nori_dataset_sessions(dataset_session_id: str, request: Request):
+    """Provenance sessions of an assembled dataset (for filter + bulk-delete)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.dataset_sessions(dataset_session_id))
+
+
+@app.delete("/nori/datasets/{dataset_session_id}/sessions/{session_key}")
+def nori_delete_dataset_session(dataset_session_id: str, session_key: str, request: Request):
+    """Bulk-delete a session's episodes (enqueues a reindex-safe rebuild)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.delete_dataset_session(dataset_session_id, session_key))
+
+
+class NoriDeleteEpisodesBody(BaseModel):
+    episode_indices: list[int]
+
+
+@app.post("/nori/datasets/{dataset_session_id}/delete-episodes")
+def nori_delete_dataset_episodes(dataset_session_id: str, body: NoriDeleteEpisodesBody, request: Request):
+    """Delete individual episodes by index (enqueues a reindex-safe rebuild)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.delete_dataset_episodes(dataset_session_id, body.episode_indices))
+
+
 @app.delete("/nori/library/policies/{job_id}")
 def nori_delete_policy(job_id: str, request: Request):
     """Permanently delete one of the caller's policies (checkpoint + record)."""
@@ -1138,9 +1202,14 @@ def nori_acquire_policy(listing_id: str, request: Request):
     return _nori_proxy(lambda: client.acquire_policy(listing_id))
 
 
-@app.get("/nori/marketplace/policies/{ref}/details")
+@app.get("/nori/marketplace/policies/{ref}")
 def nori_policy_details(ref: str, request: Request):
-    """Full detail view for one policy (class, provenance, file manifest)."""
+    """Full detail view for one policy (class, provenance, file manifest).
+
+    Path mirrors the backend's GET /marketplace/policies/{ref} and the frontend
+    client (getPolicyDetails), which both use the BARE path — not /details. The
+    proxy route had drifted to /{ref}/details, so localhost 404'd on every
+    marketplace detail open while prod (direct-to-backend) worked."""
     client = _nori_client(request)
     return _nori_proxy(lambda: client.get_policy_details(ref))
 

@@ -38,21 +38,21 @@ function Stat({
   // Tinted chips in the leader-setup palette: outlined neutral, green/amber/red badges.
   // Default tone (no data yet — path / watchdog / temp before a connect) is fill-less: the
   // card's own background with just the hairline outline marking the chip (the earlier tan
-  // fill #e5e1d2 read as unpleasant; 2026-07-16). The border is stronger than the tinted
+  // fill hsl(var(--nori-he5e1d2)) read as unpleasant; 2026-07-16). The border is stronger than the tinted
   // tones' /12 so an outline-only chip still registers. Good tone matches the "connected"
-  // status green (#8ab135 family) instead of the old cooler/bluer green, so healthy chips
+  // status green (hsl(var(--nori-h8ab135)) family) instead of the old cooler/bluer green, so healthy chips
   // and the connected pill read as one signal.
   const toneClass = {
-    default: "border-[#14131a]/20 bg-transparent text-[#14131a]",
-    good: "border-[#8ab135]/40 bg-[#8ab135]/15 text-[#4d6a1e]",
-    warn: "border-[#db9346]/35 bg-[#fdf1de] text-[#8a5a12]",
+    default: "border-nori-h14131a/20 bg-transparent text-nori-h14131a",
+    good: "border-nori-h8ab135/40 bg-nori-h8ab135/15 text-nori-h4d6a1e",
+    warn: "border-nori-hdb9346/35 bg-nori-hfdf1de text-nori-h8a5a12",
     // Same recipe as good — brand red at /15 over the card instead of the old solid
-    // #fde7e4 fill — so the two tones sit at one vibrancy level (muted 2026-07-16).
-    bad: "border-[#d24a3d]/40 bg-[#d24a3d]/15 text-[#8f2318]",
+    // hsl(var(--nori-hfde7e4)) fill — so the two tones sit at one vibrancy level (muted 2026-07-16).
+    bad: "border-nori-hd24a3d/40 bg-nori-hd24a3d/15 text-nori-h8f2318",
   }[tone];
   return (
     <div className={cn("flex flex-col gap-1 rounded-md border px-2.5 py-1.5", toneClass)}>
-      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[#857b6b]">{label}</span>
+      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-nori-h857b6b">{label}</span>
       <span className="font-mono text-sm leading-none">{value}</span>
     </div>
   );
@@ -93,7 +93,7 @@ export function controlRemedy(reason?: string): string {
 export function ControlOfflineBanner({ status }: { status: DaemonStatus | null }) {
   if (!status || status.state === "online") return null;
   return (
-    <div className="rounded-md border border-[#d24a3d]/35 bg-[#fde7e4] px-4 py-3 text-[#a3271c]">
+    <div className="rounded-md border border-nori-hd24a3d/35 bg-nori-hfde7e4 px-4 py-3 text-nori-ha3271c">
       <p className="font-mono text-[11px] uppercase tracking-[0.14em]">
         Robot motor control offline, reconnecting
       </p>
@@ -163,7 +163,7 @@ export function ConnectionBanner({ status, settingsTo }: { status: ConnectStatus
     const headline = t?.headline ?? "Couldn't connect";
     const body = t?.body ?? "Disconnect and try again; if it keeps happening, contact support.";
     return (
-      <div className="rounded-md border border-[#d24a3d]/35 bg-[#fde7e4] px-4 py-3 text-[#a3271c]">
+      <div className="rounded-md border border-nori-hd24a3d/35 bg-nori-hfde7e4 px-4 py-3 text-nori-ha3271c">
         <p className="font-mono text-[11px] uppercase tracking-[0.14em]">{headline}</p>
         <p className="mt-1 text-sm">{body}</p>
         {settingsTo && t?.settingsLink && (
@@ -178,8 +178,8 @@ export function ConnectionBanner({ status, settingsTo }: { status: ConnectStatus
   }
 
   return (
-    <div className="flex items-center gap-2.5 rounded-md border border-[#14131a]/12 bg-[#f3f1e8] px-4 py-3 text-[#14131a]">
-      <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[#857b6b]" />
+    <div className="flex items-center gap-2.5 rounded-md border border-nori-h14131a/12 bg-nori-hf3f1e8 px-4 py-3 text-nori-h14131a">
+      <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-nori-h857b6b" />
       <p className="text-sm">{CONNECT_PROGRESS[status.phase] ?? "Connecting…"}</p>
     </div>
   );
@@ -276,7 +276,7 @@ const CURRENT_FULL = 600;
 export function GripForce({ currents }: { currents: Record<string, number> }) {
   const keys = Object.keys(currents);
   if (keys.length === 0) {
-    return <p className="font-mono text-xs text-[#857b6b]">no current telemetry yet</p>;
+    return <p className="font-mono text-xs text-nori-h857b6b">no current telemetry yet</p>;
   }
   const grippers = keys.filter((k) => k.includes("gripper")).sort();
   const rest = keys.filter((k) => !k.includes("gripper")).sort();
@@ -288,16 +288,16 @@ export function GripForce({ currents }: { currents: Record<string, number> }) {
         const mag = Math.abs(currents[k] ?? 0);
         const pct = Math.min(100, (mag / CURRENT_FULL) * 100);
         const isGrip = k.includes("gripper");
-        const tone = pct >= 80 ? "bg-[#d24a3d]" : pct >= 40 ? "bg-[#c97929]" : "bg-[#d98b3d]";
+        const tone = pct >= 80 ? "bg-nori-hd24a3d" : pct >= 40 ? "bg-nori-hc97929" : "bg-nori-hd98b3d";
         return (
-          <div key={k} className="grid grid-cols-[minmax(6rem,auto)_1fr_3rem] items-center gap-3 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-3 py-2">
-            <span className={cn("truncate font-mono text-xs", isGrip ? "text-[#14131a]" : "text-[#5c564b]")}>
+          <div key={k} className="grid grid-cols-[minmax(6rem,auto)_1fr_3rem] items-center gap-3 rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-3 py-2">
+            <span className={cn("truncate font-mono text-xs", isGrip ? "text-nori-h14131a" : "text-nori-h5c564b")}>
               {shortMotor(k)}
             </span>
-            <div className="h-1.5 overflow-hidden rounded-full bg-[#e5e1d2]">
+            <div className="h-1.5 overflow-hidden rounded-full bg-nori-he5e1d2">
               <div className={cn("h-full rounded-full transition-[width] duration-100", tone)} style={{ width: `${pct}%` }} />
             </div>
-            <span className="text-right font-mono text-xs text-[#5c564b]">
+            <span className="text-right font-mono text-xs text-nori-h5c564b">
               {mag.toFixed(0)}
             </span>
           </div>
@@ -342,12 +342,12 @@ export function RailHeight({ state }: { state: Record<string, number> }) {
         const { known, depthMm, frac } = railReading(state, key);
         const pct = frac * 100;
         // orange through descent, darker mid, red as it approaches the bottom hard stop.
-        const tone = frac >= 0.85 ? "bg-[#d24a3d]" : frac >= 0.6 ? "bg-[#c97929]" : "bg-[#d98b3d]";
+        const tone = frac >= 0.85 ? "bg-nori-hd24a3d" : frac >= 0.6 ? "bg-nori-hc97929" : "bg-nori-hd98b3d";
         const atTop = known && depthMm < 3;
         return (
-          <div key={key} className="grid grid-cols-[minmax(6rem,auto)_1fr_6rem] items-center gap-3 rounded-md border border-[#14131a]/10 bg-[#f3f1e8] px-3 py-2">
-            <span className="truncate font-mono text-xs text-[#14131a]">{label}</span>
-            <div className="relative h-1.5 overflow-hidden rounded-full bg-[#e5e1d2]">
+          <div key={key} className="grid grid-cols-[minmax(6rem,auto)_1fr_6rem] items-center gap-3 rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-3 py-2">
+            <span className="truncate font-mono text-xs text-nori-h14131a">{label}</span>
+            <div className="relative h-1.5 overflow-hidden rounded-full bg-nori-he5e1d2">
               {/* top-anchored descent gauge: fills from the left (top/home) as the rail dives */}
               {known && (
                 <div
@@ -356,7 +356,7 @@ export function RailHeight({ state }: { state: Record<string, number> }) {
                 />
               )}
             </div>
-            <span className="text-right font-mono text-xs text-[#5c564b]">
+            <span className="text-right font-mono text-xs text-nori-h5c564b">
               {!known ? "unknown" : atTop ? "top" : `↓ ${depthMm.toFixed(0)} mm`}
             </span>
           </div>
@@ -372,7 +372,7 @@ export function RailHeightHelp() {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button type="button" className="text-[#857b6b] hover:text-[#14131a]" aria-label="How to read the rail gauge">
+        <button type="button" className="text-nori-h857b6b hover:text-nori-h14131a" aria-label="How to read the rail gauge">
           <HelpCircle className="h-3.5 w-3.5" />
         </button>
       </TooltipTrigger>
@@ -415,6 +415,7 @@ export function CallBar({
   onLeave,
   onToggleMute,
   onToggleCamera,
+  recording = false,
 }: {
   call: CallState;
   running: boolean;
@@ -426,6 +427,7 @@ export function CallBar({
   onLeave: () => void;
   onToggleMute: () => void;
   onToggleCamera: () => void;
+  recording?: boolean; // robot recorder capturing an episode — joining a call is blocked
 }) {
   // Speaker icon toggles a compact inline slider; opening it widens the group so the
   // you/nori indicators shift slightly left.
@@ -434,7 +436,7 @@ export function CallBar({
   // call is up the labels shorten ("Leave call" -> "Leave") and the icon gap tightens. The
   // pre-call state has only one button and keeps its full label. Titles carry the long form.
   return (
-    <div className="flex flex-wrap items-center gap-2 text-[#14131a]">
+    <div className="flex flex-wrap items-center gap-2 text-nori-h14131a">
       {/* Status on the left, actions on the right — same hand as the // controls strip, where the
           mode pills sit right-aligned. */}
       <div className="flex flex-wrap items-center gap-3">
@@ -443,7 +445,7 @@ export function CallBar({
         <span className="flex items-center gap-1.5">
           <OnAir live={call.active && !call.micMuted} label="you" />
           {call.active && !call.micMuted
-            ? <Mic className="h-3.5 w-3.5 text-[#14131a]" />
+            ? <Mic className="h-3.5 w-3.5 text-nori-h14131a" />
             : <MicOff className="h-3.5 w-3.5 text-muted-foreground/60" />}
         </span>
         <span className="flex items-center gap-1.5">
@@ -453,7 +455,7 @@ export function CallBar({
           {/* Same two tones as the mic glyph beside "you": ink when audible, dim when muted. */}
           <button
             type="button"
-            className={volume === 0 ? "text-muted-foreground/60 hover:text-[#14131a]" : "text-[#14131a]"}
+            className={volume === 0 ? "text-muted-foreground/60 hover:text-nori-h14131a" : "text-nori-h14131a"}
             title="Robot audio volume"
             onClick={() => setVolumeOpen((v) => !v)}
           >
@@ -467,7 +469,7 @@ export function CallBar({
               step={0.05}
               value={volume}
               onChange={(e) => onVolumeChange(Number(e.target.value))}
-              className="h-1 w-20 cursor-pointer accent-[#14131a]"
+              className="h-1 w-20 cursor-pointer accent-nori-h14131a"
               title="Robot audio volume"
             />
           )}
@@ -494,17 +496,41 @@ export function CallBar({
 
       <div className="ml-auto flex flex-wrap items-center gap-2">
         {!call.active ? (
-          // Same Pill as the Keyboard / Leader arm / VR mode strip below — this is the audio
-          // card's one action, and it sits in the same right-hand column, so it should read as
-          // the same kind of control rather than a differently-shaped button.
-          <Pill
-            onClick={onJoin}
-            disabled={!running || !connected}
-            title="Capture your mic and join the two-way audio call"
-            className="inline-flex items-center"
-          >
-            <Phone className="mr-2 h-4 w-4" /> Join call
-          </Pill>
+          recording ? (
+            // Recording a training dataset: a call starting mid-capture risks the P10S amp's
+            // inrush tripping USB over-current and browning out the cameras (rpi5/media/README.md
+            // "USB power budget"), which would corrupt the take — so block it and say why.
+            // A native title won't show on a disabled control, so use the (?) HelpTip tooltip
+            // pattern with the trigger on the wrapping span (a disabled Pill can't emit hover).
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex" tabIndex={0}>
+                  <Pill
+                    disabled
+                    aria-disabled
+                    className="inline-flex items-center pointer-events-none opacity-50"
+                  >
+                    <Phone className="mr-2 h-4 w-4" /> Join call
+                  </Pill>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-64 text-xs">
+                Call is disabled while recording training datasets.
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            // Same Pill as the Keyboard / Leader arm / VR mode strip below — this is the audio
+            // card's one action, and it sits in the same right-hand column, so it should read as
+            // the same kind of control rather than a differently-shaped button.
+            <Pill
+              onClick={onJoin}
+              disabled={!running || !connected}
+              title="Capture your mic and join the two-way audio call"
+              className="inline-flex items-center"
+            >
+              <Phone className="mr-2 h-4 w-4" /> Join call
+            </Pill>
+          )
         ) : (
           <>
             <Button size="sm" variant="destructive" onClick={onLeave} title="Leave the audio call">
@@ -553,7 +579,7 @@ export function ControlLegend({ mode }: { mode: ControlMode }) {
         <span className="whitespace-nowrap text-muted-foreground">press <Key>M</Key> to toggle mode</span>
         <Tooltip>
           <TooltipTrigger asChild>
-            <button type="button" className="text-[#857b6b] hover:text-[#14131a]" aria-label="What the two modes mean">
+            <button type="button" className="text-nori-h857b6b hover:text-nori-h14131a" aria-label="What the two modes mean">
               <HelpCircle className="h-3.5 w-3.5" />
             </button>
           </TooltipTrigger>

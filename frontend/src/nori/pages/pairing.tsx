@@ -78,13 +78,14 @@ const Pairing = () => {
       if (!robots || robots.length === 0) setActiveRobotSerial(next);
       await loadRobots();
     } catch (err) {
-      // A 409 means the serial belongs to someone else's account. The backend says so literally
-      // ("already paired to another customer"), which tells the far more likely case — a typo —
-      // that they've stumbled onto a stranger's robot, and confirms the serial is real and
-      // claimed. Lead with the typo instead.
-      if (err instanceof ApiError && err.status === 409) {
+      // 409 = serial owned by another account; 404 = no such registered robot (the
+      // provisioned-only cutover refuses made-up serials). Both mean "this serial isn't
+      // available to you," and the far likelier cause is a typo — so lead with that and
+      // show the same friendly copy instead of the raw backend detail (which leaked a
+      // "No robot with serial ... is registered" string for the 404 case).
+      if (err instanceof ApiError && (err.status === 409 || err.status === 404)) {
         setError(
-          `Pair robot failed: '${next}' is not available. Please check you typed your ` +
+          `Pairing failed: '${next}' is not available. Please check you typed your ` +
             `serial number correctly. Each robot can only be paired to one account.`
         );
       } else {

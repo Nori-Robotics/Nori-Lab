@@ -6,8 +6,8 @@
 // fresh, resumed-from-pause, and continued (extended) segments alike, without
 // needing a local LeLab job record. Live progress + the loss/LR curves are
 // reconstructed by parsing the log stream (parseMetrics), the same lines
-// lelab/jobs.py parses server-side. On (re)load it seeds only the last few log
-// lines (cheap); "Load full logs" fetches the whole history on demand.
+// lelab/jobs.py parses server-side. On (re)load it pulls the FULL log once so
+// the charts + panel show everything from step 0, then streams new lines.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -44,9 +44,6 @@ import type { LogLine, TrainingMetrics } from "@/lib/jobsApi";
 const POLL_INTERVAL_MS = 1000;
 const MAX_LOG_LINES = 5000;
 const HISTORY_CAP = 2000;
-// On (re)load, seed the panel with just the last few lines; the rest streams in
-// live, and the full backlog is available via "Load full logs".
-const INITIAL_TAIL = 5;
 
 // Backend job status vocab.
 const STOPPABLE = new Set(["PENDING", "SCHEDULING", "RUNNING"]);
@@ -152,8 +149,6 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
   const [metrics, setMetrics] = useState<TrainingMetrics>(emptyMetrics());
   const [lossHistory, setLossHistory] = useState<MetricPoint[]>([]);
   const [lrHistory, setLrHistory] = useState<MetricPoint[]>([]);
-  const [fullLoaded, setFullLoaded] = useState(false);
-  const [loadingFull, setLoadingFull] = useState(false);
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   // Log cursor + running metric accumulator (refs so the poll closure and the
@@ -198,7 +193,6 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
     setMetrics(emptyMetrics());
     setLossHistory([]);
     setLrHistory([]);
-    setFullLoaded(false);
 
     const tick = async () => {
       // 1. Job record (status/header) — backend UUID, works for every job.
@@ -212,16 +206,20 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
       }
       // 2. Logs. First read seeds the tail cheaply; then stream from the cursor.
       try {
-        const res = seededRef.current
-          ? await getJobLogs(baseUrl, fetchWithHeaders, jobId, offsetRef.current)
-          : await getJobLogs(baseUrl, fetchWithHeaders, jobId, 0, INITIAL_TAIL);
+        // First read pulls the ENTIRE log so the charts AND the panel show
+        // everything from step 0 on enter/reload; later polls stream new lines
+        // from the cursor. MAX_LOG_LINES caps the panel.
+        const firstRead = !seededRef.current;
+        const res = firstRead
+          ? await getJobLogs(baseUrl, fetchWithHeaders, jobId, 0)
+          : await getJobLogs(baseUrl, fetchWithHeaders, jobId, offsetRef.current);
         if (cancelled) return;
         seededRef.current = true;
         offsetRef.current = res.next_offset ?? offsetRef.current;
         if (res.is_terminal) terminalRef.current = true;
         if (res.lines.length > 0) {
-          appendLogLines(res.lines);
           applyLines(res.lines);
+          appendLogLines(res.lines);
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -245,32 +243,6 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
     }
   }, [logs]);
-
-  // Fetch the ENTIRE log on demand and rebuild the curves from it.
-  const loadFullLogs = useCallback(async () => {
-    setLoadingFull(true);
-    try {
-      const res = await getJobLogs(baseUrl, fetchWithHeaders, jobId, 0);
-      offsetRef.current = res.next_offset ?? offsetRef.current;
-      setLogs(res.lines.slice(-MAX_LOG_LINES).map((message) => ({ timestamp: 0, message })));
-      // Rebuild histories from the full log so the chart backfills too.
-      accRef.current = { metrics: emptyMetrics(), loss: [], lr: [] };
-      const folded = foldMetrics(res.lines, accRef.current);
-      accRef.current = folded;
-      setMetrics(folded.metrics);
-      setLossHistory(folded.loss.slice(-HISTORY_CAP));
-      setLrHistory(folded.lr.slice(-HISTORY_CAP));
-      setFullLoaded(true);
-    } catch (e) {
-      toast({
-        title: "Couldn't load full logs",
-        description: e instanceof Error ? e.message : String(e),
-        variant: "destructive",
-      });
-    } finally {
-      setLoadingFull(false);
-    }
-  }, [baseUrl, fetchWithHeaders, jobId, toast]);
 
   const handlePause = async () => {
     if (!job) return;
@@ -335,17 +307,17 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold text-[#14131a]">{job.dataset_repo}</h1>
+              <h1 className="text-xl font-semibold text-nori-h14131a">{job.dataset_repo}</h1>
               {policyType && (
-                <span className="rounded border border-[#14131a]/15 bg-[#14131a]/5 px-2 py-0.5 text-xs text-[#14131a]/70">
+                <span className="rounded border border-nori-h14131a/15 bg-nori-h14131a/5 px-2 py-0.5 text-xs text-nori-h14131a/70">
                   {policyType}
                 </span>
               )}
-              <span className="rounded border border-[#b06a1c]/40 bg-[#b06a1c]/10 px-2 py-0.5 text-xs text-[#b06a1c]">
+              <span className="rounded border border-nori-hb06a1c/40 bg-nori-hb06a1c/10 px-2 py-0.5 text-xs text-nori-hb06a1c">
                 Nori cloud
               </span>
             </div>
-            <p className="text-xs text-[#14131a]/60">
+            <p className="text-xs text-nori-h14131a/60">
               {job.status}
               {job.failure_reason ? ` — ${job.failure_reason}` : ""}
               {job.final_cost_usd != null ? ` · $${job.final_cost_usd}` : ""}
@@ -368,23 +340,7 @@ const MonitoringMode = ({ jobId }: { jobId: string }) => {
         lrHistory={lrHistory}
         starting={starting}
       />
-      <NoriTrainingLogs
-        logs={logs}
-        logContainerRef={logContainerRef}
-        headerAction={
-          !fullLoaded ? (
-            <Button variant="outline" size="sm" onClick={loadFullLogs} disabled={loadingFull}>
-              {loadingFull ? (
-                <>
-                  <Loader2 className="mr-2 h-3 w-3 animate-spin" /> Loading…
-                </>
-              ) : (
-                "Load full logs"
-              )}
-            </Button>
-          ) : undefined
-        }
-      />
+      <NoriTrainingLogs logs={logs} logContainerRef={logContainerRef} />
     </section>
   );
 };

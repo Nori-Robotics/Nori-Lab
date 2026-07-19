@@ -38,6 +38,17 @@ function firstToken(s: string): string {
   return s.trim().split(/\s+/)[0] ?? "";
 }
 
+// lerobot abbreviates step counts: "6K" -> 6000, "42K" -> 42000, "1.5M" ->
+// 1500000. Plain integers pass through. parseInt("6K") would wrongly yield 6.
+function parseStepToken(tok: string): number | null {
+  const mm = /^([0-9]*\.?[0-9]+)([KkMm]?)$/.exec(tok.replace(/,/g, "").trim());
+  if (!mm) return null;
+  const base = parseFloat(mm[1]);
+  if (!Number.isFinite(base)) return null;
+  const mult = mm[2] ? (mm[2].toLowerCase() === "k" ? 1000 : 1_000_000) : 1;
+  return Math.round(base * mult);
+}
+
 // Parse one log line, mutating `m` with the latest readings. Returns any
 // (step, loss)/(step, lr) sample points the line carried, for the charts.
 // tqdm lines advance step/total/eta but have no loss; the periodic
@@ -46,22 +57,31 @@ export function parseMetricLine(
   line: string,
   m: TrainingMetrics,
 ): { loss?: MetricPoint; lr?: MetricPoint } {
+  // tqdm progress bar → exact current step/total/eta. HF concatenates the tqdm
+  // render (no trailing newline) with the following INFO metric line, so ONE
+  // line usually carries BOTH the bar and "loss:…". Do NOT return here — fall
+  // through so the loss/lr on the same line is still extracted.
+  let sawTqdm = false;
   const tq = TQDM_RE.exec(line);
   if (tq) {
+    sawTqdm = true;
     const cur = parseInt(tq[1], 10);
     const total = parseInt(tq[2], 10);
     if (Number.isFinite(cur)) m.current_step = cur;
     if (Number.isFinite(total) && total > 0) m.total_steps = total;
     const eta = parseDuration(tq[3]);
     if (eta != null) m.eta_seconds = eta;
-    return {};
   }
 
-  if (line.includes("step:") && line.includes("loss:")) {
+  if (line.includes("loss:")) {
+    // Prefer the exact tqdm step from this same line; else parse the metric's
+    // own step: token (K/M-suffixed, e.g. "6K"). Using the tqdm step keeps the
+    // chart x-axis monotonic instead of clustered on rounded "6K" values.
     let step = m.current_step;
-    const stepTok = firstToken(line.split("step:")[1] ?? "").replace(/,/g, "");
-    const parsedStep = parseInt(stepTok, 10);
-    if (Number.isFinite(parsedStep)) step = parsedStep;
+    if (!sawTqdm && line.includes("step:")) {
+      const parsedStep = parseStepToken(firstToken(line.split("step:")[1] ?? ""));
+      if (parsedStep != null) step = parsedStep;
+    }
 
     let loss: number | null = null;
     const lossTok = firstToken(line.split("loss:")[1] ?? "");

@@ -57,7 +57,7 @@ export function ConnectionControls({
       <span
         className={
           "rounded-full px-3 py-1 font-mono text-xs " +
-          (connected ? "bg-[#8ab135]/25 text-[#4d6a1e]" : "bg-[#14131a]/8 text-[#857b6b]")
+          (connected ? "bg-nori-h8ab135/25 text-nori-h4d6a1e" : "bg-nori-h14131a/8 text-nori-h857b6b")
         }
       >
         ● {status}
@@ -79,7 +79,7 @@ export function ConnectionSettings() {
   const serial = activeRobotSerial ?? customer?.robot_serial_number ?? "";
 
   return (
-    <div className="mt-4 space-y-3 border-t border-[#14131a]/10 pt-4">
+    <div className="mt-4 space-y-3 border-t border-nori-h14131a/10 pt-4">
       <div className="space-y-1.5">
         <Label htmlFor="room">Room (your Nori serial number)</Label>
         {/* The room IS the Supabase realtime channel name — matched EXACTLY against the Pi's

@@ -82,7 +82,7 @@ export function AssembleModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={running ? undefined : onClose}
+      onClick={onClose}
     >
       <div
         className="w-full max-w-md rounded-[20px] bg-card p-6 shadow-xl"
@@ -90,11 +90,9 @@ export function AssembleModal({
       >
         <div className="flex items-start justify-between">
           <h2 className="text-lg font-bold text-nori-h14131a">Assemble into dataset</h2>
-          {!running && (
-            <button onClick={onClose} className="text-muted-foreground hover:text-nori-h14131a" aria-label="Close">
-              <X className="h-5 w-5" />
-            </button>
-          )}
+          <button onClick={onClose} className="text-muted-foreground hover:text-nori-h14131a" aria-label="Close">
+            <X className="h-5 w-5" />
+          </button>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
           {sources.length} recording{sources.length === 1 ? "" : "s"} → a trainable dataset. Episodes are
@@ -105,8 +103,13 @@ export function AssembleModal({
           <div className="mt-6 flex flex-col items-center gap-3 py-6 text-center">
             <Loader2 className="h-6 w-6 animate-spin text-nori-h14131a" />
             <p className="text-sm text-muted-foreground">
-              Assembling in your cloud — this can take a few minutes. Leave this open; it finishes on its own.
+              Assembling in your cloud — this can take a few minutes. You can close this; the
+              recordings show <span className="font-medium text-nori-h14131a">Uploading to dataset</span> until
+              it finishes.
             </p>
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              Run in background
+            </Button>
           </div>
         ) : (
           <>

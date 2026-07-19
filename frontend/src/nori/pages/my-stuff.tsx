@@ -204,6 +204,27 @@ const MyStuff = () => {
     void load();
   }, [load]);
 
+  // Live-refresh while any recording is in a transient state — uploading from the
+  // robot to the cloud, or being assembled into a dataset — so its badge flips on
+  // its own (uploading → in cloud, uploading-to-dataset → in cloud + new dataset).
+  const anyTransient = useMemo(() => {
+    const bundles = robot?.bundles ?? [];
+    return (
+      (robot?.on_robot_pending ?? 0) > 0 ||
+      bundles.some(
+        (b) =>
+          b.assembling === true ||
+          (b.status !== "PROMOTED" && b.status !== "FAILED" && b.status !== "PROMOTION_FAILED"),
+      )
+    );
+  }, [robot]);
+
+  useEffect(() => {
+    if (!anyTransient) return;
+    const t = setInterval(() => void load(), 5000);
+    return () => clearInterval(t);
+  }, [anyTransient, load]);
+
   // Every policy, flattened, for the Policies column.
   const allPolicies = useMemo(() => {
     if (!library) return [];
@@ -471,8 +492,10 @@ const MyStuff = () => {
           </div>
 
           {(robot?.bundles ?? []).map((b) => {
-            const inCloud = b.status === "PROMOTED";
+            const assembling = b.assembling === true;
+            const inCloud = b.status === "PROMOTED" && !assembling;
             const failed = b.status === "FAILED" || b.status === "PROMOTION_FAILED";
+            const selectable = inCloud; // can't re-select a recording mid-assembly
             return (
               <article
                 key={b.session_id}
@@ -480,7 +503,7 @@ const MyStuff = () => {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-start gap-3">
-                    {inCloud && (
+                    {selectable && (
                       <input
                         type="checkbox"
                         checked={picked.has(b.session_id)}
@@ -492,14 +515,20 @@ const MyStuff = () => {
                     <div className="min-w-0">
                       <p className="text-base font-bold text-nori-h14131a">{b.label}</p>
                       <p className="mt-0.5 text-sm text-muted-foreground">
-                        {inCloud && b.finalized_at
+                        {b.status === "PROMOTED" && b.finalized_at
                           ? `Uploaded ${shortDate(b.finalized_at)}`
                           : `Recorded ${shortDate(b.created_at)}`}
                       </p>
                     </div>
                   </div>
-                  <Pill tone={inCloud ? "leaf" : "secondary"}>
-                    {inCloud ? "In cloud" : failed ? "Needs attention" : "Uploading…"}
+                  <Pill tone={assembling ? "sticker" : inCloud ? "leaf" : failed ? "secondary" : "sticker"}>
+                    {assembling
+                      ? "Uploading to dataset"
+                      : inCloud
+                        ? "In cloud"
+                        : failed
+                          ? "Needs attention"
+                          : "Uploading to cloud"}
                   </Pill>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
@@ -507,11 +536,13 @@ const MyStuff = () => {
                   {b.frame_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(b.frame_count)}</b> frames</span>}
                 </div>
                 <p className="mt-3 border-t border-dashed border-border pt-2.5 text-[13px] italic text-muted-foreground">
-                  {failed
-                    ? `Upload problem: ${b.failure_reason ?? "unknown"}`
-                    : inCloud
-                      ? "Full-quality copy is in your cloud. Select it to assemble a trainable dataset."
-                      : "Uploading from the robot — this finishes while the robot is idle."}
+                  {assembling
+                    ? "Being assembled into a dataset — this runs in your cloud and can take a few minutes."
+                    : failed
+                      ? `Upload problem: ${b.failure_reason ?? "unknown"}`
+                      : inCloud
+                        ? "Full-quality copy is in your cloud. Select it to assemble a trainable dataset."
+                        : "Uploading from the robot — this finishes while the robot is idle."}
                 </p>
               </article>
             );
@@ -786,7 +817,10 @@ const MyStuff = () => {
         <AssembleModal
           sources={[...picked]}
           datasets={datasetOptions}
-          onClose={() => setAssembleOpen(false)}
+          onClose={() => {
+            setAssembleOpen(false);
+            void load(); // pick up the "uploading to dataset" badge if backgrounded
+          }}
           onDone={() => {
             setPicked(new Set());
             void load();

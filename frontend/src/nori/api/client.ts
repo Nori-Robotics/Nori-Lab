@@ -557,6 +557,9 @@ export interface RawBundleEntry {
   created_at: string;
   finalized_at: string | null;
   failure_reason: string | null;
+  /** True while this recording is a source of an in-flight assembly job — the UI
+   *  shows "Uploading to dataset" and it can't be selected again meanwhile. */
+  assembling?: boolean;
 }
 
 export interface RobotRecordings {

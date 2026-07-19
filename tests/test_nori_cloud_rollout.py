@@ -32,8 +32,47 @@ def _wait(pred, timeout=2.0):
 def _make(caller, **kw):
     return cr.CloudRollout(
         endpoint="http://x", token="t", instruction="pick up the cup",
-        joints=JOINTS, caller=caller, **kw,
+        action_keys=JOINTS, caller=caller, **kw,
     )
+
+
+def test_arm_keys_match_model_order():
+    # Nori keys, ordered to the model's canonical output order (NOT alphabetical).
+    assert cr.arm_keys("left") == [
+        "left_arm_shoulder_pan.pos", "left_arm_shoulder_lift.pos",
+        "left_arm_elbow_flex.pos", "left_arm_wrist_flex.pos",
+        "left_arm_wrist_roll.pos", "left_arm_gripper.pos",
+    ]
+    assert cr.arm_keys("RIGHT")[0] == "right_arm_shoulder_pan.pos"
+    assert all(k.startswith("right_arm_") for k in cr.arm_keys("right"))
+    with pytest.raises(ValueError):
+        cr.arm_keys("both")
+
+
+def test_action_maps_by_name_in_model_order():
+    # The 6-vector must land on the right named joints in the model's order.
+    keys = cr.arm_keys("left")
+    roll = cr.CloudRollout(endpoint="http://x", token="t", instruction="go",
+                           action_keys=keys, caller=lambda i, s: [[1, 2, 3, 4, 5, 6]] * 5)
+    roll.serve(["img"], [0.0] * 6)
+    assert _wait(lambda: roll.status()["queue"] > 0)
+    act = roll.serve(["img"], [0.0] * 6)["action"]
+    assert act["left_arm_shoulder_pan.pos"] == 1.0   # model dim 0
+    assert act["left_arm_gripper.pos"] == 6.0         # model dim 5
+
+
+def test_bounds_clamp_and_counter():
+    keys = cr.arm_keys("left")
+    bounds = [(-10.0, 10.0)] * 6
+    roll = cr.CloudRollout(endpoint="http://x", token="t", instruction="go",
+                           action_keys=keys, bounds=bounds,
+                           caller=lambda i, s: [[999, -999, 0, 0, 0, 0]] * 5)
+    roll.serve(["img"], [0.0] * 6)
+    assert _wait(lambda: roll.status()["queue"] > 0)
+    act = roll.serve(["img"], [0.0] * 6)["action"]
+    assert act["left_arm_shoulder_pan.pos"] == 10.0    # clipped to hi
+    assert act["left_arm_shoulder_lift.pos"] == -10.0  # clipped to lo
+    assert roll.status()["clamps"] >= 1
 
 
 def test_warming_then_serves_mapped_actions():

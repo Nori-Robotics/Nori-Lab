@@ -47,6 +47,36 @@ class CloudRolloutError(RuntimeError):
     watchdog trips and stops the rollout (belt on top of the daemon's braces)."""
 
 
+# --- MolmoAct2-SO100_101 joint contract (Phase 3 mapping) -------------------
+# The model's canonical output order, verbatim from its norm_stats.json
+# (metadata_by_tag.so100_so101_molmoact2.action_stats.names). control_mode is
+# "absolute joint pose" (degrees), so an action IS a target pose, not a delta.
+MOLMOACT2_JOINTS = [
+    "shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper",
+]
+# Per-joint (min, max) from the same norm_stats action_stats — a COARSE reject-
+# absurd guard only (the robot daemon still applies the tight physical clamp).
+MOLMOACT2_BOUNDS = [
+    (-122.61, 179.21),   # shoulder_pan
+    (-270.0, 219.64),    # shoulder_lift
+    (-269.21, 195.38),   # elbow_flex
+    (-125.77, 178.95),   # wrist_flex
+    (-269.91, 269.82),   # wrist_roll
+    (-31.57, 119.41),    # gripper
+]
+
+
+def arm_keys(arm: str) -> list[str]:
+    """The 6 Nori telemetry/action keys for one arm, ordered to MATCH the model's
+    output order (NOT Nori's alphabetical sort). Nori is bimanual with keys like
+    'left_arm_shoulder_pan.pos'; a single-arm VLA commands one arm and the daemon
+    holds the other. `arm` is "left" or "right"."""
+    a = arm.strip().lower()
+    if a not in ("left", "right"):
+        raise ValueError(f"arm must be 'left' or 'right', got {arm!r}")
+    return [f"{a}_arm_{j}.pos" for j in MOLMOACT2_JOINTS]
+
+
 def infer_token() -> Optional[str]:
     """Bearer token for /act. File first (matches ~/.nori_infer_token written by
     the Space deploy), then env — so the token is never hardcoded or logged."""
@@ -78,17 +108,23 @@ class CloudRollout:
         endpoint: str,
         token: str,
         instruction: str,
-        joints: list[str],
+        action_keys: list[str],
         num_steps: int = DEFAULT_NUM_STEPS,
         watermark: int = REFILL_WATERMARK,
         max_queue: int = MAX_QUEUE,
+        bounds: Optional[list[tuple[float, float]]] = None,
         caller: Optional[Callable[[list[str], list[float]], list[list[float]]]] = None,
     ):
         self.endpoint = endpoint.rstrip("/")
         self.token = token
         self.instruction = instruction
-        self.joints = list(joints)
-        self.action_dim = len(self.joints)  # positional map; see joint-order note below
+        # action_keys: the Nori joint keys, ordered to MATCH the model's output
+        # order (built by arm_keys()). action[i] is named action_keys[i].
+        self.action_keys = list(action_keys)
+        self.action_dim = len(self.action_keys)
+        if bounds is not None and len(bounds) != self.action_dim:
+            raise ValueError("bounds length must equal action_keys length")
+        self.bounds = bounds  # optional coarse clamp (daemon does the real clamp)
         self.num_steps = int(num_steps)
         self.watermark = int(watermark)
         self.max_queue = int(max_queue)
@@ -103,6 +139,7 @@ class CloudRollout:
         self.refills = 0
         self.chunks_received = 0
         self.actions_served = 0
+        self.clamps = 0  # count of actions the bounds guard had to clip
 
     # -- the browser-tick entry point ------------------------------------
     def serve(self, images: list[str], state: list[float]) -> dict:
@@ -124,13 +161,29 @@ class CloudRollout:
         if trigger:
             threading.Thread(target=self._refill, name="cloud-refill", daemon=True).start()
         if action is not None:
-            # Joint-order NOTE: positional zip of the model's 6-DoF output onto the
-            # session joint order. If MolmoAct2's canonical joint order differs from
-            # Nori's sorted telemetry order, remap here (Phase 3 contract mapping).
-            return {"action": dict(zip(self.joints, action)), "queue": qlen, "warming": False}
+            action = self._clamp(action)
+            # Name-based map: action[i] is action_keys[i], which is built in the
+            # model's canonical joint order (arm_keys) — so the RIGHT joint gets
+            # the RIGHT value regardless of Nori's alphabetical telemetry sort.
+            return {"action": dict(zip(self.action_keys, action)), "queue": qlen, "warming": False}
         if err:
             raise CloudRolloutError(err)
         return {"action": None, "queue": qlen, "warming": True}
+
+    def _clamp(self, action: list[float]) -> list[float]:
+        if not self.bounds:
+            return action
+        out = []
+        clipped = False
+        for v, (lo, hi) in zip(action, self.bounds):
+            cv = lo if v < lo else (hi if v > hi else v)
+            clipped = clipped or (cv != v)
+            out.append(cv)
+        if clipped:
+            with self._lock:
+                self.clamps += 1
+            logger.warning("[CLOUD-ROLLOUT] clamped out-of-range action to model bounds")
+        return out
 
     # -- refill (runs off-thread) ----------------------------------------
     def _refill(self) -> None:
@@ -145,8 +198,8 @@ class CloudRollout:
             for a in chunk:
                 if len(a) != self.action_dim:
                     raise ValueError(
-                        f"cloud action is {len(a)}-dim but the session has "
-                        f"{self.action_dim} joints — wrong robot/policy pairing."
+                        f"cloud action is {len(a)}-dim but the mapping expects "
+                        f"{self.action_dim} ({self.action_keys}) — wrong robot/policy pairing."
                     )
                 clean.append([float(x) for x in a])
             with self._lock:
@@ -202,6 +255,7 @@ class CloudRollout:
                 "refills": self.refills,
                 "chunks_received": self.chunks_received,
                 "actions_served": self.actions_served,
+                "clamps": self.clamps,
             }
 
 

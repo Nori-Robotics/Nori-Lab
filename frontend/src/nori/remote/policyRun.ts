@@ -55,6 +55,8 @@ export interface CloudParams {
   instruction: string;
   numSteps?: number;
   views?: string[];
+  /** Which arm a single-arm VLA drives; omit to use the server default (NORI_INFER_ARM). */
+  arm?: "left" | "right";
 }
 
 /** Friendly presets → raw ACT knobs. `smooth` (temporal ensembling, 0.01) is the
@@ -156,6 +158,7 @@ export class PolicyRunner {
               instruction: cloud.instruction,
               num_steps: cloud.numSteps ?? null,
               views: cloud.views ?? null,
+              arm: cloud.arm ?? null,
             }
           : {}),
       }),

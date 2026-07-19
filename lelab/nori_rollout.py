@@ -261,6 +261,15 @@ class LoadBody(BaseModel):
     instruction: str | None = None
     num_steps: int | None = None
     views: list[str] | None = None
+    #   arm — which arm a single-arm cloud VLA drives ("left"/"right"). The Nori
+    #   robot is bimanual; the VLA commands 6 of the 12 joints and the daemon
+    #   holds the rest. Omit to use NORI_INFER_ARM (default "left").
+    arm: str | None = None
+
+
+def _env_arm() -> str:
+    a = (os.environ.get("NORI_INFER_ARM") or "left").strip().lower()
+    return a if a in ("left", "right") else "left"
 
 
 def _env_views() -> list[str] | None:
@@ -295,6 +304,22 @@ def _cloud_load(body: LoadBody) -> dict:
                             detail="a cloud VLA needs an instruction (natural-language task)")
     views = body.views or _env_views() or ["observation.images.remote"]
     fps = body.fps if (body.fps and body.fps > 0) else _env_fps()
+    # Joint mapping: the model's 6-DoF output maps to ONE arm's keys, in the
+    # model's canonical order (arm_keys). Validate those keys exist in the live
+    # session so a bimanual/single-arm or left/right mismatch fails at /load, not
+    # silently mid-rollout.
+    arm = (body.arm or _env_arm()).strip().lower()
+    try:
+        akeys = cloudmod.arm_keys(arm)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    missing = [k for k in akeys if k not in set(body.joints)]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"cloud VLA drives the {arm!r} arm but the session is missing "
+                    f"joint(s) {missing}. Session joints: {sorted(body.joints)}."),
+        )
     # Fail fast on an unreachable endpoint; a not-yet-"ready" Space is fine (this
     # also wakes a sleeping Space — refills retry until the model finishes loading).
     try:
@@ -306,8 +331,9 @@ def _cloud_load(body: LoadBody) -> dict:
         endpoint=endpoint,
         token=token,
         instruction=instruction,
-        joints=body.joints,
+        action_keys=akeys,
         num_steps=body.num_steps or cloudmod.DEFAULT_NUM_STEPS,
+        bounds=cloudmod.MOLMOACT2_BOUNDS,
     )
     with _lock:
         _session.clear()
@@ -316,16 +342,20 @@ def _cloud_load(body: LoadBody) -> dict:
             "ref": body.ref,
             "cloud": roll,
             "joints": list(body.joints),
+            "arm": arm,
+            "arm_keys": akeys,   # state extraction order == model order
             "views": list(views),
             "fps": fps,
             "instruction": instruction,
         })
-    logger.info("[ROLLOUT] cloud load %s -> %s (views=%s, fps=%d, endpoint=%s)",
-                body.ref, endpoint, views, fps, health.get("status"))
+    logger.info("[ROLLOUT] cloud load %s -> %s (arm=%s, views=%s, fps=%d, endpoint=%s)",
+                body.ref, endpoint, arm, views, fps, health.get("status"))
     return {
         "ref": body.ref,
         "provider": "cloud",
         "device": "cloud",
+        "arm": arm,
+        "action_joints": akeys,
         "joints": list(body.joints),
         # empty shapes: the client only needs the KEYS to know which tiles to grab;
         # the cloud server resizes frames itself (VLA processor).
@@ -374,7 +404,7 @@ def _cloud_act(body: ActBody) -> dict:
     then hands off to CloudRollout.serve() (fast: pop + maybe kick an async refill)."""
     roll: cloudmod.CloudRollout = _session["cloud"]
     views: list[str] = _session["views"]
-    joints: list[str] = _session["joints"]
+    arm_keys: list[str] = _session["arm_keys"]
     missing = [v for v in views if v not in body.images]
     if missing:
         raise HTTPException(
@@ -382,7 +412,8 @@ def _cloud_act(body: ActBody) -> dict:
             detail=f"cloud policy needs image feature(s) {missing} — not supplied by the client.",
         )
     images = [body.images[v] for v in views]
-    state = [float(body.state.get(j, 0.0)) for j in joints]
+    # State in the MODEL's joint order (arm_keys), not Nori's alphabetical sort.
+    state = [float(body.state.get(k, 0.0)) for k in arm_keys]
     try:
         return roll.serve(images, state)
     except cloudmod.CloudRolloutError as e:

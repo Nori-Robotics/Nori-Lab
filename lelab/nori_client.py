@@ -506,6 +506,11 @@ class NoriClient:
         {id, status, mode, failure_reason, result_dataset_session_id, created_at}."""
         return self._request("GET", f"{API}/datasets/assemble/{assembly_job_id}")
 
+    def active_assemblies(self) -> dict[str, Any]:
+        """GET /datasets/assemblies/active — in-flight assembly jobs, so My Stuff can
+        show a dataset as 'Assembling' (append/rebuild target) or a placeholder (new)."""
+        return self._request("GET", f"{API}/datasets/assemblies/active")
+
     def dataset_sessions(self, dataset_session_id: str) -> dict[str, Any]:
         """GET /datasets/{id}/sessions — provenance sessions of an assembled dataset
         {sessions: [{session_key, recorded_at, task, episode_count, ...}]}."""

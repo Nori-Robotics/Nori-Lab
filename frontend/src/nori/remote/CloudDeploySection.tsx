@@ -27,6 +27,9 @@ export function CloudDeploySection() {
 
   const [instruction, setInstruction] = useState("");
   const [arm, setArm] = useState<"left" | "right">("left");
+  // Default to observe-only: an unproven cloud policy should NOT drive the arm on
+  // its first run — watch the predicted targets in the console first, then untick.
+  const [observeOnly, setObserveOnly] = useState(true);
   const [phase, setPhase] = useState<PolicyRunPhase>({ kind: "idle" });
 
   const runnerRef = useRef<PolicyRunner | null>(null);
@@ -50,6 +53,7 @@ export function CloudDeploySection() {
       await runner.start(teleop, CLOUD_REF, undefined, {
         instruction: instruction.trim(),
         arm,
+        observeOnly,
       });
     } catch (e) {
       toast({
@@ -58,7 +62,7 @@ export function CloudDeploySection() {
         variant: "destructive",
       });
     }
-  }, [baseUrl, teleop, instruction, arm, toast]);
+  }, [baseUrl, teleop, instruction, arm, observeOnly, toast]);
 
   const stop = useCallback(() => void runnerRef.current?.stop(), []);
 
@@ -106,7 +110,7 @@ export function CloudDeploySection() {
             <span className="text-xs text-[#6f6858]">
               {phase.kind === "loading"
                 ? "loading…"
-                : `running · ${phase.kind === "running" ? phase.ticks : 0} ticks`}
+                : `${observeOnly ? "observing" : "driving"} · ${phase.kind === "running" ? phase.ticks : 0} ticks`}
             </span>
           )}
           {busy ? (
@@ -114,12 +118,28 @@ export function CloudDeploySection() {
               Stop
             </Button>
           ) : (
-            <Button size="sm" className="h-7 px-3 text-xs" disabled={!canRun} onClick={() => void run()}>
-              Run
+            <Button
+              size="sm"
+              className={`h-7 px-3 text-xs ${observeOnly ? "" : "bg-red-600 hover:bg-red-700"}`}
+              disabled={!canRun}
+              onClick={() => void run()}
+            >
+              {observeOnly ? "Observe" : "Drive robot"}
             </Button>
           )}
         </div>
       </div>
+
+      <label className="flex items-center gap-2 text-xs text-[#6f6858]">
+        <input
+          type="checkbox"
+          checked={observeOnly}
+          disabled={busy}
+          onChange={(e) => setObserveOnly(e.target.checked)}
+          className="h-3.5 w-3.5 accent-[#b06a1c]"
+        />
+        Observe only — log predicted actions, don&apos;t move the robot (recommended for the first run)
+      </label>
 
       {phase.kind === "stopped" && <p className="text-xs text-[#6f6858]">Stopped — {phase.reason}</p>}
       {phase.kind === "error" && <p className="text-xs text-red-700">{phase.message}</p>}

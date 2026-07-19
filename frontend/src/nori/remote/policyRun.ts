@@ -57,6 +57,10 @@ export interface CloudParams {
   views?: string[];
   /** Which arm a single-arm VLA drives; omit to use the server default (NORI_INFER_ARM). */
   arm?: "left" | "right";
+  /** Safety dry-run: compute + log actions each tick but send NOTHING to the robot.
+   *  Use for the first on-hardware check — watch the predicted joint targets before
+   *  letting an unproven cloud policy actually drive the arm. */
+  observeOnly?: boolean;
 }
 
 /** Friendly presets → raw ACT knobs. `smooth` (temporal ensembling, 0.01) is the
@@ -98,6 +102,7 @@ export class PolicyRunner {
   private consecutiveFailures = 0;
   private ticks = 0;
   private skipLog = 0; // throttles the "tick skipped before /act" diagnostic
+  private observeOnly = false; // safety dry-run: log actions, don't drive the robot
 
   ref: string | null = null;
   onPhase: (p: PolicyRunPhase) => void = () => {};
@@ -118,6 +123,7 @@ export class PolicyRunner {
     cloud?: CloudParams,
   ): Promise<void> {
     if (this.timer) await this.stop("restarted");
+    this.observeOnly = cloud?.observeOnly ?? false;
     this.onPhase({ kind: "loading" });
 
     const tel = this.getTel();
@@ -346,8 +352,13 @@ export class PolicyRunner {
         this.consecutiveFailures = 0;
         return;
       }
-      // The one and only robot-bound artifact of this whole subsystem:
-      this.teleop.sendAction(action);
+      // The one and only robot-bound artifact of this whole subsystem — SKIPPED
+      // in observe-only mode (log the predicted targets, drive nothing).
+      if (this.observeOnly) {
+        if (this.ticks % 5 === 0) console.info("[policyRun] OBSERVE-ONLY predicted action:", action);
+      } else {
+        this.teleop.sendAction(action);
+      }
       this.ticks += 1;
       this.consecutiveFailures = 0;
       if (this.ticks % 10 === 0) this.onPhase({ kind: "running", ticks: this.ticks });

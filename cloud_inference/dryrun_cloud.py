@@ -74,9 +74,12 @@ def replay_dataset(args, endpoint, token) -> int:
     ep = args.episode
     lo = int(ds.episode_data_index["from"][ep].item())
     hi = int(ds.episode_data_index["to"][ep].item())
+    calib = cr.load_calibration(args.arm)
     roll = cr.CloudRollout(endpoint=endpoint, token=token, instruction=args.instruction,
-                           action_keys=keys, num_steps=args.num_steps, bounds=cr.MOLMOACT2_BOUNDS)
-    print(f"replaying {args.dataset} ep{ep} frames [{lo},{hi}) | arm={args.arm} | views={view_keys}")
+                           action_keys=keys, num_steps=args.num_steps,
+                           bounds=cr.MOLMOACT2_BOUNDS, calib=calib)
+    print(f"replaying {args.dataset} ep{ep} frames [{lo},{hi}) | arm={args.arm} | "
+          f"views={view_keys} | calibration={'ON' if calib else 'off'}")
     errs = []
     for i in range(lo, hi):
         fr = ds[i]
@@ -131,9 +134,11 @@ def main() -> int:
     for j, k in zip(cr.MOLMOACT2_JOINTS, keys):
         print(f"           {j:<14} -> {k}")
 
+    calib = cr.load_calibration(args.arm)
+    print(f"calib    : {'ON' if calib else 'off'}")
     roll = cr.CloudRollout(
         endpoint=endpoint, token=token, instruction=args.instruction,
-        action_keys=keys, num_steps=args.num_steps, bounds=cr.MOLMOACT2_BOUNDS,
+        action_keys=keys, num_steps=args.num_steps, bounds=cr.MOLMOACT2_BOUNDS, calib=calib,
     )
     images = [_frame(90 + 20 * i) for i in range(max(1, args.views))]
     state = [0.0] * 6  # neutral pose; the mapping/contract is what we're checking

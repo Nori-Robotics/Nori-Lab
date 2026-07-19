@@ -9,7 +9,17 @@ cp ../molmoact2_server.py molmoact2_server.py
 ```
 
 ## Target
-Space `NoriRobotics/molmoact2-space` (private, Docker SDK, GPU hardware).
+Space `NoriRobotics/molmoact2-space` (**public**, Docker SDK, GPU hardware).
+
+### Why public (not private)
+A **private** Space gates its `*.hf.space` app URL behind HF auth and returns
+**404** to unauthenticated callers — and that gate consumes the `Authorization`
+header, which is the SAME header our `/act` needs for its `NORI_INFER_TOKEN`
+bearer. HF's gate and our app-level auth can't share one header, so a
+token-authenticated custom app must be **public**. Security is preserved: the
+model weights are already public (allenai), `/` and `/health` are harmless, and
+`/act` still requires our bearer token (verified: a wrong token → 401).
+On AWS/Modal this whole issue vanishes (no HF proxy) — the server is identical.
 
 ## Path A — scripted (create repo + upload folder)
 Uses the org token already in `nori-backend/.env` (`HF_ORG_ADMIN_TOKEN`), read

@@ -60,7 +60,13 @@ def replay_dataset(args, endpoint, token) -> int:
     predicted action and the human-demonstrated action. A big error means either
     a domain gap (Nori cameras vs the model's training views) or a mapping bug."""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
-    ds = LeRobotDataset(args.dataset)
+    # torchcodec (LeRobot's default) links against ffmpeg 4 and fails to load on
+    # a machine with a newer system ffmpeg. pyav decodes the same files without
+    # that constraint, so prefer it and fall back to the default if unavailable.
+    try:
+        ds = LeRobotDataset(args.dataset, video_backend=args.video_backend)
+    except (TypeError, ValueError):
+        ds = LeRobotDataset(args.dataset)
     feats = ds.meta.features
     state_names = feats["observation.state"]["names"]
     action_names = feats["action"]["names"]
@@ -72,8 +78,16 @@ def replay_dataset(args, endpoint, token) -> int:
         return 2
     keys = cr.arm_keys(args.arm)
     ep = args.episode
-    lo = int(ds.episode_data_index["from"][ep].item())
-    hi = int(ds.episode_data_index["to"][ep].item())
+    # LeRobot v3.0 dropped `episode_data_index` in favour of per-episode
+    # dataset_from_index/dataset_to_index columns on meta.episodes. Support both
+    # so this harness keeps working across the pinned-SHA bumps.
+    if hasattr(ds, "episode_data_index"):
+        lo = int(ds.episode_data_index["from"][ep].item())
+        hi = int(ds.episode_data_index["to"][ep].item())
+    else:
+        row = ds.meta.episodes[ep]
+        lo = int(row["dataset_from_index"])
+        hi = int(row["dataset_to_index"])
     calib = cr.load_calibration(args.arm)
     roll = cr.CloudRollout(endpoint=endpoint, token=token, instruction=args.instruction,
                            action_keys=keys, num_steps=args.num_steps,
@@ -114,6 +128,8 @@ def main() -> int:
     ap.add_argument("--drain", type=int, default=30, help="actions to pull from the queue")
     ap.add_argument("--dataset", default=None, help="replay a real capture (repo_id/path)")
     ap.add_argument("--episode", type=int, default=0, help="episode index for --dataset replay")
+    ap.add_argument("--video-backend", default="pyav",
+                    help="LeRobot video decoder (pyav avoids torchcodec's ffmpeg-4 pin)")
     ap.add_argument("--views-keys", nargs="*", default=None,
                     help="image feature keys to send (default: overhead+front)")
     args = ap.parse_args()

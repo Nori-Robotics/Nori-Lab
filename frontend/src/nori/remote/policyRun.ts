@@ -362,7 +362,27 @@ export class PolicyRunner {
       if (this.observeOnly) {
         if (this.ticks % 5 === 0) console.info("[policyRun] OBSERVE-ONLY predicted action:", action);
       } else {
-        this.teleop.sendAction(action);
+        // Sample the daemon's verdict on our own commands. Without an action_id the
+        // daemon's ActionTracker returns immediately (`if (id_.empty()) return`), so a
+        // joint that is stall-latched or whose target saturated its range is reported
+        // as nothing at all — the policy loop drives blind. We can't id EVERY tick:
+        // the tracker is single-slot, so a fresh id each tick would evict the previous
+        // before it reaches a terminal state and we'd never see a verdict. Sample one
+        // tick per second instead and let that action run to terminal.
+        if (this.ticks % 10 === 0) {
+          const id = this.teleop.nextActionId();
+          this.teleop.sendAction(action, id);
+          void this.teleop.awaitAction(id, { timeoutMs: 1500 }).then((st) => {
+            // "done" is the boring case; everything else names a real problem
+            // (blocked -> "stall:<joint>", clamped -> a target hit its range limit).
+            if (st.state !== "done") {
+              console.warn(`[policyRun] daemon verdict: ${st.state}`,
+                           st.reason ? `(${st.reason})` : "");
+            }
+          });
+        } else {
+          this.teleop.sendAction(action);
+        }
       }
       this.ticks += 1;
       this.consecutiveFailures = 0;

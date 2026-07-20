@@ -103,6 +103,9 @@ export class PolicyRunner {
   private ticks = 0;
   private skipLog = 0; // throttles the "tick skipped before /act" diagnostic
   private observeOnly = false; // safety dry-run: log actions, don't drive the robot
+  // Encoder gate state as we FOUND it, so stop() restores rather than force-pauses
+  // (force-pausing froze the preview of a page that was still on screen).
+  private videoWasPaused = false;
 
   ref: string | null = null;
   onPhase: (p: PolicyRunPhase) => void = () => {};
@@ -138,7 +141,9 @@ export class PolicyRunner {
     // pauses too). Running a policy from any other page would therefore get a
     // black/frozen feed — the real cause of the 0x0 / grabFrame-null failures.
     // Explicitly resume before we load so a fresh keyframe is on its way by the
-    // time we start ticking; stop() restores the paused state.
+    // time we start ticking. Remember what we found so stop() can put it BACK —
+    // blindly pausing on stop froze the preview of a page still showing video.
+    this.videoWasPaused = teleop.isVideoPaused?.() ?? false;
     teleop.resumeVideo();
 
     // Hand the arms to the policy: the 50 Hz jog/leader heartbeat otherwise
@@ -385,11 +390,13 @@ export class PolicyRunner {
       this.compositeWrap = null;
     }
     this.layout = null;
-    // Hand the arms back to keyboard/leader control, and restore the "video off
-    // unless a page is showing it" convention we broke to run. A live remote/vr
-    // page re-resumes on its own next interaction.
+    // Hand the arms back to keyboard/leader control, and put the encoder gate back
+    // the way we found it. We must NOT blindly pause: if a page is still showing
+    // video (the normal case — you stop the policy from the remote page), pausing
+    // freezes its preview until something re-resumes.
     this.teleop?.setPolicyDriving(false);
-    this.teleop?.pauseVideo();
+    if (this.videoWasPaused) this.teleop?.pauseVideo();
+    else this.teleop?.resumeVideo();
     this.teleop = null;
     this.ref = null;
     await this.unloadQuietly();

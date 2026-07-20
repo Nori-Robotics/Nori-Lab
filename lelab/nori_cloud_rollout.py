@@ -118,14 +118,35 @@ MOLMOACT2_BOUNDS = [
 ]
 
 
-# MolmoAct2 was trained on TWO external workspace views (a "top" and a "side"
-# RealSense) and is camera-ORDER-invariant ("random camera order is acceptable").
-# Nori's external/scene tiles are "overhead" and "front"; the "left_wrist" /
-# "right_wrist" tiles are egocentric/onboard — the wrong domain for this
-# checkpoint. So default to the two scene tiles (order doesn't matter). A session
-# without these tiles (single-composite) fails loudly at the client, listing the
-# tiles it does have — set `views` explicitly or NORI_INFER_VIEWS to override.
-DEFAULT_CLOUD_VIEWS = ["observation.images.overhead", "observation.images.front"]
+# TWO views, and one of them is the WRIST of the arm being driven.
+#
+# This corrects an earlier comment here which asserted the wrist tiles were "the
+# wrong domain for this checkpoint" and defaulted to two scene tiles. That was
+# wrong on both counts:
+#   - The paper's own SO-100 evaluation (§6.2) used "the wrist camera and a
+#     third-person external camera" — not two external views.
+#   - Camera COUNT is the part that is off-distribution if you get it wrong: of
+#     the 1,222 datasets in the SO-100/101 training mix, 835 had exactly 2
+#     cameras and only 6 had four (paper Table 23).
+#   - Grasp state specifically is judged from the wrist view: the dataset's own
+#     annotation prompt says to "only say the arm is grasping an object if this
+#     is shown in the wrist camera when the gripper is closed". A policy asked to
+#     decide when to close the gripper, given no wrist view, is being asked for a
+#     judgement its training grounded in a camera we never sent.
+#
+# Camera ORDER remains irrelevant for this checkpoint ("random camera order is
+# acceptable") — it was trained on heterogeneous community rigs. Only the count
+# and the kind matter. The wrist tile must follow the driven arm, so the default
+# is built per-session from `arm`; DEFAULT_CLOUD_VIEWS is the fallback for the
+# left arm. Override with `views` or NORI_INFER_VIEWS.
+def default_cloud_views(arm: str = "left") -> list[str]:
+    a = arm.strip().lower() if arm else "left"
+    if a not in ("left", "right"):
+        a = "left"
+    return [f"observation.images.{a}_wrist", "observation.images.overhead"]
+
+
+DEFAULT_CLOUD_VIEWS = default_cloud_views("left")
 
 
 def load_calibration(arm: str) -> Optional[dict]:

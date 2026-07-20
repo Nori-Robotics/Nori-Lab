@@ -560,6 +560,11 @@ export interface RawBundleEntry {
   /** True while this recording is a source of an in-flight assembly job — the UI
    *  shows "Uploading to dataset" and it can't be selected again meanwhile. */
   assembling?: boolean;
+  /** When the recording robot confirmed it deleted its local raw copy after
+   *  promotion (W2.11). null while PROMOTED means the full-quality copy is in the
+   *  cloud but the robot still holds its on-disk copy — the UI shows "Finishing on
+   *  robot…" until this is set, so "In cloud" also means the SD-card space is back. */
+  local_deleted_at?: string | null;
 }
 
 export interface RobotRecordings {
@@ -900,11 +905,18 @@ export function getJobLogs(
 export function pairRobot(
   baseUrl: string,
   fetcher: Fetcher,
-  robotSerialNumber: string
+  robotSerialNumber: string,
+  pairCode?: string
 ): Promise<CustomerProfile> {
   return noriRequest<CustomerProfile>(baseUrl, fetcher, "/nori/customers/me/pair", {
     method: "POST",
-    body: { robot_serial_number: robotSerialNumber },
+    // pair_code is the proof-of-possession code on the box (backend migration 029).
+    // Sent only when provided; the backend requires it to claim a provisioned robot
+    // and ignores it for legacy/un-provisioned serials.
+    body: {
+      robot_serial_number: robotSerialNumber,
+      ...(pairCode ? { pair_code: pairCode } : {}),
+    },
     action: "Pair robot",
   });
 }

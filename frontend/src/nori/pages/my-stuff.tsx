@@ -214,7 +214,10 @@ const MyStuff = () => {
       bundles.some(
         (b) =>
           b.assembling === true ||
-          (b.status !== "PROMOTED" && b.status !== "FAILED" && b.status !== "PROMOTION_FAILED"),
+          (b.status !== "PROMOTED" && b.status !== "FAILED" && b.status !== "PROMOTION_FAILED") ||
+          // PROMOTED but the robot hasn't confirmed its local copy is deleted yet
+          // ("Finishing on robot…") — keep polling so it flips to "In cloud" on its own.
+          (b.status === "PROMOTED" && b.assembling !== true && b.local_deleted_at == null),
       )
     );
   }, [robot]);
@@ -484,18 +487,48 @@ const MyStuff = () => {
               into a dataset — a read-only view of what the robot has captured. */}
           <div className="flex items-baseline justify-between">
             <h2 className="text-lg font-bold tracking-tight text-nori-h14131a">Robot recordings</h2>
-            {robot?.on_robot_pending != null && robot.on_robot_pending > 0 && (
-              <span className="font-mono text-xs text-muted-foreground">
-                {robot.on_robot_pending} uploading from robot…
-              </span>
-            )}
+            {/* on_robot_pending is the robot heartbeat's count of episodes on the spool that
+                aren't in the cloud yet — this is >0 as soon as you RECORD (while you're still
+                connected), long before any upload. So only say "uploading" when a bundle is
+                actually in flight (an upload row exists = the idle-gated shipper has started,
+                i.e. after you disconnect); otherwise report it honestly as still on the robot,
+                waiting for the robot to go idle. */}
+            {(() => {
+              const pending = robot?.on_robot_pending ?? 0;
+              const uploading = (robot?.bundles ?? []).some(
+                (b) =>
+                  b.assembling !== true &&
+                  b.status !== "PROMOTED" &&
+                  b.status !== "FAILED" &&
+                  b.status !== "PROMOTION_FAILED",
+              );
+              if (uploading)
+                return <span className="font-mono text-xs text-muted-foreground">uploading to cloud…</span>;
+              if (pending > 0)
+                return (
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {pending} on robot · uploads when idle
+                  </span>
+                );
+              return null;
+            })()}
           </div>
 
           {(robot?.bundles ?? []).map((b) => {
             const assembling = b.assembling === true;
-            const inCloud = b.status === "PROMOTED" && !assembling;
+            const promoted = b.status === "PROMOTED";
+            // The full-quality copy is in the cloud at PROMOTED, but the robot only
+            // deletes its local copy just after — so "In cloud" (done, space
+            // reclaimed) waits for local_deleted_at; until then it's "Finishing on
+            // robot…". A pre-update robot never reports the delete (local_deleted_at
+            // stays null) — ship the updated shipper or recordings linger here (W2.11).
+            const localCleared = b.local_deleted_at != null;
+            const inCloud = promoted && localCleared && !assembling;
+            const finishing = promoted && !localCleared && !assembling;
             const failed = b.status === "FAILED" || b.status === "PROMOTION_FAILED";
-            const selectable = inCloud; // can't re-select a recording mid-assembly
+            // Assembly only needs the CLOUD copy, so a PROMOTED recording is selectable
+            // even during the brief local-delete tail — don't block on cleanup.
+            const selectable = promoted && !assembling;
             return (
               <article
                 key={b.session_id}
@@ -528,7 +561,9 @@ const MyStuff = () => {
                         ? "In cloud"
                         : failed
                           ? "Needs attention"
-                          : "Uploading to cloud"}
+                          : finishing
+                            ? "Finishing on robot…"
+                            : "Uploading to cloud"}
                   </Pill>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
@@ -542,7 +577,9 @@ const MyStuff = () => {
                       ? `Upload problem: ${b.failure_reason ?? "unknown"}`
                       : inCloud
                         ? "Full-quality copy is in your cloud. Select it to assemble a trainable dataset."
-                        : "Uploading from the robot — this finishes while the robot is idle."}
+                        : finishing
+                          ? "Safe in your cloud — the robot is clearing its local copy. Keep Nori powered on until it finishes."
+                          : "Uploading from the robot — this finishes while the robot is idle."}
                 </p>
               </article>
             );

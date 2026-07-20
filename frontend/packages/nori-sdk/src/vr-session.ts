@@ -22,6 +22,9 @@
 //               with the right controller. It's hand-anchored so it's always reachable even
 //               after the operator turns around; poke (not ray+trigger) because both triggers
 //               are already the grippers. -> VrSession.recenter().
+//   Record training dataset = an IN-VR poke panel stacked above the sensitivity panel on the
+//               RIGHT wrist (glance the right controller, poke with the left tip). No physical
+//               button is spent — every trigger/grip/face button is already a robot DOF.
 
 import * as THREE from "three";
 import { VrJogMapper, resolveTuning, type VrControllerFrame, type VrFrame, type VrTuning } from "./vr";
@@ -124,6 +127,21 @@ const TUNE_ZONES = [
   { x: -(TUNE_W / 2 - 0.03), y: -TUNE_H / 4, row: 1, dir: -1 },
   { x: TUNE_W / 2 - 0.03, y: -TUNE_H / 4, row: 1, dir: 1 },
 ];
+// In-VR "Record dataset" poke panel — the sensitivity panel's upstairs neighbour on the
+// RIGHT wrist (glance at the right controller, poke a button with the LEFT tip). It sits
+// ABOVE the tune panel because the left wrist is already full (controls card + Recenter
+// button), so the right wrist carries both meta surfaces: tune below, record above. It's a
+// session-management surface (Start session -> Record/Stop episode -> Finish), not a driving
+// control, so it deliberately spends NO trigger/grip/face button — every one of those is a
+// real robot DOF. State + count come straight from RemoteTeleop.recordState(); a poke calls
+// RemoteTeleop.record(...). See docs/offline_recorder_design.md for the session/episode model.
+const REC_UP = 0.30;   // metres above the right controller (stacked clear of TUNE_UP=0.17)
+const REC_W = 0.21;
+const REC_H = 0.14;    // 1.5:1, matches the 480x320 canvas
+const REC_POKE_DEPTH = 0.035;   // left tip within this of the panel plane (local m) = a poke
+const REC_POKE_MARGIN = 0.012;  // slack added around each button's rect for the hit-test
+const REC_REARM_DEPTH = 0.07;   // tip must pull this far off the plane before it can fire again
+const REC_RECONCILE_MS = 1200;  // ignore robot state this long after a local poke (optimistic UI)
 // gripper Present_Current -> rumble. Raw sign-magnitude ints; tune on hardware.
 // Tuned stronger 2026-07-02 (was hard to feel): lower the contact threshold, reach full
 // rumble much sooner, and floor any real contact at HAPTIC_MIN so light grips still register.
@@ -267,6 +285,25 @@ export class VrSession {
   private tuneOpacity = 0;
   private tunePoked = false;   // between fire and re-arm (mirrors rcPoked)
   private tuneHotZone = -1;    // highlighted zone index, -1 = none (redraw only on change)
+  // In-VR record-dataset panel (right-wrist glance, above the tune panel — see REC_* consts).
+  // Same canvas-texture-on-a-plane + glance/poke machinery as the tune panel; the zones and
+  // artwork are STATE-driven (idle / session / recording) so it repaints on state or highlight
+  // change. Local phase is optimistic — updated the instant a poke is sent, then reconciled
+  // with the robot's authoritative RecordState once replies resume (see REC_RECONCILE_MS).
+  private recBtn: THREE.Mesh | null = null;
+  private recCanvas: HTMLCanvasElement | null = null;
+  private recCtx: CanvasRenderingContext2D | null = null;
+  private recTexture: THREE.CanvasTexture | null = null;
+  private recMat: THREE.MeshBasicMaterial | null = null;
+  private recShown = false;    // glance hysteresis latch (mirrors tuneShown)
+  private recOpacity = 0;
+  private recPoked = false;    // between fire and re-arm (mirrors tunePoked)
+  private recHotZone = "";     // highlighted zone id, "" = none (redraw only on change)
+  private recPhase: "idle" | "session" | "recording" = "idle";
+  private recKept = 0;         // episodes kept in the open session (optimistic + reconciled)
+  private recTask = "";        // this session's grouping label (option C: "VR session <stamp>")
+  private recActedAt = 0;      // performance.now() of the last local poke (reconcile grace)
+  private recDrawSig = "";     // last-painted signature (phase|kept|hot) — repaint only on change
   private running = false;
 
   constructor(opts: VrSessionOptions) {
@@ -468,6 +505,28 @@ export class VrSession {
     this.tuneBtn = tuneBtn;
     this.drawTunePanel();
 
+    // Record-dataset panel — stacked above the tune panel on the right wrist (REC_* consts).
+    // Same hand-anchored, wrist-glance, poke-to-act pattern; its face is state-driven art.
+    const recCanvas = document.createElement("canvas");
+    recCanvas.width = 480;
+    recCanvas.height = 320;
+    this.recCanvas = recCanvas;
+    this.recCtx = recCanvas.getContext("2d");
+    const recTex = new THREE.CanvasTexture(recCanvas);
+    recTex.colorSpace = THREE.SRGBColorSpace;
+    this.recTexture = recTex;
+    const recMat = new THREE.MeshBasicMaterial({
+      map: recTex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthTest: false,
+    });
+    this.recMat = recMat;
+    const recBtn = new THREE.Mesh(new THREE.PlaneGeometry(REC_W, REC_H), recMat);
+    recBtn.renderOrder = 998; // same layer as the controls card / tune panel
+    recBtn.visible = false;
+    recBtn.scale.setScalar(UI_SCALE);
+    scene.add(recBtn);
+    this.recBtn = recBtn;
+    this.drawRecordPanel();
+
     const session = await xr.requestSession(mode, {
       optionalFeatures: ["local-floor", "bounded-floor"],
     });
@@ -476,6 +535,9 @@ export class VrSession {
     await renderer.xr.setSession(session);
 
     this.running = true;
+    // Seed the record panel with the robot's current recorder state (it may already have a
+    // session open from the desktop card) so it opens on the right face, not a stale "idle".
+    try { this.o.teleop.record("status"); } catch { /* channel not up yet — reconciles later */ }
     // Auto-recenter on the first frame with a viewer pose: the panel spawn pose assumes the
     // operator faces the reference space's forward, which is only sometimes true. This makes
     // session start and mid-session recenter the same path — panel AND control frame align
@@ -488,7 +550,7 @@ export class VrSession {
           + "/ move the UI closer-further (↕), "
           + "left stick-press = E-STOP, hold right stick-press = reset, "
           + "poke the Recenter button above your left hand to recenter the view, "
-          + "glance at your right wrist for sensitivity tuning"
+          + "glance at your right wrist for sensitivity tuning + recording controls"
     );
     renderer.setAnimationLoop((_t, frame) => this.onXRFrame(frame));
   }
@@ -515,6 +577,7 @@ export class VrSession {
     this.rcBtnTexture?.dispose();
     this.cardTexture?.dispose();
     this.tuneTexture?.dispose();
+    this.recTexture?.dispose();
     this.robot?.dispose();
     this.renderer = null;
     this.scene = null;
@@ -550,6 +613,20 @@ export class VrSession {
     this.tuneOpacity = 0;
     this.tunePoked = false;
     this.tuneHotZone = -1;
+    this.recBtn = null;
+    this.recCanvas = null;
+    this.recCtx = null;
+    this.recTexture = null;
+    this.recMat = null;
+    this.recShown = false;
+    this.recOpacity = 0;
+    this.recPoked = false;
+    this.recHotZone = "";
+    this.recPhase = "idle";
+    this.recKept = 0;
+    this.recTask = "";
+    this.recActedAt = 0;
+    this.recDrawSig = "";
     this.tel = null;
     this.motorsOnline = true;
     this.session = null;
@@ -636,6 +713,7 @@ export class VrSession {
         this.updateRecenterButton(vrFrame); // in-VR poke button -> recenter()
         this.updateControlsCard(vrFrame, dt); // wrist-glance controls cheat-sheet
         this.updateTunePanel(vrFrame, dt); // right-wrist glance sensitivity panel
+        this.updateRecordPanel(vrFrame, dt); // right-wrist glance record-dataset panel
         if (this.recenterPending) this.serviceRecenter(frame, refSpace);
         this.applyHaptics(session);
       }
@@ -962,6 +1040,229 @@ export class VrSession {
     if (this.tuneTexture) this.tuneTexture.needsUpdate = true;
   }
 
+  // The record panel's buttons for the current phase, positioned in the panel plane's LOCAL
+  // metres (x right, y up, origin center; the plane is REC_W×REC_H). Rebuilt per frame so the
+  // face tracks the session state; the hit-test and the artwork both read from this one list
+  // so they can't drift. Kept deliberately small — this is a between-driving surface, not a
+  // control the operator hunts through mid-task.
+  private recZones(): { id: string; x: number; y: number; w: number; h: number; label: string; tone: string }[] {
+    if (this.recPhase === "recording") {
+      return [{ id: "episode_stop", x: 0, y: -0.005, w: 0.16, h: 0.062, label: "■ Stop episode", tone: "red" }];
+    }
+    if (this.recPhase === "session") {
+      const z = [{ id: "episode_start", x: 0, y: 0.03, w: 0.17, h: 0.055, label: "● Record", tone: "red" }];
+      if (this.recKept > 0) {
+        // A take is bankable, so offer Discard-last beside Finish (keep-by-default in VR; no
+        // in-headset video review — that's a laptop affordance).
+        z.push({ id: "session_end", x: -0.05, y: -0.042, w: 0.085, h: 0.05, label: "Finish", tone: "slate" });
+        z.push({ id: "episode_discard", x: 0.05, y: -0.042, w: 0.085, h: 0.05, label: "Discard", tone: "darkred" });
+      } else {
+        z.push({ id: "session_end", x: 0, y: -0.042, w: 0.13, h: 0.05, label: "Finish session", tone: "slate" });
+      }
+      return z;
+    }
+    return [{ id: "session_start", x: 0, y: -0.005, w: 0.16, h: 0.062, label: "Start session", tone: "blue" }];
+  }
+
+  // A poke fired on zone `id`: send the record() command AND advance the local phase
+  // optimistically (the panel updates this frame, not a round-trip later). recActedAt gates
+  // reconciliation so a stale reply can't yank the face back. Task label = option C fallback:
+  // a generic "VR session <stamp>" (no keyboard in the headset). Rides episode_start too so a
+  // dropped session_start still lands the label (recorder auto-opens a session on it).
+  private fireRecordZone(id: string) {
+    const t = this.o.teleop;
+    this.recActedAt = performance.now();
+    if (id === "session_start") {
+      this.recTask = `VR session ${this.recStamp()}`;
+      t.record("session_start", this.recTask);
+      this.recPhase = "session"; this.recKept = 0;
+      this.o.onLog(`recording: session started — ${this.recTask}`);
+    } else if (id === "episode_start") {
+      if (!this.recTask) this.recTask = `VR session ${this.recStamp()}`;
+      t.record("episode_start", this.recTask);
+      this.recPhase = "recording";
+      this.o.onLog(`recording: episode ${this.recKept + 1} started`);
+    } else if (id === "episode_stop") {
+      t.record("episode_stop"); // keep-by-default: stop finalizes + banks the take on the robot
+      this.recPhase = "session"; this.recKept += 1;
+      this.o.onLog(`recording: episode kept (${this.recKept} this session)`);
+    } else if (id === "session_end") {
+      t.record("session_end");
+      this.recPhase = "idle";
+      this.o.onLog("recording: session finished — uploads when the robot next idles");
+    } else if (id === "episode_discard") {
+      t.record("episode_discard");
+      this.recKept = Math.max(0, this.recKept - 1);
+      this.o.onLog("recording: last episode discarded");
+    }
+  }
+
+  // "2026-07-19 14:38" — a human, sortable session label. new Date() is fine here (this is
+  // browser app code; the Date.now()/new Date() ban is a Workflow-sandbox rule, not a DOM one).
+  private recStamp(): string {
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+
+  // Anchor + reveal the record panel above the RIGHT controller (stacked above the tune panel),
+  // reconcile the local phase with the robot's recorder, and fire a command when the LEFT tip
+  // pokes a button. Mirrors updateTunePanel, but the hit-test is RECTANGULAR (the buttons are
+  // wide pills, not the tune panel's small ± circles) and worked in the panel's local frame.
+  private updateRecordPanel(f: VrFrame, dt: number) {
+    const btn = this.recBtn;
+    const mat = this.recMat;
+    if (!btn || !mat) return;
+
+    // Reconcile with the robot's authoritative recorder state, but conservatively: adopt a
+    // MORE-active state (a session opened from the desktop; a take the robot auto-stopped) and
+    // the kept count, but never silently downgrade to "idle" from an absent session_open — the
+    // control channel is unreliable, so a dropped session_start reply must not yank the panel
+    // back to idle under the operator. Finish drives idle locally (via fireRecordZone); a lost
+    // command self-heals because Record sends episode_start, which auto-opens a session. The
+    // grace window ignores replies still reflecting the pre-poke state. (Mirrors how the desktop
+    // DatasetCaptureCard keeps its local phase authoritative.)
+    const rs = this.o.teleop.recordState();
+    if (rs && performance.now() - this.recActedAt > REC_RECONCILE_MS) {
+      if (rs.recording) this.recPhase = "recording";
+      else if (rs.sessionOpen) { if (this.recPhase !== "recording") this.recPhase = "session"; }
+      else if (this.recPhase === "recording") this.recPhase = "session"; // robot ended the take
+      if (typeof rs.episodesKept === "number") this.recKept = rs.episodesKept;
+    }
+
+    const rp = f.right?.position;
+    const rq = f.right?.orientation;
+    if (!rp) {
+      this.recShown = false; // right hand not tracked: fade out (mirrors the tune panel)
+    } else {
+      const off = new THREE.Vector3(0, REC_UP, 0);
+      const q = rq ? new THREE.Quaternion(rq[0], rq[1], rq[2], rq[3]) : null;
+      if (q) off.applyQuaternion(q);
+      btn.position.set(rp[0] + off.x, rp[1] + off.y, rp[2] + off.z);
+
+      const head = new THREE.Vector3();
+      this.renderer?.xr.getCamera().getWorldPosition(head);
+
+      // Same glance test as the tune panel, and hidden while the right clutch is engaged
+      // (driving rolls that wrist straight through the glance pose).
+      if (this.mapper.engagedArms().right) {
+        this.recShown = false;
+      } else if (q) {
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+        const toHead = head.clone().sub(btn.position).normalize();
+        const facing = up.dot(toHead);
+        if (!this.recShown && facing > CARD_SHOW_DOT) this.recShown = true;
+        else if (this.recShown && facing < CARD_HIDE_DOT) this.recShown = false;
+      }
+      btn.lookAt(head); // billboard, same as the other hand-anchored UI
+    }
+
+    const target = this.recShown ? 1 : 0;
+    const step = CARD_FADE_PER_S * dt;
+    this.recOpacity =
+      this.recOpacity < target
+        ? Math.min(target, this.recOpacity + step)
+        : Math.max(target, this.recOpacity - step);
+    mat.opacity = this.recOpacity;
+    btn.visible = this.recOpacity > 0.01;
+
+    // Poke test only while (nearly) fully shown — no blind fires mid-fade. Rectangular
+    // containment in the panel's local plane (worldToLocal divides out UI_SCALE, so the zone
+    // rects read in the same REC_W×REC_H metres recZones() uses).
+    let hot = "";
+    const lp = f.left?.position;
+    if (btn.visible && this.recOpacity > 0.8 && lp) {
+      btn.updateMatrixWorld();
+      const tip = btn.worldToLocal(new THREE.Vector3(lp[0], lp[1], lp[2]));
+      let inZone = "";
+      if (Math.abs(tip.z) < REC_POKE_DEPTH) {
+        for (const z of this.recZones()) {
+          if (
+            Math.abs(tip.x - z.x) <= z.w / 2 + REC_POKE_MARGIN &&
+            Math.abs(tip.y - z.y) <= z.h / 2 + REC_POKE_MARGIN
+          ) { inZone = z.id; break; }
+        }
+      }
+      hot = inZone;
+      // Fire on enter; must pull the tip REC_REARM_DEPTH off the plane before it can fire
+      // again, so one poke = one command even as the buttons change under it.
+      if (!this.recPoked && inZone) {
+        this.recPoked = true;
+        this.fireRecordZone(inZone);
+      } else if (this.recPoked && Math.abs(tip.z) > REC_REARM_DEPTH) {
+        this.recPoked = false;
+      }
+    } else if (this.recPoked) {
+      this.recPoked = false; // hand left the panel entirely -> re-arm
+    }
+
+    // Repaint only when the face actually changes (state, count, or highlight).
+    const sig = `${this.recPhase}|${this.recKept}|${hot}`;
+    if (sig !== this.recDrawSig) {
+      this.recHotZone = hot;
+      this.recDrawSig = sig;
+      this.drawRecordPanel();
+    }
+  }
+
+  // Paint the record panel: a title + status line, then one rounded button per recZones()
+  // entry, tinted by tone (blue=start, red=record/stop, slate=finish, darkred=discard) and
+  // lit green while poked. Button rects derive from recZones() so art + hit-test stay locked.
+  private drawRecordPanel() {
+    const ctx = this.recCtx;
+    const cv = this.recCanvas;
+    if (!ctx || !cv) return;
+    const W = cv.width, H = cv.height;
+    const px = (x: number) => (0.5 + x / REC_W) * W;
+    const py = (y: number) => (0.5 - y / REC_H) * H;
+    ctx.clearRect(0, 0, W, H);
+
+    ctx.fillStyle = "rgba(15,23,42,0.92)";
+    this.roundRect(ctx, 4, 4, W - 8, H - 8, 26);
+    ctx.fill();
+    ctx.strokeStyle = "#64748b";
+    ctx.lineWidth = 4;
+    this.roundRect(ctx, 4, 4, W - 8, H - 8, 26);
+    ctx.stroke();
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "bold 24px system-ui, sans-serif";
+    ctx.fillText("RECORD DATASET", W / 2, 34);
+    const status =
+      this.recPhase === "recording" ? `● recording episode ${this.recKept + 1}`
+      : this.recPhase === "session" ? `session open · ${this.recKept} kept`
+      : "no session open";
+    ctx.fillStyle = this.recPhase === "recording" ? "#f87171" : "#cbd5e1";
+    ctx.font = "20px system-ui, sans-serif";
+    ctx.fillText(status, W / 2, 64);
+
+    const fills: Record<string, string> = {
+      blue: "rgba(37,99,235,0.92)",
+      red: "rgba(220,38,38,0.92)",
+      darkred: "rgba(153,27,27,0.92)",
+      slate: "rgba(51,65,85,0.95)",
+    };
+    for (const z of this.recZones()) {
+      const cx = px(z.x), cy = py(z.y);
+      const w = (z.w / REC_W) * W, h = (z.h / REC_H) * H;
+      const hot = z.id === this.recHotZone;
+      ctx.fillStyle = hot ? "rgba(34,197,94,0.95)" : (fills[z.tone] ?? fills.slate);
+      this.roundRect(ctx, cx - w / 2, cy - h / 2, w, h, 18);
+      ctx.fill();
+      ctx.strokeStyle = hot ? "#bbf7d0" : "rgba(148,163,184,0.6)";
+      ctx.lineWidth = 3;
+      this.roundRect(ctx, cx - w / 2, cy - h / 2, w, h, 18);
+      ctx.stroke();
+      ctx.fillStyle = "#f1f5f9";
+      ctx.font = `bold ${z.w >= 0.13 ? 30 : 24}px system-ui, sans-serif`;
+      ctx.fillText(z.label, cx, cy + 1);
+    }
+    ctx.textAlign = "start"; // restore shared-ctx default
+    if (this.recTexture) this.recTexture.needsUpdate = true;
+  }
+
   // Paint the controls cheat-sheet. Static — called once at session start. Keep the rows in sync
   // with DEFAULT_BINDINGS above and with the session-start log line.
   private drawControlsCard() {
@@ -1068,6 +1369,14 @@ export class VrSession {
     ctx.font = "bold 40px system-ui, sans-serif";
     ctx.fillStyle = FG;
     ctx.fillText("TELEMETRY", pad, y);
+    // A "● REC" flag pinned top-right whenever an episode is capturing, so the operator sees
+    // it's live even with the record panel glanced away (the panel is the control, not the tell).
+    if (this.recPhase === "recording") {
+      ctx.font = "bold 30px system-ui, sans-serif";
+      ctx.fillStyle = RED;
+      const rec = "● REC";
+      ctx.fillText(rec, W - pad - ctx.measureText(rec).width, y);
+    }
     y += 20;
 
     const t = this.tel;

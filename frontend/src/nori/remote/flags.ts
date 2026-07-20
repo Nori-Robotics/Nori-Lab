@@ -32,13 +32,18 @@ export function isTurnMintEnabled(): boolean {
   }
 }
 
-// Private signaling rooms (signaling Phase 1 / 1e): join realtime:<serial> as a PRIVATE
-// channel so Supabase RLS admits only the robot + its paired customer. Now DEFAULT ON —
-// every connection is private unless explicitly opted out. This is safe for un-migrated
-// (public) robots because the SDK falls back to a public join on first CHANNEL_ERROR
-// (see signaling-supabase.ts openChannel), so a private-by-default app still reaches a
-// robot that hasn't been flipped to NORI_PRIVATE_ROOM=1. Force a public join for dev
-// against a deliberately-public robot via:
+// Private signaling rooms (signaling Phase 1): join realtime:<serial> as a PRIVATE
+// channel so Supabase RLS admits only the robot + its paired customer. DEFAULT ON —
+// every connection is private unless explicitly opted out.
+//
+// ⚠️ HARD CUTOVER (audit C1): the SDK NO LONGER falls back to a public join on error —
+// a rejected private join is terminal. So a robot still on the PUBLIC room
+// (NORI_PRIVATE_ROOM unset) will NOT connect while this is on. Ship this default only
+// once the whole fleet is provisioned + private. The old fallback was removed because
+// an RLS denial was indistinguishable from an un-migrated robot, so it silently dropped
+// non-paired users onto the victim's public room.
+//
+// Force a public join for dev against a deliberately-public robot (e.g. `nori-dev`) via:
 //   localStorage.setItem("nori_private_room", "0"); location.reload();
 export function isPrivateRoomEnabled(): boolean {
   try {

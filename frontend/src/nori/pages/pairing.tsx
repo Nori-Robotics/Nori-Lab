@@ -38,6 +38,7 @@ const Pairing = () => {
 
   const [robots, setRobots] = useState<PairedRobot[] | null>(null);
   const [serial, setSerial] = useState("");
+  const [pairCode, setPairCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busySerial, setBusySerial] = useState<string | null>(null);
@@ -70,20 +71,30 @@ const Pairing = () => {
     setError(null);
     setSubmitting(true);
     const next = serial.trim();
+    const code = pairCode.trim();
     try {
-      const updated = await pairRobot(baseUrl, fetchWithHeaders, next);
+      const updated = await pairRobot(baseUrl, fetchWithHeaders, next, code || undefined);
       setCustomer(updated);
       setSerial("");
+      setPairCode("");
       // First robot paired becomes active automatically.
       if (!robots || robots.length === 0) setActiveRobotSerial(next);
       await loadRobots();
     } catch (err) {
-      // 409 = serial owned by another account; 404 = no such registered robot (the
-      // provisioned-only cutover refuses made-up serials). Both mean "this serial isn't
-      // available to you," and the far likelier cause is a typo — so lead with that and
-      // show the same friendly copy instead of the raw backend detail (which leaked a
-      // "No robot with serial ... is registered" string for the 404 case).
-      if (err instanceof ApiError && (err.status === 409 || err.status === 404)) {
+      // 403 = the pairing code is missing or wrong (proof-of-possession gate, backend
+      // migration 029). Keep this distinct from the serial cases so we point the user
+      // at the CODE, not the serial.
+      if (err instanceof ApiError && err.status === 403) {
+        setError(
+          "That pairing code is missing or incorrect. Enter the code printed on your " +
+            "robot's box to confirm it's yours."
+        );
+      } else if (err instanceof ApiError && (err.status === 409 || err.status === 404)) {
+        // 409 = serial owned by another account; 404 = no such registered robot (the
+        // provisioned-only cutover refuses made-up serials). Both mean "this serial isn't
+        // available to you," and the far likelier cause is a typo — so lead with that and
+        // show the same friendly copy instead of the raw backend detail (which leaked a
+        // "No robot with serial ... is registered" string for the 404 case).
         setError(
           `Pairing failed: '${next}' is not available. Please check you typed your ` +
             `serial number correctly. Each robot can only be paired to one account.`
@@ -233,6 +244,26 @@ const Pairing = () => {
                 spellCheck={false}
                 required
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pairCode">Pairing code</Label>
+              {/* Proof of possession (backend migration 029): the code printed on the
+                  robot's box. Required to claim a provisioned robot so knowing the
+                  on-the-box serial alone can't grab someone else's robot. Normalized
+                  server-side (case / separators don't matter), so we uppercase as typed
+                  purely for legibility. Optional field for legacy un-provisioned units. */}
+              <Input
+                id="pairCode"
+                value={pairCode}
+                onChange={(e) => setPairCode(e.target.value.toUpperCase())}
+                placeholder="e.g. 7QF3-K9PA-2BX5-MNTW"
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+              <p className="text-xs text-muted-foreground">
+                Printed on your robot's box, next to the serial number.
+              </p>
             </div>
             <Button type="submit" disabled={submitting || !serial.trim()}>
               {submitting ? "Pairing…" : "Pair robot"}

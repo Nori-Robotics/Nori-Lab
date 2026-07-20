@@ -1,5 +1,6 @@
-// Tests for the SDK Supabase signaling transport's private-room opt-in (Signaling
-// Phase 1, 1e): private-first join with a one-time public fallback, gated off by default.
+// Tests for the SDK Supabase signaling transport's private-room join (Signaling
+// Phase 1). A private join is either explicit-public (opts.private=false) or
+// private-and-terminal-on-error: there is NO private->public downgrade (audit C1).
 import { describe, it, expect, vi } from "vitest";
 import { SupabaseSignaling } from "@nori/sdk/supabase";
 
@@ -59,35 +60,29 @@ describe("SupabaseSignaling private rooms (1e)", () => {
     expect(sb.channels).toHaveLength(1); // no fallback
   });
 
-  it("falls back to public ONCE on a private join error", async () => {
+  it("a private join error is TERMINAL — never downgrades to public (audit C1)", async () => {
     const sb = new FakeSupabase();
     const h = handlers();
     const sig = new SupabaseSignaling(sb as never, "Nori-L2-1", undefined, { private: true });
     await sig.connect(h);
-    // private join fails -> retry as public
+    // private join fails (e.g. RLS denies a non-paired caller)
     sb.channels[0].emit("CHANNEL_ERROR", new Error("rls denied"));
     await tick();
-    expect(sb.channels).toHaveLength(2);
-    expect(sb.channels[1].isPrivate).toBe(false);
-    expect(sb.channels[0].unsubscribed).toBe(true);
-    // onState('error') must NOT have fired yet — the fallback is in flight
-    expect(h.onState).not.toHaveBeenCalledWith("error");
-    // a second failure (now public) surfaces as error, no third attempt
-    sb.channels[1].emit("CHANNEL_ERROR");
-    await tick();
-    expect(sb.channels).toHaveLength(2);
+    // NO second channel — the room is never re-joined as public.
+    expect(sb.channels).toHaveLength(1);
+    expect(sb.channels[0].isPrivate).toBe(true);
+    // The failure surfaces immediately as an error, not a silent public rejoin.
     expect(h.onState).toHaveBeenCalledWith("error");
   });
 
-  it("retries private again on a fresh connect() (robot may be provisioned since)", async () => {
+  it("stays private across reconnects — a re-connect() never goes public either", async () => {
     const sb = new FakeSupabase();
     const h = handlers();
     const sig = new SupabaseSignaling(sb as never, "Nori-L2-1", undefined, { private: true });
     await sig.connect(h);
-    sb.channels[0].emit("CHANNEL_ERROR");   // fall back to public
+    sb.channels[0].emit("CHANNEL_ERROR");    // terminal, no downgrade
     await tick();
-    expect(sb.channels[1].isPrivate).toBe(false);
-    await sig.connect(h);                    // reconnect -> private-first again
-    expect(sb.channels[2].isPrivate).toBe(true);
+    await sig.connect(h);                    // reconnect -> still private
+    expect(sb.channels[1].isPrivate).toBe(true);
   });
 });

@@ -20,14 +20,20 @@ import type {
 export class SupabaseSignaling implements SignalingTransport {
   private channel: RealtimeChannel | null = null;
   private handlers: SignalingHandlers | null = null;
-  // Signaling Phase 1 (1e). `private: true` joins make the room RLS-gated: the app's
+  // Signaling Phase 1. `private: true` joins make the room RLS-gated: the app's
   // signed-in Supabase session (supabase-js auto-pushes + refreshes its JWT) must be
-  // the robot's paired customer to enter. `usePrivate` starts from opts.private and
-  // DROPS to false once, as a migration fallback (see openChannel), so an updated app
-  // still reaches not-yet-migrated robots + open dev rooms. Off by default → today's
-  // public join, byte-for-byte, until the app flips the flag.
+  // the robot's paired customer to enter. `usePrivate` comes straight from opts.private
+  // and NEVER changes: a rejected private join is TERMINAL (onState("error")), not a
+  // silent downgrade.
+  //
+  // The old code fell back to a PUBLIC join on the first CHANNEL_ERROR to reach
+  // un-migrated robots — but an RLS *denial* is indistinguishable from an un-migrated
+  // robot at this layer, so that fallback dropped a non-paired user straight onto the
+  // victim's public room, nullifying the whole RLS gate (audit C1). Removed: the fleet
+  // is private-only now. A dev who needs a public room (e.g. `nori-dev`) passes
+  // opts.private=false explicitly (flags.ts nori_private_room="0") — an intentional
+  // public join, never an automatic escape hatch from a failed private one.
   private usePrivate = false;
-  private triedPublicFallback = false;
 
   // `log` is optional so the core stays logger-agnostic; the fork passes its appendLog so the
   // familiar "channel: SUBSCRIBED" trace survives the extraction.
@@ -40,10 +46,7 @@ export class SupabaseSignaling implements SignalingTransport {
 
   async connect(h: SignalingHandlers): Promise<void> {
     this.handlers = h;
-    // Reset per connect(): each fresh session tries private again (the robot may have
-    // been provisioned/flipped since the last attempt).
     this.usePrivate = this.opts.private === true;
-    this.triedPublicFallback = false;
     await this.openChannel();
   }
 
@@ -71,17 +74,13 @@ export class SupabaseSignaling implements SignalingTransport {
       // line and nothing else, so an unreachable signaling service was invisible to the UI.
       // supabase-js keeps retrying underneath, so these are reported, not fatal.
       if (status === "CHANNEL_ERROR") {
-        // Migration fallback: a private join can fail because the robot isn't
-        // provisioned/paired yet (RLS denies), or the operator isn't signed in. Retry
-        // ONCE as a public channel so an updated app still reaches un-migrated robots
-        // and dev rooms. Remove once the whole fleet is private.
-        if (this.usePrivate && !this.triedPublicFallback) {
-          this.triedPublicFallback = true;
-          this.usePrivate = false;
-          this.log?.("private room join failed — retrying public (un-migrated robot or signed-out?)", err);
-          void this.openChannel();
-          return;
-        }
+        // TERMINAL — no private->public downgrade. On a private join this is usually the
+        // RLS gate refusing a caller who isn't the robot's paired customer; silently
+        // re-joining public would drop them onto the room anyway and defeat the gate
+        // (audit C1). A genuine un-migrated/public robot is reached by an explicit
+        // opts.private=false join, not by failing a private one. supabase-js keeps
+        // retrying the socket underneath, so a transient blip still recovers.
+        this.log?.("channel error", this.usePrivate ? "(private — not paired / not signed in?)" : "(public)", err);
         h.onState?.("error");
       } else if (status === "TIMED_OUT") h.onState?.("timeout");
       else if (status === "CLOSED") h.onState?.("closed");

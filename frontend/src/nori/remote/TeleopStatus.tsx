@@ -14,7 +14,9 @@ import { HelpCircle, Mic, MicOff, Phone, PhoneOff, Video, VideoOff, Volume2, Vol
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   baseKeyClusters,
+  currentMa,
   keybindLegend,
+  CURRENT_FULL_LSB,
   type BaseKeyCluster,
   type CallState,
   type ConnectFailure,
@@ -59,11 +61,28 @@ function Stat({
 }
 
 // Map the robot's free-text safety string to a tone. Anything that isn't a plain
-// "ok"/"normal"/"-" reads as a warning so a latch/hold stands out.
-function safetyTone(safety: string): "good" | "warn" | "default" {
+// "ok"/"normal"/"-" reads as at least a warning so a latch/hold stands out; "latched" is a
+// hard E-STOP that needs an operator action to clear, so it gets the red tone rather than
+// sitting at the same amber as a self-clearing "safe_hold".
+function safetyTone(safety: string): "good" | "warn" | "bad" | "default" {
   const s = safety.toLowerCase();
   if (s === "-" || s === "") return "default";
   if (s === "ok" || s === "normal" || s === "nominal" || s === "clear") return "good";
+  if (s === "latched") return "bad";
+  return "warn";
+}
+
+// Map the watchdog (control-stream dead-man) to a tone. This used to render EVERY non-"-"
+// value as "warn", so a healthy "ok" was styled identically to a motion-blocking "stop" — the
+// chip sat permanently amber on a normal robot, which trains operators to ignore exactly the
+// indicator that matters. Now: ok = green, warn = amber, stop = red.
+// An unrecognized value (newer daemon, open union on WatchdogState) falls through to "warn"
+// rather than "good" — an unknown state should be visible, not silently reassuring.
+function watchdogTone(watchdog: string): "good" | "warn" | "bad" | "default" {
+  const s = watchdog.toLowerCase();
+  if (s === "-" || s === "") return "default";
+  if (s === "ok") return "good";
+  if (s === "stop") return "bad";
   return "warn";
 }
 
@@ -245,7 +264,7 @@ export function TelemetryPanel({
         tone={controlOk ? "good" : "bad"} />
       <Stat label="loop" value={`${tel.loopHz.toFixed(1)} Hz`} tone={hzTone} />
       <Stat label="safety" value={tel.safety} tone={safetyTone(tel.safety)} />
-      <Stat label="watchdog" value={tel.watchdog} tone={tel.watchdog === "-" ? "default" : "warn"} />
+      <Stat label="watchdog" value={tel.watchdog} tone={watchdogTone(tel.watchdog)} />
       <Stat label="temp" value={tel.tempC > 0 ? `${tel.tempC.toFixed(0)}°C` : "—"}
         tone={tel.tempC >= 80 ? "bad" : tel.tempC >= 70 ? "warn" : "default"} />
       {/* Pack state-of-charge from the robot bridge (battery_monitor_integration.md §5). null =
@@ -271,8 +290,11 @@ function shortMotor(key: string): string {
 }
 
 // Per-motor current bars. Grippers first (the primary grip-force signal), then the rest.
-// FULL is the raw sign-magnitude value mapped to a full bar — same scale VR haptics uses.
-const CURRENT_FULL = 600;
+// Telemetry carries RAW Feetech LSBs; the bar is normalized against CURRENT_FULL_LSB (the
+// same scale VR haptics uses, now shared from the SDK so the two can't drift), and the
+// numeric readout is converted to mA via currentMa() — EE reads this in real current, and a
+// bare LSB count gave no way to judge whether a value was thermally reasonable for a given
+// motor size (that ambiguity is what hid the wrist_roll burnout, 2026-07).
 export function GripForce({ currents }: { currents: Record<string, number> }) {
   const keys = Object.keys(currents);
   if (keys.length === 0) {
@@ -286,19 +308,19 @@ export function GripForce({ currents }: { currents: Record<string, number> }) {
     <div className="space-y-2">
       {ordered.map((k) => {
         const mag = Math.abs(currents[k] ?? 0);
-        const pct = Math.min(100, (mag / CURRENT_FULL) * 100);
+        const pct = Math.min(100, (mag / CURRENT_FULL_LSB) * 100);
         const isGrip = k.includes("gripper");
         const tone = pct >= 80 ? "bg-nori-hd24a3d" : pct >= 40 ? "bg-nori-hc97929" : "bg-nori-hd98b3d";
         return (
-          <div key={k} className="grid grid-cols-[minmax(6rem,auto)_1fr_3rem] items-center gap-3 rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-3 py-2">
+          <div key={k} className="grid grid-cols-[minmax(6rem,auto)_1fr_5rem] items-center gap-3 rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-3 py-2">
             <span className={cn("truncate font-mono text-xs", isGrip ? "text-nori-h14131a" : "text-nori-h5c564b")}>
               {shortMotor(k)}
             </span>
             <div className="h-1.5 overflow-hidden rounded-full bg-nori-he5e1d2">
               <div className={cn("h-full rounded-full transition-[width] duration-100", tone)} style={{ width: `${pct}%` }} />
             </div>
-            <span className="text-right font-mono text-xs text-nori-h5c564b">
-              {mag.toFixed(0)}
+            <span className="text-right font-mono text-xs tabular-nums text-nori-h5c564b">
+              {currentMa(mag).toFixed(0)} mA
             </span>
           </div>
         );

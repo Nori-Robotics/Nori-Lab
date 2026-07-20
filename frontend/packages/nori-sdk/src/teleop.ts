@@ -57,10 +57,39 @@ export type LeaderActionDeg = Record<string, number>;
 // the stalled joint only and it self-clears when that joint is jogged AWAY from the
 // obstruction (or on reset_latch). Scripts see it as action_status reason "stall:<joint>".
 export type SafetyState = "ok" | "safe_hold" | "latched" | (string & {});
-//   watchdog: "ok" | "warn" (control silence past t_warn_ms, or thermal load-shed) |
+//   watchdog: "ok" | "warn" (control silence past t_warn_ms) |
 //             "stop" (silence past t_stop_ms — motion blocked until frames resume).
-// Thresholds are the handshake's watchdogProfile (robotInfo()) — disclosed, not settable.
+// This is the CONTROL-STREAM dead-man ONLY: it is keyed purely on the arrival age of inbound
+// control frames. Thermal load-shed/hold does NOT appear here (it surfaces on `safety` as
+// "safe_hold"), and neither does the daemon's bus-loss watchdog (that ends the session with a
+// `bus_lost` error instead). Thresholds are the handshake's watchdogProfile (robotInfo()) —
+// disclosed, not settable.
 export type WatchdogState = "ok" | "warn" | "stop" | (string & {});
+
+// ── current units ───────────────────────────────────────────────────────────────────────
+// The daemon sends Present_Current as RAW Feetech LSBs (sign-magnitude, STS3215 addr 69) —
+// telemetry.json documents the field as "Signed raw Present_Current per motor". The STS3215
+// reports 6.5 mA per count.
+//
+// The WIRE deliberately stays in LSBs: every tuning knob the robot is configured with is in
+// the same unit (NORI_STALL_CURRENT, the NORI_STALL_CURRENT_BREAKIN ceiling, config_check's
+// 10..500 range). Converting daemon-side would silently desync telemetry from the numbers an
+// operator sets in lift.env. So convert at the DISPLAY EDGE only, here.
+//
+// Reference points for anyone reading a grip-force bar: the default stall trigger of 90 LSB
+// is ~585 mA, the break-in ceiling of 160 LSB is ~1.04 A, and CURRENT_FULL_LSB (600) is ~3.9 A.
+export const CURRENT_MA_PER_LSB = 6.5;
+
+// Raw Present_Current LSBs -> milliamps. Sign is preserved; callers that want magnitude
+// should Math.abs() the raw value first (direction is meaningful for haptics, not for force).
+export function currentMa(rawLsb: number): number {
+  return rawLsb * CURRENT_MA_PER_LSB;
+}
+
+// Raw LSB value mapped to a full grip-force bar, shared by the 2D readout (TeleopStatus) and
+// the VR HUD so the two can't drift apart. This is a DISPLAY normalization, not a limit: it
+// mirrors Torque_Limit's 0..600 span, which is a duty scale rather than a current scale.
+export const CURRENT_FULL_LSB = 600;
 
 export interface TelemetryView {
   loopHz: number;
@@ -73,6 +102,7 @@ export interface TelemetryView {
   linkMode: "lan" | "wan" | null;
   // Per-motor Present_Current (the "virtual tactile" signal), keyed like "right_arm_gripper".
   // Same values fed to VR haptics; surfaced here for the on-screen grip-force readout.
+  // RAW Feetech LSBs, NOT milliamps — see CURRENT_MA_PER_LSB / currentMa() below.
   currents: Record<string, number>;
   // The daemon's lerobot-native telemetry `state` dict: every joint's "<motor>.pos"
   // (arm joints normalized [-100,100], grippers [0,100]) + base "x.vel"/"theta.vel".

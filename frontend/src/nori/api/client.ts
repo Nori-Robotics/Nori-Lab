@@ -618,6 +618,22 @@ export function getAssemblyJob(baseUrl: string, fetcher: Fetcher, jobId: string)
   });
 }
 
+/** An in-flight assembly job (for My Stuff's "Assembling" dataset badge / placeholder). */
+export interface ActiveAssembly {
+  id: string;
+  mode: "new" | "append" | "rebuild";
+  status: "PENDING" | "ASSEMBLING";
+  new_dataset_name: string | null;
+  target_dataset_session_id: string | null;
+}
+
+/** GET /nori/datasets/assemblies/active — the caller's in-flight assembly jobs. */
+export function getActiveAssemblies(baseUrl: string, fetcher: Fetcher): Promise<{ assemblies: ActiveAssembly[] }> {
+  return noriRequest(baseUrl, fetcher, "/nori/datasets/assemblies/active", {
+    action: "Load active assemblies",
+  });
+}
+
 /** One recording session that contributed episodes to an assembled dataset —
  *  the unit you can filter by or bulk-delete. */
 export interface DatasetProvenanceSession {
@@ -629,12 +645,13 @@ export interface DatasetProvenanceSession {
   created_at: string;
 }
 
-/** GET /nori/datasets/{id}/sessions — provenance sessions of an assembled dataset. */
+/** GET /nori/datasets/{id}/sessions — provenance sessions + the per-episode session
+ *  map (`episode_sessions[i]` = episode i's source session_key, for the filter view). */
 export function getDatasetSessions(
   baseUrl: string,
   fetcher: Fetcher,
   datasetSessionId: string
-): Promise<{ sessions: DatasetProvenanceSession[] }> {
+): Promise<{ sessions: DatasetProvenanceSession[]; episode_sessions: string[] }> {
   return noriRequest(baseUrl, fetcher, `/nori/datasets/${encodeURIComponent(datasetSessionId)}/sessions`, {
     action: "Load dataset sessions",
   });

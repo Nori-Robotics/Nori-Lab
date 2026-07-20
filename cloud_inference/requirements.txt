@@ -1,0 +1,11 @@
+# MolmoAct2 cloud-inference server deps.
+# NOTE: pin `transformers` to the version the MolmoAct2 model card specifies —
+# the checkpoint ships custom modeling code (trust_remote_code) that expects a
+# compatible transformers base. Check the model card / repo before pinning.
+fastapi
+uvicorn[standard]
+transformers
+torch
+accelerate
+pillow
+numpy

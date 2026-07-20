@@ -1143,6 +1143,13 @@ def nori_assemble_dataset(body: NoriAssembleBody, request: Request):
         body.sources, body.mode, body.target_dataset_session_id, body.name))
 
 
+@app.get("/nori/datasets/assemblies/active")
+def nori_active_assemblies(request: Request):
+    """In-flight assembly jobs (for the 'Assembling' dataset badge + new-dataset placeholder)."""
+    client = _nori_client(request)
+    return _nori_proxy(client.active_assemblies)
+
+
 @app.get("/nori/datasets/assemble/{assembly_job_id}")
 def nori_get_assembly_job(assembly_job_id: str, request: Request):
     """Poll one assembly job's status."""

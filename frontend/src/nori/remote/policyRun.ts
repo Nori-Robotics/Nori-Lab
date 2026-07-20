@@ -46,6 +46,23 @@ export interface ExecutionParams {
 
 export type ExecutionMode = "smooth" | "balanced" | "fast";
 
+// Cloud-VLA rollout params (provider="cloud"): the policy runs on a remote
+// endpoint (MolmoAct2 on a HF Space / AWS g5) instead of a local ACT bundle.
+// lelab owns the endpoint URL + bearer token and the chunk queue — the browser
+// loop is otherwise identical. `instruction` conditions the VLA; `views` names
+// the camera feeds to grab, in the order the model expects them.
+export interface CloudParams {
+  instruction: string;
+  numSteps?: number;
+  views?: string[];
+  /** Which arm a single-arm VLA drives; omit to use the server default (NORI_INFER_ARM). */
+  arm?: "left" | "right";
+  /** Safety dry-run: compute + log actions each tick but send NOTHING to the robot.
+   *  Use for the first on-hardware check — watch the predicted joint targets before
+   *  letting an unproven cloud policy actually drive the arm. */
+  observeOnly?: boolean;
+}
+
 /** Friendly presets → raw ACT knobs. `smooth` (temporal ensembling, 0.01) is the
  *  default — best for fine/bimanual tasks and low control rates. */
 export const EXECUTION_PRESETS: Record<ExecutionMode, ExecutionParams> = {
@@ -85,6 +102,7 @@ export class PolicyRunner {
   private consecutiveFailures = 0;
   private ticks = 0;
   private skipLog = 0; // throttles the "tick skipped before /act" diagnostic
+  private observeOnly = false; // safety dry-run: log actions, don't drive the robot
 
   ref: string | null = null;
   onPhase: (p: PolicyRunPhase) => void = () => {};
@@ -98,8 +116,14 @@ export class PolicyRunner {
     return this.timer !== null;
   }
 
-  async start(teleop: RemoteTeleop, ref: string, exec?: ExecutionParams): Promise<void> {
+  async start(
+    teleop: RemoteTeleop,
+    ref: string,
+    exec?: ExecutionParams,
+    cloud?: CloudParams,
+  ): Promise<void> {
     if (this.timer) await this.stop("restarted");
+    this.observeOnly = cloud?.observeOnly ?? false;
     this.onPhase({ kind: "loading" });
 
     const tel = this.getTel();
@@ -127,11 +151,22 @@ export class PolicyRunner {
       headers: { "Content-Type": "application/json" },
       // Inference-time execution knobs (ACT); omitted keys fall back to the
       // checkpoint's saved values. See executionMode.ts / nori_rollout.py.
+      // Cloud fields are additive: sent only for a cloud VLA rollout, ignored by
+      // the local ACT path (provider defaults to "local" server-side).
       body: JSON.stringify({
         ref,
         joints,
         temporal_ensemble_coeff: exec?.temporal_ensemble_coeff ?? null,
         n_action_steps: exec?.n_action_steps ?? null,
+        ...(cloud
+          ? {
+              provider: "cloud",
+              instruction: cloud.instruction,
+              num_steps: cloud.numSteps ?? null,
+              views: cloud.views ?? null,
+              arm: cloud.arm ?? null,
+            }
+          : {}),
       }),
     });
     if (!res.ok) {
@@ -303,9 +338,27 @@ export class PolicyRunner {
         body: JSON.stringify({ state: tel.state, images }),
       });
       if (!res.ok) throw new Error(`act HTTP ${res.status}`);
-      const { action } = (await res.json()) as { action: Record<string, number> };
-      // The one and only robot-bound artifact of this whole subsystem:
-      this.teleop.sendAction(action);
+      const { action, warming } = (await res.json()) as {
+        action: Record<string, number> | null;
+        warming?: boolean;
+      };
+      // Cloud VLA cold start: the chunk queue isn't primed yet (first call
+      // compiles a CUDA graph, ~3.6s). The server returns action:null — skip this
+      // tick like a dropped frame; it is NOT a failure (don't trip the watchdog).
+      // A hard cloud error comes back as a non-2xx and takes the catch path below.
+      if (!action) {
+        if (warming && this.skipLog++ % 15 === 0)
+          console.warn("[policyRun] cloud queue warming — skipping tick");
+        this.consecutiveFailures = 0;
+        return;
+      }
+      // The one and only robot-bound artifact of this whole subsystem — SKIPPED
+      // in observe-only mode (log the predicted targets, drive nothing).
+      if (this.observeOnly) {
+        if (this.ticks % 5 === 0) console.info("[policyRun] OBSERVE-ONLY predicted action:", action);
+      } else {
+        this.teleop.sendAction(action);
+      }
       this.ticks += 1;
       this.consecutiveFailures = 0;
       if (this.ticks % 10 === 0) this.onPhase({ kind: "running", ticks: this.ticks });

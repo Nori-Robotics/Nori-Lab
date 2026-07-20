@@ -25,6 +25,7 @@ import {
   deleteDataset,
   deletePolicy,
   downloadPolicy,
+  getActiveAssemblies,
   getLibrary,
   getRobotRecordings,
   getTrainingEstimateParams,
@@ -33,6 +34,7 @@ import {
   renameUploadLabel,
   setDatasetLock,
   setPolicyLock,
+  type ActiveAssembly,
   type Library,
   type LibraryDataset,
   type LibraryPolicy,
@@ -168,6 +170,7 @@ const MyStuff = () => {
   // W2.11 robot recordings (raw bundles) — replaces the legacy laptop-spool
   // "On this laptop" datasets, which are no longer produced.
   const [robot, setRobot] = useState<RobotRecordings | null>(null);
+  const [assemblies, setAssemblies] = useState<ActiveAssembly[]>([]); // in-flight assembly jobs
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeRef, setActiveRef] = useState<string | null>(null); // hovered policy's source
@@ -197,6 +200,11 @@ const MyStuff = () => {
     } catch {
       setRobot(null);
     }
+    try {
+      setAssemblies((await getActiveAssemblies(baseUrl, fetchWithHeaders)).assemblies);
+    } catch {
+      setAssemblies([]);
+    }
     setLoading(false);
   }, [baseUrl, fetchWithHeaders]);
 
@@ -210,6 +218,7 @@ const MyStuff = () => {
   const anyTransient = useMemo(() => {
     const bundles = robot?.bundles ?? [];
     return (
+      assemblies.length > 0 ||
       (robot?.on_robot_pending ?? 0) > 0 ||
       bundles.some(
         (b) =>
@@ -220,7 +229,20 @@ const MyStuff = () => {
           (b.status === "PROMOTED" && b.assembling !== true && b.local_deleted_at == null),
       )
     );
-  }, [robot]);
+  }, [robot, assemblies]);
+
+  // Datasets currently being assembled into (append/rebuild targets) — edits blocked.
+  const assemblingDatasetIds = useMemo(
+    () =>
+      new Set(
+        assemblies
+          .filter((a) => a.target_dataset_session_id)
+          .map((a) => a.target_dataset_session_id as string),
+      ),
+    [assemblies],
+  );
+  // Brand-new datasets still being assembled from scratch — shown as placeholders.
+  const newAssembling = useMemo(() => assemblies.filter((a) => a.mode === "new"), [assemblies]);
 
   useEffect(() => {
     if (!anyTransient) return;
@@ -247,10 +269,13 @@ const MyStuff = () => {
     });
   }, []);
 
-  // Append targets = the caller's existing promoted datasets.
+  // Append targets = the caller's promoted datasets, minus any mid-assembly.
   const datasetOptions = useMemo(
-    () => (library?.datasets ?? []).map((d) => ({ session_id: d.session_id, label: d.label })),
-    [library],
+    () =>
+      (library?.datasets ?? [])
+        .filter((d) => !assemblingDatasetIds.has(d.session_id))
+        .map((d) => ({ session_id: d.session_id, label: d.label })),
+    [library, assemblingDatasetIds],
   );
 
   const onDelete = useCallback(async () => {
@@ -615,10 +640,30 @@ const MyStuff = () => {
             </span>
           </div>
 
+          {/* new datasets still assembling from scratch (no row yet) — placeholders */}
+          {newAssembling.map((a) => (
+            <article key={a.id} className={`${cardCls} opacity-90`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-base font-bold text-nori-h14131a">
+                    {a.new_dataset_name || "New dataset"}
+                  </p>
+                  <p className="mt-0.5 text-sm text-muted-foreground">Just now</p>
+                </div>
+                <Pill tone="sticker">Assembling</Pill>
+              </div>
+              <p className="mt-3 flex items-center gap-2 border-t border-dashed border-border pt-2.5 text-[13px] italic text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Assembling your recordings into a trainable dataset — this can take a few minutes.
+              </p>
+            </article>
+          ))}
+
           {/* uploaded, with lineage */}
           {datasets.map((d) => {
             const live = d.policies.filter((p) => p.state === "live").length;
             const highlighted = activeRef === d.dataset_ref;
+            const assembling = assemblingDatasetIds.has(d.session_id); // append/rebuild in flight
             return (
               <article
                 key={d.session_id}
@@ -626,14 +671,16 @@ const MyStuff = () => {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    {d.locked ? (
+                    {d.locked || assembling ? (
                       <p className="text-base font-bold text-nori-h14131a">{d.label}</p>
                     ) : (
                       <EditableName value={d.label} onRename={(next) => onRenameUpload(d.session_id, next)} />
                     )}
                     <p className="mt-0.5 text-sm text-muted-foreground">Uploaded {shortDate(d.created_at)}</p>
                   </div>
-                  {d.locked ? (
+                  {assembling ? (
+                    <Pill tone="sticker">Assembling</Pill>
+                  ) : d.locked ? (
                     <Pill tone="accent">
                       <Lock className="mr-1 inline h-3 w-3" />Locked
                     </Pill>
@@ -656,46 +703,53 @@ const MyStuff = () => {
                     </span>
                   )}
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => navigate("/nori/training")}>Train a policy</Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setReviewing({ kind: "cloud", sessionId: d.session_id, title: d.label })}
-                  >
-                    Review episodes
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={lockBusy === d.session_id}
-                    onClick={() => onToggleDatasetLock(d)}
-                  >
-                    {d.locked ? (
-                      <><Unlock className="mr-1 h-3.5 w-3.5" /> Unlock</>
-                    ) : (
-                      <><Lock className="mr-1 h-3.5 w-3.5" /> Lock</>
-                    )}
-                  </Button>
-                  {!d.locked && (
+                {assembling ? (
+                  <p className="mt-3 flex items-center gap-2 text-[13px] italic text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Assembling in your cloud — editing is paused until it finishes.
+                  </p>
+                ) : (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button size="sm" onClick={() => navigate("/nori/training")}>Train a policy</Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setReviewing({ kind: "cloud", sessionId: d.session_id, title: d.label })}
+                    >
+                      Review episodes
+                    </Button>
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => {
-                        setDeleteErr(null);
-                        setDeleting(d);
-                      }}
+                      disabled={lockBusy === d.session_id}
+                      onClick={() => onToggleDatasetLock(d)}
                     >
-                      <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                      {d.locked ? (
+                        <><Unlock className="mr-1 h-3.5 w-3.5" /> Unlock</>
+                      ) : (
+                        <><Lock className="mr-1 h-3.5 w-3.5" /> Lock</>
+                      )}
                     </Button>
-                  )}
-                </div>
+                    {!d.locked && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        onClick={() => {
+                          setDeleteErr(null);
+                          setDeleting(d);
+                        }}
+                      >
+                        <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                      </Button>
+                    )}
+                  </div>
+                )}
               </article>
             );
           })}
 
-          {datasets.length === 0 && (
+          {datasets.length === 0 && newAssembling.length === 0 && (
             <p className="rounded-[20px] border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
               No trainable datasets yet. Robot recordings become trainable datasets once assembled.
             </p>

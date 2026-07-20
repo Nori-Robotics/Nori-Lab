@@ -12,7 +12,7 @@
 // Clips load lazily (only the ones you play are fetched/transcoded).
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, X, Play, Trash2 } from "lucide-react";
+import { Loader2, X, Play, Trash2, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useApi } from "@/contexts/ApiContext";
 import { useNori } from "@/nori/NoriContext";
@@ -69,6 +69,10 @@ export function EpisodeReviewModal({
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [sessions, setSessions] = useState<DatasetProvenanceSession[] | null>(null);
+  const [episodeSessions, setEpisodeSessions] = useState<string[]>([]); // per-episode session_key
+  const [sessionsOpen, setSessionsOpen] = useState(false); // provenance list collapsed by default
+  const [sessionFilter, setSessionFilter] = useState<string | null>(null); // null = all sessions
+  const [confirmSessionKey, setConfirmSessionKey] = useState<string | null>(null); // delete confirm
   const [rebuilding, setRebuilding] = useState(false); // a delete rebuild is running
   const cancelled = useRef(false);
   useEffect(() => () => {
@@ -89,8 +93,10 @@ export function EpisodeReviewModal({
         try {
           const s = await getDatasetSessions(baseUrl, fetchWithHeaders, source.sessionId);
           setSessions(s.sessions);
+          setEpisodeSessions(s.episode_sessions || []);
         } catch {
           setSessions([]); // provenance is best-effort (pre-assembly datasets have none)
+          setEpisodeSessions([]);
         }
       }
     } catch (e) {
@@ -117,6 +123,8 @@ export function EpisodeReviewModal({
         }
         setMarked(new Set());
         setConfirm(false);
+        setConfirmSessionKey(null);
+        setSessionFilter(null); // indices shifted; a stale filter would show nothing
         onChanged();
         await load();
       } catch (e) {
@@ -196,6 +204,9 @@ export function EpisodeReviewModal({
   );
 
   const canCurate = !isCloud || (sessions != null && sessions.length > 0);
+  const visibleEpisodes = (episodes ?? []).filter(
+    (ep) => sessionFilter === null || episodeSessions[ep.index] === sessionFilter,
+  );
 
   return (
     <div
@@ -243,41 +254,100 @@ export function EpisodeReviewModal({
             </div>
           )}
           {isCloud && sessions && sessions.length > 0 && (
-            <div className="mb-4 rounded-2xl border border-border bg-background p-3">
-              <p className="eyebrow mb-2">Recording sessions</p>
-              <div className="space-y-1">
-                {sessions.map((s) => (
-                  <div
-                    key={s.session_key}
-                    className="flex items-center justify-between gap-3 rounded-xl px-2.5 py-1.5 hover:bg-secondary"
+            <div className="mb-4 overflow-hidden rounded-2xl border border-border bg-background">
+              {/* collapsed by default so it doesn't take up space */}
+              <button
+                onClick={() => setSessionsOpen((o) => !o)}
+                className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left hover:bg-secondary/50"
+              >
+                <span className="eyebrow">Recording sessions ({sessions.length})</span>
+                <span className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                  {sessionFilter
+                    ? `showing: ${sessions.find((s) => s.session_key === sessionFilter)?.task || "1 session"}`
+                    : "showing all"}
+                  <ChevronDown className={`h-4 w-4 transition-transform ${sessionsOpen ? "rotate-180" : ""}`} />
+                </span>
+              </button>
+              {sessionsOpen && (
+                <div className="border-t border-border p-2">
+                  <button
+                    onClick={() => setSessionFilter(null)}
+                    className={`mb-0.5 flex w-full items-center rounded-lg px-2.5 py-1.5 text-sm transition-colors ${
+                      sessionFilter === null
+                        ? "bg-secondary font-medium text-nori-h14131a"
+                        : "text-muted-foreground hover:bg-secondary"
+                    }`}
                   >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm text-nori-h14131a">{s.task || "Untitled session"}</p>
-                      <p className="text-[11px] text-muted-foreground">
-                        {s.recorded_at ? new Date(s.recorded_at).toLocaleDateString() : "—"} ·{" "}
-                        {s.episode_count} episode{s.episode_count === 1 ? "" : "s"}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => deleteSession(s.session_key)}
-                      disabled={rebuilding || sessions.length <= 1}
-                      title={
-                        sessions.length <= 1
-                          ? "Can't delete the only session (a dataset can't be empty)"
-                          : "Delete this session's episodes"
-                      }
-                      className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" /> Delete
-                    </button>
+                    All sessions · {episodes?.length ?? 0} episode{(episodes?.length ?? 0) === 1 ? "" : "s"}
+                  </button>
+                  <div className="max-h-48 space-y-0.5 overflow-y-auto">
+                    {sessions.map((s) => {
+                      const active = sessionFilter === s.session_key;
+                      const confirming = confirmSessionKey === s.session_key;
+                      return (
+                        <div
+                          key={s.session_key}
+                          className={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 transition-colors ${
+                            active ? "bg-secondary" : "hover:bg-secondary"
+                          }`}
+                        >
+                          <button
+                            onClick={() => setSessionFilter(active ? null : s.session_key)}
+                            className="min-w-0 flex-1 text-left"
+                            title={active ? "Show all sessions" : "Show only this session"}
+                          >
+                            <p className={`truncate text-sm text-nori-h14131a ${active ? "font-medium" : ""}`}>
+                              {s.task || "Untitled session"}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {s.recorded_at ? new Date(s.recorded_at).toLocaleDateString() : "—"} ·{" "}
+                              {s.episode_count} episode{s.episode_count === 1 ? "" : "s"}
+                            </p>
+                          </button>
+                          {confirming ? (
+                            <span className="flex shrink-0 items-center gap-1">
+                              <button
+                                onClick={() => {
+                                  setConfirmSessionKey(null);
+                                  deleteSession(s.session_key);
+                                }}
+                                disabled={rebuilding}
+                                className="rounded-lg bg-red-500 px-2 py-1 text-[11px] font-medium text-white hover:bg-red-600 disabled:opacity-50"
+                              >
+                                Delete
+                              </button>
+                              <button
+                                onClick={() => setConfirmSessionKey(null)}
+                                className="rounded-lg px-1.5 py-1 text-[11px] text-muted-foreground hover:text-nori-h14131a"
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmSessionKey(s.session_key)}
+                              disabled={rebuilding || sessions.length <= 1}
+                              title={
+                                sessions.length <= 1
+                                  ? "Can't delete the only session (a dataset can't be empty)"
+                                  : "Delete this session's episodes"
+                              }
+                              className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" /> Delete
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                ))}
-              </div>
+                </div>
+              )}
             </div>
           )}
           {episodes && (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {episodes.map((ep) => {
+              {visibleEpisodes.map((ep) => {
                 const isMarked = marked.has(ep.index);
                 return (
                   <div
@@ -356,7 +426,11 @@ export function EpisodeReviewModal({
               </span>
             ) : (
               <>
-                {episodes ? `${episodes.length} episodes` : ""}
+                {episodes
+                  ? sessionFilter !== null
+                    ? `${visibleEpisodes.length} of ${episodes.length} episodes`
+                    : `${episodes.length} episodes`
+                  : ""}
                 {marked.size > 0 ? ` · ${marked.size} marked to cut` : ""}
               </>
             )}

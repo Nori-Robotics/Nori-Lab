@@ -1,0 +1,18 @@
+# Installed on top of the HF Inference Endpoint base container (torch is already there).
+# MolmoAct2's custom modeling code statically imports these BEYOND the model card's list
+# (confirmed by the HF Job verification run).
+# NOTES:
+#  - If load fails with a torch/torchaudio ABI error ("undefined symbol: ..."), the base
+#    image already has torch+torchvision — drop `torchvision` here and do NOT upgrade the
+#    torch family.
+#  - If the custom modeling code errors, pin `transformers` to the version the MolmoAct2
+#    model card specifies.
+transformers
+accelerate
+pillow
+numpy
+einops
+torchvision
+av
+scipy
+requests

@@ -34,6 +34,8 @@ import json
 import logging
 import os
 import threading
+import time
+import urllib.error
 import urllib.request
 from collections import deque
 from pathlib import Path
@@ -75,6 +77,20 @@ def _env_int(name: str, default: int) -> int:
 def _env_bool(name: str, default: bool) -> bool:
     v = os.environ.get(name)
     return default if v is None else v.strip().lower() in ("1", "true", "yes", "on")
+
+
+class CloudEndpointWaking(RuntimeError):
+    """The endpoint is up but not serving yet (HF Space cold start: the container
+    answers while the 21GB model loads, ~3-4 min). TRANSIENT — the rollout should
+    wait, not die. Kept distinct from CloudRolloutError because the browser's
+    watchdog stops after 5 consecutive failures (~0.3s at 15fps), so treating a
+    wake as a hard error guaranteed that any sleep killed the run outright."""
+
+
+# How long to tolerate a waking endpoint before calling it a real failure. A cold
+# start with a 21GB model measured ~3.5 min warm and ~6.5 min from a deep sleep,
+# so allow a margin beyond that.
+WARMING_GRACE_S = 480.0
 
 
 class CloudRolloutError(RuntimeError):
@@ -276,6 +292,7 @@ class CloudRollout:
         self._inflight = False
         self._pending_obs: Optional[tuple[list[str], list[float]]] = None
         self._error: Optional[str] = None
+        self._warming_since: Optional[float] = None
         # observability
         self.refills = 0
         self.chunks_received = 0
@@ -323,6 +340,11 @@ class CloudRollout:
             return {"action": dict(zip(self.action_keys, action)), "queue": qlen, "warming": False}
         if err:
             raise CloudRolloutError(err)
+        with self._lock:
+            waking = self._warming_since
+        if waking is not None and (time.monotonic() - waking) > WARMING_GRACE_S:
+            raise CloudRolloutError(
+                f"endpoint still not serving after {WARMING_GRACE_S:.0f}s — treating as down")
         return {"action": None, "queue": qlen, "warming": True}
 
     def _cal_forward(self, state: list[float]) -> list[float]:
@@ -388,15 +410,45 @@ class CloudRollout:
                         self._queue.append(a)
                 self.refills += 1
                 self.chunks_received += 1
+                if self._warming_since is not None:
+                    logger.info("[CLOUD-ROLLOUT] endpoint back — resuming after %.0fs",
+                                time.monotonic() - self._warming_since)
+                    self._warming_since = None
                 self._error = None
             logger.info(
                 "[CLOUD-ROLLOUT] refill %s%d actions (queue=%d, refills=%d)",
                 "=" if self.replace_on_refill else "+", len(fresh), len(self._queue), self.refills,
             )
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
+            # Classify at the REFILL boundary, not only inside _http_act: a 503 or a
+            # read timeout means "cold start" no matter which layer raised it (an
+            # injected caller, a proxy, a future transport).
+            code = getattr(e, "code", None)
+            if code is not None and code != 503:
+                logger.warning("[CLOUD-ROLLOUT] refill failed: %s", e)
+                with self._lock:
+                    self._error = f"{type(e).__name__}: {e}"
+                    self._warming_since = None
+            else:
+                with self._lock:
+                    if self._warming_since is None:
+                        self._warming_since = time.monotonic()
+                        logger.info("[CLOUD-ROLLOUT] endpoint waking (%s) — holding the "
+                                    "rollout while it loads (up to %.0fs)", e, WARMING_GRACE_S)
+                    self._error = None
+        except CloudEndpointWaking as e:
+            # Transient: hold the rollout in "warming" instead of failing it.
+            with self._lock:
+                if self._warming_since is None:
+                    self._warming_since = time.monotonic()
+                    logger.info("[CLOUD-ROLLOUT] %s — holding the rollout while it loads "
+                                "(up to %.0fs)", e, WARMING_GRACE_S)
+                self._error = None
         except Exception as e:  # keep the loop alive; surface via serve()/status
             logger.warning("[CLOUD-ROLLOUT] refill failed: %s", e)
             with self._lock:
                 self._error = f"{type(e).__name__}: {e}"
+                self._warming_since = None
         finally:
             with self._lock:
                 self._inflight = False
@@ -418,8 +470,19 @@ class CloudRollout:
                 "Authorization": f"Bearer {self.token}",
             },
         )
-        with urllib.request.urlopen(req, timeout=ACT_TIMEOUT) as r:
-            data = json.load(r)
+        try:
+            with urllib.request.urlopen(req, timeout=ACT_TIMEOUT) as r:
+                data = json.load(r)
+        except urllib.error.HTTPError as e:
+            # 503 = our server's "model not loaded yet" (or the Space proxy's own
+            # unavailable). Either way it is a cold start, not a broken deployment.
+            if e.code == 503:
+                raise CloudEndpointWaking(f"endpoint waking (HTTP 503)") from e
+            raise
+        except (urllib.error.URLError, TimeoutError) as e:
+            # A sleeping Space accepts the TCP connection and then never answers,
+            # so a read timeout during wake looks exactly like this.
+            raise CloudEndpointWaking(f"endpoint unreachable/slow ({type(e).__name__})") from e
         actions = data.get("actions")
         if not isinstance(actions, list) or not actions:
             raise ValueError("cloud /act returned no actions")

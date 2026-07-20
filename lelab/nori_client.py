@@ -155,12 +155,19 @@ class NoriClient:
 
     # -- pairing (Phase 6) ---------------------------------------------------------
 
-    def pair_robot(self, robot_serial_number: str) -> dict[str, Any]:
+    def pair_robot(
+        self, robot_serial_number: str, pair_code: str | None = None
+    ) -> dict[str, Any]:
         """POST /customers/me/pair — pair a robot (multi-robot). First robot becomes
-        active; idempotent on an owned serial; 409 only if another customer owns it."""
-        return self._request(
-            "POST", f"{API}/customers/me/pair", json={"robot_serial_number": robot_serial_number}
-        )
+        active; idempotent on an owned serial; 409 only if another customer owns it.
+
+        pair_code is the proof-of-possession code from the robot's box (backend migration
+        029) — required to CLAIM a provisioned robot. Forwarded only when provided so
+        legacy/un-provisioned serials still pair without one."""
+        body: dict[str, Any] = {"robot_serial_number": robot_serial_number}
+        if pair_code:
+            body["pair_code"] = pair_code
+        return self._request("POST", f"{API}/customers/me/pair", json=body)
 
     def unpair_robot(self, robot_serial_number: str | None = None) -> dict[str, Any]:
         """POST /customers/me/unpair — detach a robot; idempotent if already unpaired.

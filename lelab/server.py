@@ -1465,12 +1465,16 @@ def nori_dataset_features(request: Request, dataset_ref: str | None = None):
 # NORI: pairing + consents + deletion (Phase 6).
 class NoriPairBody(BaseModel):
     robot_serial_number: str
+    # Proof-of-possession code from the robot's box (backend migration 029). MUST be
+    # carried through the proxy — without this field Pydantic silently drops it and the
+    # backend rejects the claim with "needs its pairing code" even though the browser sent it.
+    pair_code: str | None = None
 
 
 @app.post("/nori/customers/me/pair")
 def nori_pair_robot(body: NoriPairBody, request: Request):
     client = _nori_client(request)
-    return _nori_proxy(lambda: client.pair_robot(body.robot_serial_number))
+    return _nori_proxy(lambda: client.pair_robot(body.robot_serial_number, body.pair_code))
 
 
 class NoriUnpairBody(BaseModel):

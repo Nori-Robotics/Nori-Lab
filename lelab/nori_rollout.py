@@ -385,12 +385,18 @@ def _cloud_load(body: LoadBody) -> dict:
         raise HTTPException(status_code=502,
                             detail=f"cloud endpoint {endpoint} unreachable: {type(e).__name__}: {e}")
     calib = cloudmod.load_calibration(arm)  # per-joint convention remap, or None
+    # Queue-tuning knobs (env-overridable so we can retune against real latency
+    # without a redeploy): watermark must cover the refill round-trip; max_queue
+    # bounds staleness; replace_on_refill = receding horizon (jump to freshest plan).
     roll = cloudmod.CloudRollout(
         endpoint=endpoint,
         token=token,
         instruction=instruction,
         action_keys=akeys,
-        num_steps=body.num_steps or cloudmod.DEFAULT_NUM_STEPS,
+        num_steps=body.num_steps or cloudmod._env_int("NORI_INFER_NUM_STEPS", cloudmod.DEFAULT_NUM_STEPS),
+        watermark=cloudmod._env_int("NORI_INFER_WATERMARK", cloudmod.REFILL_WATERMARK),
+        max_queue=cloudmod._env_int("NORI_INFER_MAX_QUEUE", cloudmod.MAX_QUEUE),
+        replace_on_refill=cloudmod._env_bool("NORI_INFER_REPLACE", True),
         bounds=cloudmod.MOLMOACT2_BOUNDS,
         calib=calib,
     )
@@ -407,8 +413,10 @@ def _cloud_load(body: LoadBody) -> dict:
             "fps": fps,
             "instruction": instruction,
         })
-    logger.info("[ROLLOUT] cloud load %s -> %s (arm=%s, views=%s, fps=%d, calib=%s, endpoint=%s)",
-                body.ref, endpoint, arm, views, fps, "on" if calib else "off", health.get("status"))
+    logger.info("[ROLLOUT] cloud load %s -> %s (arm=%s, views=%s, fps=%d, calib=%s, "
+                "queue: wm=%d max=%d replace=%s, endpoint=%s)",
+                body.ref, endpoint, arm, views, fps, "on" if calib else "off",
+                roll.watermark, roll.max_queue, roll.replace_on_refill, health.get("status"))
     return {
         "ref": body.ref,
         "provider": "cloud",

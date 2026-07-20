@@ -142,6 +142,61 @@ def test_max_queue_cap():
     assert roll.status()["queue"] <= 50
 
 
+def test_replace_on_refill_jumps_to_fresh_plan():
+    # With replace, a refill CLEARS the stale remainder and installs the fresh
+    # chunk — so after re-planning we serve the NEW plan, not the old stale tail.
+    seq = [_chunk(30, base=0.0), _chunk(30, base=100.0)]
+    n = {"i": 0}
+
+    def caller(img, st):
+        c = seq[min(n["i"], 1)]
+        n["i"] += 1
+        return c
+
+    roll = _make(caller, watermark=8, max_queue=24, replace_on_refill=True)
+    roll.serve(["i"], [0.0] * 6)
+    assert _wait(lambda: roll.status()["queue"] > 0)  # refill 1 (base 0)
+    while roll.status()["queue"] > roll.watermark:
+        roll.serve(["i"], [0.0] * 6)
+    roll.serve(["i"], [0.0] * 6)  # crosses watermark -> refill 2 (base 100)
+    assert _wait(lambda: roll.status()["refills"] == 2)
+    act = roll.serve(["i"], [0.0] * 6)["action"]
+    assert act["a.pos"] >= 100.0  # serving the FRESH plan, stale tail dropped
+
+
+def test_append_mode_keeps_stale_tail():
+    seq = [_chunk(30, base=0.0), _chunk(30, base=100.0)]
+    n = {"i": 0}
+
+    def caller(img, st):
+        c = seq[min(n["i"], 1)]
+        n["i"] += 1
+        return c
+
+    roll = _make(caller, watermark=8, max_queue=90, replace_on_refill=False)
+    roll.serve(["i"], [0.0] * 6)
+    assert _wait(lambda: roll.status()["queue"] > 0)
+    while roll.status()["queue"] > roll.watermark:
+        roll.serve(["i"], [0.0] * 6)
+    roll.serve(["i"], [0.0] * 6)  # refill 2 appended behind the stale tail
+    assert _wait(lambda: roll.status()["refills"] == 2)
+    act = roll.serve(["i"], [0.0] * 6)["action"]
+    assert act["a.pos"] < 100.0  # still draining the OLD (stale) plan
+
+
+def test_starvation_counter():
+    def caller(img, st):
+        time.sleep(0.15)  # slow refill so the small buffer empties mid-run
+        return _chunk(3)
+
+    roll = _make(caller, watermark=1, max_queue=3)
+    roll.serve(["i"], [0.0] * 6)  # prime
+    assert _wait(lambda: roll.status()["actions_served"] > 0 or roll.status()["queue"] > 0)
+    for _ in range(12):  # drain faster than the slow refill can keep up
+        roll.serve(["i"], [0.0] * 6)
+    assert roll.status()["starvations"] > 0
+
+
 def test_wrong_action_dim_surfaces_error_and_503_semantics():
     # Cloud returns 4-dim actions but the session has 6 joints -> refill errors,
     # queue stays empty, and serve() raises CloudRolloutError (endpoint -> 503).

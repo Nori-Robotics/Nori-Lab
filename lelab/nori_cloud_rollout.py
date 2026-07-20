@@ -7,13 +7,22 @@
 # so moving the server HF -> AWS changes one env var (NORI_INFER_URL), nothing here.
 #
 # WHY A QUEUE. A VLA returns a whole action CHUNK (~30 moves) per call and the
-# call is slow (~0.30s warm, ~3.6s on the first CUDA-graph compile) — far too slow
-# to run every control tick. So we run it OPEN-LOOP: buffer the chunk and hand the
-# browser one action per tick; when the buffer runs low, fire ONE async refill
-# (using the latest observation) so the next chunk lands before the buffer drains.
-# At 15fps a 30-action chunk is ~2s of motion and a warm refill is ~0.3s, so the
-# queue never empties in steady state (the ~6.7x real-time headroom measured on
-# the A10G in milestone 1).
+# call is slow (~0.30s on-GPU, but ~0.7-1.2s round-trip from the robot's network,
+# ~3.6s on the first CUDA-graph compile) — far too slow to run every control tick.
+# So we run it OPEN-LOOP: buffer the chunk and hand the browser one action per tick;
+# when the buffer falls to `watermark`, fire ONE async refill so the next chunk
+# lands before the buffer drains.
+#
+# TWO field-tuned behaviours (a laptop run stuttered + moved indecisively):
+#  - watermark MUST cover the refill round-trip or the queue empties and the robot
+#    gets no command (the stutter). Default 15 @15fps ≈ 1s of lead; bump via
+#    NORI_INFER_WATERMARK if `starvations` in status() stays > 0.
+#  - replace_on_refill (receding horizon): a fresh chunk REPLACES the stale
+#    remainder rather than queueing behind it, so we never execute a 2s-old tail
+#    (the "drives toward a stale target" indecision). Bounds staleness to ~the
+#    refill latency. There is a hard floor here — at high latency you trade
+#    staleness for starvation; the real fix is lower latency (in-region GPU /
+#    fewer num_steps) or a finetune, not queue tuning.
 #
 # The browser is UNCHANGED: it still POSTs {state,images} to /nori/rollout/act and
 # gets {action}. lelab just serves that action from the queue instead of a local
@@ -32,13 +41,32 @@ from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-# Trigger a refill when the buffer falls to this many actions. Must cover the
-# refill round-trip: at 15fps, 8 actions ≈ 530ms of motion > ~300ms warm inference.
-REFILL_WATERMARK = 8
-MAX_QUEUE = 90  # hard cap so a burst of refills can't grow the buffer unbounded
+# Trigger a refill when the buffer falls to this many actions. It MUST cover the
+# refill round-trip (browser->lelab->cloud->back), or the queue empties and the
+# robot gets no command → the stutter/jitter seen in the field. From the robot's
+# network the round-trip is ~0.7-1.2s, so at 15fps we need ~12-18 actions of lead.
+REFILL_WATERMARK = 15
+# Bound the buffer so we never execute a stale backlog. An action that sits N deep
+# is served ~N/fps seconds after its source observation — open-loop staleness. 24
+# @15fps ≈ 1.6s worst case; combined with replace-on-refill the effective staleness
+# is the refill latency, not the full chunk.
+MAX_QUEUE = 24
 DEFAULT_NUM_STEPS = 10
 HEALTH_TIMEOUT = 8.0
 ACT_TIMEOUT = 20.0  # first call compiles a CUDA graph (~3.6s); leave slack
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        v = int(os.environ.get(name, ""))
+        return v if v > 0 else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    v = os.environ.get(name)
+    return default if v is None else v.strip().lower() in ("1", "true", "yes", "on")
 
 
 class CloudRolloutError(RuntimeError):
@@ -152,6 +180,7 @@ class CloudRollout:
         num_steps: int = DEFAULT_NUM_STEPS,
         watermark: int = REFILL_WATERMARK,
         max_queue: int = MAX_QUEUE,
+        replace_on_refill: bool = True,
         bounds: Optional[list[tuple[float, float]]] = None,
         calib: Optional[dict] = None,
         caller: Optional[Callable[[list[str], list[float]], list[list[float]]]] = None,
@@ -173,7 +202,12 @@ class CloudRollout:
         self.calib = calib
         self.num_steps = int(num_steps)
         self.watermark = int(watermark)
-        self.max_queue = int(max_queue)
+        self.max_queue = max(int(max_queue), self.watermark + 1)
+        # replace_on_refill: on refill, DROP the stale remainder and jump to the
+        # fresh chunk (receding horizon) instead of appending behind it. Bounds the
+        # worst-case open-loop staleness to the refill latency rather than a whole
+        # 30-step chunk (~2s) — the "indecisive, moves toward a stale target" jitter.
+        self.replace_on_refill = bool(replace_on_refill)
         self._call = caller or self._http_act  # injectable for tests
 
         self._queue: deque[list[float]] = deque()
@@ -186,6 +220,7 @@ class CloudRollout:
         self.chunks_received = 0
         self.actions_served = 0
         self.clamps = 0  # count of actions the bounds guard had to clip
+        self.starvations = 0  # ticks the buffer was empty AFTER priming (the stutter)
 
     # -- the browser-tick entry point ------------------------------------
     def serve(self, images: list[str], state: list[float]) -> dict:
@@ -207,6 +242,8 @@ class CloudRollout:
             err = self._error if action is None else None
             if action is not None:
                 self.actions_served += 1
+            elif self.actions_served > 0 and not err:
+                self.starvations += 1  # primed but empty this tick = a stutter gap
         if trigger:
             threading.Thread(target=self._refill, name="cloud-refill", daemon=True).start()
         if action is not None:
@@ -264,17 +301,23 @@ class CloudRollout:
                         f"{self.action_dim} ({self.action_keys}) — wrong robot/policy pairing."
                     )
                 clean.append([float(x) for x in a])
+            fresh = clean[: self.max_queue]  # receding horizon: never buffer a long stale tail
             with self._lock:
-                for a in clean:
-                    if len(self._queue) >= self.max_queue:
-                        break
-                    self._queue.append(a)
+                if self.replace_on_refill:
+                    # Drop whatever stale actions remain and switch to the fresh plan.
+                    self._queue.clear()
+                    self._queue.extend(fresh)
+                else:
+                    for a in fresh:
+                        if len(self._queue) >= self.max_queue:
+                            break
+                        self._queue.append(a)
                 self.refills += 1
                 self.chunks_received += 1
                 self._error = None
             logger.info(
-                "[CLOUD-ROLLOUT] refill +%d actions (queue=%d, refills=%d)",
-                len(clean), len(self._queue), self.refills,
+                "[CLOUD-ROLLOUT] refill %s%d actions (queue=%d, refills=%d)",
+                "=" if self.replace_on_refill else "+", len(fresh), len(self._queue), self.refills,
             )
         except Exception as e:  # keep the loop alive; surface via serve()/status
             logger.warning("[CLOUD-ROLLOUT] refill failed: %s", e)
@@ -318,6 +361,10 @@ class CloudRollout:
                 "chunks_received": self.chunks_received,
                 "actions_served": self.actions_served,
                 "clamps": self.clamps,
+                "starvations": self.starvations,
+                "watermark": self.watermark,
+                "max_queue": self.max_queue,
+                "replace_on_refill": self.replace_on_refill,
             }
 
 

@@ -206,7 +206,12 @@ class CloudRollout:
         instruction: str,
         action_keys: list[str],
         num_steps: int = DEFAULT_NUM_STEPS,
-        watermark: int = REFILL_WATERMARK,
+        # None = "auto": use the default and let the stride block resize it. An
+        # explicit value is HONOURED as-is, which is what makes stop-and-stare
+        # (watermark=1 -> refill only when the plan is spent, from a FRESH
+        # observation) expressible. Without this the stride sizing silently
+        # overrode the caller.
+        watermark: Optional[int] = None,
         max_queue: int = MAX_QUEUE,
         replace_on_refill: bool = True,
         fps: float = 0.0,
@@ -231,7 +236,8 @@ class CloudRollout:
             raise ValueError("calib A/B length must equal action_keys length")
         self.calib = calib
         self.num_steps = int(num_steps)
-        self.watermark = int(watermark)
+        watermark_auto = watermark is None
+        self.watermark = REFILL_WATERMARK if watermark_auto else int(watermark)
         self.max_queue = max(int(max_queue), self.watermark + 1)
         # replace_on_refill: on refill, DROP the stale remainder and jump to the
         # fresh chunk (receding horizon) instead of appending behind it. Bounds the
@@ -260,7 +266,8 @@ class CloudRollout:
             # action == one tick) discards cover we cannot spare, so hold the whole
             # chunk and refill as early as the single-in-flight rule allows.
             self.max_queue = max(self.max_queue, int(round(self.chunk_hz)))
-            self.watermark = max(self.watermark, self.max_queue - 3)
+            if watermark_auto:
+                self.watermark = max(self.watermark, self.max_queue - 3)
             self.max_queue = max(self.max_queue, self.watermark + 1)
         self._call = caller or self._http_act  # injectable for tests
 

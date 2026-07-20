@@ -179,7 +179,7 @@ const Pairing = () => {
   const hasRobots = paired.length > 0;
 
   return (
-    <section className="max-w-md space-y-4">
+    <section className="max-w-2xl space-y-4">
       <h1 className="text-3xl font-bold">{hasRobots ? "Your robots" : "Pair your robot"}</h1>
 
       {error && <p className="text-sm text-destructive">{error}</p>}

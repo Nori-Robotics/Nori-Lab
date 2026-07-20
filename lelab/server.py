@@ -1469,12 +1469,17 @@ class NoriPairBody(BaseModel):
     # carried through the proxy — without this field Pydantic silently drops it and the
     # backend rejects the claim with "needs its pairing code" even though the browser sent it.
     pair_code: str | None = None
+    # Customer's friendly name for the robot. Same silent-drop hazard as pair_code: without
+    # this field the browser's nickname never reaches the backend and the robot pairs unnamed.
+    nickname: str | None = None
 
 
 @app.post("/nori/customers/me/pair")
 def nori_pair_robot(body: NoriPairBody, request: Request):
     client = _nori_client(request)
-    return _nori_proxy(lambda: client.pair_robot(body.robot_serial_number, body.pair_code))
+    return _nori_proxy(
+        lambda: client.pair_robot(body.robot_serial_number, body.pair_code, body.nickname)
+    )
 
 
 class NoriUnpairBody(BaseModel):
@@ -1498,6 +1503,17 @@ def nori_list_robots(request: Request):
 def nori_select_robot(serial: str, request: Request):
     client = _nori_client(request)
     return _nori_proxy(lambda: client.select_robot(serial))
+
+
+class NoriRenameBody(BaseModel):
+    # Empty string clears the nickname (backend stores NULL); a value sets it.
+    nickname: str | None = None
+
+
+@app.patch("/nori/customers/me/robots/{serial}")
+def nori_rename_robot(serial: str, body: NoriRenameBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.rename_robot(serial, body.nickname or ""))
 
 
 # NORI: billing summary (backend Phase 1, free-tier enforcement). Read-only

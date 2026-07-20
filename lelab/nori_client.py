@@ -156,17 +156,24 @@ class NoriClient:
     # -- pairing (Phase 6) ---------------------------------------------------------
 
     def pair_robot(
-        self, robot_serial_number: str, pair_code: str | None = None
+        self,
+        robot_serial_number: str,
+        pair_code: str | None = None,
+        nickname: str | None = None,
     ) -> dict[str, Any]:
         """POST /customers/me/pair — pair a robot (multi-robot). First robot becomes
         active; idempotent on an owned serial; 409 only if another customer owns it.
 
         pair_code is the proof-of-possession code from the robot's box (backend migration
         029) — required to CLAIM a provisioned robot. Forwarded only when provided so
-        legacy/un-provisioned serials still pair without one."""
+        legacy/un-provisioned serials still pair without one.
+
+        nickname is the customer's friendly name for the robot; forwarded only when set."""
         body: dict[str, Any] = {"robot_serial_number": robot_serial_number}
         if pair_code:
             body["pair_code"] = pair_code
+        if nickname:
+            body["nickname"] = nickname
         return self._request("POST", f"{API}/customers/me/pair", json=body)
 
     def unpair_robot(self, robot_serial_number: str | None = None) -> dict[str, Any]:
@@ -201,6 +208,19 @@ class NoriClient:
 
         return self._request(
             "POST", f"{API}/customers/me/robots/{quote(robot_serial_number, safe='')}/select"
+        )
+
+    def rename_robot(self, robot_serial_number: str, nickname: str) -> dict[str, Any]:
+        """PATCH /customers/me/robots/{serial} — set (or clear) a paired robot's nickname.
+
+        Empty string clears it (backend stores NULL). Last-write-wins against a rename
+        made on the robot's own kiosk (both write the one robots.nickname column)."""
+        from urllib.parse import quote
+
+        return self._request(
+            "PATCH",
+            f"{API}/customers/me/robots/{quote(robot_serial_number, safe='')}",
+            json={"nickname": nickname},
         )
 
     # -- marketplace (Phase 3) -----------------------------------------------------

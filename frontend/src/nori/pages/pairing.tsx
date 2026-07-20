@@ -39,6 +39,7 @@ const Pairing = () => {
   const [robots, setRobots] = useState<PairedRobot[] | null>(null);
   const [serial, setSerial] = useState("");
   const [pairCode, setPairCode] = useState("");
+  const [nickname, setNickname] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busySerial, setBusySerial] = useState<string | null>(null);
@@ -72,11 +73,19 @@ const Pairing = () => {
     setSubmitting(true);
     const next = serial.trim();
     const code = pairCode.trim();
+    const name = nickname.trim();
     try {
-      const updated = await pairRobot(baseUrl, fetchWithHeaders, next, code || undefined);
+      const updated = await pairRobot(
+        baseUrl,
+        fetchWithHeaders,
+        next,
+        code || undefined,
+        name || undefined
+      );
       setCustomer(updated);
       setSerial("");
       setPairCode("");
+      setNickname("");
       // First robot paired becomes active automatically.
       if (!robots || robots.length === 0) setActiveRobotSerial(next);
       await loadRobots();
@@ -266,6 +275,22 @@ const Pairing = () => {
               />
               <p className="text-xs text-muted-foreground">
                 Printed on your robot's box, next to the serial number.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="nickname">Nickname (optional)</Label>
+              {/* Friendly name for the robot, shown on the home card and editable later on
+                  the robot's own kiosk. Backend caps it at 128 chars (PairRequest.nickname);
+                  match that here so the field can't hold a value the server would reject. */}
+              <Input
+                id="nickname"
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value)}
+                placeholder="e.g. Kitchen bot"
+                maxLength={128}
+              />
+              <p className="text-xs text-muted-foreground">
+                What you'll call this robot around the app. You can change it later.
               </p>
             </div>
             <Button type="submit" disabled={submitting || !serial.trim()}>

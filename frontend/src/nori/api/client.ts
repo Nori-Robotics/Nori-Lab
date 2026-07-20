@@ -923,16 +923,24 @@ export function pairRobot(
   baseUrl: string,
   fetcher: Fetcher,
   robotSerialNumber: string,
-  pairCode?: string
+  pairCode?: string,
+  nickname?: string
 ): Promise<CustomerProfile> {
   return noriRequest<CustomerProfile>(baseUrl, fetcher, "/nori/customers/me/pair", {
     method: "POST",
     // pair_code is the proof-of-possession code on the box (backend migration 029).
     // Sent only when provided; the backend requires it to claim a provisioned robot
     // and ignores it for legacy/un-provisioned serials.
+    //
+    // nickname is the customer's friendly name for the robot, shown on the home card
+    // and (once set) editable on the robot's own kiosk — one column, so both surfaces
+    // agree. Optional: omitted leaves it null. On re-pairing a robot already owned, the
+    // backend's claim path only writes a nickname when one is supplied, so leaving this
+    // blank never clobbers a name already set at the kiosk.
     body: {
       robot_serial_number: robotSerialNumber,
       ...(pairCode ? { pair_code: pairCode } : {}),
+      ...(nickname ? { nickname } : {}),
     },
     action: "Pair robot",
   });

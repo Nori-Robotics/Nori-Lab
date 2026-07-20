@@ -52,6 +52,14 @@ REFILL_WATERMARK = 15
 # is the refill latency, not the full chunk.
 MAX_QUEUE = 24
 DEFAULT_NUM_STEPS = 10
+# The rate the model's chunk was AUTHORED at. MolmoAct2's rule is "one training
+# sequence = one second of robot motion, so the number of actions in a chunk is
+# set by the control frequency of the source dataset" -- SO-100/101 was 30Hz,
+# hence a 30-action chunk. Serving ONE action per control tick therefore replays
+# that second at OUR tick rate: at 15fps a 1s motion is stretched over 2s, at
+# 10fps over 3s. That is the "moves very slowly" report, and it is arithmetic,
+# not a model failure. We advance `stride = chunk_hz / fps` actions per tick.
+MOLMOACT2_CHUNK_HZ = 30.0
 HEALTH_TIMEOUT = 8.0
 ACT_TIMEOUT = 20.0  # first call compiles a CUDA graph (~3.6s); leave slack
 
@@ -201,6 +209,8 @@ class CloudRollout:
         watermark: int = REFILL_WATERMARK,
         max_queue: int = MAX_QUEUE,
         replace_on_refill: bool = True,
+        fps: float = 0.0,
+        chunk_hz: float = MOLMOACT2_CHUNK_HZ,
         bounds: Optional[list[tuple[float, float]]] = None,
         calib: Optional[dict] = None,
         caller: Optional[Callable[[list[str], list[float]], list[list[float]]]] = None,
@@ -228,6 +238,30 @@ class CloudRollout:
         # worst-case open-loop staleness to the refill latency rather than a whole
         # 30-step chunk (~2s) — the "indecisive, moves toward a stale target" jitter.
         self.replace_on_refill = bool(replace_on_refill)
+        # Play the chunk at the rate it was AUTHORED (see MOLMOACT2_CHUNK_HZ):
+        # advance chunk_hz/fps actions per tick, serving the one we land on. At
+        # 30fps stride is 1 and nothing changes; at 15fps it is 2, restoring the
+        # model's intended speed.
+        #
+        # COST, stated plainly: stride N drains the buffer N times faster, so the
+        # queue holds ~1 SECOND of motion regardless of fps, while a refill
+        # round-trip is 0.7-1.2s. Correct-speed playback therefore runs at the edge
+        # of starvation and no queue tuning fixes it -- a 1s chunk cannot cover a
+        # >1s round-trip. Watch status()["starvations"]; if it climbs the answer is
+        # lower latency (in-region GPU) or RTC, not a bigger buffer.
+        # NORI_INFER_STRIDE=1 restores the old slow-but-smooth behaviour.
+        self.fps = float(fps) if fps and fps > 0 else 0.0
+        self.chunk_hz = float(chunk_hz) if chunk_hz and chunk_hz > 0 else 0.0
+        self.stride = (max(1, int(round(self.chunk_hz / self.fps)))
+                       if self.fps > 0 and self.chunk_hz > 0 else 1)
+        if self.stride > 1:
+            # At stride N the buffer is measured in TIME, not actions, and a chunk
+            # is only ~1s long. Truncating it (the old MAX_QUEUE=24, chosen when one
+            # action == one tick) discards cover we cannot spare, so hold the whole
+            # chunk and refill as early as the single-in-flight rule allows.
+            self.max_queue = max(self.max_queue, int(round(self.chunk_hz)))
+            self.watermark = max(self.watermark, self.max_queue - 3)
+            self.max_queue = max(self.max_queue, self.watermark + 1)
         self._call = caller or self._http_act  # injectable for tests
 
         self._queue: deque[list[float]] = deque()
@@ -257,7 +291,14 @@ class CloudRollout:
             if len(self._queue) <= self.watermark and not self._inflight:
                 self._inflight = True
                 trigger = True
-            action = self._queue.popleft() if self._queue else None
+            # Advance `stride` steps through the plan and serve the one we land on,
+            # so a chunk authored at chunk_hz plays out in its intended wall-clock
+            # duration instead of being stretched by (chunk_hz/fps).
+            action = None
+            for _ in range(self.stride):
+                if not self._queue:
+                    break
+                action = self._queue.popleft()
             qlen = len(self._queue)
             err = self._error if action is None else None
             if action is not None:
@@ -391,6 +432,12 @@ class CloudRollout:
                 "watermark": self.watermark,
                 "max_queue": self.max_queue,
                 "replace_on_refill": self.replace_on_refill,
+                # stride > 1 means we are playing the chunk at its authored rate;
+                # buffer_seconds is the wall-clock motion the queue holds, which is
+                # what must cover the refill round-trip (not the action count).
+                "stride": self.stride,
+                "fps": self.fps,
+                "buffer_seconds": (len(self._queue) / self.chunk_hz) if self.chunk_hz else None,
             }
 
 

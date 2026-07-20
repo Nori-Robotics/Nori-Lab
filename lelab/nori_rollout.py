@@ -398,9 +398,19 @@ def _cloud_load(body: LoadBody) -> dict:
         watermark=cloudmod._env_int("NORI_INFER_WATERMARK", cloudmod.REFILL_WATERMARK),
         max_queue=cloudmod._env_int("NORI_INFER_MAX_QUEUE", cloudmod.MAX_QUEUE),
         replace_on_refill=cloudmod._env_bool("NORI_INFER_REPLACE", True),
+        # fps drives the chunk STRIDE: the model authors 30 actions per second of
+        # motion, so serving one per tick at 15fps halves the speed. NORI_INFER_STRIDE
+        # forces a value (1 = the old one-action-per-tick behaviour).
+        fps=float(fps),
+        chunk_hz=(cloudmod.MOLMOACT2_CHUNK_HZ
+                  if not os.environ.get("NORI_INFER_STRIDE")
+                  else float(fps) * cloudmod._env_int("NORI_INFER_STRIDE", 1)),
         bounds=cloudmod.MOLMOACT2_BOUNDS,
         calib=calib,
     )
+    logger.info("[CLOUD-ROLLOUT] chunk stride=%d (fps=%s, chunk authored at %sHz) -- "
+                "queue holds %.2fs of motion; the refill round-trip must fit inside that",
+                roll.stride, fps, roll.chunk_hz, roll.max_queue / (roll.chunk_hz or 1))
     with _lock:
         _close_cam()   # release any previous session's camera subscriber
         _session.clear()

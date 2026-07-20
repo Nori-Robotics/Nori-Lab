@@ -999,6 +999,25 @@ export function selectRobot(
   );
 }
 
+/**
+ * PATCH /nori/customers/me/robots/{serial} — set (or clear) a paired robot's nickname.
+ * Pass an empty string to clear. Last-write-wins against a rename made on the robot's
+ * own kiosk, which writes the same column. Returns the updated robot.
+ */
+export function renameRobot(
+  baseUrl: string,
+  fetcher: Fetcher,
+  robotSerialNumber: string,
+  nickname: string
+): Promise<PairedRobot> {
+  return noriRequest<PairedRobot>(
+    baseUrl,
+    fetcher,
+    `/nori/customers/me/robots/${encodeURIComponent(robotSerialNumber)}`,
+    { method: "PATCH", body: { nickname }, action: "Rename robot" }
+  );
+}
+
 export function listConsents(baseUrl: string, fetcher: Fetcher): Promise<Consent[]> {
   return noriRequest<Consent[]>(baseUrl, fetcher, "/nori/consents", {
     action: "Load consents",

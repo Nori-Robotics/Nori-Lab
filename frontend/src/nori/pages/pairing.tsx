@@ -19,6 +19,7 @@ import { useNori } from "@/nori/NoriContext";
 import {
   listRobots,
   pairRobot,
+  renameRobot,
   selectRobot,
   unpairRobot,
   type CustomerProfile,
@@ -44,6 +45,8 @@ const Pairing = () => {
   const [error, setError] = useState<string | null>(null);
   const [busySerial, setBusySerial] = useState<string | null>(null);
   const [confirmSerial, setConfirmSerial] = useState<string | null>(null);
+  const [renameSerial, setRenameSerial] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const loadRobots = useCallback(async () => {
     try {
@@ -147,6 +150,31 @@ const Pairing = () => {
     }
   };
 
+  // Open the inline rename editor for a robot, seeded with its current name. Clears any
+  // pending unpair confirm on the same row so the two edit modes can't overlap.
+  const startRename = (s: string, current: string | null | undefined) => {
+    setError(null);
+    setConfirmSerial(null);
+    setRenameValue(current ?? "");
+    setRenameSerial(s);
+  };
+
+  const onRename = async (s: string) => {
+    setError(null);
+    setBusySerial(s);
+    try {
+      // Empty string clears the nickname (backend stores NULL). Last-write-wins against a
+      // rename made on the robot's own kiosk — both write the one robots.nickname column.
+      await renameRobot(baseUrl, fetchWithHeaders, s, renameValue.trim());
+      setRenameSerial(null);
+      await loadRobots();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusySerial(null);
+    }
+  };
+
   const paired = robots ?? [];
   const hasRobots = paired.length > 0;
 
@@ -168,7 +196,48 @@ const Pairing = () => {
               const s = r.robot_serial_number;
               const active = s === activeRobotSerial;
               const confirming = confirmSerial === s;
+              const renaming = renameSerial === s;
               const busy = busySerial === s;
+
+              // Rename mode: the whole row becomes an edit form so the input has room
+              // (nicknames run up to 128 chars — no space for it inline with the buttons).
+              if (renaming) {
+                return (
+                  <div
+                    key={s}
+                    className={`space-y-2 rounded-md border p-3 ${
+                      active ? "border-primary" : "border-border"
+                    }`}
+                  >
+                    <div className="truncate font-mono text-xs text-muted-foreground">{s}</div>
+                    <Label htmlFor={`rename-${s}`} className="sr-only">
+                      Nickname
+                    </Label>
+                    <Input
+                      id={`rename-${s}`}
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      placeholder="Nickname (leave blank to clear)"
+                      maxLength={128}
+                      autoFocus
+                    />
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => onRename(s)} disabled={busy}>
+                        {busy ? "Saving…" : "Save"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setRenameSerial(null)}
+                        disabled={busy}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                );
+              }
+
               return (
                 <div
                   key={s}
@@ -177,9 +246,15 @@ const Pairing = () => {
                   }`}
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="truncate font-mono text-sm">{s}</div>
-                    {r.nickname && (
-                      <div className="truncate text-xs text-muted-foreground">{r.nickname}</div>
+                    {/* Lead with the nickname when set — it's what the customer named the
+                        robot — and drop the serial to a secondary line. Serial-only when unnamed. */}
+                    {r.nickname ? (
+                      <>
+                        <div className="truncate text-sm font-medium">{r.nickname}</div>
+                        <div className="truncate font-mono text-xs text-muted-foreground">{s}</div>
+                      </>
+                    ) : (
+                      <div className="truncate font-mono text-sm">{s}</div>
                     )}
                   </div>
                   {active ? (
@@ -216,14 +291,24 @@ const Pairing = () => {
                       </Button>
                     </>
                   ) : (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-destructive hover:text-destructive"
-                      onClick={() => setConfirmSerial(s)}
-                    >
-                      Unpair
-                    </Button>
+                    <>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => startRename(s, r.nickname)}
+                        disabled={busy}
+                      >
+                        Rename
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => setConfirmSerial(s)}
+                      >
+                        Unpair
+                      </Button>
+                    </>
                   )}
                 </div>
               );

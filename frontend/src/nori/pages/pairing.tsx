@@ -81,13 +81,16 @@ const Pairing = () => {
       if (!robots || robots.length === 0) setActiveRobotSerial(next);
       await loadRobots();
     } catch (err) {
-      // 403 = the pairing code is missing or wrong (proof-of-possession gate, backend
-      // migration 029). Keep this distinct from the serial cases so we point the user
-      // at the CODE, not the serial.
+      // 403 covers TWO different refusals with different fixes: the pair-code gate
+      // (proof of possession, mig 029) AND the tier robot-limit cap (get_tier_limits,
+      // which runs BEFORE the code check). Both backend `detail` strings are already
+      // user-facing, so surface the actual one — otherwise someone over their robot
+      // limit is wrongly told "wrong pairing code" and chases the code forever.
       if (err instanceof ApiError && err.status === 403) {
         setError(
-          "That pairing code is missing or incorrect. Enter the code printed on your " +
-            "robot's box to confirm it's yours."
+          err.detail ??
+            "Pairing was refused — check the code printed on your robot's box, and that " +
+              "you're not over your robot limit."
         );
       } else if (err instanceof ApiError && (err.status === 409 || err.status === 404)) {
         // 409 = serial owned by another account; 404 = no such registered robot (the

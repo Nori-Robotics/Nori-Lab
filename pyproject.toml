@@ -24,6 +24,11 @@ dependencies = [
     # frontend can match a camera to its browser deviceId (issues #12, #16).
     # Guarded by try/except at the call site, so its absence degrades gracefully.
     "pygrabber>=0.2 ; sys_platform == 'win32'",
+    # NORI: subscribe to the Pi's per-camera MJPEG PUB sockets (image_server.py)
+    # so cloud inference is fed FULL-QUALITY frames — the same source the
+    # recorder/training data uses — instead of crops of the degraded composite.
+    # Imported lazily in lelab/nori_cam_zmq.py; absence degrades to the composite.
+    "pyzmq>=25.0",
 ]
 
 [project.optional-dependencies]

@@ -869,6 +869,10 @@ export class RemoteTeleop {
   // Safe to call before the control channel is open — the desired state is flushed on open.
   pauseVideo() { this.setVideoPaused(true); }
   resumeVideo() { this.setVideoPaused(false); }
+  /** Current encoder gate state, so a transient consumer (e.g. a policy rollout that
+   *  force-resumes to grab frames) can RESTORE what it found instead of blindly
+   *  pausing on exit — blindly pausing freezes the preview of a page still on screen. */
+  isVideoPaused(): boolean { return this.videoPaused; }
   private setVideoPaused(paused: boolean) {
     this.videoPaused = paused;
     this.dcSend({ type: "video", state: paused ? "pause" : "resume" });

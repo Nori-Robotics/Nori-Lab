@@ -41,6 +41,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from . import nori_cam_zmq as camzmq
 from . import nori_cloud_rollout as cloudmod
 from .utils import config
 
@@ -401,6 +402,7 @@ def _cloud_load(body: LoadBody) -> dict:
         calib=calib,
     )
     with _lock:
+        _close_cam()   # release any previous session's camera subscriber
         _session.clear()
         _session.update({
             "mode": "cloud",
@@ -412,6 +414,9 @@ def _cloud_load(body: LoadBody) -> dict:
             "views": list(views),
             "fps": fps,
             "instruction": instruction,
+            # Full-quality per-camera frames straight off the Pi's capture layer
+            # (the source RECORDING uses). None -> browser composite crops.
+            "cam": camzmq.build_source(list(views)),
         })
     logger.info("[ROLLOUT] cloud load %s -> %s (arm=%s, views=%s, fps=%d, calib=%s, "
                 "queue: wm=%d max=%d replace=%s, endpoint=%s)",
@@ -440,6 +445,7 @@ def rollout_load(body: LoadBody):
     if body.provider == "cloud":
         return _cloud_load(body)
     with _lock:
+        _close_cam()   # release any previous session's camera subscriber
         _session.clear()
         sess = _load_bundle(
             body.ref, body.joints,
@@ -473,13 +479,24 @@ def _cloud_act(body: ActBody) -> dict:
     roll: cloudmod.CloudRollout = _session["cloud"]
     views: list[str] = _session["views"]
     arm_keys: list[str] = _session["arm_keys"]
-    missing = [v for v in views if v not in body.images]
-    if missing:
-        raise HTTPException(
-            status_code=422,
-            detail=f"cloud policy needs image feature(s) {missing} — not supplied by the client.",
-        )
-    images = [body.images[v] for v in views]
+    # Prefer FULL-QUALITY per-camera frames from the Pi's capture layer (the same
+    # source the recorder/training data uses). Fall back to the browser's crops of
+    # the ABR-degraded composite when that source isn't configured/reachable, or
+    # when any view is stale — a partial/frozen obs is worse than the composite.
+    cam = _session.get("cam")
+    zmq_imgs = cam.frames_b64(views) if cam else None
+    if zmq_imgs is not None:
+        images = [zmq_imgs[v] for v in views]
+        _session["frame_source"] = "zmq"
+    else:
+        missing = [v for v in views if v not in body.images]
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail=f"cloud policy needs image feature(s) {missing} — not supplied by the client.",
+            )
+        images = [body.images[v] for v in views]
+        _session["frame_source"] = "composite"
     # State in the MODEL's joint order (arm_keys), not Nori's alphabetical sort.
     state = [float(body.state.get(k, 0.0)) for k in arm_keys]
     try:
@@ -551,10 +568,22 @@ def rollout_act(body: ActBody):
         return {"action": {j: v for j, v in zip(action_joints, vec)}}
 
 
+def _close_cam() -> None:
+    """Release the ZMQ camera subscriber (daemon threads + sockets) of the session
+    being torn down, so a re-load doesn't leak subscribers onto the same ports."""
+    cam = _session.get("cam")
+    if cam:
+        try:
+            cam.close()
+        except Exception:
+            logger.warning("[ROLLOUT] camera source close failed", exc_info=True)
+
+
 @router.post("/unload")
 def rollout_unload():
     with _lock:
         had = _session.get("ref")
+        _close_cam()
         _session.clear()
     return {"unloaded": had}
 
@@ -572,6 +601,10 @@ def rollout_status():
                 "joints": _session["joints"],
                 "image_keys": list(_session["views"]),
                 "cloud": _session["cloud"].status(),
+                # Which frame path the policy is actually being fed, so a silent
+                # fallback to the degraded composite is visible in the field.
+                "frame_source": _session.get("frame_source", "unknown"),
+                "cameras": _session["cam"].status() if _session.get("cam") else None,
             }
         return {
             "loaded": _session["ref"],

@@ -58,6 +58,16 @@ interface NoriContextType {
   activeRobotSerial: string | null;
   /** Pick which paired robot is active. Pass null to clear. */
   setActiveRobotSerial: (serial: string | null) => void;
+  /**
+   * True when this account owns a robot AND one is selected as active — i.e. there is
+   * something for a teleop session to connect TO. The canonical form of the check that
+   * used to be re-derived in home/pairing/account; connect surfaces gate on this so the
+   * button can't be pressed into a guaranteed failure.
+   *
+   * Note this stays false while `provisioning` is still in flight (the profile hasn't
+   * arrived yet), which is the safe direction: the button is disabled until we know.
+   */
+  isPaired: boolean;
 }
 
 /** localStorage key for the active-robot choice, scoped per auth user. */
@@ -267,6 +277,7 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setCustomer,
       activeRobotSerial,
       setActiveRobotSerial,
+      isPaired: !!customer?.is_paired && !!activeRobotSerial,
     }),
     [
       config,

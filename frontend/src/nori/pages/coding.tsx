@@ -23,6 +23,7 @@ import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { ScriptSession } from "@/nori/remote/ScriptSession";
 import { startMockPerception, type MockPerceptionHandle } from "@/nori/remote/mockPerception";
 import { useApi } from "@/contexts/ApiContext";
+import { useConnectGate } from "@/nori/components/ConnectionPanel";
 
 const CODE_EXTENSIONS = [javascript({ typescript: true }), EditorView.lineWrapping];
 
@@ -70,9 +71,10 @@ nori.log("done");
 
 const Coding = () => {
   const {
-    teleop, connState, connecting, connect, tel, scriptSource, setScriptSource,
+    teleop, connState, connecting, connect, tel, scriptSource, setScriptSource, setSessionBusy,
   } = useTeleopSession();
   const { baseUrl, fetchWithHeaders } = useApi();
+  const connectBlocked = useConnectGate();
 
   const [prompt, setPrompt] = useState("");
   const [output, setOutput] = useState<string[]>([]);
@@ -110,6 +112,14 @@ const Coding = () => {
 
   // Stop a running script if we navigate away (the SESSION persists; only the script stops).
   useEffect(() => () => sessionRef.current?.stop(), []);
+
+  // A script run is hands-off by design — the operator watches video on Remote and never touches
+  // the mouse — so hold off the idle auto-disconnect for its duration. The cleanup also clears the
+  // flag when the page unmounts mid-run, which is correct: the unmount effect above stops the run.
+  useEffect(() => {
+    setSessionBusy("coding:script", scriptRunning);
+    return () => setSessionBusy("coding:script", false);
+  }, [scriptRunning, setSessionBusy]);
 
   // Dev: start/stop the synthetic perception feed so nori.perceive() returns data before the on-Pi
   // detector exists (Phase F). Off by default; injects through the same path a real frame takes.
@@ -272,7 +282,13 @@ const Coding = () => {
             ● {status}
           </span>
           {!connected && (
-            <Button size="sm" variant="secondary" onClick={connect} disabled={connecting}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={connect}
+              disabled={connecting || !!connectBlocked}
+              title={connectBlocked ?? undefined}
+            >
               {connecting ? "Connecting…" : "Connect"}
             </Button>
           )}

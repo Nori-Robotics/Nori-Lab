@@ -34,11 +34,31 @@ export function ConnectionStatus() {
   return <ConnectionBanner status={connectStatus} />;
 }
 
+/**
+ * Why the Connect button can't be pressed right now, or null if it can.
+ *
+ * Shared by every signed-in connect surface (Home, Remote, Coding, Agent) so they can't drift.
+ * Connecting with no paired robot can only ever fail — the room defaults to the paired serial,
+ * and without one there's nothing to join — so the button is disabled rather than left live to
+ * produce a confusing connect-timeout. The string doubles as the button's `title`, because a
+ * greyed-out control with no stated reason was itself one of the tester complaints.
+ *
+ * NOT used by the /nori/drive and /nori/vr quick-start pages: those are deliberately usable
+ * anonymously against a hand-typed LAN room, with no account and therefore no pairing.
+ */
+export function useConnectGate(): string | null {
+  const { ready, isPaired, provisioning } = useNori();
+  if (provisioning) return "Checking your account…";
+  if (!isPaired) return "Pair a robot first — see the Pairing page.";
+  if (!ready) return "Nori is still starting up.";
+  return null;
+}
+
 export function ConnectionControls({
   showSettings, onToggleSettings,
 }: { showSettings: boolean; onToggleSettings: () => void }) {
-  const { ready } = useNori();
   const { connState, connecting, running, connect, disconnect } = useTeleopSession();
+  const blockedReason = useConnectGate();
 
   const connected = running && connState === "connected";
   const status = connected
@@ -48,7 +68,13 @@ export function ConnectionControls({
   return (
     <div className="mt-4 flex flex-wrap items-center gap-3">
       {!running ? (
-        <Button size="sm" variant="secondary" onClick={connect} disabled={connecting || !ready}>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={connect}
+          disabled={connecting || !!blockedReason}
+          title={blockedReason ?? undefined}
+        >
           {connecting ? "Connecting…" : "Connect"}
         </Button>
       ) : (

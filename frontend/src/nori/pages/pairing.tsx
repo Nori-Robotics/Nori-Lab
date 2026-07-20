@@ -256,7 +256,7 @@ const Pairing = () => {
                 id="pairCode"
                 value={pairCode}
                 onChange={(e) => setPairCode(e.target.value.toUpperCase())}
-                placeholder="e.g. 7QF3-K9PA-2BX5-MNTW"
+                placeholder="e.g. ABC3-DEF4-XYZ5-MNTW"
                 autoCapitalize="characters"
                 autoCorrect="off"
                 spellCheck={false}

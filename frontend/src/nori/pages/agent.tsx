@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Play, Square, OctagonX, Check, X, Bot } from "lucide-react";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { useApi } from "@/contexts/ApiContext";
+import { useConnectGate } from "@/nori/components/ConnectionPanel";
 import {
   AgentSession, AgentBudgetError,
   type AgentBlock, type AgentEvent, type AgentTurn, type FinishReason, type AgentMessage,
@@ -52,7 +53,8 @@ type DailyBudget = {
 };
 
 const Agent = () => {
-  const { teleop, connState, connecting, connect, tel } = useTeleopSession();
+  const { teleop, connState, connecting, connect, tel, setSessionBusy } = useTeleopSession();
+  const connectBlocked = useConnectGate();
   const { baseUrl, fetchWithHeaders } = useApi();
 
   const [goal, setGoal] = useState("");
@@ -81,6 +83,14 @@ const Agent = () => {
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [rows]);
   // Stop the loop if we navigate away (the session persists; only the run stops).
   useEffect(() => () => sessionRef.current?.stop(), []);
+
+  // An agent run is autonomous — minutes can pass with no operator input while the robot moves —
+  // so suppress the idle auto-disconnect until the loop ends. Includes the pause waiting for the
+  // first-motion OK: that prompt can sit unanswered, but the operator IS about to answer it.
+  useEffect(() => {
+    setSessionBusy("agent:run", running || !!pendingMotion);
+    return () => setSessionBusy("agent:run", false);
+  }, [running, pendingMotion, setSessionBusy]);
 
   const push = (row: Row) => setRows((prev) => [...prev.slice(-400), row]);
 
@@ -195,7 +205,13 @@ const Agent = () => {
               ● {status}
             </span>
             {!connected && (
-              <Button size="sm" variant="secondary" onClick={connect} disabled={connecting}>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={connect}
+                disabled={connecting || !!connectBlocked}
+                title={connectBlocked ?? undefined}
+              >
                 {connecting ? "Connecting…" : "Connect"}
               </Button>
             )}

@@ -27,6 +27,8 @@ import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
 import { getTurnCredentials } from "@/nori/api/client";
 import { isTurnMintEnabled, isPrivateRoomEnabled } from "@/nori/remote/flags";
+import { useIdleDisconnect } from "@/nori/useIdleDisconnect";
+import IdleDisconnectDialog from "@/nori/components/IdleDisconnectDialog";
 
 const DEFAULT_STUN = "stun:stun.l.google.com:19302";
 
@@ -117,6 +119,12 @@ export interface TeleopSessionValue {
   // The pasted/generated script text, persisted so it survives navigation + reload.
   scriptSource: string;
   setScriptSource: (s: string) => void;
+  // Idle auto-disconnect opt-out. A page running something hands-off (a script, an agent goal)
+  // registers itself busy for as long as the run lasts, which suppresses the "Are you still
+  // there?" timer — those are exactly the sessions where nobody touches the mouse for minutes
+  // on purpose. Keyed so concurrent registrants can't clobber each other; always unregister in
+  // an effect cleanup so a page that unmounts mid-run can't wedge the timer off forever.
+  setSessionBusy: (key: string, busy: boolean) => void;
 }
 
 const TeleopSessionContext = createContext<TeleopSessionValue | undefined>(undefined);
@@ -356,19 +364,53 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
   // Leaving /nori entirely unmounts this provider — tear the session down cleanly (robot `bye`).
   useEffect(() => () => { teleopRef.current?.stop(); }, []);
 
+  // ── Idle auto-disconnect ────────────────────────────────────────────────────────────────
+  const busyKeysRef = useRef<Set<string>>(new Set());
+  const [busyCount, setBusyCount] = useState(0);
+  const setSessionBusy = useCallback((key: string, busy: boolean) => {
+    const keys = busyKeysRef.current;
+    if (busy) keys.add(key);
+    else keys.delete(key);
+    setBusyCount(keys.size);
+  }, []);
+
+  // "Mid-activity" = anything that means the operator is legitimately hands-off rather than gone:
+  // a page-registered run (script/agent), live control frames, or an open recording session
+  // (disconnecting under one would auto-close it on the robot — see remote.tsx's confirm dialog).
+  const sessionBusy =
+    busyCount > 0 || controlActive || !!recordState?.sessionOpen || !!recordState?.recording;
+
+  const idle = useIdleDisconnect({
+    armed: running,
+    busy: sessionBusy,
+    onTimeout: () => { void disconnect(); },
+  });
+
   const value = useMemo<TeleopSessionValue>(() => ({
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
     recordState, connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
+    setSessionBusy,
   }), [
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
     recordState, connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
+    setSessionBusy,
   ]);
 
-  return <TeleopSessionContext.Provider value={value}>{children}</TeleopSessionContext.Provider>;
+  return (
+    <TeleopSessionContext.Provider value={value}>
+      {children}
+      <IdleDisconnectDialog
+        open={idle.promptOpen}
+        secondsLeft={idle.secondsLeft}
+        onConfirm={idle.confirmPresent}
+        onDisconnect={() => { idle.confirmPresent(); void disconnect(); }}
+      />
+    </TeleopSessionContext.Provider>
+  );
 };
 
 export const useTeleopSession = (): TeleopSessionValue => {

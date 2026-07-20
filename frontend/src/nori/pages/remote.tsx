@@ -20,6 +20,7 @@ import { useApi } from "@/contexts/ApiContext";
 import { type ArmSide, type CameraViewHandle } from "@nori/sdk";
 import { VrSession } from "@nori/sdk/vr";
 import { VrHandoff } from "@/nori/components/VrHandoff";
+import { useConnectGate } from "@/nori/components/ConnectionPanel";
 import { TelemetryPanel, GripForce, ControlLegend, BaseCommandLegend, CallBar, ConnectionBanner, ControlOfflineBanner, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
@@ -87,6 +88,7 @@ const TuneSlider = ({
 
 const Remote = () => {
   const { ready, error: noriError } = useNori();
+  const connectBlocked = useConnectGate();
   const { baseUrl, fetchWithHeaders } = useApi();
   // The session now lives in TeleopSessionProvider so it survives navigation (Remote <-> Coding).
   // This page is a consumer: it renders video/telemetry/settings and drives VR/leader/clip, but
@@ -523,7 +525,13 @@ const Remote = () => {
               {running ? (
                 <Button size="sm" variant="destructive" onClick={requestDisconnect}>Disconnect</Button>
               ) : (
-                <Button size="sm" variant="secondary" onClick={connect} disabled={connecting}>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={connect}
+                  disabled={connecting || !!connectBlocked}
+                  title={connectBlocked ?? undefined}
+                >
                   {connecting ? "Connecting…" : "Connect"}
                 </Button>
               )}

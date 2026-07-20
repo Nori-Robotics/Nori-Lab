@@ -24,6 +24,7 @@ import io
 import os
 import secrets
 import threading
+import time
 from typing import Optional
 
 import numpy as np
@@ -86,10 +87,24 @@ class ActRequest(BaseModel):
     state: list[float]     # robot joint state (6 for a single SO-100/101 arm)
     instruction: str       # natural-language task, e.g. "pick up the red cup"
     num_steps: int = 10    # flow-matching integration steps (latency <-> quality)
+    # RTC FEASIBILITY PROBE (see cloud_inference/rtc.py). RTC's per-step PiGDM
+    # correction is a VJP, so it needs (a) autograd enabled and (b) the CUDA-graph
+    # fast path off. Both are optimisations we currently rely on, and latency is
+    # already the binding constraint: after the chunk-stride fix the queue covers
+    # ~1s of motion against a 0.65-1.2s round-trip. So measure the cost BEFORE
+    # building the integration — if compute doubles, RTC needs a latency
+    # reduction (in-region GPU) to be viable at all.
+    # Cost is still bounded by MAX_NUM_STEPS and the bearer token.
+    enable_cuda_graph: bool = True
+    enable_grad: bool = False
 
 
 class ActResponse(BaseModel):
     actions: list[list[float]]  # chunk: N moves x DOF, ROBOT SCALE (already de-normalized)
+    # Server-side compute time, so the client can separate GPU cost from network
+    # RTT. Additive + optional: existing clients that read only `actions` are
+    # unaffected.
+    compute_ms: Optional[float] = None
 
 
 def _decode(b64: str) -> np.ndarray:
@@ -133,22 +148,39 @@ def act(req: ActRequest, authorization: Optional[str] = Header(None)) -> ActResp
     num_steps = max(1, min(int(req.num_steps), MAX_NUM_STEPS))  # clamp GPU cost
     images = [_decode(b) for b in req.images]
     state = np.asarray(req.state, dtype=np.float32)
-    with _lock, torch.no_grad():
-        out = _model.predict_action(
-            processor=_processor,
-            images=images,
-            task=req.instruction,
-            state=state,
-            norm_tag=NORM_TAG,
-            inference_action_mode="continuous",
-            num_steps=num_steps,
-            normalize_language=True,
-            enable_cuda_graph=True,
-        )
+    # Autograd roughly doubles activation memory, and the weights alone are ~21GB
+    # on a 24GB A10G — so the grad path can simply OOM. Report that as a clean 507
+    # rather than letting it wedge the container: "RTC does not fit on this
+    # hardware" is a legitimate measurement outcome, not a crash.
+    grad_ctx = torch.enable_grad() if req.enable_grad else torch.no_grad()
+    t0 = time.perf_counter()
+    try:
+        with _lock, grad_ctx:
+            out = _model.predict_action(
+                processor=_processor,
+                images=images,
+                task=req.instruction,
+                state=state,
+                norm_tag=NORM_TAG,
+                inference_action_mode="continuous",
+                num_steps=num_steps,
+                normalize_language=True,
+                enable_cuda_graph=bool(req.enable_cuda_graph),
+            )
+    except torch.cuda.OutOfMemoryError as e:
+        torch.cuda.empty_cache()
+        raise HTTPException(
+            status_code=507,
+            detail=f"CUDA OOM (enable_grad={req.enable_grad}, "
+                   f"cuda_graph={req.enable_cuda_graph}): {e}",
+        ) from e
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()   # predict_action is async; time the real compute
+    compute_ms = (time.perf_counter() - t0) * 1000.0
     acts = out.actions
     if torch.is_tensor(acts):  # predict_action returns a CUDA tensor — move to host first
         acts = acts.detach().float().cpu().numpy()
     acts = np.asarray(acts, dtype=np.float32)
     if acts.ndim == 3 and acts.shape[0] == 1:  # (1, chunk, DOF) -> (chunk, DOF)
         acts = acts[0]
-    return ActResponse(actions=acts.tolist())
+    return ActResponse(actions=acts.tolist(), compute_ms=round(compute_ms, 1))

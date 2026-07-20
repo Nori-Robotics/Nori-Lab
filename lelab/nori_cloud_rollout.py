@@ -125,13 +125,33 @@ def load_calibration(arm: str) -> Optional[dict]:
         cal = d.get(arm, d)
         A = [float(x) for x in cal["A"]]
         B = [float(x) for x in cal["B"]]
+        # OPTIONAL asymmetric gains. The two directions can genuinely want different
+        # scales on a joint the reference capture barely exercised (measured on
+        # wrist_roll, 3.7deg of span in move_red_left):
+        #   forward  wants A~1 -- a large A multiplies sensor NOISE into the model's
+        #            input, so a near-static joint reads as thrashing and every
+        #            prediction destabilises.
+        #   inverse  wants a large A -- undamped, the model's full +-50deg of roll
+        #            passes straight through, the rolled state feeds back, and the
+        #            joint walks monotonically into its mechanical stop (observed:
+        #            0 -> -50deg -> "blocked (stall:left_arm_wrist_roll)", which then
+        #            stalled shoulder_lift too).
+        # One gain cannot serve both. Absent these keys, behaviour is unchanged.
+        A_inv = [float(x) for x in cal.get("A_inverse", A)]
+        B_inv = [float(x) for x in cal.get("B_inverse", B)]
     except Exception as e:
         logger.warning("[CLOUD-ROLLOUT] unreadable calibration %s (%s)", p, e)
         return None
-    if len(A) != 6 or len(B) != 6 or any(abs(a) < 1e-6 for a in A):
-        logger.warning("[CLOUD-ROLLOUT] calibration A/B must be length 6 with non-zero A")
+    for name, vals in (("A", A), ("B", B), ("A_inverse", A_inv), ("B_inverse", B_inv)):
+        if len(vals) != 6:
+            logger.warning("[CLOUD-ROLLOUT] calibration %s must be length 6", name)
+            return None
+    if any(abs(a) < 1e-6 for a in A) or any(abs(a) < 1e-6 for a in A_inv):
+        logger.warning("[CLOUD-ROLLOUT] calibration gains must be non-zero")
         return None
-    return {"A": A, "B": B}
+    if A_inv != A or B_inv != B:
+        logger.info("[CLOUD-ROLLOUT] asymmetric calibration: forward A=%s / inverse A=%s", A, A_inv)
+    return {"A": A, "B": B, "A_inverse": A_inv, "B_inverse": B_inv}
 
 
 def arm_keys(arm: str) -> list[str]:
@@ -264,10 +284,16 @@ class CloudRollout:
         return [a * s + b for s, a, b in zip(state, self.calib["A"], self.calib["B"])]
 
     def _cal_inverse(self, action: list[float]) -> list[float]:
-        """Model action -> Nori convention ((a - B)/A)."""
+        """Model action -> Nori convention ((a - B)/A).
+
+        Uses the INVERSE gains, which default to the forward ones (so a plain
+        {"A","B"} calibration behaves exactly as before). See load_calibration for
+        why a joint can need a different scale in each direction."""
         if not self.calib:
             return action
-        return [(v - b) / a for v, a, b in zip(action, self.calib["A"], self.calib["B"])]
+        A = self.calib.get("A_inverse", self.calib["A"])
+        B = self.calib.get("B_inverse", self.calib["B"])
+        return [(v - b) / a for v, a, b in zip(action, A, B)]
 
     def _clamp(self, action: list[float]) -> list[float]:
         if not self.bounds:

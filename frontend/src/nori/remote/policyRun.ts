@@ -357,6 +357,22 @@ export class PolicyRunner {
         this.consecutiveFailures = 0;
         return;
       }
+      // COMMANDED vs ACHIEVED, per joint. The action_status channel can't answer
+      // "is this joint actually moving?" for a streaming policy — a tracked action
+      // never converges, so it never terminalises. This does answer it: `action` is
+      // what we asked for, tel.state is what the arm reports. A joint whose command
+      // varies while its observation stays flat is being dropped or overridden
+      // downstream; a joint whose COMMAND is itself flat is an upstream (model)
+      // problem. Logged once a second so the two are directly comparable.
+      if (this.ticks % 10 === 0) {
+        const obs = tel.state ?? {};
+        const row = Object.keys(action)
+          .filter((k) => k in obs)
+          .map((k) => `${k.replace(/^(left|right)_arm_/, "").replace(/\.pos$/, "")}` +
+                      ` cmd=${action[k].toFixed(1)} obs=${obs[k].toFixed(1)}`)
+          .join("  ");
+        console.info(`[policyRun] cmd-vs-obs | ${row}`);
+      }
       // The one and only robot-bound artifact of this whole subsystem — SKIPPED
       // in observe-only mode (log the predicted targets, drive nothing).
       if (this.observeOnly) {
@@ -375,10 +391,21 @@ export class PolicyRunner {
           void this.teleop.awaitAction(id, { timeoutMs: 1500 }).then((st) => {
             // "done" is the boring case; everything else names a real problem
             // (blocked -> "stall:<joint>", clamped -> a target hit its range limit).
-            if (st.state !== "done") {
-              console.warn(`[policyRun] daemon verdict: ${st.state}`,
-                           st.reason ? `(${st.reason})` : "");
-            }
+            if (st.state === "done") return;
+            // A streaming policy rewrites setpoints every ~100 ms, so a tracked
+            // action almost never CONVERGES -> "done"/"clamped" are rare and a
+            // client-fallback timeout is expected. That timeout is not evidence the
+            // daemon is quiet: "blocked" (incl. stall) is checked before the
+            // convergence test and would have fired promptly. Report the last
+            // non-terminal status too, so a silent daemon (null: no Phase-E support
+            // or status not reaching us) is distinguishable from a live one that
+            // simply never terminalised.
+            // stop() nulls this.teleop, and this resolves up to timeoutMs later — so
+            // ending a run mid-flight would otherwise throw out of a floating promise.
+            const last = this.teleop?.actionStatus(id) ?? null;
+            const seen = last ? `${last.state}${last.reason ? ` (${last.reason})` : ""}` : "NONE";
+            console.warn(`[policyRun] daemon verdict: ${st.state}`,
+                         st.reason ? `(${st.reason})` : "", `| last status seen: ${seen}`);
           });
         } else {
           this.teleop.sendAction(action);

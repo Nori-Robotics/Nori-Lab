@@ -360,13 +360,16 @@ def _cloud_load(body: LoadBody) -> dict:
     if not instruction:
         raise HTTPException(status_code=422,
                             detail="a cloud VLA needs an instruction (natural-language task)")
-    views = body.views or _env_views() or cloudmod.DEFAULT_CLOUD_VIEWS
     fps = body.fps if (body.fps and body.fps > 0) else _env_fps()
     # Joint mapping: the model's 6-DoF output maps to ONE arm's keys, in the
     # model's canonical order (arm_keys). Validate those keys exist in the live
     # session so a bimanual/single-arm or left/right mismatch fails at /load, not
     # silently mid-rollout.
     arm = (body.arm or _env_arm()).strip().lower()
+    # Resolved AFTER `arm`: the default view pair includes that arm's wrist tile,
+    # so driving the right arm must not feed the left wrist (see
+    # default_cloud_views for why a wrist view belongs in the pair at all).
+    views = body.views or _env_views() or cloudmod.default_cloud_views(arm)
     try:
         akeys = cloudmod.arm_keys(arm)
     except ValueError as e:
@@ -398,9 +401,19 @@ def _cloud_load(body: LoadBody) -> dict:
         watermark=cloudmod._env_int("NORI_INFER_WATERMARK", cloudmod.REFILL_WATERMARK),
         max_queue=cloudmod._env_int("NORI_INFER_MAX_QUEUE", cloudmod.MAX_QUEUE),
         replace_on_refill=cloudmod._env_bool("NORI_INFER_REPLACE", True),
+        # fps drives the chunk STRIDE: the model authors 30 actions per second of
+        # motion, so serving one per tick at 15fps halves the speed. NORI_INFER_STRIDE
+        # forces a value (1 = the old one-action-per-tick behaviour).
+        fps=float(fps),
+        chunk_hz=(cloudmod.MOLMOACT2_CHUNK_HZ
+                  if not os.environ.get("NORI_INFER_STRIDE")
+                  else float(fps) * cloudmod._env_int("NORI_INFER_STRIDE", 1)),
         bounds=cloudmod.MOLMOACT2_BOUNDS,
         calib=calib,
     )
+    logger.info("[CLOUD-ROLLOUT] chunk stride=%d (fps=%s, chunk authored at %sHz) -- "
+                "queue holds %.2fs of motion; the refill round-trip must fit inside that",
+                roll.stride, fps, roll.chunk_hz, roll.max_queue / (roll.chunk_hz or 1))
     with _lock:
         _close_cam()   # release any previous session's camera subscriber
         _session.clear()
@@ -472,6 +485,36 @@ class ActBody(BaseModel):
     images: dict[str, str] = {}
 
 
+_dump_tick = 0
+
+
+def _dump_frames(images: list[str], views: list[str]) -> None:
+    """Write the exact frames handed to the policy to NORI_INFER_DUMP_FRAMES.
+
+    Diagnostic only, and deliberately cheap to leave off: a single env var, no
+    cost when unset. Filenames carry the tick and the view key so a sequence can
+    be flipped through in order. Never raises — a debug aid must not be able to
+    stop a rollout."""
+    global _dump_tick
+    out = os.environ.get("NORI_INFER_DUMP_FRAMES")
+    if not out:
+        return
+    every = max(1, int(os.environ.get("NORI_INFER_DUMP_EVERY", "30")))
+    tick = _dump_tick
+    _dump_tick += 1
+    if tick % every:
+        return
+    try:
+        d = Path(out).expanduser()
+        d.mkdir(parents=True, exist_ok=True)
+        for key, b64 in zip(views, images):
+            raw = b64.split(",", 1)[1] if b64.lstrip().startswith("data:") else b64
+            short = key.replace("observation.images.", "")
+            (d / f"t{tick:05d}_{short}.jpg").write_bytes(base64.b64decode(raw))
+    except Exception as e:
+        logger.warning("[ROLLOUT] frame dump failed (%s) — continuing", e)
+
+
 def _cloud_act(body: ActBody) -> dict:
     """Serve one action from the cloud chunk queue (lock already held). Maps the
     browser's {featureKey: dataURL} dict to the ordered view list the model wants,
@@ -497,6 +540,12 @@ def _cloud_act(body: ActBody) -> dict:
             )
         images = [body.images[v] for v in views]
         _session["frame_source"] = "composite"
+    # NORI_INFER_DUMP_FRAMES=<dir>: write the images we ACTUALLY send, so the
+    # policy's input can be inspected rather than reasoned about. A whole day of
+    # this spike was spent theorising about frame quality without once looking at
+    # a frame. Off unless the env var is set; writes every DUMP_EVERY-th tick so a
+    # run yields a handful of files, not thousands.
+    _dump_frames(images, views)
     # State in the MODEL's joint order (arm_keys), not Nori's alphabetical sort.
     state = [float(body.state.get(k, 0.0)) for k in arm_keys]
     try:
@@ -569,14 +618,22 @@ def rollout_act(body: ActBody):
 
 
 def _close_cam() -> None:
-    """Release the ZMQ camera subscriber (daemon threads + sockets) of the session
-    being torn down, so a re-load doesn't leak subscribers onto the same ports."""
+    """Release the per-session resources that hold sockets: the ZMQ camera
+    subscriber (daemon threads) and the cloud client's POOLED HTTP connection.
+    Both must go on teardown or a re-load leaks — subscribers onto the same
+    ports, and an idle keep-alive connection per rollout."""
     cam = _session.get("cam")
     if cam:
         try:
             cam.close()
         except Exception:
             logger.warning("[ROLLOUT] camera source close failed", exc_info=True)
+    roll = _session.get("cloud")
+    if roll is not None and hasattr(roll, "close"):
+        try:
+            roll.close()
+        except Exception:
+            logger.warning("[ROLLOUT] cloud client close failed", exc_info=True)
 
 
 @router.post("/unload")

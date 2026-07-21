@@ -218,10 +218,15 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     return () => clearInterval(id);
   }, [running]);
 
-  // Default the room to the paired robot's serial (only while unset — a typed value wins).
+  // Keep the session room pointed at the active paired robot. For a signed-in operator the room
+  // IS their active robot's serial — the manual room field was retired (room-token auth is gone,
+  // so you can only join a robot your account owns). Re-sync whenever the active robot changes so
+  // a stale/persisted room can't linger and mislead the consumers that read it (connect() below
+  // and the VR hand-off link). Anonymous LAN pages (drive/vr) have no serial, so their hand-typed
+  // room is left untouched.
   const serial = activeRobotSerial ?? customer?.robot_serial_number ?? "";
   useEffect(() => {
-    if (!settings.room && serial) setSetting("room", serial);
+    if (serial && settings.room !== serial) setSetting("room", serial);
   }, [serial, settings.room, setSetting]);
 
   // Live-update the active session's arm without reconnecting.

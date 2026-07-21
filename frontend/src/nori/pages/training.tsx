@@ -95,7 +95,12 @@ const ConfigurationMode = () => {
     <section className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Train a policy</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold">Train a policy</h1>
+            <span className="inline-flex -rotate-3 animate-floaty items-center rounded-full bg-sticker px-3 py-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink shadow-soft">
+              {"// beta"}
+            </span>
+          </div>
           <p className="text-sm text-muted-foreground">
             Configure a run and dispatch it to Nori cloud compute.
           </p>

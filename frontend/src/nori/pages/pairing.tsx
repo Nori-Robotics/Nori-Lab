@@ -19,6 +19,7 @@ import { useNori } from "@/nori/NoriContext";
 import {
   listRobots,
   pairRobot,
+  renameRobot,
   selectRobot,
   unpairRobot,
   type CustomerProfile,
@@ -39,10 +40,13 @@ const Pairing = () => {
   const [robots, setRobots] = useState<PairedRobot[] | null>(null);
   const [serial, setSerial] = useState("");
   const [pairCode, setPairCode] = useState("");
+  const [nickname, setNickname] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busySerial, setBusySerial] = useState<string | null>(null);
   const [confirmSerial, setConfirmSerial] = useState<string | null>(null);
+  const [renameSerial, setRenameSerial] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const loadRobots = useCallback(async () => {
     try {
@@ -72,22 +76,33 @@ const Pairing = () => {
     setSubmitting(true);
     const next = serial.trim();
     const code = pairCode.trim();
+    const name = nickname.trim();
     try {
-      const updated = await pairRobot(baseUrl, fetchWithHeaders, next, code || undefined);
+      const updated = await pairRobot(
+        baseUrl,
+        fetchWithHeaders,
+        next,
+        code || undefined,
+        name || undefined
+      );
       setCustomer(updated);
       setSerial("");
       setPairCode("");
+      setNickname("");
       // First robot paired becomes active automatically.
       if (!robots || robots.length === 0) setActiveRobotSerial(next);
       await loadRobots();
     } catch (err) {
-      // 403 = the pairing code is missing or wrong (proof-of-possession gate, backend
-      // migration 029). Keep this distinct from the serial cases so we point the user
-      // at the CODE, not the serial.
+      // 403 covers TWO different refusals with different fixes: the pair-code gate
+      // (proof of possession, mig 029) AND the tier robot-limit cap (get_tier_limits,
+      // which runs BEFORE the code check). Both backend `detail` strings are already
+      // user-facing, so surface the actual one — otherwise someone over their robot
+      // limit is wrongly told "wrong pairing code" and chases the code forever.
       if (err instanceof ApiError && err.status === 403) {
         setError(
-          "That pairing code is missing or incorrect. Enter the code printed on your " +
-            "robot's box to confirm it's yours."
+          err.detail ??
+            "Pairing was refused — check the code printed on your robot's box, and that " +
+              "you're not over your robot limit."
         );
       } else if (err instanceof ApiError && (err.status === 409 || err.status === 404)) {
         // 409 = serial owned by another account; 404 = no such registered robot (the
@@ -135,11 +150,36 @@ const Pairing = () => {
     }
   };
 
+  // Open the inline rename editor for a robot, seeded with its current name. Clears any
+  // pending unpair confirm on the same row so the two edit modes can't overlap.
+  const startRename = (s: string, current: string | null | undefined) => {
+    setError(null);
+    setConfirmSerial(null);
+    setRenameValue(current ?? "");
+    setRenameSerial(s);
+  };
+
+  const onRename = async (s: string) => {
+    setError(null);
+    setBusySerial(s);
+    try {
+      // Empty string clears the nickname (backend stores NULL). Last-write-wins against a
+      // rename made on the robot's own kiosk — both write the one robots.nickname column.
+      await renameRobot(baseUrl, fetchWithHeaders, s, renameValue.trim());
+      setRenameSerial(null);
+      await loadRobots();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusySerial(null);
+    }
+  };
+
   const paired = robots ?? [];
   const hasRobots = paired.length > 0;
 
   return (
-    <section className="max-w-md space-y-4">
+    <section className="max-w-2xl space-y-4">
       <h1 className="text-3xl font-bold">{hasRobots ? "Your robots" : "Pair your robot"}</h1>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
@@ -156,7 +196,48 @@ const Pairing = () => {
               const s = r.robot_serial_number;
               const active = s === activeRobotSerial;
               const confirming = confirmSerial === s;
+              const renaming = renameSerial === s;
               const busy = busySerial === s;
+
+              // Rename mode: the whole row becomes an edit form so the input has room
+              // (nicknames run up to 128 chars — no space for it inline with the buttons).
+              if (renaming) {
+                return (
+                  <div
+                    key={s}
+                    className={`space-y-2 rounded-md border p-3 ${
+                      active ? "border-primary" : "border-border"
+                    }`}
+                  >
+                    <div className="truncate font-mono text-xs text-muted-foreground">{s}</div>
+                    <Label htmlFor={`rename-${s}`} className="sr-only">
+                      Nickname
+                    </Label>
+                    <Input
+                      id={`rename-${s}`}
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      placeholder="Nickname (leave blank to clear)"
+                      maxLength={128}
+                      autoFocus
+                    />
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => onRename(s)} disabled={busy}>
+                        {busy ? "Saving…" : "Save"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setRenameSerial(null)}
+                        disabled={busy}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                );
+              }
+
               return (
                 <div
                   key={s}
@@ -165,9 +246,15 @@ const Pairing = () => {
                   }`}
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="truncate font-mono text-sm">{s}</div>
-                    {r.nickname && (
-                      <div className="truncate text-xs text-muted-foreground">{r.nickname}</div>
+                    {/* Lead with the nickname when set — it's what the customer named the
+                        robot — and drop the serial to a secondary line. Serial-only when unnamed. */}
+                    {r.nickname ? (
+                      <>
+                        <div className="truncate text-sm font-medium">{r.nickname}</div>
+                        <div className="truncate font-mono text-xs text-muted-foreground">{s}</div>
+                      </>
+                    ) : (
+                      <div className="truncate font-mono text-sm">{s}</div>
                     )}
                   </div>
                   {active ? (
@@ -204,14 +291,24 @@ const Pairing = () => {
                       </Button>
                     </>
                   ) : (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-destructive hover:text-destructive"
-                      onClick={() => setConfirmSerial(s)}
-                    >
-                      Unpair
-                    </Button>
+                    <>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => startRename(s, r.nickname)}
+                        disabled={busy}
+                      >
+                        Rename
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => setConfirmSerial(s)}
+                      >
+                        Unpair
+                      </Button>
+                    </>
                   )}
                 </div>
               );
@@ -263,6 +360,22 @@ const Pairing = () => {
               />
               <p className="text-xs text-muted-foreground">
                 Printed on your robot's box, next to the serial number.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="nickname">Nickname (optional)</Label>
+              {/* Friendly name for the robot, shown on the home card and editable later on
+                  the robot's own kiosk. Backend caps it at 128 chars (PairRequest.nickname);
+                  match that here so the field can't hold a value the server would reject. */}
+              <Input
+                id="nickname"
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value)}
+                placeholder="e.g. Kitchen bot"
+                maxLength={128}
+              />
+              <p className="text-xs text-muted-foreground">
+                What you'll call this robot around the app. You can change it later.
               </p>
             </div>
             <Button type="submit" disabled={submitting || !serial.trim()}>

@@ -155,12 +155,26 @@ class NoriClient:
 
     # -- pairing (Phase 6) ---------------------------------------------------------
 
-    def pair_robot(self, robot_serial_number: str) -> dict[str, Any]:
+    def pair_robot(
+        self,
+        robot_serial_number: str,
+        pair_code: str | None = None,
+        nickname: str | None = None,
+    ) -> dict[str, Any]:
         """POST /customers/me/pair — pair a robot (multi-robot). First robot becomes
-        active; idempotent on an owned serial; 409 only if another customer owns it."""
-        return self._request(
-            "POST", f"{API}/customers/me/pair", json={"robot_serial_number": robot_serial_number}
-        )
+        active; idempotent on an owned serial; 409 only if another customer owns it.
+
+        pair_code is the proof-of-possession code from the robot's box (backend migration
+        029) — required to CLAIM a provisioned robot. Forwarded only when provided so
+        legacy/un-provisioned serials still pair without one.
+
+        nickname is the customer's friendly name for the robot; forwarded only when set."""
+        body: dict[str, Any] = {"robot_serial_number": robot_serial_number}
+        if pair_code:
+            body["pair_code"] = pair_code
+        if nickname:
+            body["nickname"] = nickname
+        return self._request("POST", f"{API}/customers/me/pair", json=body)
 
     def unpair_robot(self, robot_serial_number: str | None = None) -> dict[str, Any]:
         """POST /customers/me/unpair — detach a robot; idempotent if already unpaired.
@@ -194,6 +208,19 @@ class NoriClient:
 
         return self._request(
             "POST", f"{API}/customers/me/robots/{quote(robot_serial_number, safe='')}/select"
+        )
+
+    def rename_robot(self, robot_serial_number: str, nickname: str) -> dict[str, Any]:
+        """PATCH /customers/me/robots/{serial} — set (or clear) a paired robot's nickname.
+
+        Empty string clears it (backend stores NULL). Last-write-wins against a rename
+        made on the robot's own kiosk (both write the one robots.nickname column)."""
+        from urllib.parse import quote
+
+        return self._request(
+            "PATCH",
+            f"{API}/customers/me/robots/{quote(robot_serial_number, safe='')}",
+            json={"nickname": nickname},
         )
 
     # -- marketplace (Phase 3) -----------------------------------------------------
@@ -436,10 +463,12 @@ class NoriClient:
             "PATCH", f"{API}/datasets/upload/{session_id}", json={"label": label}
         )
 
-    def delete_dataset(self, session_id: str) -> dict[str, Any]:
+    def delete_dataset(self, session_id: str, also_unpublish: bool = False) -> dict[str, Any]:
         """DELETE /datasets/{session_id} — permanently remove a dataset (its HF
-        files + record). 404 on a non-own session; 409 if it's published/locked."""
-        return self._request("DELETE", f"{API}/datasets/{session_id}")
+        files + record). If it's also published, also_unpublish=True takes the
+        listing down too; else the listing stays live. 404 on a non-own session."""
+        params = {"also_unpublish": "true"} if also_unpublish else None
+        return self._request("DELETE", f"{API}/datasets/{session_id}", params=params)
 
     def rename_training_job(self, job_id: str, title: str | None) -> dict[str, Any]:
         """PATCH /training/jobs/{job_id}/name — name a policy at any lifecycle
@@ -454,10 +483,16 @@ class NoriClient:
             "POST", f"{API}/datasets/{session_id}/lock", json={"locked": locked}
         )
 
-    def delete_policy(self, job_id: str) -> dict[str, Any]:
+    def delete_policy(self, job_id: str, also_unpublish: bool = False) -> dict[str, Any]:
         """DELETE /library/policies/{job_id} — remove a policy (checkpoint +
-        record). 409 if it's published, still training, or locked."""
-        return self._request("DELETE", f"{API}/library/policies/{job_id}")
+        record). If it's also published, also_unpublish=True takes the listing
+        down too; else the listing stays live. 409 if still training or locked."""
+        params = {"also_unpublish": "true"} if also_unpublish else None
+        return self._request("DELETE", f"{API}/library/policies/{job_id}", params=params)
+
+    def get_import(self, import_job_id: str) -> dict[str, Any]:
+        """GET /marketplace/imports/{id} — poll an 'add to my cloud' copy job."""
+        return self._request("GET", f"{API}/marketplace/imports/{import_job_id}")
 
     def set_policy_lock(self, job_id: str, locked: bool) -> dict[str, Any]:
         """POST /library/policies/{job_id}/lock — lock/unlock a policy."""
@@ -510,6 +545,17 @@ class NoriClient:
         """GET /datasets/assemblies/active — in-flight assembly jobs, so My Stuff can
         show a dataset as 'Assembling' (append/rebuild target) or a placeholder (new)."""
         return self._request("GET", f"{API}/datasets/assemblies/active")
+
+    def export_dataset(self, dataset_session_id: str) -> dict[str, Any]:
+        """POST /datasets/{id}/export — enqueue packaging this dataset for download.
+        Idempotent (reuses a still-valid export). Returns
+        {export_job_id, status, download_url, size_bytes, expires_at, failure_reason}."""
+        return self._request("POST", f"{API}/datasets/{dataset_session_id}/export")
+
+    def get_export_job(self, export_job_id: str) -> dict[str, Any]:
+        """GET /datasets/export/{id} — poll one export job; download_url is populated
+        (and non-expired) once status is DONE."""
+        return self._request("GET", f"{API}/datasets/export/{export_job_id}")
 
     def dataset_sessions(self, dataset_session_id: str) -> dict[str, Any]:
         """GET /datasets/{id}/sessions — provenance sessions of an assembled dataset

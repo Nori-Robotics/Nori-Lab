@@ -2,13 +2,15 @@
 // NoriWebsite visual language (paper/ink, // eyebrows, display headline, tinted
 // feature cards) pointing at the app's three main surfaces.
 
-import { useState, type SVGProps, type ReactElement } from "react";
+import { useEffect, useState, type SVGProps, type ReactElement } from "react";
 import { Link } from "react-router-dom";
 import { Battery, BatteryLow } from "lucide-react";
+import { useApi } from "@/contexts/ApiContext";
 import { FadeIn } from "@/nori/components/FadeIn";
 import { ConnectionControls, ConnectionSettings, ConnectionStatus } from "@/nori/components/ConnectionPanel";
 import { useNori } from "@/nori/NoriContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
+import { listRobots } from "@/nori/api/client";
 
 // Brand glyphs for the dev card's social links. lucide dropped most brand icons, so these are
 // the official simple-icons paths, inline as currentColor SVGs (inherit the link's text color).
@@ -93,10 +95,36 @@ const FEATURES: {
 ];
 
 const Home = () => {
-  const { customer, activeRobotSerial, provisioning } = useNori();
+  const { customer, session, activeRobotSerial, provisioning } = useNori();
+  const { baseUrl, fetchWithHeaders } = useApi();
   const serial = activeRobotSerial ?? customer?.robot_serial_number ?? null;
   const paired = !!customer?.is_paired && !!serial;
   const [showSettings, setShowSettings] = useState(false);
+
+  // The customer profile only carries the active robot's SERIAL, not its nickname (that
+  // lives on the robots list). Fetch it the same way account.tsx does — a per-page read of
+  // GET /customers/me/robots — so the card can greet the customer with the name they chose
+  // when pairing. Best-effort: on any failure the card just falls back to the model name.
+  const [nickname, setNickname] = useState<string | null>(null);
+  useEffect(() => {
+    if (!session || !serial) {
+      setNickname(null);
+      return;
+    }
+    let cancelled = false;
+    listRobots(baseUrl, fetchWithHeaders)
+      .then((list) => {
+        if (cancelled) return;
+        const active = list.find((r) => r.robot_serial_number === serial);
+        setNickname(active?.nickname?.trim() || null);
+      })
+      .catch(() => {
+        if (!cancelled) setNickname(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session, serial, baseUrl, fetchWithHeaders]);
 
   return (
   <section>
@@ -139,9 +167,17 @@ const Home = () => {
       <div className="flex items-stretch gap-6">
         <div className="min-w-0 flex-1 p-6 md:pl-8">
           <span className="eyebrow">{paired ? "// your robot" : "// get set up"}</span>
+          {/* Lead with the customer's chosen nickname when they set one; the model name
+              (from the serial) drops to a subtitle so it isn't lost. Falls back to the
+              model as the heading for robots paired without a nickname. */}
           <h2 className="mt-3 font-display text-[1.7rem] font-normal leading-[1] tracking-tight text-ink">
-            {paired ? modelFromSerial(serial!) : "Pair your robot"}
+            {paired ? nickname ?? modelFromSerial(serial!) : "Pair your robot"}
           </h2>
+          {paired && nickname && (
+            <div className="mt-1 text-[13px] leading-snug text-ink-2">
+              {modelFromSerial(serial!)}
+            </div>
+          )}
           {paired ? (
             <p className="mt-3 text-[14px] leading-relaxed text-ink-2">
               <span className="rounded-full border border-ink/20 bg-background px-2.5 py-0.5 font-mono text-[12px] font-semibold tracking-[0.08em] text-ink">

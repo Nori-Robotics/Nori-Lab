@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Loader2, Lock, Trash2, Unlock } from "lucide-react";
+import { Download, Loader2, Lock, Trash2, Unlock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -42,6 +42,7 @@ import {
 } from "@/nori/api/client";
 import { EpisodeReviewModal, type ReviewSource } from "@/nori/components/EpisodeReviewModal";
 import { AssembleModal } from "@/nori/components/AssembleModal";
+import { ExportModal } from "@/nori/components/ExportModal";
 
 // ---- small presentational bits -------------------------------------------
 
@@ -177,7 +178,9 @@ const MyStuff = () => {
   const [reviewing, setReviewing] = useState<ReviewSource | null>(null); // dataset under review
   const [picked, setPicked] = useState<Set<string>>(new Set()); // recordings selected to assemble
   const [assembleOpen, setAssembleOpen] = useState(false);
+  const [exporting, setExporting] = useState<{ session_id: string; label: string } | null>(null); // dataset being downloaded
   const [deleting, setDeleting] = useState<LibraryDataset | null>(null); // pending delete confirmation
+  const [alsoUnpublish, setAlsoUnpublish] = useState(false); // "also remove from marketplace" (published items)
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
   const [deletingPolicy, setDeletingPolicy] = useState<LibraryPolicy | null>(null);
@@ -283,7 +286,7 @@ const MyStuff = () => {
     setDeleteBusy(true);
     setDeleteErr(null);
     try {
-      await deleteDataset(baseUrl, fetchWithHeaders, deleting.session_id);
+      await deleteDataset(baseUrl, fetchWithHeaders, deleting.session_id, deleting.published ? alsoUnpublish : false);
       setDeleting(null);
       await load();
     } catch (e) {
@@ -292,7 +295,7 @@ const MyStuff = () => {
     } finally {
       setDeleteBusy(false);
     }
-  }, [deleting, baseUrl, fetchWithHeaders, load]);
+  }, [deleting, alsoUnpublish, baseUrl, fetchWithHeaders, load]);
 
   const onToggleDatasetLock = useCallback(
     async (d: LibraryDataset) => {
@@ -329,7 +332,7 @@ const MyStuff = () => {
     setDeletePolicyBusy(true);
     setDeletePolicyErr(null);
     try {
-      await deletePolicy(baseUrl, fetchWithHeaders, deletingPolicy.job_id);
+      await deletePolicy(baseUrl, fetchWithHeaders, deletingPolicy.job_id, deletingPolicy.published ? alsoUnpublish : false);
       setDeletingPolicy(null);
       await load();
     } catch (e) {
@@ -337,7 +340,7 @@ const MyStuff = () => {
     } finally {
       setDeletePolicyBusy(false);
     }
-  }, [deletingPolicy, baseUrl, fetchWithHeaders, load]);
+  }, [deletingPolicy, alsoUnpublish, baseUrl, fetchWithHeaders, load]);
 
   const onRenameUpload = useCallback(
     async (sessionId: string, next: string) => {
@@ -506,7 +509,9 @@ const MyStuff = () => {
 
       <div className="grid gap-8 lg:grid-cols-[1.35fr_1fr]">
         {/* -------- Datasets -------- */}
-        <div className="space-y-3.5">
+        {/* min-w-0: grid items default to min-width:auto, so a wide row (long dataset name / repo
+            id) would otherwise push this column past the viewport and overflow the page. */}
+        <div className="min-w-0 space-y-3.5">
           {/* Robot recordings (W2.11): full-quality episodes recorded on the robot
               and uploaded to your cloud automatically. Not trainable until assembled
               into a dataset — a read-only view of what the robot has captured. */}
@@ -676,17 +681,22 @@ const MyStuff = () => {
                     ) : (
                       <EditableName value={d.label} onRename={(next) => onRenameUpload(d.session_id, next)} />
                     )}
-                    <p className="mt-0.5 text-sm text-muted-foreground">Uploaded {shortDate(d.created_at)}</p>
+                    <p className="mt-0.5 text-sm text-muted-foreground">
+                      {d.origin === "community" ? "Added" : "Uploaded"} {shortDate(d.created_at)}
+                    </p>
                   </div>
-                  {assembling ? (
-                    <Pill tone="sticker">Assembling</Pill>
-                  ) : d.locked ? (
-                    <Pill tone="accent">
-                      <Lock className="mr-1 inline h-3 w-3" />Locked
-                    </Pill>
-                  ) : (
-                    <Pill tone="leaf">Uploaded</Pill>
-                  )}
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {d.origin === "community" && <Pill tone="sticker-2">Community</Pill>}
+                    {assembling ? (
+                      <Pill tone="sticker">Assembling</Pill>
+                    ) : d.locked ? (
+                      <Pill tone="accent">
+                        <Lock className="mr-1 inline h-3 w-3" />Locked
+                      </Pill>
+                    ) : (
+                      <Pill tone="leaf">{d.origin === "community" ? "In cloud" : "Uploaded"}</Pill>
+                    )}
+                  </div>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
                   {d.episode_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(d.episode_count)}</b> episodes</span>}
@@ -721,6 +731,13 @@ const MyStuff = () => {
                     <Button
                       size="sm"
                       variant="ghost"
+                      onClick={() => setExporting({ session_id: d.session_id, label: d.label })}
+                    >
+                      <Download className="mr-1 h-3.5 w-3.5" /> Download
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
                       disabled={lockBusy === d.session_id}
                       onClick={() => onToggleDatasetLock(d)}
                     >
@@ -737,6 +754,7 @@ const MyStuff = () => {
                         className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                         onClick={() => {
                           setDeleteErr(null);
+                          setAlsoUnpublish(false);
                           setDeleting(d);
                         }}
                       >
@@ -757,7 +775,7 @@ const MyStuff = () => {
         </div>
 
         {/* -------- Policies -------- */}
-        <div className="space-y-3.5">
+        <div className="min-w-0 space-y-3.5">
           <div className="flex items-baseline justify-between">
             <h2 className="text-lg font-bold tracking-tight text-nori-h14131a">Policies</h2>
             <span className="font-mono text-xs text-muted-foreground">{allPolicies.length} total</span>
@@ -799,6 +817,7 @@ const MyStuff = () => {
                   )}
                   <div className="flex flex-wrap items-center gap-1.5">
                     {p.policy_class && <Pill tone="accent">{p.policy_class.toUpperCase()}</Pill>}
+                    {p.origin === "community" && <Pill tone="sticker-2">Community</Pill>}
                     {p.locked && (
                       <Pill tone="accent">
                         <Lock className="mr-1 inline h-3 w-3" />Locked
@@ -887,6 +906,7 @@ const MyStuff = () => {
                     onClick={(e) => {
                       e.stopPropagation();
                       setDeletePolicyErr(null);
+                      setAlsoUnpublish(false);
                       setDeletingPolicy(p);
                     }}
                   >
@@ -902,6 +922,10 @@ const MyStuff = () => {
 
       {reviewing && (
         <EpisodeReviewModal source={reviewing} onClose={() => setReviewing(null)} onChanged={load} />
+      )}
+
+      {exporting && (
+        <ExportModal dataset={exporting} onClose={() => setExporting(null)} />
       )}
 
       {assembleOpen && (
@@ -941,6 +965,22 @@ const MyStuff = () => {
               ) : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {deleting?.published && (
+            <label className="flex items-start gap-2 rounded-md border border-border bg-secondary/40 px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={alsoUnpublish}
+                onChange={(e) => setAlsoUnpublish(e.target.checked)}
+              />
+              <span>
+                Also remove it from the community marketplace.
+                <span className="block text-xs text-muted-foreground">
+                  Leave unchecked to keep the public listing live — only your personal copy is deleted.
+                </span>
+              </span>
+            </label>
+          )}
           {deleteErr && (
             <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {deleteErr}
@@ -977,10 +1017,25 @@ const MyStuff = () => {
               Delete “{deletingPolicy?.title ?? "this policy"}”?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently deletes the trained policy and its checkpoint. This can’t be
-              undone. Published policies must be unpublished first.
+              This permanently deletes the trained policy and its checkpoint. This can’t be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {deletingPolicy?.published && (
+            <label className="flex items-start gap-2 rounded-md border border-border bg-secondary/40 px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={alsoUnpublish}
+                onChange={(e) => setAlsoUnpublish(e.target.checked)}
+              />
+              <span>
+                Also remove it from the community marketplace.
+                <span className="block text-xs text-muted-foreground">
+                  Leave unchecked to keep the public listing live — only your personal copy is deleted.
+                </span>
+              </span>
+            </label>
+          )}
           {deletePolicyErr && (
             <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {deletePolicyErr}

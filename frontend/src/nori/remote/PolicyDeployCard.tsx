@@ -132,6 +132,9 @@ export function PolicyDeployCard() {
       >
         <h3 className="text-base font-semibold leading-none tracking-tight">
           Deploy a policy
+          <span className="ml-2 inline-flex -rotate-2 items-center rounded-full bg-sticker px-2 py-0.5 align-middle font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-ink shadow-soft">
+            {"// beta"}
+          </span>
           {busy && (
             <span className="ml-2 inline-block h-2 w-2 animate-pulse rounded-full bg-red-500 align-middle" />
           )}

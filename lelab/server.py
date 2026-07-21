@@ -1101,10 +1101,11 @@ def nori_list_my_datasets(request: Request):
 
 
 @app.delete("/nori/datasets/{session_id}")
-def nori_delete_dataset(session_id: str, request: Request):
-    """Permanently delete one of the caller's datasets (HF files + record)."""
+def nori_delete_dataset(session_id: str, request: Request, also_unpublish: bool = False):
+    """Permanently delete one of the caller's datasets (HF files + record).
+    also_unpublish=true also takes down a linked community listing."""
     client = _nori_client(request)
-    return _nori_proxy(lambda: client.delete_dataset(session_id))
+    return _nori_proxy(lambda: client.delete_dataset(session_id, also_unpublish))
 
 
 class NoriLockBody(BaseModel):
@@ -1157,6 +1158,22 @@ def nori_get_assembly_job(assembly_job_id: str, request: Request):
     return _nori_proxy(lambda: client.get_assembly_job(assembly_job_id))
 
 
+# Dataset export (download to the user's machine). Bytes stream S3->client via the
+# presigned URL in the response; only the enqueue + poll go through here.
+@app.get("/nori/datasets/export/{export_job_id}")
+def nori_get_export_job(export_job_id: str, request: Request):
+    """Poll one dataset-export job; download_url is set once status is DONE."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.get_export_job(export_job_id))
+
+
+@app.post("/nori/datasets/{dataset_session_id}/export")
+def nori_export_dataset(dataset_session_id: str, request: Request):
+    """Enqueue packaging a dataset for download (idempotent; reuses a live export)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.export_dataset(dataset_session_id))
+
+
 @app.get("/nori/datasets/{dataset_session_id}/sessions")
 def nori_dataset_sessions(dataset_session_id: str, request: Request):
     """Provenance sessions of an assembled dataset (for filter + bulk-delete)."""
@@ -1183,10 +1200,11 @@ def nori_delete_dataset_episodes(dataset_session_id: str, body: NoriDeleteEpisod
 
 
 @app.delete("/nori/library/policies/{job_id}")
-def nori_delete_policy(job_id: str, request: Request):
-    """Permanently delete one of the caller's policies (checkpoint + record)."""
+def nori_delete_policy(job_id: str, request: Request, also_unpublish: bool = False):
+    """Permanently delete one of the caller's policies (checkpoint + record).
+    also_unpublish=true also takes down a linked community listing."""
     client = _nori_client(request)
-    return _nori_proxy(lambda: client.delete_policy(job_id))
+    return _nori_proxy(lambda: client.delete_policy(job_id, also_unpublish))
 
 
 @app.post("/nori/library/policies/{job_id}/lock")
@@ -1198,8 +1216,16 @@ def nori_set_policy_lock(job_id: str, body: NoriLockBody, request: Request):
 
 @app.post("/nori/marketplace/policies/{listing_id}/acquire")
 def nori_acquire_policy(listing_id: str, request: Request):
+    """Acquire + one-click 'add to my cloud' (returns import_job_id to poll)."""
     client = _nori_client(request)
     return _nori_proxy(lambda: client.acquire_policy(listing_id))
+
+
+@app.get("/nori/marketplace/imports/{import_job_id}")
+def nori_get_import(import_job_id: str, request: Request):
+    """Poll an 'add to my cloud' import job."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.get_import(import_job_id))
 
 
 @app.get("/nori/marketplace/policies/{ref}")
@@ -1465,12 +1491,21 @@ def nori_dataset_features(request: Request, dataset_ref: str | None = None):
 # NORI: pairing + consents + deletion (Phase 6).
 class NoriPairBody(BaseModel):
     robot_serial_number: str
+    # Proof-of-possession code from the robot's box (backend migration 029). MUST be
+    # carried through the proxy — without this field Pydantic silently drops it and the
+    # backend rejects the claim with "needs its pairing code" even though the browser sent it.
+    pair_code: str | None = None
+    # Customer's friendly name for the robot. Same silent-drop hazard as pair_code: without
+    # this field the browser's nickname never reaches the backend and the robot pairs unnamed.
+    nickname: str | None = None
 
 
 @app.post("/nori/customers/me/pair")
 def nori_pair_robot(body: NoriPairBody, request: Request):
     client = _nori_client(request)
-    return _nori_proxy(lambda: client.pair_robot(body.robot_serial_number))
+    return _nori_proxy(
+        lambda: client.pair_robot(body.robot_serial_number, body.pair_code, body.nickname)
+    )
 
 
 class NoriUnpairBody(BaseModel):
@@ -1494,6 +1529,17 @@ def nori_list_robots(request: Request):
 def nori_select_robot(serial: str, request: Request):
     client = _nori_client(request)
     return _nori_proxy(lambda: client.select_robot(serial))
+
+
+class NoriRenameBody(BaseModel):
+    # Empty string clears the nickname (backend stores NULL); a value sets it.
+    nickname: str | None = None
+
+
+@app.patch("/nori/customers/me/robots/{serial}")
+def nori_rename_robot(serial: str, body: NoriRenameBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.rename_robot(serial, body.nickname or ""))
 
 
 # NORI: billing summary (backend Phase 1, free-tier enforcement). Read-only

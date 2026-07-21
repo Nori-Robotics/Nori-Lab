@@ -353,14 +353,23 @@ const MarketplaceDetail = () => {
           acquired ? (
             <div className="rounded-xl border border-border bg-secondary px-4 py-4">
               <p className="text-[14px] text-foreground">
-                Added to your training datasets.
+                Copying to your Nori cloud — it’ll appear in My Stuff (tagged Community) in a
+                moment, ready to train on.
               </p>
-              <Link
-                to="/nori/training"
-                className="mt-2 inline-flex rounded-xl border border-border bg-background px-3 py-2 font-mono text-[12px] hover:bg-accent"
-              >
-                train on this dataset →
-              </Link>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Link
+                  to="/nori/my-stuff"
+                  className="inline-flex rounded-xl border border-border bg-background px-3 py-2 font-mono text-[12px] hover:bg-accent"
+                >
+                  view in My Stuff →
+                </Link>
+                <Link
+                  to="/nori/training"
+                  className="inline-flex rounded-xl border border-border bg-background px-3 py-2 font-mono text-[12px] hover:bg-accent"
+                >
+                  train on this dataset →
+                </Link>
+              </div>
             </div>
           ) : (
             <button
@@ -369,7 +378,7 @@ const MarketplaceDetail = () => {
               disabled={busy}
               className="w-full rounded-xl border border-border bg-secondary px-3 py-3 font-mono text-[13px] hover:bg-accent disabled:opacity-50"
             >
-              {busy ? "acquiring…" : "acquire dataset — add to my training datasets →"}
+              {busy ? "adding…" : "add to my cloud — copy this dataset into My Stuff →"}
             </button>
           )
         ) : (

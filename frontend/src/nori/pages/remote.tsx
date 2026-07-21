@@ -507,7 +507,10 @@ const Remote = () => {
       {/* One grid holds header + video (left) and the side panels (right), so the right
           column starts at the very top, level with the page title. */}
       <div className="grid gap-4 lg:grid-cols-[1fr_400px]">
-        <div className="space-y-3">
+        {/* min-w-0: grid items default to min-width:auto, so without this the column refuses to
+            shrink below its content's intrinsic width and the whole grid overflows the viewport
+            on narrow screens (the w-full video then balloons against the over-wide track). */}
+        <div className="min-w-0 space-y-3">
           {/* Header: connection status + Connect/Disconnect. The session itself lives in
               TeleopSessionProvider, so connecting from here is the same action as connecting on
               Home — it just saves the round trip. */}
@@ -646,7 +649,7 @@ const Remote = () => {
               persistent session. */}
         </div>
 
-        <div className="h-fit space-y-4">
+        <div className="h-fit min-w-0 space-y-4">
         {/* Audio: two-way call plus clip-to-robot-speaker (reuses the M3b downlink; needs the
             robot's voice downlink on — --voice / NORI_SPEAKER). Always shown; disabled offline.
             Kept tight: in this 400px rail an active call fits on two rows, so joining doesn't

@@ -30,6 +30,7 @@ import * as THREE from "three";
 import { VrJogMapper, resolveTuning, type VrControllerFrame, type VrFrame, type VrTuning } from "./vr";
 import { buildRobotModel, type ArmHighlight, type RobotModel } from "./robot-model";
 import type { RemoteTeleop, TelemetryView } from "./teleop";
+import { CURRENT_FULL_LSB } from "./teleop";
 
 const RESET_HOLD_MS = 1500;
 // Recenter is triggered by an in-VR button anchored above the LEFT controller, poked with
@@ -158,7 +159,8 @@ const HAPTIC_BASE_RISE = 3; // baseline upward creep (units/s): slow enough that
                             // (deltas of hundreds) keeps buzzing for minutes, fast enough to
                             // absorb idle-current drift
 const HAPTIC_PULSE_MS = 100; // longer pulse per frame -> a more solid, continuous buzz (was 60)
-const CURRENT_FULL = 600; // Present_Current mapped to a full HUD bar (matches TeleopStatus)
+// Present_Current (raw LSB) mapped to a full HUD bar. Shared from teleop.ts so this and the
+// 2D grip-force readout in TeleopStatus can't drift apart.
 const TEL_STALE_MS = 1500; // no telemetry for this long -> HUD control row reads "disconnected"
 const HUD_REDRAW_MS = 250;  // repaint cadence so staleness updates even without new frames
 
@@ -1429,7 +1431,7 @@ export class VrSession {
         for (const k of ordered) {
           y += 46;
           const mag = Math.abs(currents[k] ?? 0);
-          const frac = Math.min(1, mag / CURRENT_FULL);
+          const frac = Math.min(1, mag / CURRENT_FULL_LSB);
           ctx.font = "22px system-ui, sans-serif";
           ctx.fillStyle = k.includes("gripper") ? FG : DIM;
           ctx.fillText(this.shortMotor(k), pad, y - 6);

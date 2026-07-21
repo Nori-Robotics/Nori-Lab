@@ -1,5 +1,16 @@
 # NORI: Additive file. FULL-QUALITY camera frames for cloud inference (option "B").
 #
+# DEPRECATED (2026-07-21) — superseded by the robot-side policy streamer
+# (NoriTelop rpi5/media/policy_streamer.py, docs/protocol_streaming_design.md).
+# This module PULLS by SUBscribing to the Pi's camera sockets over the LAN,
+# which (a) is dead on customer-provisioned units (NORI_CAM_BIND=127.0.0.1),
+# (b) carries no capture timestamps (staleness is judged by arrival), and
+# (c) delivers no calibration. The streamer PUSHES frames with capture mono_ts
+# and the robot.json preamble, works under the customer bind posture, and has
+# an in-session control plane. New work goes to the policy-stream receiver
+# (see cloud_inference/STREAM_INTEGRATION_PLAN.md); this path remains only as
+# a dev-bench fallback and warns when activated.
+#
 # WHY. Until now the cloud VLA was fed frames the browser cropped out of the ONE
 # composite WebRTC track: 4 cameras tiled into a single H264 frame that an ABR loop
 # degrades to 480p or even 240p under load — so each camera reaches the model as a
@@ -177,6 +188,9 @@ def build_source(view_keys: list[str]) -> Optional[ZmqCameraSource]:
         return None
     try:
         base = int(os.environ.get("NORI_CAM_BASE_PORT", str(DEFAULT_BASE_PORT)))
+        logger.warning("[CAM-ZMQ] DEPRECATED direct-SUB camera path active — "
+                       "superseded by the robot's policy streamer (see "
+                       "cloud_inference/STREAM_INTEGRATION_PLAN.md)")
         return ZmqCameraSource(host, roles, base_port=base)
     except Exception as e:  # pyzmq missing, bad host, etc.
         logger.warning("[CAM-ZMQ] unavailable (%s) — falling back to the composite path", e)

@@ -74,15 +74,32 @@ fn main() {
                     handle.exit(1);
                     return;
                 }
-                let _ = WebviewWindowBuilder::new(
+                #[allow(unused_mut)]
+                let mut builder = WebviewWindowBuilder::new(
                     &handle,
                     "main",
                     WebviewUrl::External(BACKEND_URL.parse().unwrap()),
                 )
                 .title("Nori Lab")
                 .inner_size(1400.0, 900.0)
-                .resizable(true)
-                .build();
+                .resizable(true);
+
+                // macOS: drop the title bar so the UI runs edge-to-edge, leaving only the
+                // traffic-light buttons floating over the content. `Overlay` (not
+                // `decorations(false)`) is deliberate — it keeps the close/minimize buttons
+                // and the draggable top edge; killing decorations entirely would leave no
+                // way to close or move the window. `hidden_title` removes the "Nori Lab"
+                // text that would otherwise still paint over the content.
+                // NOTE: content now extends UNDER the traffic lights (top-left ~80x28px),
+                // so the web UI needs a little top padding there or they'll overlap it.
+                #[cfg(target_os = "macos")]
+                {
+                    builder = builder
+                        .title_bar_style(tauri::TitleBarStyle::Overlay)
+                        .hidden_title(true);
+                }
+
+                let _ = builder.build();
             });
 
             Ok(())

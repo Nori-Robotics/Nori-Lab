@@ -27,10 +27,12 @@ Robot Pis must set:
 usb_max_current_enable=1
 ```
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 - Where exactly this goes and how to verify it took effect.
 - Which robot builds ship with it already set, and how to tell.
 :::
+-->
 
 ## Confirming it rather than guessing
 
@@ -102,10 +104,12 @@ Motor torque is deliberately limited so a peak draw doesn't trip the power stati
 seeing the whole robot cut out under aggressive motion rather than a single peripheral dropping,
 that's a different problem from a USB brownout — it's the supply rail.
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 - The supported power configurations and their limits.
 - What tripping the power station looks like vs. a USB brownout, so operators can tell them apart.
 - Recovery procedure after a trip.
 :::
+-->
 
 Setup: [Power and cabling](/guide/power).

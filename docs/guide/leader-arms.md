@@ -24,6 +24,7 @@ Calibration lands in:
 ~/.cache/huggingface/lerobot/calibration/teleoperators/nori_l2_dual_leader/
 ```
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 - **Motor IDs.** Both arms share a serial bus, so every motor needs a unique ID before anything
   works. Explain the ID scheme, and why a fresh motor out of the box always needs this.
@@ -32,6 +33,7 @@ Calibration lands in:
 - **Which arm is which.** How left/right is determined and what to do when they're swapped.
 - Screenshots of each wizard step.
 :::
+-->
 
 ## The gotchas that bite people
 

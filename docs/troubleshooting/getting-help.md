@@ -31,11 +31,13 @@ also tell us whether the session log showed `TURN: using minted credentials` or
 
 **Logs**, if you can get them.
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 Tell people exactly how to collect logs: browser console for SDK clients, the desktop app's log
 location per platform (**still undocumented — the biggest gap in this page**), and how to pull
 robot-side daemon logs.
 :::
+-->
 
 ## Things we already know
 

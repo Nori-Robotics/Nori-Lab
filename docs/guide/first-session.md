@@ -2,6 +2,7 @@
 
 Getting from a powered-on robot to an arm that moves when you press a key.
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 The happy path, start to finish. Rough shape — fill in from the real app flow
 (`frontend/src/nori/pages/`):
@@ -18,6 +19,7 @@ The happy path, start to finish. Rough shape — fill in from the real app flow
 6. **Drive it.** The keyboard legend on the Remote page is the live key map.
 7. **Stop.** Tearing down cleanly vs. just closing the tab.
 :::
+-->
 
 ## The one thing to know before you move an arm
 

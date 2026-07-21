@@ -11,6 +11,7 @@ no signed installer has shipped on any OS. Until it does, run from source (below
 
 ## Download
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 Download links per platform, once installers ship:
 
@@ -23,6 +24,7 @@ Download links per platform, once installers ship:
 Also cover: what the OS scare screen looks like if a build *isn't* signed yet, and how to get
 past it deliberately.
 :::
+-->
 
 ## What the app actually does when it starts
 
@@ -50,6 +52,7 @@ lelab            # serves API + UI on :8000 and opens a browser
 For frontend development, `lelab --dev` runs Vite on `:8080` against a reloading backend on
 `:8000`.
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 - System requirements (RAM, disk — the bundle is ~770 MB on disk because torch ships in it so
   inference never depends on Wi-Fi).
@@ -57,3 +60,4 @@ For frontend development, `lelab --dev` runs Vite on `:8080` against a reloading
 - Uninstall, and what's left behind (`~/.cache/huggingface/lerobot/` holds calibration, saved
   ports, and config selections).
 :::
+-->

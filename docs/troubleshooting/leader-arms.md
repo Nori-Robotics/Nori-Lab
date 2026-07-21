@@ -14,12 +14,14 @@ once it works.
 
 **3. It's genuinely unplugged.** Worth actually checking.
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 - What a healthy detection looks like in the app.
 - How to list serial ports by hand per OS (`ls /dev/tty.*` on macOS, Device Manager on Windows),
   and what the arms show up as.
 - Driver requirements, if any, per OS.
 :::
+-->
 
 If the wizard still can't see it, the CLI takes the same steps and is more verbose:
 
@@ -38,10 +40,12 @@ Re-run the ID assignment:
 python -m lelab.nori_leader_setup set-id --wizard
 ```
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 Explain the ID scheme and why a motor fresh out of the box always needs an ID assigned before
 anything works.
 :::
+-->
 
 ## The wrong joint moves, or a joint moves backwards
 

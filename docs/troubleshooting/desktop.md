@@ -28,21 +28,25 @@ netstat -ano | findstr :8000   # Windows
 
 Kill it, then relaunch.
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 - Where the app's logs go per platform, and how a user gets at them. **This is the single most
   useful thing to add here** — right now a failed startup gives an operator nothing to send us.
 - Whether the port is configurable, and how.
 :::
+-->
 
 ## The OS refuses to open the app
 
 If the build isn't signed and notarized yet, macOS Gatekeeper and Windows SmartScreen will both
 block it.
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 The deliberate override steps per platform — and, better, remove this section entirely once signed
 builds ship.
 :::
+-->
 
 ## A stray backend keeps running after I quit
 

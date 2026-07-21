@@ -1,5 +1,6 @@
 # Cameras
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 - Which cameras a robot ships with and what **role** each has (`overhead`, `left_wrist`,
   `right_wrist`, …). Roles are the vocabulary everything else uses — the composite video tiles,
@@ -7,6 +8,7 @@
 - Mounting and aiming.
 - How to verify each camera is alive before a session.
 :::
+-->
 
 ## What the video feed actually is
 
@@ -43,7 +45,9 @@ with a rotation, and those cameras cost noticeably more CPU per frame.
 Streaming a phone camera into the app requires **HTTPS** — browsers won't hand out camera access
 over plain HTTP from a non-localhost origin.
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 Port the operator-facing parts of `frontend/HTTPS_SETUP.md` (mkcert, self-signed certs in
 `certs/`, running uvicorn with `--ssl-keyfile`/`--ssl-certfile`). Skip the dev-only detail.
 :::
+-->

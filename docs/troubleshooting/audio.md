@@ -14,10 +14,12 @@ That's the intended behavior.
 **Browser autoplay policy.** Browsers refuse to play inbound audio without a user gesture. If the
 audio element was never attached to a real click, the stream arrives and is silently not played.
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 The exact gesture requirement per browser, and the recommended pattern (attach the audio sink from
 a click handler).
 :::
+-->
 
 ## `sendClipAudio` returns `false` and nothing plays
 

@@ -30,6 +30,7 @@ nothing else. There is no secret in the link, so it's safe to send over chat —
 URL shortener mangles no longer breaks anything but the pre-fill.
 :::
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 - The actual VR domain, once it's assigned.
 - The on-device checklist: getting the link onto the Quest, browser requirements, what "Enter VR"
@@ -37,6 +38,7 @@ URL shortener mangles no longer breaks anything but the pre-fill.
 - The controller binding map (`DEFAULT_BINDINGS`), as a diagram.
 - What the in-VR HUD shows (telemetry, currents, haptics).
 :::
+-->
 
 ## Requirements
 

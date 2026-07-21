@@ -75,9 +75,11 @@ gain `0.7`).
 `joinCall()` / `leaveCall()` and the mic/camera surface on `RemoteTeleop` are **experimental** and
 may change.
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 Document the call API properly once it stabilizes: joining, the robot-side consent prompt, mic
 and camera control, and what the operator hears while waiting for someone at the robot to accept.
 :::
+-->
 
 Audio problems: [Audio troubleshooting](/troubleshooting/audio).

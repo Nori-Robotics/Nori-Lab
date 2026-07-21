@@ -18,6 +18,7 @@ into a broken one. See [Connectivity](/sdk/connectivity).
 
 **STUN is still editable**, and you should still never need to touch it.
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 - **The keyboard legend.** It's rendered live on the page and changes with the control mode, so
   document the *modes*, not a frozen key table.
@@ -27,6 +28,7 @@ into a broken one. See [Connectivity](/sdk/connectivity).
   each stall means.
 - Screenshots.
 :::
+-->
 
 ## Modes and commands
 

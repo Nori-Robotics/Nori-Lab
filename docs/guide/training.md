@@ -2,6 +2,7 @@
 
 Record demonstrations by teleoperating the robot, then train a policy on them and run it back.
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 - **Recording a dataset.** Starting/stopping an episode, what a good episode looks like, how many
   you need before training is worth attempting.
@@ -15,6 +16,7 @@ Record demonstrations by teleoperating the robot, then train a policy on them an
   stopping it safely.
 - **Marketplace.** Publishing a policy and using someone else's.
 :::
+-->
 
 ## Why training is cloud and inference is local
 

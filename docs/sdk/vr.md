@@ -35,11 +35,13 @@ See `DEFAULT_BINDINGS` for the full map.
 - A WebXR-capable browser on the headset.
 - A `RemoteTeleop` that has already `start()`ed.
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 - Feeding telemetry and currents in, and what the in-VR HUD renders from them.
 - Haptics: what triggers them.
 - Writing custom bindings rather than using `DEFAULT_BINDINGS`.
 :::
+-->
 
 Using Nori's hosted VR page instead of building your own: [Guide: VR](/guide/vr).
 

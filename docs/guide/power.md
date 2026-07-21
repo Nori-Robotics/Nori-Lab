@@ -21,6 +21,7 @@ usb_max_current_enable=1
 actually looking at a power problem — and distinguishes an undervoltage history from a *thermal*
 one, which needs cooling instead. [Bit-by-bit decode](/troubleshooting/power#confirming-it-rather-than-guessing).
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 - The actual supported power configurations (battery, power station, wall).
 - A cabling diagram: what plugs into what, and which ports are current-limited.
@@ -28,6 +29,7 @@ one, which needs cooling instead. [Bit-by-bit decode](/troubleshooting/power#con
   mid-stream re-enumeration. The robot clamps playback gain (default `0.7`) to defend against
   this — see [SDK: Audio](/sdk/audio).
 :::
+-->
 
 ## Devices that re-enumerate
 

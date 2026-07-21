@@ -41,10 +41,12 @@ mangled fragment is no longer a failure mode.
 If the page connects but the robot never appears, the account you're signed in as probably isn't
 the one the robot is paired to. Check the Pairing page in the app.
 
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 - Getting a link onto a Quest without typing it (the actual recommended flow).
 - The on-device acceptance checklist: what a working session looks like step by step.
 :::
+-->
 
 ## Controls feel wrong
 

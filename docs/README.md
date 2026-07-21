@@ -51,6 +51,22 @@ What still needs writing here, specifically.
 
 Grep for `🚧` to see everything outstanding.
 
+**They're currently hidden from the live site, not deleted.** Every one of those blocks is wrapped
+in an HTML comment so visitors don't read a page full of scaffolding while the queue is worked
+through:
+
+```md
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
+::: info 🚧 To write
+…
+:::
+-->
+```
+
+To publish one, delete the two sentinel lines. To add a new stub, wrap it the same way — grep for
+`TODO-DOCS` to find them all. The `🚧` grep still works either way, since the text is only
+commented, never removed.
+
 **Say when the software is ahead of the hardware.** Several SDK surfaces are implemented but not
 yet verified on a real robot. Those carry a `::: warning Verification status` block. Readers trust
 them over the surrounding prose, so keep them accurate — and delete them the moment they stop being

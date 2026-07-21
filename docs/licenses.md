@@ -4,6 +4,20 @@ Nori ships with third-party open-source software. Their licenses require that th
 text and attribution travel **with the product** — i.e. with this documentation and the
 printed/PDF manual, not just in an internal repo.
 
+::: warning This page is not complete yet
+The full attribution notices are still being compiled and are **not** reproduced below yet. Nori
+is `v0` and has not shipped to a customer; this page is a ship blocker and will carry the verbatim
+notices before it does.
+
+If you need the current inventory before then — for your own compliance review, or because you're
+redistributing something built on Nori — [ask us](/troubleshooting/getting-help) and we'll send it.
+
+Components known to be in scope include SCServo_Linux (MIT), nlohmann/json (MIT), GStreamer and
+its plugins (LGPL-2.1, with some GPL packages in the robot image), pynput (LGPL), and openh264
+(BSD). Nori's own code is Apache-2.0.
+:::
+
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write — REQUIRED before ship (legal sign-off received 2026-07-14)
 Legal confirmed we don't need to relicense anything — we just need to **ship the correct
 license + attribution notices alongside the manual and these docs**. This page (and the
@@ -32,3 +46,4 @@ required for units without internet.
 
 **Owner:** _unassigned — pick this up before the first customer ship._
 :::
+-->

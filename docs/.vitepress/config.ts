@@ -14,6 +14,11 @@ export default defineConfig({
   lang: "en-US",
   cleanUrls: true,
 
+  // The contributor guide is for people reading the repo, not visitors. It was being built to
+  // /README (unlinked, but public and indexed), and it necessarily quotes the "🚧 To write"
+  // convention it documents — so it can't be hidden the way the stubs themselves are.
+  srcExclude: ["README.md"],
+
   // A dead link should fail the build, not ship. Docs that lie are worse than missing docs.
   ignoreDeadLinks: false,
 

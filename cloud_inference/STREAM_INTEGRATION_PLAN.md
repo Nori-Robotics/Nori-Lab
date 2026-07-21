@@ -77,12 +77,17 @@ Pure-Python TCP listener, testable with no robot.
 
 ## 2. lelab wiring (`nori_rollout.py`)
 
-- `POST /nori/rollout/stream/open` → arm a listener, return
-  `{host, port, expected_serial}`. `POST .../stream/close`. Status folded into
+- `POST /nori/rollout/stream/open` — the request carries `expected_serial`,
+  supplied by the FRONTEND APP from its pairing/session state
+  (`TeleopSessionContext`; the SDK itself does not know the serial) — arms a
+  listener and returns `{host, port}`. `POST .../stream/close`.
+  `/stream/status` exposes `{connected, serial, preamble_received,
+  calibration_present}` for the start-sequence poll. Status folded into
   the existing rollout `status()` (`frame_source`, per-camera ages, streamer
   counters when known).
 - Source preference in `_cloud_act`: **stream > deprecated direct-SUB (only if
-  explicitly configured; warns) > composite**. `frame_source ∈
+  explicitly configured; warns) > composite (deprecated legacy fallback —
+  logs a deprecation warning every time it engages)**. `frame_source ∈
   {"stream","zmq","composite"}`.
 - Host auto-detection: default-route private address (UDP-connect trick),
   `NORI_STREAM_HOST` override for multi-NIC laptops.
@@ -107,8 +112,11 @@ silent):
 3. Wait: SDK status `ok` **and** lelab `/stream/status` shows the preamble
    arrived (≤5 s poll)
 4. `POST /nori/rollout/load` as today — views resolved against streamed cameras
-5. Tick loop unchanged. (Later: stop attaching composite JPEGs to `/act` bodies
-   while the stream is live — cuts browser upload to just joint state.)
+5. Tick loop: while the stream is live the browser STOPS attaching composite
+   JPEGs to `/act` bodies (upload shrinks to joint state) — P3 work now that
+   the composite path is deprecated, not polish. Observation no longer depends
+   on the preview video element; the encoder pause/resume dance stays purely a
+   preview-UX concern.
 
 Stop: `policyStream("stop")` + `/stream/close`, best-effort, in `stop()`.
 
@@ -130,6 +138,20 @@ with a deprecation warning until retired or retrained. v1: explicit flag on
 promotion and choose automatically — `"browser"` provenance then also gates the
 warning.
 
+## 5b. Deprecating browser-capture RECORDING (companion track)
+
+The browser catcher (`datasetCapture.ts` → `lelab/browser_capture.py` →
+`capture_export.py`) is deprecated in favour of the Pi raw-bundle recorder
+(already the primary path). Scope is marking, not deleting:
+
+- Deprecation banners on all three modules + a warning when a browser capture
+  starts; the record UI labels the option "legacy".
+- New browser-capture recordings go behind an env flag (default off) once the
+  raw-bundle UI covers the workflow; viewing/assembly of EXISTING captures is
+  untouched.
+- Removal is a later decision, after the raw-bundle path has proven it covers
+  every workflow.
+
 ## 6. Phases
 
 | # | What | Needs robot? |
@@ -137,11 +159,12 @@ warning.
 | P0 | Deprecate option B (done in this commit) | no |
 | P1 | Receiver + tests against a fake streamer speaking their wire (their `test_policy_streamer.py` FakeSink is the reference decoder — ours is the mirror image) | no |
 | P2 | lelab endpoints + cloud-path wiring + status | no |
-| P3 | SDK + policyRun orchestration (+ dist rebuild, localhost checklist) | no |
+| P3 | SDK + policyRun orchestration; skip composite upload while the stream is live (+ dist rebuild, localhost checklist) | no |
 | P4 | Live bench: robot build deployed, `NORI_POLICY_ENABLED=1`, `NORI_POLICY_CAMERAS=left_wrist,overhead` — coordinate w/ NoriTelop (their own Pi bench §7.5 is still pending) | **yes** |
 | P5 | Units conversion derived from the streamed `robot.json` (scale = `(max−min)×360/(200×4096)` per joint, ≤1.8 sanity bound, gripper passthrough; A/B against the fitted affine in `dryrun_cloud` before replacing `NORI_INFER_CALIB`) | file only |
 | P6 | Local-ACT provenance gating + `capture_source` stamp | no |
-| P7 | Polish: skip composite upload during streams; client live-view bitrate downshift; RTC `delay` from true capture age instead of the RTT EWMA | no |
+| P6b | Browser-capture recording deprecation (§5b) | no |
+| P7 | Polish: client live-view bitrate downshift during runs; RTC `delay` from true capture age instead of the RTT EWMA | no |
 
 ## 7. Answers to NoriTelop §9 open questions (handoff — already established)
 

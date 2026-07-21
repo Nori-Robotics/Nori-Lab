@@ -508,9 +508,6 @@ const Marketplace = () => {
         <div className="relative">
           <div className="flex items-center justify-between">
             <span className="eyebrow">{"// skills community"}</span>
-            <span className="inline-flex -rotate-3 animate-floaty items-center rounded-full bg-sticker px-3 py-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink shadow-soft">
-              {"// beta"}
-            </span>
           </div>
           <h1 className="mt-4 font-display text-balance text-[clamp(2rem,4.5vw,3rem)] leading-[0.95] tracking-tight">
             Teach once. Share forever.

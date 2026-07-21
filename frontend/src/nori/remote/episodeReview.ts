@@ -115,3 +115,53 @@ export function cloudEpisodeThumbUrl(
     `/episode/${index}/thumb.jpg?t=${encodeURIComponent(token)}${cam}`
   );
 }
+
+// -- Raw source (robot recordings, ORIGINAL quality, viewable before assembly) -
+// A raw_bundle upload session, served by the backend's raw-recording viewer as a
+// lossless faststart remux of the robot's original H.264 cam mp4s (no AV1, no
+// double-transcode). Same JWT-listing + signed-clip-token shape as the cloud
+// dataset viewer, just different routes.
+
+/** List a promoted raw_bundle recording's episodes from the backend viewer. */
+export async function listRecordingEpisodes(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string,
+): Promise<CloudEpisodeListing> {
+  return noriRequest<CloudEpisodeListing>(
+    baseUrl,
+    fetcher,
+    `/nori/library/recordings/${encodeURIComponent(sessionId)}/episodes`,
+    { action: "List recording episodes" },
+  );
+}
+
+/** Raw clip URL — the robot's original file, lossless faststart remux. */
+export function recordingClipUrl(
+  backendBase: string,
+  sessionId: string,
+  index: number,
+  token: string,
+  camera?: string,
+): string {
+  const cam = camera ? `&camera=${encodeURIComponent(camera)}` : "";
+  return (
+    `${base(backendBase)}/api/v1/library/recordings/${encodeURIComponent(sessionId)}` +
+    `/episode/${index}/clip.mp4?t=${encodeURIComponent(token)}${cam}`
+  );
+}
+
+/** First-frame thumbnail (JPEG) of a raw episode, token-authorized. */
+export function recordingThumbUrl(
+  backendBase: string,
+  sessionId: string,
+  index: number,
+  token: string,
+  camera?: string,
+): string {
+  const cam = camera ? `&camera=${encodeURIComponent(camera)}` : "";
+  return (
+    `${base(backendBase)}/api/v1/library/recordings/${encodeURIComponent(sessionId)}` +
+    `/episode/${index}/thumb.jpg?t=${encodeURIComponent(token)}${cam}`
+  );
+}

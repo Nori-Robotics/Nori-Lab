@@ -39,7 +39,8 @@ refreshes `robotInfo()`. The raw parse is exported as `parseAck(frame)` if you n
 bridge authenticating to its daemon — being missing or stale. That's a robot-side provisioning
 problem.
 
-It is **not** your `token` option. The room token is checked much earlier, at signaling; if your
-room token were wrong you'd never get an offer at all.
+It is **not** about room access. Room access is gated by Supabase RLS when you join the private
+channel: if your account isn't the robot's paired account you'd never join, let alone reach an
+offer. (There is no room token — the legacy HMAC token is retired.)
 
 If you see `unauthorized`, **nothing on your end fixes it.** Report it to us.

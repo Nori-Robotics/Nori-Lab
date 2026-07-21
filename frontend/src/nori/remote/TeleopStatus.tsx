@@ -374,30 +374,45 @@ export function GripForce({ currents }: { currents: Record<string, number> }) {
   );
 }
 
-// Per-motor hardware faults from the robot (telemetry status.motor_faults): a joint whose servo
-// reports an error byte — overload / overheat / voltage / overcurrent / angle. Renders one red
-// row per faulted motor with its decoded type(s); nothing at all when the arm is healthy, so it's
-// invisible in normal operation and only appears when a single motor actually errors. This is the
-// "which motor has what error" readout — the same faults also stream to the Robot logs, but here
-// they're a live, at-a-glance panel keyed by joint. The decoded string carries the raw 0xNN hex,
-// which is authoritative; the names are best-effort per the Feetech status byte.
+// Per-motor problem state from the robot (telemetry status.motor_faults): each entry is either a
+// hardware fault (servo error byte decoded — "overload,overheat (0x24)") or the exact sentinel
+// "no response", meaning that motor DIDN'T ANSWER the bus (dropped / lost power). Renders one row
+// per problem joint; nothing at all when every expected motor answers and is healthy — so it's
+// invisible in normal operation. The distinction matters: a hardware fault (RED) is the servo
+// reporting a real condition; "no response" (AMBER) is an absent motor, which would otherwise be
+// indistinguishable from healthy — this panel is exactly what makes a dropped motor visible. The
+// decoded fault string carries the raw 0xNN hex (authoritative; names are best-effort).
+const MOTOR_NO_RESPONSE = "no response"; // sentinel the daemon sends for an unreadable motor
 export function MotorFaults({ faults }: { faults: Record<string, string> }) {
   const keys = Object.keys(faults).sort();
   if (keys.length === 0) return null;
+  const anyDropped = keys.some((k) => faults[k] === MOTOR_NO_RESPONSE);
   return (
     <div className="space-y-1.5">
       <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-nori-h8f2318">
-        Motor faults
+        {anyDropped ? "Motor faults / not responding" : "Motor faults"}
       </span>
-      {keys.map((k) => (
-        <div
-          key={k}
-          className="grid grid-cols-[minmax(6rem,auto)_1fr] items-center gap-3 rounded-md border border-nori-hd24a3d/40 bg-nori-hd24a3d/15 px-3 py-2"
-        >
-          <span className="truncate font-mono text-xs text-nori-h8f2318">{shortMotor(k)}</span>
-          <span className="text-right font-mono text-xs text-nori-h8f2318">{faults[k]}</span>
-        </div>
-      ))}
+      {keys.map((k) => {
+        const dropped = faults[k] === MOTOR_NO_RESPONSE;
+        // amber = not responding (absent motor), red = servo-reported hardware fault
+        const cls = dropped
+          ? "border-nori-hdb9346/40 bg-nori-hfdf1de text-nori-h8a5a12"
+          : "border-nori-hd24a3d/40 bg-nori-hd24a3d/15 text-nori-h8f2318";
+        return (
+          <div
+            key={k}
+            className={cn(
+              "grid grid-cols-[minmax(6rem,auto)_1fr] items-center gap-3 rounded-md border px-3 py-2",
+              cls,
+            )}
+          >
+            <span className="truncate font-mono text-xs">{shortMotor(k)}</span>
+            <span className="text-right font-mono text-xs">
+              {dropped ? "not responding" : faults[k]}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

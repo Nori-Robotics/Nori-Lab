@@ -1,8 +1,12 @@
 # Quick start
 
-The fastest path: use the reference **Supabase** transport with a room + token we provision for
-you (you do **not** need your own Supabase account — just the room credentials). See
-[Connectivity](/sdk/connectivity) for when you'd additionally need TURN values.
+The fastest path: use the reference **Supabase** transport with the room + Supabase credentials we
+provision for you. Access to a real robot's room is gated by **Supabase RLS** on a private channel:
+you sign the `supabase` client in as the robot's paired account and RLS admits you — there is **no
+room token** to pass (the legacy HMAC room token is retired). Pairing an account to a robot is a
+one-time step done in the Nori app using the **pair code printed on the robot's box**; that's
+upstream of the SDK, not a connect option. See [Connectivity](/sdk/connectivity) for when you'd
+additionally need TURN values.
 
 ```ts
 import { RemoteTeleop } from "@nori/sdk";
@@ -15,7 +19,9 @@ const video = document.querySelector("video")!;
 const teleop = new RemoteTeleop({
   signaling: new SupabaseSignaling(supabase, ROOM, (...m) => console.log(...m)),
   videoEl: video,
-  token: ROOM_TOKEN,        // "" for an open dev room; HMAC-authed otherwise
+  // No room token: a real robot's private room is gated by Supabase RLS (sign `supabase`
+  // in as the paired account). Pass `{ private: true }` to SupabaseSignaling for a real
+  // robot; open dev rooms (`nori-dev`) use the default public join.
   stun: "stun:stun.l.google.com:19302",
   // TURN is optional and currently not issued by default (see "Connectivity").
   // If we've sent you relay credentials, add: turnUrls: [TURN_URL], turnUser, turnCred.
@@ -46,7 +52,7 @@ import { SupabaseSignaling } from "@nori/sdk/supabase";
 const teleop = new RemoteTeleop({
   signaling: new SupabaseSignaling(supabase, room, console.log),
   videoEl: document.querySelector("video")!,
-  token, stun, turnUrls, turnUser, turnCred, forceRelay: false,
+  stun, turnUrls, turnUser, turnCred, forceRelay: false,
   arm: "right", onLog: console.log, onConnState: console.log,
   onTelemetry: () => {}, onMode: () => {}, onControlActive: () => {},
 });

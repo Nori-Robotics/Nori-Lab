@@ -538,6 +538,17 @@ class NoriClient:
         show a dataset as 'Assembling' (append/rebuild target) or a placeholder (new)."""
         return self._request("GET", f"{API}/datasets/assemblies/active")
 
+    def export_dataset(self, dataset_session_id: str) -> dict[str, Any]:
+        """POST /datasets/{id}/export — enqueue packaging this dataset for download.
+        Idempotent (reuses a still-valid export). Returns
+        {export_job_id, status, download_url, size_bytes, expires_at, failure_reason}."""
+        return self._request("POST", f"{API}/datasets/{dataset_session_id}/export")
+
+    def get_export_job(self, export_job_id: str) -> dict[str, Any]:
+        """GET /datasets/export/{id} — poll one export job; download_url is populated
+        (and non-expired) once status is DONE."""
+        return self._request("GET", f"{API}/datasets/export/{export_job_id}")
+
     def dataset_sessions(self, dataset_session_id: str) -> dict[str, Any]:
         """GET /datasets/{id}/sessions — provenance sessions of an assembled dataset
         {sessions: [{session_key, recorded_at, task, episode_count, ...}]}."""

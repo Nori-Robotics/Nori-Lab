@@ -1157,6 +1157,22 @@ def nori_get_assembly_job(assembly_job_id: str, request: Request):
     return _nori_proxy(lambda: client.get_assembly_job(assembly_job_id))
 
 
+# Dataset export (download to the user's machine). Bytes stream S3->client via the
+# presigned URL in the response; only the enqueue + poll go through here.
+@app.get("/nori/datasets/export/{export_job_id}")
+def nori_get_export_job(export_job_id: str, request: Request):
+    """Poll one dataset-export job; download_url is set once status is DONE."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.get_export_job(export_job_id))
+
+
+@app.post("/nori/datasets/{dataset_session_id}/export")
+def nori_export_dataset(dataset_session_id: str, request: Request):
+    """Enqueue packaging a dataset for download (idempotent; reuses a live export)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.export_dataset(dataset_session_id))
+
+
 @app.get("/nori/datasets/{dataset_session_id}/sessions")
 def nori_dataset_sessions(dataset_session_id: str, request: Request):
     """Provenance sessions of an assembled dataset (for filter + bulk-delete)."""

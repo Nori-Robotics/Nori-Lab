@@ -297,7 +297,9 @@ const Coding = () => {
 
       <div className="grid h-[calc(100vh-12rem)] grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Left: LLM prompt (codegen — D3, not wired yet) + run output log */}
-        <div className="flex h-full min-h-0 flex-col gap-4">
+        {/* min-w-0 so the mono output log can't force the grid column past the viewport width
+            (grid items default to min-width:auto). Matches the Agent page's columns. */}
+        <div className="flex h-full min-w-0 min-h-0 flex-col gap-4">
           <div className="flex flex-1 min-h-0 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
             <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// prompt</span>
             <Textarea
@@ -369,7 +371,7 @@ const Coding = () => {
         </div>
 
         {/* Right: code editor + run / stop / e-stop */}
-        <div className="flex h-full min-h-0 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
+        <div className="flex h-full min-w-0 min-h-0 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
           <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// code</span>
           <div className="flex-1 min-h-0 overflow-hidden rounded-md border border-nori-h14131a/12">
             <CodeMirror

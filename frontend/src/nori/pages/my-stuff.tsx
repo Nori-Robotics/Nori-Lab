@@ -508,7 +508,9 @@ const MyStuff = () => {
 
       <div className="grid gap-8 lg:grid-cols-[1.35fr_1fr]">
         {/* -------- Datasets -------- */}
-        <div className="space-y-3.5">
+        {/* min-w-0: grid items default to min-width:auto, so a wide row (long dataset name / repo
+            id) would otherwise push this column past the viewport and overflow the page. */}
+        <div className="min-w-0 space-y-3.5">
           {/* Robot recordings (W2.11): full-quality episodes recorded on the robot
               and uploaded to your cloud automatically. Not trainable until assembled
               into a dataset — a read-only view of what the robot has captured. */}
@@ -766,7 +768,7 @@ const MyStuff = () => {
         </div>
 
         {/* -------- Policies -------- */}
-        <div className="space-y-3.5">
+        <div className="min-w-0 space-y-3.5">
           <div className="flex items-baseline justify-between">
             <h2 className="text-lg font-bold tracking-tight text-nori-h14131a">Policies</h2>
             <span className="font-mono text-xs text-muted-foreground">{allPolicies.length} total</span>

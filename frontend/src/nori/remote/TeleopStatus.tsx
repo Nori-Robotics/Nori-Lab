@@ -289,39 +289,84 @@ function shortMotor(key: string): string {
     .replace(/_/g, " ");
 }
 
-// Per-motor current bars. Grippers first (the primary grip-force signal), then the rest.
-// Telemetry carries RAW Feetech LSBs; the bar is normalized against CURRENT_FULL_LSB (the
-// same scale VR haptics uses, now shared from the SDK so the two can't drift), and the
-// numeric readout is converted to mA via currentMa() — EE reads this in real current, and a
-// bare LSB count gave no way to judge whether a value was thermally reasonable for a given
-// motor size (that ambiguity is what hid the wrist_roll burnout, 2026-07).
+// Which arm a current key belongs to. Motors are keyed "<side>_arm_<joint>" (and "<side>_..."
+// for lift/base); anything without a side prefix falls into "other" so it still shows.
+function armSide(key: string): "left" | "right" | "other" {
+  if (key.startsWith("left_")) return "left";
+  if (key.startsWith("right_")) return "right";
+  return "other";
+}
+
+// One motor's current bar. Bar normalized against CURRENT_FULL_LSB (the same scale VR haptics
+// uses, shared from the SDK so the two can't drift); numeric readout converted to mA via
+// currentMa() — EE reads this in real current, and a bare LSB count gave no way to judge
+// whether a value was thermally reasonable for a given motor size (the ambiguity that hid the
+// wrist_roll burnout, 2026-07).
+function CurrentBar({ motorKey, raw }: { motorKey: string; raw: number }) {
+  const mag = Math.abs(raw);
+  const pct = Math.min(100, (mag / CURRENT_FULL_LSB) * 100);
+  const isGrip = motorKey.includes("gripper");
+  const tone = pct >= 80 ? "bg-nori-hd24a3d" : pct >= 40 ? "bg-nori-hc97929" : "bg-nori-hd98b3d";
+  return (
+    <div className="grid grid-cols-[minmax(6rem,auto)_1fr_5rem] items-center gap-3 rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-3 py-2">
+      <span className={cn("truncate font-mono text-xs", isGrip ? "text-nori-h14131a" : "text-nori-h5c564b")}>
+        {shortMotor(motorKey)}
+      </span>
+      <div className="h-1.5 overflow-hidden rounded-full bg-nori-he5e1d2">
+        <div className={cn("h-full rounded-full transition-[width] duration-100", tone)} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-right font-mono text-xs tabular-nums text-nori-h5c564b">
+        {currentMa(mag).toFixed(0)} mA
+      </span>
+    </div>
+  );
+}
+
+// Per-motor current bars, grouped by arm with a per-arm TOTAL current header. Within a group,
+// grippers first (the primary grip-force signal), then the rest. The per-arm total is the sum
+// of |Present_Current| across that arm's motors — a whole-arm draw an EE can watch for a joint
+// that's quietly pinned against a stop (the wrist_roll failure mode: one joint sustaining ~900
+// mA while the arm looks otherwise idle stands out in the total).
 export function GripForce({ currents }: { currents: Record<string, number> }) {
   const keys = Object.keys(currents);
   if (keys.length === 0) {
     return <p className="font-mono text-xs text-nori-h857b6b">no current telemetry yet</p>;
   }
-  const grippers = keys.filter((k) => k.includes("gripper")).sort();
-  const rest = keys.filter((k) => !k.includes("gripper")).sort();
-  const ordered = [...grippers, ...rest];
+
+  // Order within a side: grippers first, then the rest alphabetically.
+  const orderSide = (ks: string[]) => {
+    const grip = ks.filter((k) => k.includes("gripper")).sort();
+    const rest = ks.filter((k) => !k.includes("gripper")).sort();
+    return [...grip, ...rest];
+  };
+  // Annotate the ARRAY LITERAL (not the .filter() result): filtering an annotated literal only
+  // keeps `side` narrow if TS back-propagates the contextual type through the generic .filter
+  // call, which it stops doing under enough type-instantiation load — widening `side` to `string`.
+  // Typing the literal directly pins the union regardless.
+  const allGroups: { side: "left" | "right" | "other"; label: string; keys: string[] }[] = [
+    { side: "left", label: "Left arm", keys: orderSide(keys.filter((k) => armSide(k) === "left")) },
+    { side: "right", label: "Right arm", keys: orderSide(keys.filter((k) => armSide(k) === "right")) },
+    { side: "other", label: "Other", keys: orderSide(keys.filter((k) => armSide(k) === "other")) },
+  ];
+  const groups = allGroups.filter((g) => g.keys.length > 0);
 
   return (
-    <div className="space-y-2">
-      {ordered.map((k) => {
-        const mag = Math.abs(currents[k] ?? 0);
-        const pct = Math.min(100, (mag / CURRENT_FULL_LSB) * 100);
-        const isGrip = k.includes("gripper");
-        const tone = pct >= 80 ? "bg-nori-hd24a3d" : pct >= 40 ? "bg-nori-hc97929" : "bg-nori-hd98b3d";
+    <div className="space-y-3">
+      {groups.map((g) => {
+        const totalRaw = g.keys.reduce((s, k) => s + Math.abs(currents[k] ?? 0), 0);
         return (
-          <div key={k} className="grid grid-cols-[minmax(6rem,auto)_1fr_5rem] items-center gap-3 rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-3 py-2">
-            <span className={cn("truncate font-mono text-xs", isGrip ? "text-nori-h14131a" : "text-nori-h5c564b")}>
-              {shortMotor(k)}
-            </span>
-            <div className="h-1.5 overflow-hidden rounded-full bg-nori-he5e1d2">
-              <div className={cn("h-full rounded-full transition-[width] duration-100", tone)} style={{ width: `${pct}%` }} />
+          <div key={g.side} className="space-y-1.5">
+            <div className="flex items-baseline justify-between px-1">
+              <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-nori-h857b6b">
+                {g.label}
+              </span>
+              <span className="font-mono text-xs tabular-nums text-nori-h5c564b">
+                {(currentMa(totalRaw) / 1000).toFixed(2)} A total
+              </span>
             </div>
-            <span className="text-right font-mono text-xs tabular-nums text-nori-h5c564b">
-              {currentMa(mag).toFixed(0)} mA
-            </span>
+            {g.keys.map((k) => (
+              <CurrentBar key={k} motorKey={k} raw={currents[k] ?? 0} />
+            ))}
           </div>
         );
       })}

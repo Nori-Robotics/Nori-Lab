@@ -2,12 +2,15 @@
 // Reuses Tailwind tokens only (no parallel UI kit); shadcn primitives live in
 // @/components/ui and can be pulled in per-page as the pages get built out.
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Battery, BatteryLow } from "lucide-react";
+import { Battery, BatteryLow, Menu } from "lucide-react";
 import { useNori } from "@/nori/NoriContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { openDocs } from "@/lib/docs";
+import {
+  Sheet, SheetContent, SheetHeader, SheetTitle,
+} from "@/components/ui/sheet";
 
 // Always-visible connection status. Connecting happens once on Home (ConnectionPanel); every
 // page just reads this shared chip. When disconnected it doubles as a shortcut back to Home.
@@ -62,6 +65,9 @@ const NoriLayout = () => {
   const { loading, error, ready, session } = useNori();
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  // Mobile/tablet drawer. Below `lg` the row of links can't fit, so it collapses behind a
+  // hamburger into a slide-in side menu.
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // Landing (/nori) and marketplace bring themselves up with their own staggered FadeIn, so the
   // blanket page fade would double up there — everywhere else gets the quick full-page fade.
@@ -76,24 +82,40 @@ const NoriLayout = () => {
     }
   }, [loading, ready, session, navigate]);
 
+  // Close the drawer whenever navigation completes — a tapped link changes `pathname`, so this
+  // dismisses the menu without every link needing its own onClick. Also covers programmatic
+  // navigation (e.g. the sign-in redirect above).
+  useEffect(() => { setMenuOpen(false); }, [pathname]);
+
+  const navLinkCls = (to: string, active: string, inactive: string) =>
+    pathname === to ? active : inactive;
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b">
         <nav className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-3">
+          {/* Hamburger — only below lg, where the inline links are hidden. */}
+          <button
+            type="button"
+            onClick={() => setMenuOpen(true)}
+            className="-ml-1 rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+            aria-label="Open menu"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+
           <Link to="/nori" className="flex items-center gap-2 font-semibold">
             <img src="/nori-logo.png" alt="Nori" className="h-7 w-7" />
             Nori
           </Link>
-          <div className="flex gap-6 text-sm">
+
+          {/* Inline links — lg and up. Below that they live in the drawer instead. */}
+          <div className="hidden gap-5 text-sm lg:flex">
             {NAV.map((item) => (
               <Link
                 key={item.to}
                 to={item.to}
-                className={
-                  pathname === item.to
-                    ? "text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                }
+                className={navLinkCls(item.to, "text-foreground", "text-muted-foreground hover:text-foreground")}
               >
                 {item.label}
               </Link>
@@ -110,12 +132,52 @@ const NoriLayout = () => {
               Docs ↗
             </button>
           </div>
+
           <div className="ml-auto flex items-center gap-2">
             <BatteryChip />
             <ConnectionChip />
           </div>
         </nav>
       </header>
+
+      {/* The collapsed nav: a left-side drawer for tablet/mobile. The same NAV list, stacked and
+          full-width for touch. Closes on navigation via the pathname effect above. */}
+      <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+        <SheetContent side="left" className="w-72 p-0">
+          <SheetHeader className="border-b px-4 py-3 text-left">
+            <SheetTitle className="flex items-center gap-2">
+              <img src="/nori-logo.png" alt="" className="h-6 w-6" />
+              Nori
+            </SheetTitle>
+          </SheetHeader>
+          <nav className="flex flex-col gap-0.5 p-3">
+            {NAV.map((item) => (
+              <Link
+                key={item.to}
+                to={item.to}
+                className={
+                  "rounded-md px-3 py-2.5 text-sm " +
+                  navLinkCls(
+                    item.to,
+                    "bg-muted font-medium text-foreground",
+                    "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  )
+                }
+              >
+                {item.label}
+              </Link>
+            ))}
+            <button
+              type="button"
+              onClick={() => { setMenuOpen(false); void openDocs(); }}
+              className="rounded-md px-3 py-2.5 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+              title="Open the Nori docs in your browser"
+            >
+              Docs ↗
+            </button>
+          </nav>
+        </SheetContent>
+      </Sheet>
 
       {loading && (
         <div className="bg-muted px-4 py-2 text-center text-sm text-muted-foreground">

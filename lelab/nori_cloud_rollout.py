@@ -7,7 +7,7 @@
 # so moving the server HF -> AWS changes one env var (NORI_INFER_URL), nothing here.
 #
 # WHY A QUEUE. A VLA returns a whole action CHUNK (~30 moves) per call and the
-# call is slow (~0.30s on-GPU, but ~0.7-1.2s round-trip from the robot's network,
+# call is slow (~0.30s on-GPU, ~0.39s round-trip on a pooled connection,
 # ~3.6s on the first CUDA-graph compile) — far too slow to run every control tick.
 # So we run it OPEN-LOOP: buffer the chunk and hand the browser one action per tick;
 # when the buffer falls to `watermark`, fire ONE async refill so the next chunk
@@ -21,8 +21,16 @@
 #    remainder rather than queueing behind it, so we never execute a 2s-old tail
 #    (the "drives toward a stale target" indecision). Bounds staleness to ~the
 #    refill latency. There is a hard floor here — at high latency you trade
-#    staleness for starvation; the real fix is lower latency (in-region GPU /
-#    fewer num_steps) or a finetune, not queue tuning.
+#    staleness for starvation.
+#
+# MEASURED 2026-07-20, and it overturned the assumption above. The round trip was
+# NOT dominated by distance -- it was dominated by us opening a fresh TCP+TLS
+# connection per /act. With real 29KB frames against the HF Space:
+#   fresh conn per call : rtt 731ms | compute 303ms | network 428ms
+#   reused connection   : rtt 392ms | compute 303ms | network  89ms
+# 340ms/request (46%) was self-inflicted; only 89ms is actual distance. So "the
+# real fix is an in-region GPU" was wrong -- the fix was a connection pool, and
+# a closer GPU would now save ~60ms more, not ~700ms.
 #
 # The browser is UNCHANGED: it still POSTs {state,images} to /nori/rollout/act and
 # gets {action}. lelab just serves that action from the queue instead of a local
@@ -64,6 +72,12 @@ DEFAULT_NUM_STEPS = 10
 MOLMOACT2_CHUNK_HZ = 30.0
 HEALTH_TIMEOUT = 8.0
 ACT_TIMEOUT = 20.0  # first call compiles a CUDA graph (~3.6s); leave slack
+CONNECT_TIMEOUT = 10.0
+# Keep the pooled connection alive between refills, but expire it well before any
+# load balancer would: reusing a socket the far end has already half-closed
+# surfaces as a sporadic 502. Refills run ~1/s (continuous) to ~1/1.75s
+# (stop-and-stare), so 30s keeps the connection hot with a wide safety margin.
+KEEPALIVE_EXPIRY_S = 30.0
 
 
 def _env_int(name: str, default: int) -> int:
@@ -314,6 +328,7 @@ class CloudRollout:
         self._pending_obs: Optional[tuple[list[str], list[float]]] = None
         self._error: Optional[str] = None
         self._warming_since: Optional[float] = None
+        self._http = None  # lazily-built, REUSED httpx.Client (see _client)
         # observability
         self.refills = 0
         self.chunks_received = 0
@@ -475,35 +490,69 @@ class CloudRollout:
                 self._inflight = False
 
     # -- the actual HTTP call to our cloud server ------------------------
+    def _client(self):
+        """One REUSED connection for the whole rollout, built on first use.
+
+        We previously opened a fresh urllib connection per /act, paying a full
+        TCP+TLS handshake every inference. Measured against the HF Space with
+        real 29KB frames:
+
+            fresh conn per call : rtt 731ms | compute 303ms | network 428ms
+            reused connection   : rtt 392ms | compute 303ms | network  89ms
+
+        340ms/request, 46% of the round-trip, for nothing. The residual 89ms is
+        the actual distance to the GPU; the rest was self-inflicted. This also
+        decides other things: RTC costs +524ms of compute, which does NOT fit a
+        1s chunk at 731ms but DOES at 392ms.
+
+        Built lazily so constructing a CloudRollout (e.g. in tests, with an
+        injected caller) opens no sockets."""
+        if self._http is None:
+            import httpx
+
+            self._http = httpx.Client(
+                timeout=httpx.Timeout(ACT_TIMEOUT, connect=CONNECT_TIMEOUT),
+                limits=httpx.Limits(max_connections=4, max_keepalive_connections=4,
+                                    keepalive_expiry=KEEPALIVE_EXPIRY_S),
+                headers={"Content-Type": "application/json",
+                         "Authorization": f"Bearer {self.token}"},
+            )
+        return self._http
+
+    def close(self) -> None:
+        """Release the pooled connection. Safe to call twice."""
+        if self._http is not None:
+            try:
+                self._http.close()
+            except Exception:
+                pass
+            self._http = None
+
     def _http_act(self, images: list[str], state: list[float]) -> list[list[float]]:
-        payload = json.dumps({
+        import httpx
+
+        payload = {
             "images": images,
             "state": state,
             "instruction": self.instruction,
             "num_steps": self.num_steps,
-        }).encode()
-        req = urllib.request.Request(
-            f"{self.endpoint}/act",
-            data=payload,
-            method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.token}",
-            },
-        )
+        }
         try:
-            with urllib.request.urlopen(req, timeout=ACT_TIMEOUT) as r:
-                data = json.load(r)
-        except urllib.error.HTTPError as e:
-            # 503 = our server's "model not loaded yet" (or the Space proxy's own
-            # unavailable). Either way it is a cold start, not a broken deployment.
-            if e.code == 503:
-                raise CloudEndpointWaking(f"endpoint waking (HTTP 503)") from e
-            raise
-        except (urllib.error.URLError, TimeoutError) as e:
-            # A sleeping Space accepts the TCP connection and then never answers,
-            # so a read timeout during wake looks exactly like this.
-            raise CloudEndpointWaking(f"endpoint unreachable/slow ({type(e).__name__})") from e
+            r = self._client().post(f"{self.endpoint}/act", json=payload)
+        except httpx.TimeoutException as e:
+            # A sleeping Space accepts the TCP connection then never answers.
+            raise CloudEndpointWaking(f"endpoint slow/unreachable ({type(e).__name__})") from e
+        except httpx.TransportError as e:
+            # Connect/read/protocol errors — incl. a pooled socket the far end
+            # closed. Transient by nature; the next refill rebuilds the pool.
+            self.close()
+            raise CloudEndpointWaking(f"transport error ({type(e).__name__})") from e
+        if r.status_code == 503:
+            # our server's "model not loaded yet", or the Space proxy's own
+            # unavailable — a cold start, not a broken deployment.
+            raise CloudEndpointWaking("endpoint waking (HTTP 503)")
+        r.raise_for_status()  # 401/404/500 stay HARD errors and fail fast
+        data = r.json()
         actions = data.get("actions")
         if not isinstance(actions, list) or not actions:
             raise ValueError("cloud /act returned no actions")

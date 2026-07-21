@@ -618,14 +618,22 @@ def rollout_act(body: ActBody):
 
 
 def _close_cam() -> None:
-    """Release the ZMQ camera subscriber (daemon threads + sockets) of the session
-    being torn down, so a re-load doesn't leak subscribers onto the same ports."""
+    """Release the per-session resources that hold sockets: the ZMQ camera
+    subscriber (daemon threads) and the cloud client's POOLED HTTP connection.
+    Both must go on teardown or a re-load leaks — subscribers onto the same
+    ports, and an idle keep-alive connection per rollout."""
     cam = _session.get("cam")
     if cam:
         try:
             cam.close()
         except Exception:
             logger.warning("[ROLLOUT] camera source close failed", exc_info=True)
+    roll = _session.get("cloud")
+    if roll is not None and hasattr(roll, "close"):
+        try:
+            roll.close()
+        except Exception:
+            logger.warning("[ROLLOUT] cloud client close failed", exc_info=True)
 
 
 @router.post("/unload")

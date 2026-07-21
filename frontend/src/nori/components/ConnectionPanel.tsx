@@ -20,13 +20,9 @@ import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { ConnectionBanner } from "@/nori/remote/TeleopStatus";
 
 /**
- * The connect-failure banner, on the page that owns the settings it tells you to fix.
- *
- * Remote renders the same banner, but a failed connect is usually a settings problem (wrong
- * access code, wrong room), and the settings only exist here — so Remote passes `settingsTo`
- * and its banner links back to this page; here the settings sit directly below the banner and
- * no link is needed. Renders nothing while idle or connected, so it costs no space in the
- * common case.
+ * The connect-failure banner. Shows what a connect attempt is doing, or why it failed plus the
+ * remedy. Renders nothing while idle or connected, so it costs no space in the common case.
+ * (Remote renders the same banner directly.)
  */
 export function ConnectionStatus() {
   const { connectStatus } = useTeleopSession();
@@ -106,31 +102,18 @@ export function ConnectionSettings() {
   return (
     <div className="mt-4 space-y-3 border-t border-nori-h14131a/10 pt-4">
       <div className="space-y-1.5">
-        <Label htmlFor="room">Room (your Nori serial number)</Label>
-        {/* The room IS the Supabase realtime channel name — matched EXACTLY against the Pi's
-            NORI_ROOM. Forced to UPPERCASE on every keystroke. NOTE: this breaks lowercase dev
-            rooms (e.g. NORI_ROOM=nori-dev -> NORI-DEV joins a channel the robot isn't on); set the
-            robot's NORI_ROOM to uppercase to match, or use a real (uppercase) serial. */}
-        <Input id="room" value={settings.room}
-          onChange={(e) => set("room", e.target.value.toUpperCase())}
-          autoCorrect="off"
-          spellCheck={false}
-          placeholder={serial || "NORI-DEV"} />
+        <Label>Robot</Label>
+        {/* The room (the Supabase realtime channel) is the active robot's serial, auto-filled from
+            pairing — no longer hand-typed. Room-token auth is retired, so an operator can only join
+            a robot their account owns; there is nothing to configure here. The active robot is
+            chosen on the Pairing page; the session follows it automatically. */}
         {serial ? (
-          settings.room === serial ? (
-            <p className="text-xs text-muted-foreground">
-              using paired robot <span className="font-mono">{serial}</span>
-            </p>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              paired robot: <span className="font-mono">{serial}</span>{" "}
-              <button type="button" className="underline hover:text-foreground"
-                onClick={() => set("room", serial)}>use it</button>
-            </p>
-          )
+          <p className="text-sm">
+            connecting to <span className="font-mono">{serial}</span>
+          </p>
         ) : (
           <p className="text-xs text-muted-foreground">
-            pair a robot (Pairing) to auto-fill this from its serial.
+            pair a robot (Pairing) to connect.
           </p>
         )}
       </div>

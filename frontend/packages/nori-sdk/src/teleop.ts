@@ -207,13 +207,9 @@ export type ConnectPhase =
 export type ConnectFailure =
   // Can't reach the signaling service at all: the operator's own internet, or Nori's service.
   | "signaling_unreachable"
-  // The robot explicitly rejected our access code (it sent a `nack`). This is the ONLY way to
-  // know the code is wrong: a robot that doesn't recognise the code otherwise stays silent, which
-  // is indistinguishable from being switched off.
-  | "bad_access_code"
-  // Nobody answered in the room at all. That means the robot is off, has no internet, or we're
-  // pointed at the wrong robot. It ALSO still covers a wrong access code on a robot too old to
-  // send a nack — so the remedy text names that possibility rather than asserting the robot is off.
+  // Nobody answered in the room at all: the robot is off, has no internet, or we're pointed at the
+  // wrong robot. (Room-token auth is retired, so there's no "wrong access code" failure any more —
+  // a non-paired operator is refused at the RLS join, never reaches this handshake.)
   | "robot_not_responding"
   // The robot answered but no network path could be established (NAT/firewall/TURN).
   | "ice_failed"

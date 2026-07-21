@@ -38,6 +38,7 @@ import {
   type Library,
   type LibraryDataset,
   type LibraryPolicy,
+  type RawBundleEntry,
   type RobotRecordings,
 } from "@/nori/api/client";
 import { EpisodeReviewModal, type ReviewSource } from "@/nori/components/EpisodeReviewModal";
@@ -176,6 +177,10 @@ const MyStuff = () => {
   const [error, setError] = useState<string | null>(null);
   const [activeRef, setActiveRef] = useState<string | null>(null); // hovered policy's source
   const [reviewing, setReviewing] = useState<ReviewSource | null>(null); // dataset under review
+  const [view, setView] = useState<"recordings" | "datasets">("recordings"); // left-column picker
+  const [deletingRecording, setDeletingRecording] = useState<RawBundleEntry | null>(null); // pending delete
+  const [deleteRecBusy, setDeleteRecBusy] = useState(false);
+  const [deleteRecErr, setDeleteRecErr] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set()); // recordings selected to assemble
   const [assembleOpen, setAssembleOpen] = useState(false);
   const [exporting, setExporting] = useState<{ session_id: string; label: string } | null>(null); // dataset being downloaded
@@ -296,6 +301,30 @@ const MyStuff = () => {
       setDeleteBusy(false);
     }
   }, [deleting, alsoUnpublish, baseUrl, fetchWithHeaders, load]);
+
+  const onDeleteRecording = useCallback(async () => {
+    if (!deletingRecording) return;
+    const id = deletingRecording.session_id;
+    setDeleteRecBusy(true);
+    setDeleteRecErr(null);
+    try {
+      // A recording is a dataset_upload_sessions row (kind=raw_bundle); the same
+      // owner-scoped delete removes its raw_bundles/ files AND the row. Datasets
+      // already assembled from it are independent copies and are untouched.
+      await deleteDataset(baseUrl, fetchWithHeaders, id, false);
+      setDeletingRecording(null);
+      setPicked((s) => {
+        const n = new Set(s);
+        n.delete(id);
+        return n;
+      });
+      await load();
+    } catch (e) {
+      setDeleteRecErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleteRecBusy(false);
+    }
+  }, [deletingRecording, baseUrl, fetchWithHeaders, load]);
 
   const onToggleDatasetLock = useCallback(
     async (d: LibraryDataset) => {
@@ -512,38 +541,62 @@ const MyStuff = () => {
         {/* min-w-0: grid items default to min-width:auto, so a wide row (long dataset name / repo
             id) would otherwise push this column past the viewport and overflow the page. */}
         <div className="min-w-0 space-y-3.5">
-          {/* Robot recordings (W2.11): full-quality episodes recorded on the robot
-              and uploaded to your cloud automatically. Not trainable until assembled
-              into a dataset — a read-only view of what the robot has captured. */}
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-lg font-bold tracking-tight text-nori-h14131a">Robot recordings</h2>
-            {/* on_robot_pending is the robot heartbeat's count of episodes on the spool that
-                aren't in the cloud yet — this is >0 as soon as you RECORD (while you're still
-                connected), long before any upload. So only say "uploading" when a bundle is
-                actually in flight (an upload row exists = the idle-gated shipper has started,
-                i.e. after you disconnect); otherwise report it honestly as still on the robot,
-                waiting for the robot to go idle. */}
-            {(() => {
-              const pending = robot?.on_robot_pending ?? 0;
-              const uploading = (robot?.bundles ?? []).some(
-                (b) =>
-                  b.assembling !== true &&
-                  b.status !== "PROMOTED" &&
-                  b.status !== "FAILED" &&
-                  b.status !== "PROMOTION_FAILED",
-              );
-              if (uploading)
-                return <span className="font-mono text-xs text-muted-foreground">uploading to cloud…</span>;
-              if (pending > 0)
-                return (
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {pending} on robot · uploads when idle
+          {/* View picker: Recordings ↔ Datasets, one at a time. Robot recordings
+              (W2.11) are full-quality episodes captured on the robot and auto-
+              uploaded; they become trainable once assembled into a dataset. */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="inline-flex rounded-full bg-secondary p-1 text-sm font-medium">
+              {([
+                ["recordings", "Recordings", robot?.bundles?.length ?? 0],
+                ["datasets", "Datasets", datasets.length],
+              ] as const).map(([key, label, count]) => (
+                <button
+                  key={key}
+                  onClick={() => setView(key)}
+                  className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 transition-colors ${
+                    view === key
+                      ? "bg-card text-nori-h14131a shadow-soft"
+                      : "text-muted-foreground hover:text-nori-h14131a"
+                  }`}
+                >
+                  {label}
+                  <span className="rounded-full bg-nori-h14131a/10 px-1.5 text-xs [font-variant-numeric:tabular-nums]">
+                    {count}
                   </span>
-                );
-              return null;
-            })()}
+                </button>
+              ))}
+            </div>
+            {/* Contextual status: recordings show the on-robot/uploading note; datasets show the total. */}
+            {view === "recordings"
+              ? (() => {
+                  // on_robot_pending is >0 as soon as you RECORD (while still connected), long
+                  // before any upload — so only say "uploading" when a bundle is actually in
+                  // flight (an upload row exists); otherwise report it as still on the robot.
+                  const pending = robot?.on_robot_pending ?? 0;
+                  const uploading = (robot?.bundles ?? []).some(
+                    (b) =>
+                      b.assembling !== true &&
+                      b.status !== "PROMOTED" &&
+                      b.status !== "FAILED" &&
+                      b.status !== "PROMOTION_FAILED",
+                  );
+                  if (uploading)
+                    return <span className="font-mono text-xs text-muted-foreground">uploading to cloud…</span>;
+                  if (pending > 0)
+                    return (
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {pending} on robot · uploads when idle
+                      </span>
+                    );
+                  return null;
+                })()
+              : (
+                <span className="font-mono text-xs text-muted-foreground">{datasets.length} total</span>
+              )}
           </div>
 
+          {view === "recordings" && (
+            <>
           {(robot?.bundles ?? []).map((b) => {
             const assembling = b.assembling === true;
             const promoted = b.status === "PROMOTED";
@@ -559,6 +612,9 @@ const MyStuff = () => {
             // Assembly only needs the CLOUD copy, so a PROMOTED recording is selectable
             // even during the brief local-delete tail — don't block on cleanup.
             const selectable = promoted && !assembling;
+            // Deletable once it's in a stable state (in cloud / failed) and not
+            // mid-assembly — deleting a source mid-assembly would break the job.
+            const deletable = !assembling && (promoted || failed);
             return (
               <article
                 key={b.session_id}
@@ -601,17 +657,32 @@ const MyStuff = () => {
                     {b.episode_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(b.episode_count)}</b> episodes</span>}
                     {b.frame_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(b.frame_count)}</b> frames</span>}
                   </span>
-                  {/* Preview the ORIGINAL recorded video (raw_bundle viewer) — the
-                      robot's own H.264 at full quality, viewable before assembly. */}
-                  {selectable && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setReviewing({ kind: "raw", sessionId: b.session_id, title: b.label })}
-                    >
-                      Preview
-                    </Button>
-                  )}
+                  <div className="flex items-center gap-1.5">
+                    {/* Preview the ORIGINAL recorded video (raw_bundle viewer) — the
+                        robot's own H.264 at full quality, viewable before assembly. */}
+                    {selectable && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setReviewing({ kind: "raw", sessionId: b.session_id, title: b.label })}
+                      >
+                        Preview
+                      </Button>
+                    )}
+                    {deletable && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        onClick={() => {
+                          setDeleteRecErr(null);
+                          setDeletingRecording(b);
+                        }}
+                      >
+                        <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 <p className="mt-3 border-t border-dashed border-border pt-2.5 text-[13px] italic text-muted-foreground">
                   {assembling
@@ -650,14 +721,11 @@ const MyStuff = () => {
             </p>
           )}
 
-          {/* -------- Datasets (uploaded, trainable) -------- */}
-          <div className="flex items-baseline justify-between pt-4">
-            <h2 className="text-lg font-bold tracking-tight text-nori-h14131a">Datasets</h2>
-            <span className="font-mono text-xs text-muted-foreground">
-              {datasets.length} total
-            </span>
-          </div>
+            </>
+          )}
 
+          {view === "datasets" && (
+            <>
           {/* new datasets still assembling from scratch (no row yet) — placeholders */}
           {newAssembling.map((a) => (
             <article key={a.id} className={`${cardCls} opacity-90`}>
@@ -784,6 +852,8 @@ const MyStuff = () => {
             <p className="rounded-[20px] border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
               No trainable datasets yet. Robot recordings become trainable datasets once assembled.
             </p>
+          )}
+            </>
           )}
         </div>
 
@@ -1010,6 +1080,44 @@ const MyStuff = () => {
               className="bg-red-500 text-white hover:bg-red-600"
             >
               {deleteBusy ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!deletingRecording}
+        onOpenChange={(o) => {
+          if (!o && !deleteRecBusy) {
+            setDeletingRecording(null);
+            setDeleteRecErr(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{deletingRecording?.label}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes the recording and its original video files from your Nori
+              cloud. This can’t be undone. Any datasets you already assembled from it are kept.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleteRecErr && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {deleteRecErr}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteRecBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void onDeleteRecording();
+              }}
+              disabled={deleteRecBusy}
+              className="bg-red-500 text-white hover:bg-red-600"
+            >
+              {deleteRecBusy ? "Deleting…" : "Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

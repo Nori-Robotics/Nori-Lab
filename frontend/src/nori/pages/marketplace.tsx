@@ -176,8 +176,10 @@ const PolicyCard = ({
       onClick={onOpen}
       className="mt-4 flex w-full items-center justify-between gap-3 rounded-xl border border-border bg-secondary px-3 py-2 text-left transition-colors hover:bg-accent"
     >
+      {/* Uniform label on every card — no per-item title (long titles truncate
+          and make the row read differently per item). */}
       <code className="truncate font-mono text-[12px] text-foreground">
-        view dataset · {policy.title}
+        view dataset
       </code>
       <span className="eyebrow shrink-0 text-foreground">open →</span>
     </button>
@@ -197,8 +199,8 @@ const PolicyCard = ({
           (state.status === "working"
             ? "installing…"
             : installed
-              ? `reinstall ${policy.title}`
-              : `nori install ${policy.title}`)}
+              ? "reinstall"
+              : "nori install")}
       </code>
       <span className="eyebrow shrink-0 text-foreground">
         {state.status === "working" ? "…" : installed ? "reinstall →" : "install →"}

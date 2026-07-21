@@ -238,9 +238,15 @@ class ConnectionManager:
     def stop_broadcast_thread(self):
         """Stop the background thread"""
         self.is_running = False
-        if self.broadcast_thread:
-            self.broadcast_thread.join(timeout=1.0)
-            logger.info("📡 Broadcast thread stopped")
+        thread = self.broadcast_thread
+        # `disconnect()` can reach here from *inside* the broadcast worker itself: a
+        # failed send drops that client, and if it was the last one, disconnect() calls
+        # stop. Joining the current thread raises "cannot join current thread", so only
+        # join when called from another thread — the worker's own `while self.is_running`
+        # loop already sees the cleared flag and exits on its own.
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
+        logger.info("📡 Broadcast thread stopped")
 
     def _broadcast_worker(self):
         """Background worker thread for broadcasting WebSocket data"""

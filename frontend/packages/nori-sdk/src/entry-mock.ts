@@ -6,7 +6,7 @@
 //   import { createMockRobot } from "@nori/sdk/mock";
 //
 //   const robot = createMockRobot();
-//   const teleop = new RemoteTeleop({ signaling: robot.signaling, token: "", ... });
+//   const teleop = new RemoteTeleop({ signaling: robot.signaling, ... });
 //   await teleop.start();   // real SDK path: handshake, WebRTC, video, telemetry, jog
 export { createMockRobot } from "./mock/robot";
 export type { MockRobotOptions, MockRobotHandle } from "./mock/robot";

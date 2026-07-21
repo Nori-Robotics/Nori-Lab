@@ -5,7 +5,6 @@
 //   * ControlLegend  — mode-aware keybind legend, derived from teleop.ts's exported maps.
 
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -124,28 +123,18 @@ export function ControlOfflineBanner({ status }: { status: DaemonStatus | null }
 // What the operator is told for each connect failure. Same contract as CONTROL_REMEDIES above:
 // headline = what's wrong in their words, body = what to DO about it.
 //
-// A NOTE ON HONESTY: `robot_not_responding` still mentions the access code even though
-// `bad_access_code` now exists. A robot only reports a bad code if its software is new enough to
-// send a rejection; an older one in the fleet still refuses SILENTLY, and that is indistinguishable
-// from being switched off. So the "isn't answering" copy names both causes rather than asserting
-// the robot is off and sending the operator to hunt a power cable that's already plugged in.
-// `settingsLink: true` marks failures whose remedy lives in the call settings; ConnectionBanner
-// renders a link to them when given `settingsTo` (pages that aren't Home, where the settings
-// actually are — see ConnectionPanel.ConnectionStatus for the dead-end this fixes).
-const CONNECT_TROUBLE: Record<ConnectFailure, { headline: string; body: string; settingsLink?: boolean }> = {
+// Room-token auth is retired: there is no "wrong access code" failure any more — a non-paired
+// operator is refused at the RLS join (they never reach the robot handshake), so the only "nobody
+// answered" cause left is a robot that's off / offline / the wrong robot. That retirement also
+// removed the only settings-fixable failure, so the banner no longer links back to call settings.
+const CONNECT_TROUBLE: Record<ConnectFailure, { headline: string; body: string }> = {
   signaling_unreachable: {
     headline: "Can't reach Nori",
     body: "Your device can't reach Nori's servers. Check your internet connection — the robot is probably fine.",
   },
-  bad_access_code: {
-    headline: "Wrong access code",
-    body: "Your robot is online but rejected this access code. Open your call settings and re-enter the code shown on the robot.",
-    settingsLink: true,
-  },
   robot_not_responding: {
     headline: "Your robot isn't answering",
-    body: "Check that the robot is powered on and connected to Wi-Fi. If it's on and online, the access code in your call settings may not match the one on the robot. It will connect on its own once it's reachable.",
-    settingsLink: true,
+    body: "Check that the robot is powered on and connected to Wi-Fi. It will connect on its own once it's reachable.",
   },
   ice_failed: {
     headline: "Couldn't open a video connection",
@@ -170,10 +159,7 @@ const CONNECT_PROGRESS: Partial<Record<ConnectPhase, string>> = {
 
 // The connection surface: a calm progress line while a connect is in flight, a red banner with a
 // remedy when it fails. Renders nothing once connected (the chips take over) or when idle.
-// `settingsTo`: route to the page that owns the call settings (Home). Pass it from pages WITHOUT
-// the settings (Remote) so a settings-shaped failure links the operator there instead of dead-
-// ending; omit it on Home itself, where the settings are directly below the banner.
-export function ConnectionBanner({ status, settingsTo }: { status: ConnectStatus; settingsTo?: string }) {
+export function ConnectionBanner({ status }: { status: ConnectStatus }) {
   if (status.phase === "idle" || status.phase === "connected") return null;
 
   if (status.phase === "failed") {
@@ -185,13 +171,6 @@ export function ConnectionBanner({ status, settingsTo }: { status: ConnectStatus
       <div className="rounded-md border border-nori-hd24a3d/35 bg-nori-hfde7e4 px-4 py-3 text-nori-ha3271c">
         <p className="font-mono text-[11px] uppercase tracking-[0.14em]">{headline}</p>
         <p className="mt-1 text-sm">{body}</p>
-        {settingsTo && t?.settingsLink && (
-          <p className="mt-1.5 text-sm">
-            <Link to={settingsTo} className="font-medium underline hover:opacity-80">
-              Open settings on the Home page →
-            </Link>
-          </p>
-        )}
       </div>
     );
   }

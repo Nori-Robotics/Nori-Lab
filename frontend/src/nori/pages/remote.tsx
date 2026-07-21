@@ -561,10 +561,8 @@ const Remote = () => {
             </AlertDialogContent>
           </AlertDialog>
           {/* Connection banner: what the connect attempt is doing, or why it failed + the remedy.
-              Every connect failure used to land ONLY in the collapsed "Robot logs" box.
-              settingsTo: the call settings live on Home, so settings-shaped failures (wrong/
-              rejected access code) link the operator there instead of dead-ending. */}
-          <ConnectionBanner status={connectStatus} settingsTo="/nori" />
+              Every connect failure used to land ONLY in the collapsed "Robot logs" box. */}
+          <ConnectionBanner status={connectStatus} />
           {/* Motor-control outage banner: video/link can be perfectly healthy while the robot's
               controller is down or refusing sessions (dead arm) — say so, with the remedy,
               instead of letting it read as random dead control. */}

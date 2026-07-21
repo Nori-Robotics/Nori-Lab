@@ -18,8 +18,10 @@ import {
   getBuildTimeConfig,
   settleBackendRouting,
   provisionCustomer,
+  listRobots,
   type CustomerProfile,
   type NoriPublicConfig,
+  type PairedRobot,
 } from "@/nori/api/client";
 import { initSupabase, settleSupabaseGate } from "@/nori/auth/supabase";
 import { getSession, onAuthStateChange } from "@/nori/auth/session";
@@ -233,7 +235,8 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   // Seed the active-robot choice when the customer (or account) changes: prefer a
   // previously-persisted selection for this user, else fall back to the profile's serial.
-  // The Pairing page corrects a stale/removed selection once it has the full robot list.
+  // This is an optimistic value; the reconcile effect below corrects a stale/removed
+  // selection once the live robot list arrives.
   const pairedSerial = customer?.robot_serial_number ?? null;
   useEffect(() => {
     if (!userId) {
@@ -262,6 +265,41 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     },
     [userId]
   );
+
+  // Reconcile the active-robot selection against the live paired-robot list — app-wide, not just
+  // on the Pairing page. The serial seeded above from localStorage can be stale: a robot may have
+  // been unpaired from another device/kiosk, in which case `customer.is_paired` stays true (the
+  // account still owns others) while the stored serial points at a robot this account no longer
+  // owns. Left unreconciled, `isPaired` reads true, the connect gate stays enabled, and a session
+  // joins a room the account can't own (dead-ends as "your robot isn't answering"). Runs on load
+  // and whenever the profile changes (pair/unpair). Best-effort: if the list can't be fetched,
+  // keep the seeded selection rather than falsely disabling a working setup on a network blip.
+  // A ref feeds the current serial in so the effect doesn't re-run every time it changes.
+  const activeRobotSerialRef = React.useRef(activeRobotSerial);
+  activeRobotSerialRef.current = activeRobotSerial;
+  useEffect(() => {
+    if (!userId || !customer?.is_paired) return;
+    let cancelled = false;
+    (async () => {
+      let robots: PairedRobot[];
+      try {
+        robots = await listRobots(baseUrl, fetchWithHeaders);
+      } catch {
+        return; // network/backend blip — trust the seeded selection
+      }
+      if (cancelled) return;
+      const current = activeRobotSerialRef.current;
+      if (robots.length === 0) {
+        setActiveRobotSerial(null); // every robot was unpaired elsewhere
+      } else if (!current || !robots.some((r) => r.robot_serial_number === current)) {
+        const preferred = robots.find((r) => r.is_active) ?? robots[0];
+        setActiveRobotSerial(preferred.robot_serial_number);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, customer, baseUrl, fetchWithHeaders, setActiveRobotSerial]);
 
   const value = useMemo<NoriContextType>(
     () => ({

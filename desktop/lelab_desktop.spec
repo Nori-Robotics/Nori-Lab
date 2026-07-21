@@ -92,6 +92,20 @@ a = Analysis(
     noarchive=False,
 )
 
+# --- Cross-platform slimming: drop never-executed test suites and C headers that
+#     collect_all drags in. Unlike the symbol-strip in build.sh (macOS-only, needs a
+#     re-sign), this filters the file manifest, so BOTH the macOS and Windows bundles
+#     shrink by it. ~20MB. Scoped to specific packages so we never drop a package that
+#     imports its own tests at runtime.
+_JUNK = (
+    "numpy/tests/", "pandas/tests/", "pyarrow/tests/",
+    "pyarrow/include/", "torch/include/", "torch/test/",
+)
+def _slim(entries):
+    return [e for e in entries if not any(j in e[0].replace("\\", "/") for j in _JUNK)]
+a.datas = _slim(a.datas)
+a.binaries = _slim(a.binaries)
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(

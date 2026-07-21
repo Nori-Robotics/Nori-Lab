@@ -20,13 +20,9 @@ import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { ConnectionBanner } from "@/nori/remote/TeleopStatus";
 
 /**
- * The connect-failure banner, on the page that owns the settings it tells you to fix.
- *
- * Remote renders the same banner, but a failed connect is usually a settings problem (wrong
- * access code, wrong room), and the settings only exist here — so Remote passes `settingsTo`
- * and its banner links back to this page; here the settings sit directly below the banner and
- * no link is needed. Renders nothing while idle or connected, so it costs no space in the
- * common case.
+ * The connect-failure banner. Shows what a connect attempt is doing, or why it failed plus the
+ * remedy. Renders nothing while idle or connected, so it costs no space in the common case.
+ * (Remote renders the same banner directly.)
  */
 export function ConnectionStatus() {
   const { connectStatus } = useTeleopSession();

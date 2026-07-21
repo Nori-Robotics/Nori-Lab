@@ -1,6 +1,6 @@
 {
   "name": "@nori/sdk",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Robot-local teleop SDK for the Nori daemon (nori-protocol over WebRTC). Connect, jog, stream telemetry/video — the daemon defends itself.",
   "type": "module",
   "license": "Apache-2.0",

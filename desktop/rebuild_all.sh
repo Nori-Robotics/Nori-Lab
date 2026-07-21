@@ -21,6 +21,20 @@ echo "== [3/6] freeze backend (bundles the fresh dist) =="
 ( cd desktop && rm -rf build dist && pyinstaller lelab_desktop.spec --noconfirm \
     --distpath ./dist --workpath ./build >/tmp/rebuild_freeze.log 2>&1 )
 
+# shrink: strip native libs + re-sign (macOS) — see build.sh for the why
+if [ "$(uname)" = "Darwin" ]; then
+  echo "   strip + re-sign native libs"
+  BUNDLE=desktop/dist/lelab-backend
+  while IFS= read -r -d '' f; do
+    strip -Sx "$f" 2>/dev/null || true
+    codesign --force --sign - "$f" 2>/dev/null || true
+  done < <(find "$BUNDLE" \( -name "*.dylib" -o -name "*.so" \) -print0)
+  codesign --force --sign - "$BUNDLE/lelab-backend" 2>/dev/null || true
+  rm -rf "$BUNDLE/_internal/pyarrow/include" "$BUNDLE/_internal/pyarrow/tests" 2>/dev/null || true
+  find "$BUNDLE/_internal/numpy" "$BUNDLE/_internal/pandas" -type d -name tests -prune -exec rm -rf {} + 2>/dev/null || true
+  find "$BUNDLE/_internal/torch" -type d -name include -prune -exec rm -rf {} + 2>/dev/null || true
+fi
+
 echo "== [4/6] stage bundle + .env =="
 rm -rf desktop/tauri/resources/backend
 cp -R desktop/dist/lelab-backend desktop/tauri/resources/backend

@@ -27,6 +27,29 @@ BACKEND_HOST = "127.0.0.1"
 BACKEND_PORT = 8000
 
 
+def _force_utf8_io() -> None:
+    """Make stdout/stderr UTF-8 regardless of the OS console codepage.
+
+    On Windows the default stdio encoding is the legacy codepage (cp1252), which
+    can't encode characters that lerobot/uvicorn routinely emit — e.g. the `≥`
+    in `lerobot_rollout --help`. Writing one crashes the process with
+    UnicodeEncodeError before it can serve (this is exactly what broke the frozen
+    `_child` smoke test on Windows). Reconfiguring to UTF-8 with
+    errors="backslashreplace" makes both the `_child` and server paths encoding-safe
+    and degrades instead of raising if a stream still can't be reconfigured
+    (e.g. a windowed build where stdout is None).
+    """
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (ValueError, OSError):
+            pass
+
+
 def _install_parent_death_watchdog() -> None:
     """Exit this backend if the parent (the Tauri shell) goes away.
 
@@ -98,6 +121,10 @@ def main() -> None:
     # Required first: PyInstaller + multiprocessing (lerobot dataloaders, torch)
     # would otherwise re-bootstrap the whole app in each worker.
     multiprocessing.freeze_support()
+
+    # Before anything can print: guarantee UTF-8 stdio so Unicode in help text /
+    # log lines can't kill the process on a non-UTF-8 Windows console.
+    _force_utf8_io()
 
     if len(sys.argv) >= 3 and sys.argv[1] == CHILD_DISPATCH_FLAG:
         _run_child_module()

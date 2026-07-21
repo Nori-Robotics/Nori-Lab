@@ -12,11 +12,19 @@ import json
 import logging
 import select
 import sys
-import termios
 import threading
 import time
-import tty
 import uuid
+
+try:
+    # Unix-only: raw-terminal keypress reading for the CLI wizard. Absent on
+    # Windows, where the desktop bundle runs headless and never reaches the
+    # interactive tty path anyway (guarded in _read_key_nonblocking).
+    import termios
+    import tty
+except ImportError:  # pragma: no cover - platform-dependent
+    termios = None  # type: ignore[assignment]
+    tty = None  # type: ignore[assignment]
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Literal
@@ -1487,7 +1495,7 @@ def _json_print(value: Any) -> None:
 
 
 def _read_key_nonblocking() -> str | None:
-    if not sys.stdin.isatty():
+    if termios is None or tty is None or not sys.stdin.isatty():
         return None
     old = termios.tcgetattr(sys.stdin)
     try:

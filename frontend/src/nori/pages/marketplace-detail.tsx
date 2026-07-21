@@ -12,12 +12,12 @@ import { ApiError } from "@/lib/apiClient";
 import {
   acquirePolicy,
   deleteLocalPolicy,
-  downloadPolicy,
   getPolicyDetails,
   listLocalPolicies,
   listMyListings,
   listPolicies,
   renamePolicy,
+  unpublishDataset,
   unpublishPolicy,
   type MyListing,
   type PolicyDetails,
@@ -49,7 +49,6 @@ const MarketplaceDetail = () => {
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
-  const [installMsg, setInstallMsg] = useState<string | null>(null);
   const [acquired, setAcquired] = useState(false);
 
   const refreshLocal = useCallback(async () => {
@@ -109,24 +108,36 @@ const MarketplaceDetail = () => {
     (loaded?.entry as (PolicyListEntry & { kind?: string }) | null | undefined)?.kind ===
       "dataset";
   const installed = loaded ? installedRefs.has(loaded.details.ref) : false;
+  // Policies key listings by job ref (=== detail ref). Own DATASET cards carry
+  // the LISTING id as their ref, so match that too; unpublishing a dataset needs
+  // its upload-session ref, which the listing row now carries.
+  const myListing = useMemo(
+    () =>
+      myListings.find(
+        (l) => l.source_job_id === ref || l.listing_id === ref || l.source_upload_session_id === ref,
+      ) ?? null,
+    [myListings, ref],
+  );
+
   const withdrawListing = useCallback(async () => {
     if (!ref) return;
     setBusy(true);
     setActionErr(null);
     try {
-      await unpublishPolicy(baseUrl, fetchWithHeaders, ref);
+      if (isDataset) {
+        const sessionRef = myListing?.source_upload_session_id;
+        if (!sessionRef) throw new Error("couldn't resolve this listing's source dataset");
+        await unpublishDataset(baseUrl, fetchWithHeaders, sessionRef);
+      } else {
+        await unpublishPolicy(baseUrl, fetchWithHeaders, ref);
+      }
       await refreshMyListings();
     } catch (e) {
       setActionErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
-  }, [ref, baseUrl, fetchWithHeaders, refreshMyListings]);
-
-  const myListing = useMemo(
-    () => myListings.find((l) => l.source_job_id === ref) ?? null,
-    [myListings, ref]
-  );
+  }, [ref, isDataset, myListing, baseUrl, fetchWithHeaders, refreshMyListings]);
 
   const back = (
     <button
@@ -180,26 +191,14 @@ const MarketplaceDetail = () => {
     }
   };
 
-  const install = async () => {
-    setBusy(true);
-    setActionErr(null);
-    setInstallMsg("installing…");
-    try {
-      if (details.source === "first_party" || details.source === "community") {
-        await acquirePolicy(baseUrl, fetchWithHeaders, details.ref);
-      }
-      const res = await downloadPolicy(baseUrl, fetchWithHeaders, details.ref);
-      setInstallMsg(`cached ${fmtBytes(res.size_bytes)} locally`);
-      refreshLocal();
-    } catch (e) {
-      setInstallMsg(null);
-      setActionErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
+  // "Add to my cloud" — entitle + copy the item into the caller's library
+  // (kind-agnostic acquire). Installing a policy onto THIS laptop happens from
+  // My Stuff once it lands there, never from the marketplace.
+  const addToCloud = async () => {
+    if (details.source === "own") {
+      setActionErr("This is your own — it's already in My Stuff.");
+      return;
     }
-  };
-
-  const acquireDataset = async () => {
     setBusy(true);
     setActionErr(null);
     try {
@@ -347,48 +346,41 @@ const MarketplaceDetail = () => {
         </div>
       </div>
 
-      {/* ACTIONS */}
+      {/* ACTIONS — one uniform "add to my cloud" for every kind. Laptop install
+          for policies happens from My Stuff after the copy lands. */}
       <div className="mt-8">
-        {isDataset ? (
-          acquired ? (
-            <div className="rounded-xl border border-border bg-secondary px-4 py-4">
-              <p className="text-[14px] text-foreground">
-                Copying to your Nori cloud — it’ll appear in My Stuff (tagged Community) in a
-                moment, ready to train on.
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Link
-                  to="/nori/my-stuff"
-                  className="inline-flex rounded-xl border border-border bg-background px-3 py-2 font-mono text-[12px] hover:bg-accent"
-                >
-                  view in My Stuff →
-                </Link>
+        {acquired ? (
+          <div className="rounded-xl border border-border bg-secondary px-4 py-4">
+            <p className="text-[14px] text-foreground">
+              {isDataset
+                ? "Copying to your Nori cloud — it’ll appear in My Stuff (tagged Community) in a moment, ready to train on."
+                : "Copying to your Nori cloud — it’ll appear in My Stuff (tagged Community) in a moment. Install it onto this laptop from there."}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Link
+                to="/nori/my-stuff"
+                className="inline-flex rounded-xl border border-border bg-background px-3 py-2 font-mono text-[12px] hover:bg-accent"
+              >
+                view in My Stuff →
+              </Link>
+              {isDataset && (
                 <Link
                   to="/nori/training"
                   className="inline-flex rounded-xl border border-border bg-background px-3 py-2 font-mono text-[12px] hover:bg-accent"
                 >
                   train on this dataset →
                 </Link>
-              </div>
+              )}
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={acquireDataset}
-              disabled={busy}
-              className="w-full rounded-xl border border-border bg-secondary px-3 py-3 font-mono text-[13px] hover:bg-accent disabled:opacity-50"
-            >
-              {busy ? "adding…" : "add to my cloud — copy this dataset into My Stuff →"}
-            </button>
-          )
+          </div>
         ) : (
           <button
             type="button"
-            onClick={install}
+            onClick={addToCloud}
             disabled={busy}
             className="w-full rounded-xl border border-border bg-secondary px-3 py-3 font-mono text-[13px] hover:bg-accent disabled:opacity-50"
           >
-            {installMsg ?? (installed ? "reinstall" : "nori install")}
+            {busy ? "adding…" : "add to my cloud — copy it into My Stuff →"}
           </button>
         )}
       </div>
@@ -396,7 +388,11 @@ const MarketplaceDetail = () => {
       {/* Community status (publishing itself moved to the marketplace page's
           "Publish something to the community" card — the single publish
           surface). Owners keep status visibility + instant withdraw here. */}
-      {details.editable && myListing && (myListing.in_review || myListing.is_public) ? (
+      {/* Own POLICIES: editable=true, listing keyed by source_job_id === ref.
+          Own DATASETS: the catalog card's ref IS the listing id (editable stays
+          false on the listing branch), so match listing_id and gate on
+          source === "own" as well. */}
+      {(details.editable || details.source === "own") && myListing && (myListing.in_review || myListing.is_public) ? (
         <div className="mt-6 flex items-center justify-between gap-3 rounded-xl border border-border bg-secondary/60 px-3 py-2">
           <span className="flex items-center gap-2 text-[13px]">
             <ListingStatusChip status={myListing.status} />

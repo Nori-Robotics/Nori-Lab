@@ -106,6 +106,11 @@ def main() -> None:
     # HF cache etc. resolve from $HOME; nothing else to set up — config.py owns paths.
     os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
+    # Self-configure from the PUBLIC .env staged next to the binary. MUST run before
+    # `lelab` is imported (uvicorn.run below triggers that), since lelab.utils.config
+    # reads SUPABASE_URL / SUPABASE_ANON_KEY / NORI_BACKEND_URL at import time.
+    _load_adjacent_env()
+
     # Don't outlive the Tauri shell that spawned us (prevents an orphan on :8000).
     _install_parent_death_watchdog()
 

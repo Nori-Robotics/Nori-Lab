@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Loader2, Lock, Trash2, Unlock } from "lucide-react";
+import { Download, Loader2, Lock, Trash2, Unlock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -42,6 +42,7 @@ import {
 } from "@/nori/api/client";
 import { EpisodeReviewModal, type ReviewSource } from "@/nori/components/EpisodeReviewModal";
 import { AssembleModal } from "@/nori/components/AssembleModal";
+import { ExportModal } from "@/nori/components/ExportModal";
 
 // ---- small presentational bits -------------------------------------------
 
@@ -177,6 +178,7 @@ const MyStuff = () => {
   const [reviewing, setReviewing] = useState<ReviewSource | null>(null); // dataset under review
   const [picked, setPicked] = useState<Set<string>>(new Set()); // recordings selected to assemble
   const [assembleOpen, setAssembleOpen] = useState(false);
+  const [exporting, setExporting] = useState<{ session_id: string; label: string } | null>(null); // dataset being downloaded
   const [deleting, setDeleting] = useState<LibraryDataset | null>(null); // pending delete confirmation
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
@@ -721,6 +723,13 @@ const MyStuff = () => {
                     <Button
                       size="sm"
                       variant="ghost"
+                      onClick={() => setExporting({ session_id: d.session_id, label: d.label })}
+                    >
+                      <Download className="mr-1 h-3.5 w-3.5" /> Download
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
                       disabled={lockBusy === d.session_id}
                       onClick={() => onToggleDatasetLock(d)}
                     >
@@ -902,6 +911,10 @@ const MyStuff = () => {
 
       {reviewing && (
         <EpisodeReviewModal source={reviewing} onClose={() => setReviewing(null)} onChanged={load} />
+      )}
+
+      {exporting && (
+        <ExportModal dataset={exporting} onClose={() => setExporting(null)} />
       )}
 
       {assembleOpen && (

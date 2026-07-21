@@ -634,6 +634,44 @@ export function getActiveAssemblies(baseUrl: string, fetcher: Fetcher): Promise<
   });
 }
 
+/** A dataset export job (package a cloud dataset -> downloadable tarball). Enqueued
+ *  by exportDataset; poll getExportJob until DONE, then download_url is a live,
+ *  short-lived presigned S3 URL (bytes stream straight from S3, not the backend). */
+export interface ExportJob {
+  export_job_id: string;
+  status: "PENDING" | "EXPORTING" | "DONE" | "FAILED";
+  /** Live presigned download URL — present only when DONE and not yet expired. */
+  download_url: string | null;
+  size_bytes: number | null;
+  expires_at: string | null;
+  failure_reason: string | null;
+}
+
+/** POST /nori/datasets/{id}/export — package this dataset for download. Idempotent:
+ *  reuses a still-valid export instead of re-tarring. Returns the job to poll. */
+export function exportDataset(
+  baseUrl: string,
+  fetcher: Fetcher,
+  datasetSessionId: string
+): Promise<ExportJob> {
+  return noriRequest<ExportJob>(
+    baseUrl,
+    fetcher,
+    `/nori/datasets/${encodeURIComponent(datasetSessionId)}/export`,
+    { method: "POST", action: "Prepare dataset download" }
+  );
+}
+
+/** GET /nori/datasets/export/{id} — poll one export job. */
+export function getExportJob(baseUrl: string, fetcher: Fetcher, exportJobId: string): Promise<ExportJob> {
+  return noriRequest<ExportJob>(
+    baseUrl,
+    fetcher,
+    `/nori/datasets/export/${encodeURIComponent(exportJobId)}`,
+    { action: "Check download status" }
+  );
+}
+
 /** One recording session that contributed episodes to an assembled dataset —
  *  the unit you can filter by or bulk-delete. */
 export interface DatasetProvenanceSession {

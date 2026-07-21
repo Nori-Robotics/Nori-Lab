@@ -388,7 +388,7 @@ const MarketplaceDetail = () => {
             disabled={busy}
             className="w-full rounded-xl border border-border bg-secondary px-3 py-3 font-mono text-[13px] hover:bg-accent disabled:opacity-50"
           >
-            {installMsg ?? (installed ? `reinstall ${details.title}` : `nori install ${details.title}`)}
+            {installMsg ?? (installed ? "reinstall" : "nori install")}
           </button>
         )}
       </div>

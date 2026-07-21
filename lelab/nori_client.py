@@ -512,6 +512,14 @@ class NoriClient:
         so only this listing is proxied."""
         return self._request("GET", f"{API}/library/datasets/{session_id}/episodes")
 
+    def list_recording_episodes(self, session_id: str) -> dict[str, Any]:
+        """GET /library/recordings/{session_id}/episodes — raw-recording viewer:
+        cameras + episodes + a signed clip token for a raw_bundle session (the
+        robot's ORIGINAL cam mp4s, viewable before assembly). Clips/thumbs are
+        fetched straight from the backend with the token, so only this listing is
+        proxied."""
+        return self._request("GET", f"{API}/library/recordings/{session_id}/episodes")
+
     # --- Recording -> dataset assembly (raw_bundle promotion) --------------
     def list_raw_bundles(self) -> dict[str, Any]:
         """GET /datasets/raw-bundles — the caller's robot recordings (raw_bundle

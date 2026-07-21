@@ -19,11 +19,14 @@ import { useNori } from "@/nori/NoriContext";
 import {
   listEpisodes,
   listCloudEpisodes,
+  listRecordingEpisodes,
   deleteEpisodes,
   episodeClipUrl,
   cloudEpisodeClipUrl,
+  recordingClipUrl,
   episodeThumbUrl,
   cloudEpisodeThumbUrl,
+  recordingThumbUrl,
   type DatasetEpisode,
 } from "@/nori/remote/episodeReview";
 import {
@@ -34,11 +37,13 @@ import {
   type DatasetProvenanceSession,
 } from "@/nori/api/client";
 
-/** What the modal is reviewing: a local lerobot-cache dataset, or a promoted
- * cloud upload (keyed by its upload session id). */
+/** What the modal is reviewing: a local lerobot-cache dataset, a promoted cloud
+ * upload (assembled dataset), or a raw robot recording (raw_bundle) served at
+ * ORIGINAL quality. Raw is view-only (no curation). */
 export type ReviewSource =
   | { kind: "local"; repoId: string }
-  | { kind: "cloud"; sessionId: string; title: string };
+  | { kind: "cloud"; sessionId: string; title: string }
+  | { kind: "raw"; sessionId: string; title: string };
 
 export function EpisodeReviewModal({
   source,
@@ -54,6 +59,7 @@ export function EpisodeReviewModal({
   const backendBase = config?.noriBackendUrl ?? "";
 
   const isCloud = source.kind === "cloud";
+  const isRaw = source.kind === "raw";
   const title = source.kind === "local" ? source.repoId : source.title;
   // Curation (episode/session delete) needs the provenance sidecar, which only
   // ASSEMBLED datasets have. Local datasets curate directly; a cloud dataset does
@@ -82,9 +88,12 @@ export function EpisodeReviewModal({
   const load = useCallback(async () => {
     setError(null);
     try {
-      const listing = isCloud
-        ? await listCloudEpisodes(baseUrl, fetchWithHeaders, source.sessionId)
-        : await listEpisodes(baseUrl, source.repoId);
+      const listing =
+        source.kind === "raw"
+          ? await listRecordingEpisodes(baseUrl, fetchWithHeaders, source.sessionId)
+          : source.kind === "cloud"
+            ? await listCloudEpisodes(baseUrl, fetchWithHeaders, source.sessionId)
+            : await listEpisodes(baseUrl, source.repoId);
       setEpisodes(listing.episodes);
       setCameras(listing.cameras);
       setCamera((c) => c ?? listing.cameras[0] ?? null);
@@ -148,7 +157,11 @@ export function EpisodeReviewModal({
   }, [onClose]);
 
   const clipSrc = (index: number): string | undefined => {
-    if (isCloud) {
+    if (source.kind === "raw") {
+      if (!clipToken || !backendBase) return undefined;
+      return recordingClipUrl(backendBase, source.sessionId, index, clipToken, camera ?? undefined);
+    }
+    if (source.kind === "cloud") {
       if (!clipToken || !backendBase) return undefined;
       return cloudEpisodeClipUrl(backendBase, source.sessionId, index, clipToken, camera ?? undefined);
     }
@@ -156,7 +169,11 @@ export function EpisodeReviewModal({
   };
 
   const thumbSrc = (index: number): string | undefined => {
-    if (isCloud) {
+    if (source.kind === "raw") {
+      if (!clipToken || !backendBase) return undefined;
+      return recordingThumbUrl(backendBase, source.sessionId, index, clipToken, camera ?? undefined);
+    }
+    if (source.kind === "cloud") {
       if (!clipToken || !backendBase) return undefined;
       return cloudEpisodeThumbUrl(backendBase, source.sessionId, index, clipToken, camera ?? undefined);
     }
@@ -203,7 +220,9 @@ export function EpisodeReviewModal({
     [baseUrl, fetchWithHeaders, source, runRebuild],
   );
 
-  const canCurate = !isCloud || (sessions != null && sessions.length > 0);
+  // Raw recordings are view-only (no curation). Local curates directly; an
+  // assembled cloud dataset curates only once it has recording-session provenance.
+  const canCurate = source.kind === "local" || (isCloud && sessions != null && sessions.length > 0);
   const visibleEpisodes = (episodes ?? []).filter(
     (ep) => sessionFilter === null || episodeSessions[ep.index] === sessionFilter,
   );
@@ -219,7 +238,7 @@ export function EpisodeReviewModal({
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
-            <p className="eyebrow">Review episodes{isCloud ? " · cloud" : ""}</p>
+            <p className="eyebrow">Review episodes{isCloud ? " · cloud" : isRaw ? " · original quality" : ""}</p>
             <h2 className="text-xl font-bold text-nori-h14131a">{title}</h2>
           </div>
           {cameras.length > 1 && (

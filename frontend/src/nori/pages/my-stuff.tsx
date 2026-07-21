@@ -596,9 +596,22 @@ const MyStuff = () => {
                             : "Uploading to cloud"}
                   </Pill>
                 </div>
-                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
-                  {b.episode_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(b.episode_count)}</b> episodes</span>}
-                  {b.frame_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(b.frame_count)}</b> frames</span>}
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
+                  <span className="flex flex-wrap gap-x-4 gap-y-1">
+                    {b.episode_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(b.episode_count)}</b> episodes</span>}
+                    {b.frame_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(b.frame_count)}</b> frames</span>}
+                  </span>
+                  {/* Preview the ORIGINAL recorded video (raw_bundle viewer) — the
+                      robot's own H.264 at full quality, viewable before assembly. */}
+                  {selectable && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setReviewing({ kind: "raw", sessionId: b.session_id, title: b.label })}
+                    >
+                      Preview
+                    </Button>
+                  )}
                 </div>
                 <p className="mt-3 border-t border-dashed border-border pt-2.5 text-[13px] italic text-muted-foreground">
                   {assembling

@@ -1443,6 +1443,16 @@ def nori_dataset_episodes(session_id: str, request: Request):
     return _nori_proxy(lambda: client.list_dataset_episodes(session_id))
 
 
+@app.get("/nori/library/recordings/{session_id}/episodes")
+def nori_recording_episodes(session_id: str, request: Request):
+    """Raw-recording viewer: list a promoted raw_bundle's episodes (+ a signed
+    clip token) — the robot's ORIGINAL cam mp4s, previewable before assembly.
+    Clips/thumbs are fetched straight from the backend with the token, so only
+    this JSON listing needs proxying."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.list_recording_episodes(session_id))
+
+
 class NoriJobNameBody(BaseModel):
     title: str | None = None
 

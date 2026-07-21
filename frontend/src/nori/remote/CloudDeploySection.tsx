@@ -22,7 +22,7 @@ const CLOUD_REF = "cloud:molmoact2";
 
 export function CloudDeploySection() {
   const { baseUrl } = useApi();
-  const { teleop, running, tel } = useTeleopSession();
+  const { teleop, running, tel, settings } = useTeleopSession();
   const { toast } = useToast();
 
   const [instruction, setInstruction] = useState("");
@@ -54,6 +54,10 @@ export function CloudDeploySection() {
         instruction: instruction.trim(),
         arm,
         observeOnly,
+        // The session room IS the paired robot's serial (room-token retirement).
+        // Present -> policyRun arms the full-quality policy stream; absent ->
+        // deprecated composite with a server-side warning.
+        robotSerial: settings.room.trim() || undefined,
       });
     } catch (e) {
       toast({
@@ -62,7 +66,7 @@ export function CloudDeploySection() {
         variant: "destructive",
       });
     }
-  }, [baseUrl, teleop, instruction, arm, observeOnly, toast]);
+  }, [baseUrl, teleop, instruction, arm, observeOnly, settings.room, toast]);
 
   const stop = useCallback(() => void runnerRef.current?.stop(), []);
 

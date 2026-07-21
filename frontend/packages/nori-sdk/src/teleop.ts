@@ -371,6 +371,22 @@ export interface CallState {
   cameraOn: boolean;     // M6 (gated): operator camera is sending
 }
 
+// Policy-stream control replies ({type:"policy_stream_status"} frames): the robot's
+// always-on policy streamer (rpi5/media/policy_streamer.py) relayed through the
+// bridge, same pattern as record_status below. `dropped` is the honest congestion
+// signal — frames the robot's bounded newest-wins buffer discarded. `error` covers
+// both refusals ("streamer unreachable" = feature disabled/absent on this robot,
+// a definite no) and mid-run deaths ("sink timeout", "camera silence").
+export interface PolicyStreamStatus {
+  ok: boolean;
+  streaming: boolean;
+  dest: string | null;
+  fpsOut?: number;
+  framesSent?: number;
+  dropped?: number;
+  error?: string;
+}
+
 // W2.11 on-robot episode recording: the reply to a record() command, relayed by the
 // bridge from the robot's always-on recorder ({type:"record_status"} frames). Null
 // until the first reply — record({action:"status"}) on connect is the cheap probe.
@@ -451,6 +467,10 @@ export interface RemoteTeleopOptions {
   // Optional: on-robot episode recording state (W2.11) — fires on every record_status
   // reply to a record() command. Poll recordState() for the latest value at use-time.
   onRecord?: (s: RecordState) => void;
+  // Optional: policy-stream state — fires on every policy_stream_status reply to a
+  // policyStream() command (incl. the mid-run death statuses). Poll
+  // policyStreamStatus() for the latest value at use-time.
+  onPolicyStream?: (s: PolicyStreamStatus) => void;
 }
 
 // Two schemes; 'm' toggles. Default = CYLINDRICAL (the rpi4 feel).
@@ -613,6 +633,8 @@ export class RemoteTeleop {
   private cameraLayoutRaw: CameraLayout | null = null;
   private daemonStat: DaemonStatus | null = null;   // latest daemon_status (bridge health frame)
   private recStat: RecordState | null = null;       // latest record_status (W2.11 recorder reply)
+  private psStat: PolicyStreamStatus | null = null; // latest policy_stream_status
+  private psWaiters: Array<(s: PolicyStreamStatus) => void> = []; // FIFO, one per in-flight policyStream()
   // The parsed handshake ack (P4.1). null until the daemon's ack arrives; refreshed on every
   // daemon (re)connect (a fresh offer means a fresh session, and the daemon re-acks).
   private ackInfo: RobotInfo | null = null;
@@ -787,6 +809,39 @@ export class RemoteTeleop {
   // Mint a fresh, unique action_id for a move (Phase E). Human-readable for logs.
   nextActionId(): string {
     return `a${++this.actionSeq}`;
+  }
+
+  // Drive the robot's policy streamer (STREAM_INTEGRATION_PLAN §3): the observation
+  // leg of remote inference. `start` makes the ROBOT dial out to `target` (the
+  // lelab receiver from /nori/rollout/stream/open) and push full-quality frames.
+  // Resolves with the robot's reply, or a synthetic timeout error after `timeoutMs`
+  // — never rejects (the awaitAction contract). Default 12 s because the robot-side
+  // relay legitimately blocks up to ~8 s on `start` (sink connect + preamble); a
+  // shorter wait reports "timeout" while the stream then actually starts.
+  policyStream(
+    action: "start" | "stop" | "status",
+    opts?: { dest?: "laptop" | "cloud"; target?: string; timeoutMs?: number },
+  ): Promise<PolicyStreamStatus> {
+    const frame: Record<string, unknown> = { type: "policy_stream", action };
+    if (opts?.dest) frame.dest = opts.dest;
+    if (opts?.target) frame.target = opts.target;
+    return new Promise<PolicyStreamStatus>((resolve) => {
+      const timer = setTimeout(() => {
+        const i = this.psWaiters.indexOf(entry);
+        if (i >= 0) this.psWaiters.splice(i, 1);
+        resolve({ ok: false, streaming: false, dest: null,
+                  error: `policy_stream ${action}: no reply in ${opts?.timeoutMs ?? 12000}ms` });
+      }, opts?.timeoutMs ?? 12000);
+      const entry = (s: PolicyStreamStatus) => { clearTimeout(timer); resolve(s); };
+      this.psWaiters.push(entry);
+      this.dcSend(frame);
+    });
+  }
+
+  // Latest policy_stream_status seen (any), or null. The mid-run death statuses
+  // ("sink timeout", "camera silence") land here even with no command in flight.
+  policyStreamStatus(): PolicyStreamStatus | null {
+    return this.psStat;
   }
 
   // Hand the arms to an autonomous policy (or take them back). While on, the 50 Hz
@@ -1587,6 +1642,8 @@ export class RemoteTeleop {
       this.ingestDaemonStatus(m);
     } else if (m.type === "record_status") {
       this.ingestRecordStatus(m);
+    } else if (m.type === "policy_stream_status") {
+      this.ingestPolicyStream(m);
     } else if (m.type === "ack") {
       this.ingestAck(m);
     } else if (m.type === "error") {
@@ -1717,6 +1774,28 @@ export class RemoteTeleop {
   // bridge, or the control channel just opened).
   daemonStatus(): DaemonStatus | null {
     return this.daemonStat;
+  }
+
+  // Coerce a policy_stream_status reply (fields per rpi5/media/policy_streamer.py
+  // _status), cache it, resolve the oldest in-flight policyStream() call, notify.
+  // FIFO waiter resolution: replies arrive in command order over the ordered data
+  // channel, so the oldest waiter owns the next reply.
+  private ingestPolicyStream(m: Record<string, unknown>) {
+    const s: PolicyStreamStatus = {
+      ok: m.ok === true,
+      streaming: m.streaming === true,
+      dest: typeof m.dest === "string" ? m.dest : null,
+    };
+    if (typeof m.fps_out === "number") s.fpsOut = m.fps_out;
+    if (typeof m.frames_sent === "number") s.framesSent = m.frames_sent;
+    if (typeof m.dropped === "number") s.dropped = m.dropped;
+    if (typeof m.error === "string" && m.error) s.error = m.error;
+    this.psStat = s;
+    this.log(s.error ? `policy stream: ${s.error}`
+      : s.streaming ? `policy stream live -> ${s.dest} (${s.fpsOut ?? "?"} fps, ${s.dropped ?? 0} dropped)`
+      : "policy stream idle");
+    this.psWaiters.shift()?.(s);
+    this.o.onPolicyStream?.(s);
   }
 
   // W2.11: coerce a record_status reply (fields per rpi5/media/recorder.py _status),

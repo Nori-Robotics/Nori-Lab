@@ -463,10 +463,12 @@ class NoriClient:
             "PATCH", f"{API}/datasets/upload/{session_id}", json={"label": label}
         )
 
-    def delete_dataset(self, session_id: str) -> dict[str, Any]:
+    def delete_dataset(self, session_id: str, also_unpublish: bool = False) -> dict[str, Any]:
         """DELETE /datasets/{session_id} — permanently remove a dataset (its HF
-        files + record). 404 on a non-own session; 409 if it's published/locked."""
-        return self._request("DELETE", f"{API}/datasets/{session_id}")
+        files + record). If it's also published, also_unpublish=True takes the
+        listing down too; else the listing stays live. 404 on a non-own session."""
+        params = {"also_unpublish": "true"} if also_unpublish else None
+        return self._request("DELETE", f"{API}/datasets/{session_id}", params=params)
 
     def rename_training_job(self, job_id: str, title: str | None) -> dict[str, Any]:
         """PATCH /training/jobs/{job_id}/name — name a policy at any lifecycle
@@ -481,10 +483,16 @@ class NoriClient:
             "POST", f"{API}/datasets/{session_id}/lock", json={"locked": locked}
         )
 
-    def delete_policy(self, job_id: str) -> dict[str, Any]:
+    def delete_policy(self, job_id: str, also_unpublish: bool = False) -> dict[str, Any]:
         """DELETE /library/policies/{job_id} — remove a policy (checkpoint +
-        record). 409 if it's published, still training, or locked."""
-        return self._request("DELETE", f"{API}/library/policies/{job_id}")
+        record). If it's also published, also_unpublish=True takes the listing
+        down too; else the listing stays live. 409 if still training or locked."""
+        params = {"also_unpublish": "true"} if also_unpublish else None
+        return self._request("DELETE", f"{API}/library/policies/{job_id}", params=params)
+
+    def get_import(self, import_job_id: str) -> dict[str, Any]:
+        """GET /marketplace/imports/{id} — poll an 'add to my cloud' copy job."""
+        return self._request("GET", f"{API}/marketplace/imports/{import_job_id}")
 
     def set_policy_lock(self, job_id: str, locked: bool) -> dict[str, Any]:
         """POST /library/policies/{job_id}/lock — lock/unlock a policy."""

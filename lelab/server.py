@@ -1101,10 +1101,11 @@ def nori_list_my_datasets(request: Request):
 
 
 @app.delete("/nori/datasets/{session_id}")
-def nori_delete_dataset(session_id: str, request: Request):
-    """Permanently delete one of the caller's datasets (HF files + record)."""
+def nori_delete_dataset(session_id: str, request: Request, also_unpublish: bool = False):
+    """Permanently delete one of the caller's datasets (HF files + record).
+    also_unpublish=true also takes down a linked community listing."""
     client = _nori_client(request)
-    return _nori_proxy(lambda: client.delete_dataset(session_id))
+    return _nori_proxy(lambda: client.delete_dataset(session_id, also_unpublish))
 
 
 class NoriLockBody(BaseModel):
@@ -1199,10 +1200,11 @@ def nori_delete_dataset_episodes(dataset_session_id: str, body: NoriDeleteEpisod
 
 
 @app.delete("/nori/library/policies/{job_id}")
-def nori_delete_policy(job_id: str, request: Request):
-    """Permanently delete one of the caller's policies (checkpoint + record)."""
+def nori_delete_policy(job_id: str, request: Request, also_unpublish: bool = False):
+    """Permanently delete one of the caller's policies (checkpoint + record).
+    also_unpublish=true also takes down a linked community listing."""
     client = _nori_client(request)
-    return _nori_proxy(lambda: client.delete_policy(job_id))
+    return _nori_proxy(lambda: client.delete_policy(job_id, also_unpublish))
 
 
 @app.post("/nori/library/policies/{job_id}/lock")
@@ -1214,8 +1216,16 @@ def nori_set_policy_lock(job_id: str, body: NoriLockBody, request: Request):
 
 @app.post("/nori/marketplace/policies/{listing_id}/acquire")
 def nori_acquire_policy(listing_id: str, request: Request):
+    """Acquire + one-click 'add to my cloud' (returns import_job_id to poll)."""
     client = _nori_client(request)
     return _nori_proxy(lambda: client.acquire_policy(listing_id))
+
+
+@app.get("/nori/marketplace/imports/{import_job_id}")
+def nori_get_import(import_job_id: str, request: Request):
+    """Poll an 'add to my cloud' import job."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.get_import(import_job_id))
 
 
 @app.get("/nori/marketplace/policies/{ref}")

@@ -78,6 +78,7 @@ export default defineConfig({
             { text: "Connectivity: LAN, STUN, TURN", link: "/sdk/connectivity" },
             { text: "The handshake", link: "/sdk/handshake" },
             { text: "Driving the robot", link: "/sdk/driving" },
+            { text: "Telemetry", link: "/sdk/telemetry" },
             { text: "The safety contract", link: "/sdk/safety" },
           ],
         },

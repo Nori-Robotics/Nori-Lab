@@ -22,8 +22,9 @@ See [safety states](/troubleshooting/safety-states).
 `connected`.
 
 **Your network.** Corporate/university Wi-Fi, hotel, VPN, mobile hotspot? If a session won't
-connect, this is usually the answer, and knowing it lets us just send you TURN credentials rather
-than debug your code. See [connection troubleshooting](/troubleshooting/connection).
+connect, this is usually the answer. Relay credentials are now minted automatically at connect, so
+also tell us whether the session log showed `TURN: using minted credentials` or
+`TURN: mint failed`. See [connection troubleshooting](/troubleshooting/connection).
 
 **Whether it correlates with load.** A peripheral that drops under load and is fine when idle is a
 [power problem](/troubleshooting/power), not a software one.
@@ -47,7 +48,12 @@ Don't spend your afternoon on these — they're expected:
 - **A stall stops one joint, not the robot.** By design. [Safety states](/troubleshooting/safety-states).
 - **Silence after `joinCall()`** until someone at the robot accepts the prompt. By design.
   [Audio](/troubleshooting/audio).
-- **Sessions that hang at `connecting` on strict networks.** You need TURN credentials — just ask.
+- **Sessions that hang at `connecting` on strict networks.** You need the TURN relay path; the app
+  fetches credentials for you at connect. [Connection](/troubleshooting/connection).
+- **A robot that latched itself with nobody touching it.** Over-temp and over-current motor
+  protection do that on purpose. [Safety states](/troubleshooting/safety-states).
+- **`batteryPercent` reading `null`.** Means unknown, not empty — many robots have no monitor
+  fitted. [Telemetry](/sdk/telemetry#battery).
 
 ## If these docs are wrong
 

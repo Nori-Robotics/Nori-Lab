@@ -11,9 +11,20 @@ completes — so the session sits at `connecting` forever.
 Networks that do this: corporate and university firewalls, hotel and co-working Wi-Fi, CGNAT
 mobile carriers, and VPNs.
 
-**The fix is a TURN relay.** We don't issue TURN credentials by default yet. If you're hitting
-this, [tell us](/troubleshooting/getting-help) and we'll provision relay credentials for you; they
-slot into the options you already pass, with no other change.
+**The fix is a TURN relay**, and in the Nori app you already have one: the backend **mints
+short-lived relay credentials at every connect** for a signed-in operator, automatically. If
+you're signed in and still stuck at `connecting`, check the session log for a
+`TURN: mint failed…` line — that means the fetch didn't land and the session fell back to STUN
+only.
+
+Building your own client? Fetch the same credentials yourself
+(`GET /api/v1/turn/credentials` with your account's JWT) and pass them into `RemoteTeleop`.
+
+::: warning An old static TURN credential no longer works
+The relay moved to a shared-secret scheme where credentials are time-bound. If you're still
+passing a fixed username/password we sent you months ago, it will be **rejected** — and a
+rejected relay looks exactly like no relay. Fetch fresh credentials instead.
+:::
 
 To confirm that's what you're looking at before asking:
 

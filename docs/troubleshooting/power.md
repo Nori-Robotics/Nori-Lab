@@ -40,11 +40,43 @@ On the Pi:
 vcgencmd get_throttled
 ```
 
-::: info 🚧 To write
-Decode the bits — which indicate undervoltage now vs. undervoltage since boot vs. thermal
-throttling — and show what a healthy reading looks like. Right now this is the fastest way to
-confirm a power problem and it's undocumented for operators.
+`throttled=0x0` is healthy. Anything else is the firmware telling you what went wrong:
+
+| Bit | Value | Meaning |
+|---|---|---|
+| 0 | `0x1` | **Undervoltage right now.** The live signal — this is the one to watch. |
+| 1 | `0x2` | Arm frequency capped now. |
+| 2 | `0x4` | Currently throttled. |
+| 3 | `0x8` | Soft temperature limit active now. |
+| 16 | `0x10000` | Undervoltage **has occurred** since boot. |
+| 17 | `0x20000` | Frequency cap has occurred since boot. |
+| 18 | `0x40000` | Throttling has occurred since boot. |
+| 19 | `0x80000` | Soft temp limit has been hit since boot. |
+
+So `0x50000` = "undervoltage and throttling both happened at some point since boot"; `0xe0000` =
+"frequency-capped, throttled, and soft-temp-limited since boot" — a **thermal** history, not a
+power one. That distinction matters: a Pi dropping camera frames with `0xe0000` and no bit 0 needs
+**cooling**, not a bigger supply.
+
+::: warning The high bits are sticky until reboot
+Bits 16–19 persist for the life of the boot, so a sag from yesterday pollutes today's reading.
+**Reboot before you measure**, then watch **bit 0** (the reading ending in an odd digit) in a live
+loop — that's the real-time signal.
 :::
+
+Log it alongside temperature and the 5 V rail while you reproduce:
+
+```bash
+while true; do
+  printf '%s  %s  %s  5V=%s\n' "$(date +%T)" "$(vcgencmd get_throttled)" \
+    "$(vcgencmd measure_temp)" \
+    "$(vcgencmd pmic_read_adc | grep -E 'EXT5V_V' | awk '{print $2}')"
+  sleep 2
+done
+```
+
+`EXT5V_V` sagging below **~4.8 V** under load means the rail is marginal — note which activity did
+it.
 
 ## Audio clips brown out the speaker
 

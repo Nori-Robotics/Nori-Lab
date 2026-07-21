@@ -6,8 +6,11 @@
 #
 # transformers>=4.57.0 is MANDATORY — MolmoAct2's trust_remote_code processor
 # imports transformers.video_utils.VideoInput (added in 4.57.0). Pinning it here
-# is SAFE in a Docker Space (unlike the Inference-Endpoint toolkit, nothing else
-# in this image imports the removed transformers.file_utils.is_tf_available).
+# is SAFE in a Docker Space: we control the whole image. The managed
+# Inference-Endpoint toolkit cannot do this because it hard-pins
+# transformers==4.51.3, which predates video_utils entirely.
+# (Earlier revisions of this file blamed a "removed is_tf_available" — wrong:
+# that symbol survives through 4.57.3 and goes only in v5.0.0.)
 transformers>=4.57.0
 accelerate
 fastapi

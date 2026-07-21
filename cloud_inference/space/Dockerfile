@@ -1,12 +1,18 @@
 # MolmoAct2-SO100_101 cloud-inference server as a HuggingFace **Docker** Space.
 #
-# WHY A DOCKER SPACE (not an Inference Endpoint): the managed Inference-Endpoint
-# container bakes in `huggingface_inference_toolkit`, whose bootstrap imports
-# `transformers.file_utils.is_tf_available` — REMOVED in the transformers >=4.57
-# that MolmoAct2's processor requires (it needs `transformers.video_utils`). The
-# two are mutually exclusive, so the toolkit path is a dead end. A Docker Space
-# runs OUR uvicorn directly — the toolkit never enters the picture, and we own
-# the exact transformers version.
+# WHY A DOCKER SPACE (not a managed Inference Endpoint): the managed container
+# bakes in `huggingface_inference_toolkit`, which HARD-PINS transformers==4.51.3.
+# That predates `transformers.video_utils.VideoInput` (added in 4.57.0), which
+# MolmoAct2's trust_remote_code processor imports — so the managed image simply
+# cannot satisfy the model. A Docker Space runs OUR uvicorn directly: no toolkit,
+# and we own the exact transformers version.
+#
+# CORRECTION (2026-07-21): this comment previously blamed the toolkit importing
+# `transformers.file_utils.is_tf_available`, said to be "REMOVED in >=4.57". That
+# is false — is_tf_available is present through 4.57.3 and only disappears in
+# v5.0.0. The version floor below is right; only the reason was wrong. Note the
+# managed path may still be reachable with a CUSTOM container image, which
+# bypasses the toolkit entirely — untested here.
 #
 # Base image = the SAME torch stack proven on HF Jobs (torch 2.5.1 + cu121):
 # pinning transformers on top of it does NOT upgrade torch, so torchvision /

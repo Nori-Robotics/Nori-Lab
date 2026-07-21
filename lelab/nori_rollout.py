@@ -42,6 +42,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from . import nori_cam_zmq as camzmq
+from . import policy_stream_rx as streamrx
 from . import nori_cloud_rollout as cloudmod
 from .utils import config
 
@@ -55,6 +56,74 @@ DEFAULT_FPS = 10
 _act_dbg_counter = 0  # throttles the per-tick rollout debug line to ~1/sec
 
 _lock = threading.Lock()  # single-flight inference + load/unload mutex
+
+# The armed/live policy-stream receiver (STREAM_INTEGRATION_PLAN §2). Module-
+# level, NOT session state: the orchestration arms it BEFORE /rollout/load
+# (the robot needs a target to dial), so it must survive the load path's
+# previous-session cleanup. Closed by /stream/close and by /unload.
+_stream = None  # Optional[streamrx.StreamListener]
+
+
+def _detect_host() -> str:
+    """The LAN address the robot should dial. Default-route interface trick
+    (no packet is sent); NORI_STREAM_HOST overrides for multi-NIC laptops."""
+    env = os.environ.get("NORI_STREAM_HOST", "").strip()
+    if env:
+        return env
+    import socket as _socket
+    sk = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+    try:
+        sk.connect(("10.255.255.255", 1))
+        return sk.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        sk.close()
+
+
+class StreamOpenBody(BaseModel):
+    # Supplied by the FRONTEND APP from its pairing/session state (the SDK does
+    # not know the serial). The receiver drops any stream whose preamble names
+    # a different robot — the v1 stand-in for sink auth.
+    expected_serial: str
+    port: int = 0  # 0 = ephemeral
+
+
+@router.post("/stream/open")
+def stream_open(body: StreamOpenBody):
+    """Arm the policy-stream receiver. Returns the {host, port} the browser
+    hands the robot as `target` in {type:"policy_stream", action:"start"}.
+    Re-opening replaces any previous listener (a retry is open->start again)."""
+    global _stream
+    serial = body.expected_serial.strip()
+    if not serial:
+        raise HTTPException(status_code=422, detail="expected_serial is required")
+    with _lock:
+        if _stream is not None:
+            _stream.close()
+        lst = streamrx.StreamListener(
+            serial, port=body.port or int(os.environ.get("NORI_STREAM_PORT", "0")))
+        lst.open()  # binds all interfaces; we advertise the routable address
+        _stream = lst
+    return {"host": _detect_host(), "port": lst.port}
+
+
+@router.post("/stream/close")
+def stream_close():
+    global _stream
+    with _lock:
+        had = _stream is not None
+        if _stream is not None:
+            _stream.close()
+            _stream = None
+    return {"closed": had}
+
+
+@router.get("/stream/status")
+def stream_status():
+    st = _stream
+    return st.status() if st is not None else {
+        "armed": False, "connected": False, "preamble_received": False}
 _session: dict[str, Any] = {}  # ref, policy, pre, post, device, joints, image_shapes
 
 
@@ -526,12 +595,26 @@ def _cloud_act(body: ActBody) -> dict:
     # source the recorder/training data uses). Fall back to the browser's crops of
     # the ABR-degraded composite when that source isn't configured/reachable, or
     # when any view is stale — a partial/frozen obs is worse than the composite.
-    cam = _session.get("cam")
-    zmq_imgs = cam.frames_b64(views) if cam else None
-    if zmq_imgs is not None:
-        images = [zmq_imgs[v] for v in views]
-        _session["frame_source"] = "zmq"
-    else:
+    # Source preference (STREAM_INTEGRATION_PLAN §2): the robot's policy
+    # stream > the DEPRECATED direct-SUB tap > the browser composite. The
+    # composite is a warned legacy fallback now that browser capture is
+    # deprecated for inference — warn on the TRANSITION into it, not per tick
+    # (15 Hz of identical warnings is noise, a silent fallback is worse).
+    prev_src = _session.get("frame_source")
+    images = None
+    st = _stream
+    if st is not None:
+        stream_imgs = st.frames_b64(views)
+        if stream_imgs is not None:
+            images = [stream_imgs[v] for v in views]
+            _session["frame_source"] = "stream"
+    if images is None:
+        cam = _session.get("cam")
+        zmq_imgs = cam.frames_b64(views) if cam else None
+        if zmq_imgs is not None:
+            images = [zmq_imgs[v] for v in views]
+            _session["frame_source"] = "zmq"
+    if images is None:
         missing = [v for v in views if v not in body.images]
         if missing:
             raise HTTPException(
@@ -540,6 +623,11 @@ def _cloud_act(body: ActBody) -> dict:
             )
         images = [body.images[v] for v in views]
         _session["frame_source"] = "composite"
+        if prev_src != "composite":
+            logger.warning(
+                "[ROLLOUT] observation source is the DEPRECATED browser composite"
+                + (" (stream went stale/disconnected)" if prev_src == "stream" else "")
+                + " — full-quality path: arm /stream/open and start the robot's policy stream")
     # NORI_INFER_DUMP_FRAMES=<dir>: write the images we ACTUALLY send, so the
     # policy's input can be inspected rather than reasoned about. A whole day of
     # this spike was spent theorising about frame quality without once looking at
@@ -638,10 +726,16 @@ def _close_cam() -> None:
 
 @router.post("/unload")
 def rollout_unload():
+    global _stream
     with _lock:
         had = _session.get("ref")
         _close_cam()
         _session.clear()
+        # The stream listener is per-rollout-session (plan §1): tearing down the
+        # session tears down the observation path with it.
+        if _stream is not None:
+            _stream.close()
+            _stream = None
     return {"unloaded": had}
 
 
@@ -662,6 +756,7 @@ def rollout_status():
                 # fallback to the degraded composite is visible in the field.
                 "frame_source": _session.get("frame_source", "unknown"),
                 "cameras": _session["cam"].status() if _session.get("cam") else None,
+                "stream": _stream.status() if _stream is not None else None,
             }
         return {
             "loaded": _session["ref"],

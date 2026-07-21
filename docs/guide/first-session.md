@@ -21,12 +21,19 @@ The happy path, start to finish. Rough shape — fill in from the real app flow
 
 ## The one thing to know before you move an arm
 
-The robot has an **E-STOP**, and it latches. Trip it any time — from the app, from your code
-(`teleop.command("estop")`), or with the physical button on the robot. Motion stops; the motors
-keep holding their pose, because letting a raised arm fall would be the more dangerous choice.
+The robot has two different kinds of E-stop:
 
-Clearing it is deliberate and nothing else does it for you: `reset_latch`. That's the design —
-a latch you can clear by accident isn't a latch.
+- The **physical E-stop** cuts electrical power to the motors only. The robot's computer and other
+  non-motor systems stay powered. A raised arm can go limp and fall when motor power is removed.
+- The **software E-stop**, available in the app or through `teleop.command("estop")`, blocks motion
+  and latches while leaving motor torque engaged.
+
+The **master switch** is different again: it controls power to the entire robot.
+
+Clearing a software E-stop is deliberate and nothing else does it for you: `reset_latch`. That's
+the design — a latch you can clear by accident isn't a latch. Releasing the physical E-stop is
+required to restore motor power; a software command cannot restore power that the physical E-stop
+has cut.
 
 **The robot can also latch itself.** A servo that gets too hot, or a joint that pulls too much
 current for too long, has its torque cut and latched off to save the motor — no human involved.

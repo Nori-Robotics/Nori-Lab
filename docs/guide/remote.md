@@ -38,7 +38,7 @@ Three commands, always available:
 
 | Command | Effect |
 |---|---|
-| **E-STOP** | Trips the latch immediately. Motion blocked; torque **stays engaged**, because dropping a raised arm is worse than holding it. Never rate-limited. |
+| **Software E-STOP** | Trips the software latch immediately. Motion blocked; torque **stays engaged**, because dropping a raised arm is worse than holding it. Never rate-limited. This is separate from the physical E-stop, which cuts motor power. |
 | **Reset latch** | Clears every latch — E-STOP, stall, and the over-temp / over-current motor cuts — and re-engages torque on any joint that was cut. The only thing that clears a latch. |
 | **Reset** | Returns the arms to their neutral pose. It's a motion command, so it's refused while latched. |
 

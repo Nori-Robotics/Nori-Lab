@@ -1,11 +1,12 @@
 # The safety contract
 
-The core promise, stated precisely: **every safety mechanism lives on the robot, and none of them
-are negotiable from this SDK.**
+The core promise, stated precisely: **every software safety mechanism lives on the robot, and none
+of them are negotiable from this SDK.**
 
-Clamping, watchdog, E-STOP, stall handling, and the motor torque lifecycle all run in the robot's
-control daemon. No message you can send — malformed, malicious, or buggy — disables or loosens
-them.
+Clamping, watchdog, software E-STOP, stall handling, and the motor torque lifecycle all run in the
+robot's control daemon. No message you can send — malformed, malicious, or buggy — disables or
+loosens them. The physical E-stop is a separate electrical control that cuts power to the motors;
+the master switch cuts power to the entire robot.
 
 Limits are **disclosed, not negotiated**: the handshake tells you what they are
 (`robotInfo().watchdogProfile`, `descriptor.ranges`), and there is deliberately no API to change
@@ -20,7 +21,7 @@ parameter.
 |---|---|---|
 | `"ok"` | Normal operation. | Carry on. |
 | `"safe_hold"` | Refusing motion to protect itself — either the Pi is too hot, or your control frames went silent past the watchdog stop threshold. **Not a latch.** | Fix the cause (let it cool / restore your control stream); it clears itself. |
-| `"latched"` | Something latched. **E-STOP** (operator command or the robot's physical button), **or** a motor-protection trip — an over-temperature or sustained-over-current joint cut. Motion blocked. | Clear deliberately with `command("reset_latch")` once the situation is safe. |
+| `"latched"` | Something latched. A **software E-STOP** operator command, **or** a motor-protection trip — an over-temperature or sustained-over-current joint cut. Motion blocked. | Clear deliberately with `command("reset_latch")` once the situation is safe. |
 
 ::: warning `latched` is no longer synonymous with E-STOP
 A robot can latch on its own to protect a motor. Read `latch_reason` before you assume a human
@@ -33,7 +34,7 @@ Reason strings follow `"<cause>:<detail>"`:
 
 | Value | Meaning |
 |---|---|
-| `estop:<reason>` | A human (app command, SDK `command("estop")`, or the physical button). `safety` = `latched`. |
+| `estop:<reason>` | A human used the app or SDK `command("estop")`. `safety` = `latched`. |
 | `overtemp:<motor>` | That servo's case temperature crossed the over-temp threshold. Torque cut on that joint. `safety` = `latched`. |
 | `overcurrent:<motor>` | That joint drew too much current for too long (a sustained-load integral, not an instantaneous spike). Torque cut on that joint. `safety` = `latched`. |
 | `stall:<motor>` | That joint is pressing into an obstruction. **`safety` stays `ok`** — a stall is not a global stop. |
@@ -61,11 +62,11 @@ the behavior change most likely to surprise a client written before them:
 The current and temperature guards exist because a joint can *cook* while drawing too little to
 look like a stall. They are deliberately not tunable from a client.
 
-::: tip Torque is not dropped on a latch
-An E-STOP blocks motion but **leaves torque engaged** — dropping a gravity-loaded arm is more
-dangerous than holding it. The per-joint guards above are the exception: they cut torque on the
-one offending joint, on purpose, because that joint is the thing being damaged. **A joint that
-goes limp can fall.**
+::: tip Software and physical E-stops affect torque differently
+A software E-STOP blocks motion but **leaves torque engaged** — dropping a gravity-loaded arm is
+more dangerous than holding it. The physical E-stop cuts power to every motor, so an arm can go
+limp and fall. The per-joint guards above cut torque on the one offending joint, on purpose,
+because that joint is the thing being damaged. **A joint that goes limp can fall.**
 :::
 
 ### `telemetry.watchdog` (`WatchdogState`)
@@ -91,7 +92,7 @@ robot and need an explicit `reset_latch`. A stall does not.
 
 | Command | Effect |
 |---|---|
-| `"estop"` | Trip the E-STOP latch now (safety → `"latched"`). Always available; never rate-limited. Torque stays engaged. |
+| `"estop"` | Trip the software E-STOP latch now (safety → `"latched"`). Always available; never rate-limited. Torque stays engaged. This does not operate the physical motor-power cutoff. |
 | `"reset_latch"` | Clear **every** latch — E-STOP, stall, over-temp, over-current — and re-engage torque on any joint that was cut. A deliberate act; nothing else clears a latch. |
 | `"reset"` | Return the arm(s) to their neutral pose. A motion command, not a latch operation — so it's refused while latched. |
 

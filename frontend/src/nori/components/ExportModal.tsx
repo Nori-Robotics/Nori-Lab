@@ -4,6 +4,12 @@
 // the bytes via a plain download — the browser saves it (S3's Content-Disposition
 // names the file). "Copy link" covers Colab / a remote GPU box (wget the presigned
 // URL). Bytes go S3 -> client directly, never through lelab.
+//
+// FUTURE (dropped 2026-07-20): an in-app "Save to a folder" picker + progress bar
+// via the File System Access API (showSaveFilePicker + streaming fetch of the S3
+// URL). It needs a bucket CORS rule (cross-origin fetch) that the scoped IAM user
+// can't set. To re-enable: add the CORS rule documented in the backend
+// src/storage/verify_aws_setup.py checklist, then restore the streaming path here.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Copy, Download, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";

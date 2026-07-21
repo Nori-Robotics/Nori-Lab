@@ -166,6 +166,39 @@ The browser catcher (`datasetCapture.ts` → `lelab/browser_capture.py` →
 | P6b | Browser-capture recording deprecation (§5b) | no |
 | P7 | Polish: client live-view bitrate downshift during runs; RTC `delay` from true capture age instead of the RTT EWMA | no |
 
+## 6b. P4 bench runbook (the first robot-dependent step)
+
+Off-hardware E2E is green (`tests/test_policy_stream_e2e.py`): fake robot →
+real receiver → real endpoints → real chunk queue, incl. the stream-death →
+422 → composite recovery leg and the calibration persist. P4 is the same run
+with the real robot.
+
+Robot side (Shanying's deployment, no code changes):
+1. Deploy a build containing `675aa3c`+ (policy streamer).
+2. `NORI_POLICY_ENABLED=1`, `NORI_POLICY_CAMERAS=left_wrist,overhead` in
+   `media.env` (bandwidth re-check per their §7.5 bench — still pending their
+   side).
+
+Laptop side, from the Remote page (everything is already wired):
+1. Connect the session as usual, open the cloud deploy card, Observe-only ON.
+2. Start. Expected console: `[policyRun] policy stream live — cameras:
+   ["left_wrist","overhead"]`. If it warns `composite fallback`, the robot
+   refused/unreachable — check `NORI_POLICY_ENABLED` and the LAN route.
+3. `curl -s localhost:8000/nori/rollout/status | python3 -m json.tool`:
+   `frame_source` must read `"stream"`, `stream.age_s` under ~0.2 s per
+   camera, streamer `dropped` near 0.
+4. `~/.nori_robot_calib.json` must now exist — the P5 unblock. Run the units
+   check against it (scale = (max−min)×360/(200×4096) ≤ 1.8 per joint).
+5. Kill test: stop the robot's streamer mid-run (or disconnect) — the browser
+   must log `policy stream lost — re-attaching DEPRECATED composite` and keep
+   ticking; the run must NOT die.
+6. Stop the run: robot streamer must stop (its own status goes idle), lelab
+   listener closed.
+
+Abort criteria: teleop loop_hz or live-view degradation while streaming
+(uplink contention — drop to `NORI_POLICY_CAMERAS=overhead` and re-check), or
+`dropped` climbing steadily (sink congestion).
+
 ## 7. Answers to NoriTelop §9 open questions (handoff — already established)
 
 - **State vector**: 6 floats, ONE arm, order `shoulder_pan, shoulder_lift,

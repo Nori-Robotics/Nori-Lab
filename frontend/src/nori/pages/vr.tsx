@@ -2,8 +2,9 @@
 //
 // Unlike the full Remote page, this renders OUTSIDE NoriLayout (no app nav) and does NOT require
 // a signed-in session: the VR drive loop only needs the public Supabase config (from /nori/config
-// or the VITE_SUPABASE_* build-time fallback), a room, and a token. A consumer opens this URL in
-// the Meta Quest browser, enters the robot code + access token, connects, and taps "Enter VR".
+// or the VITE_SUPABASE_* build-time fallback) and a room. A consumer opens this URL in the Meta
+// Quest browser, enters the robot code, connects, and taps "Enter VR". (Private-room access is
+// gated by the robot via Supabase RLS; the room-token HMAC is retired, so no token is collected.)
 //
 // It reuses the exact session + VR machinery the Remote page uses (TeleopSessionContext.connect +
 // VrSession), so there is no parallel control path — this is purely a trimmed, headset-first shell.
@@ -34,23 +35,13 @@ export default function VrLanding() {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Pre-fill from the laptop→headset handoff link so a headset that opened the app's shared
-  // link doesn't have to retype on a VR keyboard. Room comes via the query (?room=); the
-  // token comes via the FRAGMENT (#token=) so the credential is never sent to the server /
-  // access logs. Applied once on mount; a value in the URL wins over what was persisted.
+  // link doesn't have to retype on a VR keyboard. Room comes via the query (?room=). Applied
+  // once on mount; a value in the URL wins over what was persisted. (Room-token auth is retired
+  // — the robot gates private rooms via Supabase RLS — so there's no token to carry or scrub.)
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
-    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     const room = q.get("room");
-    const token = hash.get("token") ?? q.get("token"); // query token tolerated but discouraged
     if (room) set("room", room);
-    if (token) set("token", token);
-    // Once captured (persisted to localStorage by set()), scrub the token out of the address
-    // bar so it isn't left in the fragment for shoulder-surfing, bookmarking, or re-share.
-    if (token) {
-      try {
-        window.history.replaceState(null, "", window.location.pathname + window.location.search);
-      } catch { /* ignore */ }
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -192,18 +183,6 @@ export default function VrLanding() {
                     value={settings.room}
                     onChange={(e) => set("room", e.target.value)}
                     placeholder="your Nori serial number"
-                    autoComplete="off"
-                    className="h-11 text-base"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="token">Access token</Label>
-                  <Input
-                    id="token"
-                    type="password"
-                    value={settings.token}
-                    onChange={(e) => set("token", e.target.value)}
-                    placeholder="robot access token"
                     autoComplete="off"
                     className="h-11 text-base"
                   />

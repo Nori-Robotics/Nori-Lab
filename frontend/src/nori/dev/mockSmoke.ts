@@ -99,7 +99,6 @@ function render() {
 // the network), which is precisely the config that used to crash RTCPeerConnection.
 function makeTeleop(
   signaling: ReturnType<typeof createMockRobot>["signaling"],
-  token: string,
   hooks: {
     videoEl?: HTMLVideoElement;
     onTelemetry?: (t: TelemetryView) => void;
@@ -111,7 +110,6 @@ function makeTeleop(
   return new RemoteTeleop({
     signaling,
     videoEl: hooks.videoEl,
-    token,
     stun: "",
     turnUrls: [],
     turnUser: "",
@@ -143,7 +141,7 @@ export async function runSmoke(): Promise<SmokeReport> {
 
   let tel: TelemetryView | null = null;
   let connState = "";
-  const teleop = makeTeleop(robot.signaling, "", {
+  const teleop = makeTeleop(robot.signaling, {
     videoEl,
     onTelemetry: (t) => { tel = t; },
     onConnState: (s) => { connState = s; },
@@ -244,7 +242,7 @@ export async function runSmoke(): Promise<SmokeReport> {
   await check("reconnect after stop() (the regression the dropped bye caused)", async () => {
     let tel2: TelemetryView | null = null;
     let conn2 = "";
-    const teleop2 = makeTeleop(robot.signaling, "", {
+    const teleop2 = makeTeleop(robot.signaling, {
       onTelemetry: (t) => { tel2 = t; },
       onConnState: (s) => { conn2 = s; },
     });
@@ -256,42 +254,10 @@ export async function runSmoke(): Promise<SmokeReport> {
 
   robot.stop();
 
-  // ---- Scenario B: the token auth path ------------------------------------------------------
-  // The review found the mock rotated its nonce on every failed ready, so a CORRECT token could
-  // never converge and reported bad_access_code.
-  await check("correct token completes the HMAC handshake", async () => {
-    const authRobot = createMockRobot({ token: "s3cret-room-token" });
-    let conn = "";
-    const t = makeTeleop(authRobot.signaling, "s3cret-room-token", { onConnState: (s) => { conn = s; } });
-    try {
-      await t.start();
-      await waitFor(() => conn === "connected", 12000, "authenticated connState=connected");
-    } finally {
-      await t.stop();
-      authRobot.stop();
-    }
-  });
-
-  await check("wrong token is rejected as bad_access_code", async () => {
-    const authRobot = createMockRobot({ token: "s3cret-room-token" });
-    let failure = "";
-    let conn = "";
-    const t = makeTeleop(authRobot.signaling, "wrong-token", {
-      onConnState: (s) => { conn = s; },
-      onFailure: (f) => { failure = f; },
-    });
-    try {
-      await t.start();
-      // The SDK debounces a nack for NACK_CONFIRM_MS (2.5 s) before calling it a bad code. Stay
-      // well under WAIT_FOR_ROBOT_MS (12 s) so a pass here can't be the "nobody answered"
-      // deadline wearing a different hat.
-      await waitFor(() => failure === "bad_access_code", 8000, "bad_access_code");
-      assert(conn !== "connected", "a wrong token must not reach connected");
-    } finally {
-      await t.stop();
-      authRobot.stop();
-    }
-  });
+  // NOTE: the room-token HMAC auth scenarios were removed with room-token retirement — the
+  // operator no longer signs a mac (the robot gates private rooms via Supabase RLS). The mock
+  // robot keeps its token/HMAC verification internally, but nothing on the operator side drives
+  // it anymore, so there's no operator-facing handshake to smoke-test here.
 
   report.done = true;
   render();

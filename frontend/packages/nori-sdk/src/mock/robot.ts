@@ -18,7 +18,6 @@
 
 import { MockDaemonSim } from "./sim";
 import { createLoopbackSignaling, type MockRobotSignalingPort } from "./loopback-signaling";
-import { hmacHex } from "../teleop";
 import type { SignalingTransport } from "../signaling";
 
 export interface MockRobotOptions {
@@ -313,8 +312,19 @@ export function createMockRobot(opts?: MockRobotOptions): MockRobotHandle {
   };
 }
 
-// Verify with the operator's own primitive (teleop.ts hmacHex) rather than a second copy of the
-// crypto — the two could otherwise drift and break the token path silently.
+// HMAC-SHA256(token, nonce) as lowercase hex — the room-token proof the mock robot still
+// verifies to exercise the legacy auth path. The operator no longer signs one (room-token auth
+// is retired; the real robot gates access via Supabase RLS), so this lives here on the mock
+// robot side only.
+async function hmacHex(key: string, msg: string): Promise<string> {
+  const enc = new TextEncoder();
+  const k = await crypto.subtle.importKey(
+    "raw", enc.encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", k, enc.encode(msg));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 async function verifyMac(token: string, nonce: string, mac?: string): Promise<boolean> {
   if (!mac) return false;
   if (typeof crypto === "undefined" || !crypto.subtle) return false;

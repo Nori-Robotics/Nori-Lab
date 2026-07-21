@@ -28,12 +28,14 @@ export interface RobotHerePayload {
   nonce?: string;
 }
 
-// The robot REFUSED our 'ready'. Today the only reason is "unauthorized" (the room token's HMAC
-// didn't match). Before this existed the robot rejected a bad token silently, so a wrong access
-// code and a switched-off robot were the same event from the browser: nothing.
+// The robot REFUSED our 'ready'. `reason` names why (e.g. the robot is busy with another
+// session). Room-token auth is retired — the robot gates private-room access itself via
+// Supabase RLS — so the operator no longer computes an HMAC and a legacy "unauthorized" nack
+// is treated as a stray/forged artifact rather than a wrong access code.
 //
-// TRUST: the signaling room is unauthenticated, so a nack can be forged by anyone already in the
-// room. It is a HINT used only to pick better error copy — never a security decision.
+// TRUST: the signaling room's membership is enforced by the robot (RLS), but a nack itself can
+// be forged by anyone already in the room. It is a HINT used only to pick better error copy —
+// never a security decision.
 export interface NackPayload {
   reason?: "unauthorized" | (string & {});
 }
@@ -51,8 +53,9 @@ export interface SignalingHandlers {
   onSdp: (payload: SdpPayload) => void;
   // A remote ICE candidate from the robot.
   onIce: (payload: IcePayload) => void;
-  // The robot (re)joined the room, carrying its auth nonce — prove possession of the room
-  // token (HMAC) and re-handshake. May fire repeatedly (robot restarts / reconnects).
+  // The robot (re)joined the room — re-announce 'ready' and re-handshake. (The robot may still
+  // carry a legacy nonce; the operator no longer uses it, since room-token auth is retired.)
+  // May fire repeatedly (robot restarts / reconnects).
   onRobotHere: (payload: RobotHerePayload) => void;
   // The robot rejected our 'ready' (see NackPayload). Optional: robots older than 2026-07-12
   // never send it, so its ABSENCE must never be read as success.
@@ -72,7 +75,8 @@ export interface SignalingTransport {
   // Join the room and wire the inbound handlers. Resolves once wiring is registered — NOT once
   // the room is open; readiness is signalled via handlers.onOpen (which may fire repeatedly).
   connect(handlers: SignalingHandlers): Promise<void>;
-  // Announce the operator is 'ready', optionally carrying the HMAC proof of the room token.
+  // Announce the operator is 'ready'. The `mac` field is legacy (room-token HMAC proof) and is
+  // no longer sent by the operator — kept optional so a mock robot can still exercise it.
   sendReady(payload: { mac?: string }): void;
   // Publish our SDP ANSWER back to the robot.
   sendSdp(payload: SdpPayload): void;

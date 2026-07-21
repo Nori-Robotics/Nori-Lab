@@ -11,20 +11,17 @@ import { Button } from "@/components/ui/button";
 const vrBase = (): string =>
   import.meta.env.VITE_VR_BASE_URL?.replace(/\/+$/, "") || window.location.origin;
 
-export function VrHandoff({ room, token }: { room: string; token: string }) {
-  const [includeToken, setIncludeToken] = useState(false);
+export function VrHandoff({ room }: { room: string }) {
   const [copied, setCopied] = useState(false);
 
   const url = useMemo(() => {
     const u = new URL("/nori/vr", vrBase());
+    // Room stays in the query (it's the semi-public serial). Room-token auth is retired — the
+    // robot gates private rooms via Supabase RLS — so the link carries no secret. See
+    // DEPLOY_FRONTEND.md.
     if (room.trim()) u.searchParams.set("room", room.trim());
-    let s = u.toString();
-    // The token rides in the URL FRAGMENT (#), never the query: fragments are not sent to
-    // the server, so the credential never lands in CDN/proxy access logs or the Referer
-    // header. Room stays in the query (it's the semi-public serial). See DEPLOY_FRONTEND.md.
-    if (includeToken && token.trim()) s += "#token=" + encodeURIComponent(token.trim());
-    return s;
-  }, [room, token, includeToken]);
+    return u.toString();
+  }, [room]);
 
   const copy = async () => {
     try {
@@ -48,20 +45,6 @@ export function VrHandoff({ room, token }: { room: string; token: string }) {
           {copied ? "Copied" : "Copy"}
         </Button>
       </div>
-      <label className="flex items-center gap-2 text-xs text-muted-foreground">
-        <input
-          type="checkbox"
-          checked={includeToken}
-          onChange={(e) => setIncludeToken(e.target.checked)}
-        />
-        include access token (skip typing it on the headset)
-      </label>
-      {includeToken && (
-        <p className="text-xs text-nori-ha06a1e">
-          Carries your access token in the URL fragment (kept out of server logs) — still,
-          only open it on your own devices.
-        </p>
-      )}
     </div>
   );
 }

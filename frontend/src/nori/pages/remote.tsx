@@ -5,7 +5,7 @@
 //
 // The Supabase project (URL/anon key) is the one already initialized by NoriContext from
 // /nori/config, so there are no paste boxes for it here — only the remote-session
-// settings (room, optional room token, ICE/TURN) which must match the Pi's .env.
+// settings (room, ICE/TURN) which must match the Pi's .env.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ import { type ArmSide, type CameraViewHandle } from "@nori/sdk";
 import { VrSession } from "@nori/sdk/vr";
 import { VrHandoff } from "@/nori/components/VrHandoff";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
-import { TelemetryPanel, GripForce, ControlLegend, BaseCommandLegend, CallBar, ConnectionBanner, ControlOfflineBanner, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
+import { TelemetryPanel, GripForce, MotorFaults, ControlLegend, BaseCommandLegend, CallBar, ConnectionBanner, ControlOfflineBanner, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import LeaderSetup from "@/nori/pages/leader-setup";
@@ -643,6 +643,10 @@ const Remote = () => {
             <div className="mt-2">
               <GripForce currents={tel.currents} />
             </div>
+            {/* Per-motor hardware faults — renders nothing unless a motor is actually erroring. */}
+            <div className="mt-2">
+              <MotorFaults faults={tel.motorFaults} />
+            </div>
           </div>
 
           {/* The script console now lives on the Coding page (/nori/coding), driving the same
@@ -799,7 +803,7 @@ const Remote = () => {
                   />
                 </div>
                 {/* On a laptop: hand off a link to the hosted VR page to open on the headset. */}
-                <VrHandoff room={settings.room} token={settings.token} />
+                <VrHandoff room={settings.room} />
               </div>
             )}
           </div>

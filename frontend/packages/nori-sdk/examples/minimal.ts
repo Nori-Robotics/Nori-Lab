@@ -15,7 +15,6 @@ const CONFIG = {
   SUPABASE_URL: "https://YOUR-PROJECT.supabase.co",
   SUPABASE_ANON_KEY: "YOUR-ANON-KEY",
   ROOM: "nori-dev",
-  ROOM_TOKEN: "", // "" = open dev room; otherwise the HMAC room secret
   STUN: "stun:stun.l.google.com:19302",
   TURN_URLS: [] as string[], // e.g. ["turn:turn.example.com:3478"] for WAN; empty = same-LAN only
   TURN_USER: "",
@@ -29,7 +28,6 @@ export function runMinimalTeleop(videoEl: HTMLVideoElement) {
   const teleop = new RemoteTeleop({
     signaling: new SupabaseSignaling(supabase, CONFIG.ROOM, (...m) => console.log("[sig]", ...m)),
     videoEl,
-    token: CONFIG.ROOM_TOKEN,
     stun: CONFIG.STUN,
     turnUrls: CONFIG.TURN_URLS,
     turnUser: CONFIG.TURN_USER,

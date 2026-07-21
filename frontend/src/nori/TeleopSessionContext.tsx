@@ -35,7 +35,6 @@ const DEFAULT_STUN = "stun:stun.l.google.com:19302";
 // Remote-session settings persist in localStorage (must match the Pi's .env).
 export type Settings = {
   room: string;
-  token: string;
   stun: string;
   turn: string;
   turnUser: string;
@@ -51,7 +50,7 @@ export type Settings = {
 };
 
 const DEFAULTS: Settings = {
-  room: "", token: "", stun: DEFAULT_STUN, turn: "", turnUser: "", turnCred: "", forceRelay: false, arm: "right",
+  room: "", stun: DEFAULT_STUN, turn: "", turnUser: "", turnCred: "", forceRelay: false, arm: "right",
   kbSpeed: 1, vrSensitivity: 1, vrGripperOpen: 0.25,
 };
 
@@ -63,8 +62,7 @@ function loadSettings(): Settings {
     const raw = localStorage.getItem(LS_SETTINGS);
     // turnCred is memory-only: it's supplied per-session by minting (nori_turn_mint),
     // or a stale static value the use-auth-secret relay rejects. Never rehydrate it from
-    // localStorage — drops any secret persisted by older builds. (Room token still
-    // persists until it becomes a minted JWT at signaling Phase 2.)
+    // localStorage — drops any secret persisted by older builds.
     if (raw) return { ...DEFAULTS, ...JSON.parse(raw), turnCred: "" };
   } catch { /* ignore */ }
   return { ...DEFAULTS };
@@ -284,7 +282,6 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
       signaling: new SupabaseSignaling(supabase, room, appendLog, { private: isPrivateRoomEnabled() }),
       // No videoEl/audioEl here: the session is page-independent. The page that shows video
       // attaches its elements via teleop.setVideoEl()/setAudioEl() on mount.
-      token: settings.token.trim(),
       stun: settings.stun.trim() || DEFAULT_STUN,
       turnUrls,
       turnUser,

@@ -5,17 +5,15 @@
 // this is purely a trimmed shell for driving your own robot from a browser, no install.
 //
 // Two ways to connect, and the page needs no network-detection toggle to tell them apart:
-//   - Same network as the robot: enter robot code + token and Connect. STUN is enough; no
+//   - Same network as the robot: enter the robot code and Connect. STUN is enough; no
 //     login. This is the ~30-second quick-start.
 //   - A different network: sign in (below). A signed-in session unlocks minted coturn
 //     credentials (TeleopSessionContext gates minting on being signed in), so the relay is
 //     available as an ICE fallback automatically. If a remote connect is attempted without
 //     signing in it will fail on STUN — the page says so and points at sign-in.
 //
-// Security note (deferred, tracked in docs/sdk_v1_finalization.md item 5, Decision 2):
-// the room token persists in localStorage plaintext, inherited from the shared session
-// settings. Acceptable for the current small, named-team audience; revisit before wider
-// release.
+// Private-room access is gated by the robot via Supabase RLS (room-token HMAC auth retired),
+// so the page collects no room token.
 
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -56,21 +54,13 @@ export default function DrivePage() {
     return () => { alive = false; unsub(); };
   }, []);
 
-  // Pre-fill from a shared link: room via ?room=, token via the #token= FRAGMENT (never sent
-  // to the server / logs). Applied once; a URL value wins over what was persisted. Then scrub
-  // the token from the address bar so it isn't left for shoulder-surfing or re-share.
+  // Pre-fill from a shared link: room via ?room=. Applied once; a URL value wins over what was
+  // persisted. (Room-token auth is retired — the robot gates private rooms via Supabase RLS —
+  // so there's no secret to capture from the URL fragment anymore.)
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
-    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     const room = q.get("room");
-    const token = hash.get("token") ?? q.get("token");
     if (room) set("room", room);
-    if (token) set("token", token);
-    if (token) {
-      try {
-        window.history.replaceState(null, "", window.location.pathname + window.location.search);
-      } catch { /* ignore */ }
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -180,18 +170,6 @@ export default function DrivePage() {
                     value={settings.room}
                     onChange={(e) => set("room", e.target.value)}
                     placeholder="your Nori serial number"
-                    autoComplete="off"
-                    className="h-11 text-base"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="token">Access token</Label>
-                  <Input
-                    id="token"
-                    type="password"
-                    value={settings.token}
-                    onChange={(e) => set("token", e.target.value)}
-                    placeholder="robot access token"
                     autoComplete="off"
                     className="h-11 text-base"
                   />

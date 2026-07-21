@@ -33,8 +33,8 @@ their own subpath imports so you never pull them unless you ask for them.
 
 ## Quick start (Supabase signaling)
 
-The fastest path: use the reference **Supabase** transport with a room + token we provision for
-you (you do **not** need your own Supabase account — just the room credentials). See
+The fastest path: use the reference **Supabase** transport with a room we provision for you (you
+do **not** need your own Supabase account — just the room credentials). See
 ["Connectivity"](#connectivity-lan-stun-turn) below for when you'd additionally need TURN values.
 
 ```ts
@@ -48,7 +48,6 @@ const video = document.querySelector("video")!;
 const teleop = new RemoteTeleop({
   signaling: new SupabaseSignaling(supabase, ROOM, (...m) => console.log(...m)),
   videoEl: video,
-  token: ROOM_TOKEN,        // "" for an open dev room; HMAC-authed otherwise
   stun: "stun:stun.l.google.com:19302",
   // TURN is optional and currently not issued by default (see "Connectivity" below).
   // If we've sent you relay credentials, add: turnUrls: [TURN_URL], turnUser, turnCred.
@@ -91,7 +90,6 @@ const robot = createMockRobot();          // the fake robot, living in your page
 const teleop = new RemoteTeleop({
   signaling: robot.signaling,             // <- the ONLY line that differs from production
   videoEl: document.querySelector("video")!,
-  token: "",
   stun: "", turnUrls: [], turnUser: "", turnCred: "", forceRelay: false,
   arm: "right",
   onLog: console.log,
@@ -112,24 +110,20 @@ What the mock gives you:
   `videoStream()`, `cameraView(role)`, `captureFrame`/`snapshot(role)` all work. Tiles move
   when you jog (a dot tracks `shoulder_pan`), so "is my view wired up" is answerable by eye.
 - **The real handshake**: `onReady`/`robotInfo()` deliver a descriptor (12 joints, 4 cameras,
-  ranges) shaped exactly like a real robot's; pass `token:` to `createMockRobot` to
-  exercise the HMAC auth path (wrong token → the real nack/`bad_access_code` flow).
+  ranges) shaped exactly like a real robot's.
 - **Determinism for CI**: the simulation core (`MockDaemonSim`) is pure and seeded — no
   `Date.now`/`Math.random` — and can be driven tick-by-tick in Node unit tests without any
   browser at all (`sim.handleFrame(...)` / `sim.tick(ms)`).
 
-The mock speaks the same room handshake as the real robot (`robot_here` + nonce -> HMAC `ready` -> offer, with rate-limited nack/announce), so the auth path you code against is the real one.
+The mock speaks the same room handshake as the real robot (`robot_here` -> `ready` -> offer, with rate-limited nack/announce). Room-token HMAC auth is retired — the real robot gates private-room access via Supabase RLS — so the operator just handshakes and no token is sent.
 
 Honest limits (v1): no audio tracks (`joinCall()` degrades to local-only), no perception frames (use `injectPerception()`), motion is *plausible, not kinematically true* — cylindrical dofs nudge a fixed joint mapping so telemetry visibly responds. Never use mock trajectories to validate motion or train anything. `createMockRobot()` needs a browser (WebRTC + canvas); `MockDaemonSim` alone runs anywhere.
 
-Two gotchas worth knowing (they apply to real robots too, so the mock reproduces them):
+One gotcha worth knowing (it applies to real robots too, so the mock reproduces it):
 
 - **`onTelemetry` fires for more than daemon frames.** RemoteTeleop also emits a view on its
   ~1 Hz video/ABR tick, and that one carries an **empty `state`**. Wait for the field you need
   (`t.state["right_arm_shoulder_pan.pos"] !== undefined`), not merely the first callback.
-- **A wrong `token` surfaces as `bad_access_code` after ~2.5 s**, not instantly: the first
-  `ready` is legitimately mac-less, so the SDK debounces a nack before believing it. Read the
-  failure from `onConnectStatus`'s **`reason`** field (`ConnectStatus.reason`).
 
 ## Connectivity: LAN, STUN, TURN
 
@@ -193,9 +187,9 @@ you read. The ack is re-sent on every daemon (re)connect (a robot restart mid-se
 
 One rejection worth knowing by name: `accepted:false` with `error:"unauthorized"` is the robot's
 **internal** agent token (its own bridge authenticating to its daemon) being missing or stale —
-a robot-side provisioning problem. It is **not** your `token` option (the room token, checked
-much earlier at signaling); if your room token were wrong you'd never get an offer at all. If
-you see `unauthorized`, nothing on your end fixes it — report it to us.
+a robot-side provisioning problem. It has nothing to do with your access to the room (private
+rooms are gated by the robot via Supabase RLS; you'd never get an offer if you couldn't join).
+If you see `unauthorized`, nothing on your end fixes it — report it to us.
 
 ## Driving the robot
 
@@ -366,7 +360,7 @@ import { SupabaseSignaling } from "@nori/sdk/supabase";
 const teleop = new RemoteTeleop({
   signaling: new SupabaseSignaling(supabase, room, console.log),
   videoEl: document.querySelector("video")!,
-  token, stun, turnUrls, turnUser, turnCred, forceRelay: false,
+  stun, turnUrls, turnUser, turnCred, forceRelay: false,
   arm: "right", onLog: console.log, onConnState: console.log,
   onTelemetry: () => {}, onMode: () => {}, onControlActive: () => {},
 });

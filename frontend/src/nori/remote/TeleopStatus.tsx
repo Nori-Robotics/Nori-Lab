@@ -374,6 +374,34 @@ export function GripForce({ currents }: { currents: Record<string, number> }) {
   );
 }
 
+// Per-motor hardware faults from the robot (telemetry status.motor_faults): a joint whose servo
+// reports an error byte — overload / overheat / voltage / overcurrent / angle. Renders one red
+// row per faulted motor with its decoded type(s); nothing at all when the arm is healthy, so it's
+// invisible in normal operation and only appears when a single motor actually errors. This is the
+// "which motor has what error" readout — the same faults also stream to the Robot logs, but here
+// they're a live, at-a-glance panel keyed by joint. The decoded string carries the raw 0xNN hex,
+// which is authoritative; the names are best-effort per the Feetech status byte.
+export function MotorFaults({ faults }: { faults: Record<string, string> }) {
+  const keys = Object.keys(faults).sort();
+  if (keys.length === 0) return null;
+  return (
+    <div className="space-y-1.5">
+      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-nori-h8f2318">
+        Motor faults
+      </span>
+      {keys.map((k) => (
+        <div
+          key={k}
+          className="grid grid-cols-[minmax(6rem,auto)_1fr] items-center gap-3 rounded-md border border-nori-hd24a3d/40 bg-nori-hd24a3d/15 px-3 py-2"
+        >
+          <span className="truncate font-mono text-xs text-nori-h8f2318">{shortMotor(k)}</span>
+          <span className="text-right font-mono text-xs text-nori-h8f2318">{faults[k]}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // Rail (lift) height per arm, from telemetry `state` `left_lift.pos`/`right_lift.pos` —
 // real millimeters (~115.6 mm per encoder rev, Pi-side multi-turn tracker, m3_m5 §5.5). Zero
 // is the pose at DAEMON START (startup-relative until stall-homing lands). The Pi OMITS the

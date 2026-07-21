@@ -384,7 +384,9 @@ export function GripForce({ currents }: { currents: Record<string, number> }) {
 // decoded fault string carries the raw 0xNN hex (authoritative; names are best-effort).
 const MOTOR_NO_RESPONSE = "no response"; // sentinel the daemon sends for an unreadable motor
 export function MotorFaults({ faults }: { faults: Record<string, string> }) {
-  const keys = Object.keys(faults).sort();
+  // Defensive: an older SDK/daemon (or a pre-telemetry initial state) may not populate this;
+  // never let a missing map crash the whole page.
+  const keys = faults ? Object.keys(faults).sort() : [];
   if (keys.length === 0) return null;
   const anyDropped = keys.some((k) => faults[k] === MOTOR_NO_RESPONSE);
   return (

@@ -70,7 +70,7 @@ function loadSettings(): Settings {
 
 const EMPTY_TEL: TelemetryView = {
   loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {},
-  state: {}, videoNet: null, batteryPercent: null,
+  state: {}, videoNet: null, batteryPercent: null, motorFaults: {},
 };
 
 const EMPTY_CALL: CallState = {

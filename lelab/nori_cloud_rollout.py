@@ -43,6 +43,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.request
 from collections import deque
@@ -329,6 +330,16 @@ class CloudRollout:
         self._error: Optional[str] = None
         self._warming_since: Optional[float] = None
         self._http = None  # lazily-built, REUSED httpx.Client (see _client)
+        # RTC. Opt-in (NORI_INFER_RTC=1) because it costs ~+524ms of server compute:
+        # it needs autograd and the CUDA-graph path off. Viable only now that the
+        # pooled connection cut the round trip to ~386ms (827+89 = 916ms < the 1s a
+        # chunk covers); at the old 731ms it did not fit.
+        self.rtc_enabled = _env_bool("NORI_INFER_RTC", False)
+        self._rtc_session = uuid.uuid4().hex[:16]
+        self._rtc_pending: Optional[dict] = None   # set per-refill, read by _http_act
+        self._chunk_len = 0        # length of the chunk currently draining
+        self._rtt_s = 0.0          # EWMA of measured refill round-trip
+        self.rtc_last: Optional[dict] = None       # server's report, for status()
         # observability
         self.refills = 0
         self.chunks_received = 0
@@ -424,7 +435,27 @@ class CloudRollout:
             if obs is None:
                 return
             images, state = obs
+            # RTC needs two counts, both in CHUNK-action units (the chunk plays at
+            # chunk_hz regardless of our tick rate):
+            #   consumed — how much of the previous chunk already executed, which
+            #              aligns the cached chunk to the new timeline
+            #   delay    — how much WILL execute while this inference runs, which
+            #              becomes the frozen prefix. Estimated from measured RTT,
+            #              so it self-corrects as the network moves.
+            if self.rtc_enabled:
+                with self._lock:
+                    remaining = len(self._queue)
+                consumed = max(0, self._chunk_len - remaining)
+                hz = self.chunk_hz or MOLMOACT2_CHUNK_HZ
+                delay = int(round((self._rtt_s or 0.4) * hz))
+                self._rtc_pending = {"session": self._rtc_session,
+                                     "consumed": consumed, "delay": delay}
+            _t0 = time.monotonic()
             chunk = self._call(images, state)
+            rtt = time.monotonic() - _t0
+            # EWMA: one slow call shouldn't swing the frozen-prefix length.
+            self._rtt_s = rtt if self._rtt_s <= 0 else (0.7 * self._rtt_s + 0.3 * rtt)
+            self._chunk_len = len(chunk)
             clean: list[list[float]] = []
             for a in chunk:
                 if len(a) != self.action_dim:
@@ -537,6 +568,8 @@ class CloudRollout:
             "instruction": self.instruction,
             "num_steps": self.num_steps,
         }
+        if self.rtc_enabled and self._rtc_pending:
+            payload["rtc"] = self._rtc_pending
         try:
             r = self._client().post(f"{self.endpoint}/act", json=payload)
         except httpx.TimeoutException as e:
@@ -553,6 +586,7 @@ class CloudRollout:
             raise CloudEndpointWaking("endpoint waking (HTTP 503)")
         r.raise_for_status()  # 401/404/500 stay HARD errors and fail fast
         data = r.json()
+        self.rtc_last = data.get("rtc")
         actions = data.get("actions")
         if not isinstance(actions, list) or not actions:
             raise ValueError("cloud /act returned no actions")
@@ -575,6 +609,9 @@ class CloudRollout:
                 # stride > 1 means we are playing the chunk at its authored rate;
                 # buffer_seconds is the wall-clock motion the queue holds, which is
                 # what must cover the refill round-trip (not the action count).
+                "rtc_enabled": self.rtc_enabled,
+                "rtc": self.rtc_last,
+                "rtt_ms": round(self._rtt_s * 1000) if self._rtt_s else None,
                 "stride": self.stride,
                 "fps": self.fps,
                 "buffer_seconds": (len(self._queue) / self.chunk_hz) if self.chunk_hz else None,

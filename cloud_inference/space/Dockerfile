@@ -32,6 +32,9 @@ COPY --chown=user:user requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt hf_transfer
 
 COPY --chown=user:user molmoact2_server.py .
+# RTC guidance core — imported by the server; without this the container
+# dies on `import rtc` at startup.
+COPY --chown=user:user rtc.py .
 
 RUN mkdir -p /home/user/.cache/huggingface && chown -R user:user /home/user /app
 USER user

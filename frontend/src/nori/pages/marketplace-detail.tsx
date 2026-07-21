@@ -12,7 +12,6 @@ import { ApiError } from "@/lib/apiClient";
 import {
   acquirePolicy,
   deleteLocalPolicy,
-  downloadPolicy,
   getPolicyDetails,
   listLocalPolicies,
   listMyListings,
@@ -49,7 +48,6 @@ const MarketplaceDetail = () => {
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
-  const [installMsg, setInstallMsg] = useState<string | null>(null);
   const [acquired, setAcquired] = useState(false);
 
   const refreshLocal = useCallback(async () => {
@@ -180,26 +178,14 @@ const MarketplaceDetail = () => {
     }
   };
 
-  const install = async () => {
-    setBusy(true);
-    setActionErr(null);
-    setInstallMsg("installing…");
-    try {
-      if (details.source === "first_party" || details.source === "community") {
-        await acquirePolicy(baseUrl, fetchWithHeaders, details.ref);
-      }
-      const res = await downloadPolicy(baseUrl, fetchWithHeaders, details.ref);
-      setInstallMsg(`cached ${fmtBytes(res.size_bytes)} locally`);
-      refreshLocal();
-    } catch (e) {
-      setInstallMsg(null);
-      setActionErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
+  // "Add to my cloud" — entitle + copy the item into the caller's library
+  // (kind-agnostic acquire). Installing a policy onto THIS laptop happens from
+  // My Stuff once it lands there, never from the marketplace.
+  const addToCloud = async () => {
+    if (details.source === "own") {
+      setActionErr("This is your own — it's already in My Stuff.");
+      return;
     }
-  };
-
-  const acquireDataset = async () => {
     setBusy(true);
     setActionErr(null);
     try {
@@ -347,48 +333,41 @@ const MarketplaceDetail = () => {
         </div>
       </div>
 
-      {/* ACTIONS */}
+      {/* ACTIONS — one uniform "add to my cloud" for every kind. Laptop install
+          for policies happens from My Stuff after the copy lands. */}
       <div className="mt-8">
-        {isDataset ? (
-          acquired ? (
-            <div className="rounded-xl border border-border bg-secondary px-4 py-4">
-              <p className="text-[14px] text-foreground">
-                Copying to your Nori cloud — it’ll appear in My Stuff (tagged Community) in a
-                moment, ready to train on.
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Link
-                  to="/nori/my-stuff"
-                  className="inline-flex rounded-xl border border-border bg-background px-3 py-2 font-mono text-[12px] hover:bg-accent"
-                >
-                  view in My Stuff →
-                </Link>
+        {acquired ? (
+          <div className="rounded-xl border border-border bg-secondary px-4 py-4">
+            <p className="text-[14px] text-foreground">
+              {isDataset
+                ? "Copying to your Nori cloud — it’ll appear in My Stuff (tagged Community) in a moment, ready to train on."
+                : "Copying to your Nori cloud — it’ll appear in My Stuff (tagged Community) in a moment. Install it onto this laptop from there."}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Link
+                to="/nori/my-stuff"
+                className="inline-flex rounded-xl border border-border bg-background px-3 py-2 font-mono text-[12px] hover:bg-accent"
+              >
+                view in My Stuff →
+              </Link>
+              {isDataset && (
                 <Link
                   to="/nori/training"
                   className="inline-flex rounded-xl border border-border bg-background px-3 py-2 font-mono text-[12px] hover:bg-accent"
                 >
                   train on this dataset →
                 </Link>
-              </div>
+              )}
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={acquireDataset}
-              disabled={busy}
-              className="w-full rounded-xl border border-border bg-secondary px-3 py-3 font-mono text-[13px] hover:bg-accent disabled:opacity-50"
-            >
-              {busy ? "adding…" : "add to my cloud — copy this dataset into My Stuff →"}
-            </button>
-          )
+          </div>
         ) : (
           <button
             type="button"
-            onClick={install}
+            onClick={addToCloud}
             disabled={busy}
             className="w-full rounded-xl border border-border bg-secondary px-3 py-3 font-mono text-[13px] hover:bg-accent disabled:opacity-50"
           >
-            {installMsg ?? (installed ? "reinstall" : "nori install")}
+            {busy ? "adding…" : "add to my cloud — copy it into My Stuff →"}
           </button>
         )}
       </div>

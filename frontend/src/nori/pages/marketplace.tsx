@@ -16,7 +16,6 @@ import { useToast } from "@/hooks/use-toast";
 import { Pill } from "@/components/ui/pill";
 import {
   acquirePolicy,
-  downloadPolicy,
   listLocalPolicies,
   listMyListings,
   listPolicies,
@@ -85,7 +84,6 @@ type RobotAction = {
 const PolicyCard = ({
   policy,
   state,
-  installed,
   listingStatus,
   robotAction,
   onInstall,
@@ -93,7 +91,6 @@ const PolicyCard = ({
 }: {
   policy: PolicyListEntry;
   state: InstallState;
-  installed: boolean;
   /** Latest community-submission state for OWN policies (in review / public /
    * rejected / taken down) — at-a-glance sharing status on the card. A
    * "public" chip means the policy is live in other customers' Community tab
@@ -195,15 +192,10 @@ const PolicyCard = ({
           state.status === "error" ? "text-destructive" : "text-foreground"
         }`}
       >
-        {state.message ??
-          (state.status === "working"
-            ? "installing…"
-            : installed
-              ? "reinstall"
-              : "nori install")}
+        {state.message ?? (state.status === "working" ? "adding…" : "add to my cloud")}
       </code>
       <span className="eyebrow shrink-0 text-foreground">
-        {state.status === "working" ? "…" : installed ? "reinstall →" : "install →"}
+        {state.status === "working" ? "…" : "add →"}
       </span>
     </button>
     )}
@@ -315,7 +307,6 @@ const Marketplace = () => {
     execModeRef.current = execMode;
   }, [execMode]);
 
-  const installedRefs = useMemo(() => new Set(local.map((p) => p.ref)), [local]);
 
   // Newest submission per source job — what the drawer's share section shows.
   // Best-effort (older backends without the endpoint just hide the feature).
@@ -417,19 +408,25 @@ const Marketplace = () => {
     void runnerRef.current?.stop();
   }, []);
 
-  const install = useCallback(
+  // Marketplace is acquire-only: "add to my cloud" entitles + copies the item
+  // into the caller's library (My Stuff). Installing onto THIS laptop happens
+  // from My Stuff once the policy lands there — never from the marketplace.
+  const addToCloud = useCallback(
     async (policy: PolicyListEntry) => {
-      setInstalls((s) => ({ ...s, [policy.ref]: { status: "working" } }));
-      try {
-        if (policy.source === "first_party" || policy.source === "community") {
-          await acquirePolicy(baseUrl, fetchWithHeaders, policy.ref);
-        }
-        const res = await downloadPolicy(baseUrl, fetchWithHeaders, policy.ref);
+      if (policy.source === "own") {
         setInstalls((s) => ({
           ...s,
-          [policy.ref]: { status: "done", message: `cached ${fmtBytes(res.size_bytes)} locally` },
+          [policy.ref]: { status: "done", message: "already yours — it's in My Stuff" },
         }));
-        refreshLocal();
+        return;
+      }
+      setInstalls((s) => ({ ...s, [policy.ref]: { status: "working" } }));
+      try {
+        await acquirePolicy(baseUrl, fetchWithHeaders, policy.ref);
+        setInstalls((s) => ({
+          ...s,
+          [policy.ref]: { status: "done", message: "added — view in My Stuff" },
+        }));
       } catch (e) {
         setInstalls((s) => ({
           ...s,
@@ -437,7 +434,7 @@ const Marketplace = () => {
         }));
       }
     },
-    [baseUrl, fetchWithHeaders, refreshLocal]
+    [baseUrl, fetchWithHeaders]
   );
 
   const robotActionFor = useCallback(
@@ -461,11 +458,12 @@ const Marketplace = () => {
       }
       const installedLocally = local.some((l) => l.ref === policy.ref && l.runnable);
       if (!installedLocally) {
-        return { label: "install first, then run from here", busy: false, error: false, onClick: () => install(policy) };
+        // Laptop install lives in My Stuff (after "add to my cloud"), not here.
+        return { label: "not on this laptop — install it from My Stuff", busy: false, error: false, onClick: () => navigate("/nori/my-stuff") };
       }
       return { label: "run on robot (policy runs here)", busy: false, error: false, onClick: () => runOnRobot(policy) };
     },
-    [running, teleop, runState, stopRun, runOnRobot, local, install]
+    [running, teleop, runState, stopRun, runOnRobot, local, navigate]
   );
 
 
@@ -510,6 +508,9 @@ const Marketplace = () => {
         <div className="relative">
           <div className="flex items-center justify-between">
             <span className="eyebrow">{"// skills community"}</span>
+            <span className="inline-flex -rotate-3 animate-floaty items-center rounded-full bg-sticker px-3 py-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink shadow-soft">
+              {"// beta"}
+            </span>
           </div>
           <h1 className="mt-4 font-display text-balance text-[clamp(2rem,4.5vw,3rem)] leading-[0.95] tracking-tight">
             Teach once. Share forever.
@@ -595,10 +596,9 @@ const Marketplace = () => {
               <PolicyCard
                 policy={p}
                 state={installs[p.ref] ?? { status: "idle" }}
-                installed={installedRefs.has(p.ref)}
                 listingStatus={p.source === "own" ? myListingByJob[p.ref]?.status : null}
                 robotAction={robotActionFor(p)}
-                onInstall={() => install(p)}
+                onInstall={() => addToCloud(p)}
                 onOpen={() => navigate(`/nori/marketplace/${encodeURIComponent(p.ref)}`)}
               />
             </div>
@@ -607,7 +607,7 @@ const Marketplace = () => {
       )}
 
       <p className="eyebrow mt-10">
-        {"// installed policies are cached locally and load into rollout on the robot"}
+        {"// added items land in My Stuff — install policies to this laptop from there"}
       </p>
 
     </section>

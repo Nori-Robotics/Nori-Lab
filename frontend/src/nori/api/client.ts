@@ -337,6 +337,9 @@ export function renamePolicy(
 export interface MyListing {
   listing_id: string;
   source_job_id: string | null;
+  /** Dataset listings key on the upload session (source_job_id stays null) —
+   * match a detail ref against either field. */
+  source_upload_session_id?: string | null;
   title: string;
   description: string | null;
   status: string;
@@ -398,6 +401,21 @@ export function unpublishPolicy(
     fetcher,
     `/nori/marketplace/policies/${encodeURIComponent(ref)}/publish`,
     { method: "DELETE", action: "Unpublish policy" }
+  );
+}
+
+/** DELETE /nori/marketplace/datasets/{uploadRef}/publish — instant, idempotent
+ * takedown of the active dataset listing sourced from this upload. */
+export function unpublishDataset(
+  baseUrl: string,
+  fetcher: Fetcher,
+  uploadRef: string
+): Promise<{ taken_down: string[] }> {
+  return noriRequest<{ taken_down: string[] }>(
+    baseUrl,
+    fetcher,
+    `/nori/marketplace/datasets/${encodeURIComponent(uploadRef)}/publish`,
+    { method: "DELETE", action: "Unpublish dataset" }
   );
 }
 

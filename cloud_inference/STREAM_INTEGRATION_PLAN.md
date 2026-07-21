@@ -8,6 +8,12 @@
 > the Pi camera sockets) is DEPRECATED in favour of this: it is dead on
 > customer-provisioned units (loopback-bound cameras), carries no capture
 > timestamps, and delivers no calibration.
+>
+> DECISION 2026-07-21: the BROWSER-CAPTURE route is deprecated for BOTH
+> recording and policy inference. The Pi raw-bundle recorder is the recording
+> path; the policy stream is the observation path. The browser composite
+> survives only as (a) the live operator preview and (b) a warned legacy
+> fallback for policies trained on composite data.
 
 ## 0. The fixed contract (theirs — do not redesign)
 
@@ -116,9 +122,13 @@ frame source must **match the policy's training domain**:
 - Trained on **browser-capture** data → keep the composite. Full-quality frames
   would be the same train/infer mismatch we just fixed, inverted.
 
-v1: explicit opt-in flag on `/rollout/load`. Follow-on: stamp
-`capture_source: "raw_bundle"|"browser"` into `nori_meta.json` at promotion and
-choose automatically.
+With browser capture deprecated, this table is transitional: NEW policies are
+raw-bundle-trained and take the stream; EXISTING composite-trained checkpoints
+(e.g. `observation.images.remote` policies) run on the legacy composite path
+with a deprecation warning until retired or retrained. v1: explicit flag on
+`/rollout/load`; follow-on: stamp `capture_source` into `nori_meta.json` at
+promotion and choose automatically — `"browser"` provenance then also gates the
+warning.
 
 ## 6. Phases
 

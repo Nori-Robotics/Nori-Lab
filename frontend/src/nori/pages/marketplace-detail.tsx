@@ -388,11 +388,12 @@ const MarketplaceDetail = () => {
       {/* Community status (publishing itself moved to the marketplace page's
           "Publish something to the community" card — the single publish
           surface). Owners keep status visibility + instant withdraw here. */}
-      {/* Own POLICIES: editable=true, listing keyed by source_job_id === ref.
-          Own DATASETS: the catalog card's ref IS the listing id (editable stays
-          false on the listing branch), so match listing_id and gate on
-          source === "own" as well. */}
-      {(details.editable || details.source === "own") && myListing && (myListing.in_review || myListing.is_public) ? (
+      {/* Ownership proof is the my-listings MATCH itself: /marketplace/my-listings
+          only returns the CALLER's listings, so if this detail ref matched one,
+          it's theirs — regardless of the detail's editable/source fields (which
+          say editable=false + source="community" for an own DATASET listing,
+          since its detail is served by the generic listing branch). */}
+      {myListing && (myListing.in_review || myListing.is_public) ? (
         <div className="mt-6 flex items-center justify-between gap-3 rounded-xl border border-border bg-secondary/60 px-3 py-2">
           <span className="flex items-center gap-2 text-[13px]">
             <ListingStatusChip status={myListing.status} />

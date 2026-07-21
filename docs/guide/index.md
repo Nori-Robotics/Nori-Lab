@@ -17,12 +17,19 @@ no client may disable it.** The app and the SDK are both just clients. That's wh
 [Install the desktop app](/guide/install) → [set up leader arms](/guide/leader-arms) →
 [first session](/guide/first-session).
 
-**I want to build software on a robot.**
+**I want to build software for my robot.**
 [SDK quick start](/sdk/quickstart). You don't need the desktop app for this.
 
 **I want to drive using my headset.**
 [VR](/guide/vr). The VR page is hosted — no install needed, but the robot must already be paired.
 
+## What's in the box:
+
+Early batches of the Nori L2 will come with:
+- Nori robot
+- One leader arm, which can be used in conjunction with keyboard teleoperation to control both arms. 
+- Clamps for the leader arm.
+- A charger for Nori.
 <!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 A short "what's in the box" section: robot, two leader arms, cables, what the operator supplies

@@ -1,25 +1,14 @@
 # Your first session
 
-Getting from a powered-on robot to an arm that moves when you press a key.
-
-<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
-::: info 🚧 To write
-The happy path, start to finish. Rough shape — fill in from the real app flow
-(`frontend/src/nori/pages/`):
-
-1. **Power on the robot.** What the LEDs / boot sound should do. How long until it's on the
-   network.
-2. **Sign in** to the Nori app.
-3. **Pair the robot** (`/nori/pairing`), using the **pair code printed on the box**. This is the
-   one-time step that makes the robot yours; after it, the app fills in the room (the robot's
-   serial) automatically. There is no room token to copy anywhere.
-4. **Connect** (`/nori/remote`). The connection chip goes `not connected` → `connecting…` →
-   `connected`. Video should appear within a couple of seconds.
-5. **Check telemetry** — `safety: ok`, loop running at ~50 Hz.
-6. **Drive it.** The keyboard legend on the Remote page is the live key map.
-7. **Stop.** Tearing down cleanly vs. just closing the tab.
-:::
--->
+## Setting up and Driving
+1. Power on the robot with the switch on the back. Expect the screen to light up and a chime to play. Booting up will take around 30s, at the end of which your Nori's eyes will show up.
+2. First step is always to connect to Wifi: find it by tapping on Nori's face, navigating to Settings, Wifi, then wait as local networks are discovered. Select your one and enter the password.
+3. Sign up/in on the Nori app, and pair the robot at the Pairing page, using your secret pair code and the serial number (found on the back of Nori's head just above the neck). You may also grant your Nori a nickname on this page.
+4. Connect to your Nori on the landing page (Nori logo) or anywhere on the Remote Operation, Coding or Agent pages (connection persists within the app).
+5. It may take a few seconds to connect. Once your see it light up green, check telemetry: you will see stats from the robot, its safety status, your connection, and more. Remember to take off any camera covers that your Nori may have been shipped with.
+6. Drive it: the keyboard control panel is the easiest way to get started. Make sure you're focused on the page, and give it a try. Tweak sensitivity at any time to moderate the speed.
+7. To stop, just disconnect at any time. 
+8. Nori will automatically sleep after being left idle, and will be woken up by a tap of your finger on Nori's face, or by connecting via the app. Powering off is not necessary between sessions within a day or two, but prolonged sleeping can still drain your battery.
 
 ## The one thing to know before you move an arm
 

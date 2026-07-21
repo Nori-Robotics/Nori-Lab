@@ -127,11 +127,6 @@ const PolicyCard = ({
         {policy.source !== "own" && listingStatus && listingStatus !== "taken_down" && (
           <ListingStatusChip status={listingStatus} />
         )}
-        {installed && (
-          <span className="inline-flex items-center rounded-full bg-leaf px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink">
-            installed
-          </span>
-        )}
         {isDataset ? (
           <span className="inline-flex items-center rounded-full bg-leaf px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink">
             dataset

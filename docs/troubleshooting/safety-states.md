@@ -9,11 +9,20 @@ Read `telemetry.safety`:
 |---|---|---|
 | `ok` | Normal operation. | — |
 | `safe_hold` | Refusing motion to protect itself: the Pi is too hot, **or** your control frames went silent past the watchdog stop threshold. **Not a latch.** | **Clears itself** once you fix the cause — let it cool, or restore your control stream. |
-| `latched` | **E-STOP is latched** — an operator command, or the physical button on the robot. Motion blocked, motors torque-limited. | **Only** `command("reset_latch")`. Deliberate, by design. |
+| `latched` | Something latched: **E-STOP** (an operator command or the physical button), **or** the robot protecting a motor from over-temperature or sustained over-current. Motion blocked. | **Only** `command("reset_latch")`. Deliberate, by design. |
+
+Then read `latch_reason` — it tells you *which*:
+
+| `latch_reason` | What happened |
+|---|---|
+| `estop:<reason>` | A human stopped it. |
+| `overtemp:<motor>` | That servo got too hot. Its torque was cut. |
+| `overcurrent:<motor>` | That joint pulled too much current for too long. Its torque was cut. |
+| `stall:<motor>` | That joint is pressed into an obstruction. **This one does not set `safety: latched`** — a stall reports a reason while `safety` stays `ok`. |
 
 ## "It stopped and won't start again"
 
-You're in `latched`. Nothing clears an E-STOP latch except clearing it explicitly:
+You're in `latched`. Nothing clears a latch except clearing it explicitly:
 
 ```ts
 teleop.command("reset_latch");
@@ -21,6 +30,53 @@ teleop.command("reset_latch");
 
 That's intentional. A latch you can clear by accident isn't a latch. Confirm the situation is
 actually safe first — that's the whole point of the state existing.
+
+**Check `latch_reason` before you reset.** If it's `overtemp:<motor>`, the servo is genuinely hot
+and resetting immediately will just re-trip it — let it cool. If it's `overcurrent:<motor>`, the
+joint was working against something; find out what before you re-energize it.
+
+## "The robot latched and nobody touched it"
+
+That's the motor protection doing its job, and it's new enough that it surprises people who
+learned `latched` == E-STOP.
+
+The robot watches every arm joint two ways:
+
+- **Temperature.** A servo whose case temp crosses the limit has its torque **cut and latched
+  off** (`latch_reason: "overtemp:<motor>"`). The servo's own firmware alarm sits behind that as a
+  backstop for the case where the daemon isn't running at all.
+- **Sustained current.** A joint pulling above the current floor accumulates against a budget;
+  cross it and torque is **cut and latched off** (`latch_reason: "overcurrent:<motor>"`). Higher
+  current trips faster. This catches the failure temperature is too slow to catch: a joint quietly
+  cooking under a load that's below the stall threshold, or creeping into something soft.
+
+::: danger That joint is now limp, and limp arms fall
+These guards cut torque on the offending joint deliberately — the joint is what's being damaged.
+A raised arm whose shoulder or elbow just went limp **will drop**. Clear the area before you
+`reset_latch`.
+:::
+
+Both are manual-recovery only. Neither is configurable from a client.
+
+## A joint shows up in `motorFaults` {#motor-faults}
+
+`telemetry.motorFaults` maps a motor name to what's wrong with it. Only unhealthy motors appear;
+`{}` means everything answered and is healthy. The app renders the same data as chips under the
+grip-force card.
+
+Two very different things live in that map:
+
+**A decoded hardware fault** — e.g. `"overload,overheat (0x24)"`. This is the servo's own status
+byte. The **hex is authoritative**; the names are best-effort decoding. The app shows these in
+red. Expect it alongside an over-temp or over-current latch.
+
+**The exact string `"no response"`** — the motor stopped answering the bus for several reads. It
+was dropped, unplugged, or lost power. The app shows these in amber. This is a *cabling* problem,
+not a thermal one, and it's why the distinction exists: a dead motor used to look identical to a
+healthy one.
+
+The same events also stream into the Robot logs panel as `motor_fault` / `motor_unreadable` /
+`motor_recovered` lines.
 
 Note that `reset` (return to neutral pose) is a **motion** command, so it's **refused while
 latched**. Trying to `reset` your way out of a latch will look like the robot ignoring you. Clear

@@ -26,16 +26,20 @@ to VR, because VR is just another SDK client.
 The link looks like:
 
 ```
-https://<vr-domain>/nori/vr?room=<robot>#token=<token>
+https://<vr-domain>/nori/vr?room=<robot-serial>
 ```
 
-The token is in the **fragment** (`#token=…`) deliberately, so it never reaches a server log. Two
-consequences that bite people:
+`?room=` only pre-fills the **Robot code** field. If it didn't survive whatever you sent it
+through, type the serial into the field by hand — nothing else is lost.
 
-- **Anything that rewrites or strips the fragment breaks the link.** Some chat apps and URL
-  shorteners do exactly that. Send the link in a way that preserves it verbatim.
-- The page **scrubs the token from the address bar** once it's read. That's expected — the link in
-  your history won't work a second time if you copy it back out.
+::: tip Looking for the `#token=` part?
+It's gone. Room-token auth is **retired**; access to a real robot's room is gated by Supabase RLS
+against the account the robot is paired to. There is no token to carry, scrub, or leak — so a
+mangled fragment is no longer a failure mode.
+:::
+
+If the page connects but the robot never appears, the account you're signed in as probably isn't
+the one the robot is paired to. Check the Pairing page in the app.
 
 ::: info 🚧 To write
 - Getting a link onto a Quest without typing it (the actual recommended flow).

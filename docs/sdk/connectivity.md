@@ -21,9 +21,33 @@ connection can be impossible.
 The symptom is a session **stuck at ICE/`connecting` that never reaches `connected`** — nothing is
 wrong with your code.
 
-This is the one case that needs a **TURN relay** (`turnUrls` / `turnUser` / `turnCred`). We do not
-issue TURN credentials by default yet — **if you hit this, tell us and we'll provision relay
-credentials for you.** They slot into the options you already pass with no other change.
+This is the one case that needs a **TURN relay** (`turnUrls` / `turnUser` / `turnCred`).
+
+## TURN credentials are minted per session
+
+You no longer ask us for relay credentials. The Nori backend runs a coturn relay on a shared
+secret and **mints short-lived credentials at session start** for a signed-in operator:
+
+```
+GET /api/v1/turn/credentials     (Authorization: Bearer <your Supabase JWT>)
+  -> { urls, username, credential, ttl }
+```
+
+The Nori app does this for you on every connect and passes the result straight into
+`RemoteTeleop`. If you're building your own client, fetch the same endpoint with the account's
+JWT and pass the three values through.
+
+The endpoint requires a provisioned-customer JWT and **401s anonymously**, so an anonymous session
+(an open dev room on the LAN) simply stays on STUN — which is what it wants anyway.
+
+::: warning A hand-typed static TURN credential will be rejected
+The relay is on `use-auth-secret`, so credentials are time-bound and derived — a fixed
+username/password pair we sent you in the past no longer authenticates. Fetch, don't hardcode.
+This is why the app's TURN fields were removed from the connection panel: the only thing they
+could do was make a working session fail.
+:::
+
+Passing the values explicitly:
 
 ```ts
 const teleop = new RemoteTeleop({

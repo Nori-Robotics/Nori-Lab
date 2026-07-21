@@ -9,7 +9,7 @@ Read `telemetry.safety`:
 |---|---|---|
 | `ok` | Normal operation. | — |
 | `safe_hold` | Refusing motion to protect itself: the Pi is too hot, **or** your control frames went silent past the watchdog stop threshold. **Not a latch.** | **Clears itself** once you fix the cause — let it cool, or restore your control stream. |
-| `latched` | Something latched: **E-STOP** (an operator command or the physical button), **or** the robot protecting a motor from over-temperature or sustained over-current. Motion blocked. | **Only** `command("reset_latch")`. Deliberate, by design. |
+| `latched` | Something latched: a **software E-STOP** operator command, **or** the robot protecting a motor from over-temperature or sustained over-current. Motion blocked. | **Only** `command("reset_latch")`. Deliberate, by design. |
 
 Then read `latch_reason` — it tells you *which*:
 
@@ -81,6 +81,13 @@ The same events also stream into the Robot logs panel as `motor_fault` / `motor_
 Note that `reset` (return to neutral pose) is a **motion** command, so it's **refused while
 latched**. Trying to `reset` your way out of a latch will look like the robot ignoring you. Clear
 the latch first, then reset.
+
+## "The computer is on, but every motor is off"
+
+Check the physical E-stop. Unlike the software latch described above, the physical E-stop cuts
+the motors' electrical power while leaving the robot's computer and other non-motor systems on.
+Release the physical E-stop only after the area is safe. `reset_latch` cannot restore power that a
+physical control has cut.
 
 ## "It stopped on its own, and then started working again"
 

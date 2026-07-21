@@ -98,17 +98,18 @@ configured by number (`hw:0`) now points at nothing — permanently, until a res
 **Configure by name.** For the speaker: `NORI_SPEAKER` must be a dmix alias (`nori_out`) or
 `hw:CARD=<name>`, **never `hw:<number>`**.
 
-## Motor torque and the power station
+## Motor power
 
-Motor torque is deliberately limited so a peak draw doesn't trip the power station. If you're
-seeing the whole robot cut out under aggressive motion rather than a single peripheral dropping,
-that's a different problem from a USB brownout — it's the supply rail.
+The robot's motors run from a 12 V motor supply rated for a maximum of 40 A. Motor torque is
+deliberately limited so peak draw stays within the motor power system's limits. If every motor
+loses power but the computer stays on, check the physical E-stop. If the entire robot loses power,
+check the master switch and battery system. Both cases are different from a USB peripheral
+brownout.
 
 <!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
-- The supported power configurations and their limits.
-- What tripping the power station looks like vs. a USB brownout, so operators can tell them apart.
-- Recovery procedure after a trip.
+- What a battery-protection trip looks like vs. a USB brownout, so operators can tell them apart.
+- Recovery procedure after a battery-protection trip.
 :::
 -->
 

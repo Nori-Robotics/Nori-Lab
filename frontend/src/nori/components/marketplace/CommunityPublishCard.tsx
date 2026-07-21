@@ -83,6 +83,7 @@ const CommunityPublishCard = () => {
   const [busy, setBusy] = useState<string | null>(null); // progress line while working
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false); // public-publish confirmation gate
 
   useEffect(() => {
     if (!open) return;
@@ -406,7 +407,7 @@ const CommunityPublishCard = () => {
 
               <button
                 type="button"
-                onClick={submit}
+                onClick={() => setConfirming(true)}
                 disabled={!canSubmit}
                 className="w-full rounded-xl border border-border bg-secondary px-3 py-2 font-mono text-[12px] hover:bg-accent disabled:opacity-50"
               >
@@ -415,6 +416,48 @@ const CommunityPublishCard = () => {
                     ? "import to Nori, then publish →"
                     : "publish to community →")}
               </button>
+
+              {confirming && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+                  onClick={() => setConfirming(false)}
+                >
+                  <div
+                    className="w-full max-w-md rounded-[20px] bg-card p-6 shadow-xl"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <h2 className="text-lg font-bold text-foreground">Publish to the community?</h2>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      This makes your {kind === "policy" ? "policy" : "dataset"} — <span className="font-medium text-foreground">including all of its data</span> — public
+                      to everyone on the community marketplace: anyone can view, add it to their
+                      cloud, and {kind === "policy" ? "deploy" : "train on"} it.
+                    </p>
+                    <p className="mt-2 rounded-lg bg-secondary px-3 py-2 text-sm text-muted-foreground">
+                      You can <span className="font-medium text-foreground">unpublish it at any time</span> — that takes the listing down
+                      and revokes access. (Copies others already added to their own cloud stay with them.)
+                    </p>
+                    <div className="mt-5 flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setConfirming(false)}
+                        className="rounded-xl border border-border px-3 py-2 font-mono text-[12px] hover:bg-accent"
+                      >
+                        cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConfirming(false);
+                          void submit();
+                        }}
+                        className="rounded-xl border border-border bg-foreground px-3 py-2 font-mono text-[12px] text-background hover:opacity-90"
+                      >
+                        make it public →
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Each kind runs its own server-side safety pipeline. */}
               <p className="text-[11.5px] leading-relaxed text-muted-foreground">

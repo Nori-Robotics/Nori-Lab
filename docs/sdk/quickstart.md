@@ -23,8 +23,10 @@ const teleop = new RemoteTeleop({
   // in as the paired account). Pass `{ private: true }` to SupabaseSignaling for a real
   // robot; open dev rooms (`nori-dev`) use the default public join.
   stun: "stun:stun.l.google.com:19302",
-  // TURN is optional and currently not issued by default (see "Connectivity").
-  // If we've sent you relay credentials, add: turnUrls: [TURN_URL], turnUser, turnCred.
+  // TURN is only needed on strict networks. Credentials are MINTED per session — fetch
+  // GET /api/v1/turn/credentials with your account's JWT and pass the result through as
+  // turnUrls / turnUser / turnCred. Static credentials no longer authenticate.
+  // See "Connectivity".
   forceRelay: false,
   arm: "right",             // which arm keyboard/jog drives
   onLog: (m) => console.log(m),

@@ -14,7 +14,11 @@ Find your symptom. Each links to the page that fixes it.
 | Robot's speaker disconnects mid-clip | Brownout — the clip was too loud | [Power and brownouts](/troubleshooting/power) |
 | A camera vanishes mid-session | USB current cap on the Pi | [Power and brownouts](/troubleshooting/power) |
 | One joint stopped, the rest still work | A **stall**. Working as designed | [Safety states](/troubleshooting/safety-states) |
-| Everything stopped and won't restart | E-STOP is **latched** — clear it deliberately | [Safety states](/troubleshooting/safety-states) |
+| Everything stopped and won't restart | Something is **latched** — E-STOP, or motor protection | [Safety states](/troubleshooting/safety-states) |
+| The robot latched itself, nobody touched it | Over-temp or over-current motor protection | [Safety states](/troubleshooting/safety-states) |
+| A joint went limp and won't re-engage | Its torque was cut to save the motor. Needs `reset_latch` | [Safety states](/troubleshooting/safety-states) |
+| A motor shows red or amber in the app | Hardware fault vs. not answering the bus — different fixes | [Safety states](/troubleshooting/safety-states#motor-faults) |
+| Camera fps falls off over a long session | Thermal throttling, not power. Needs cooling | [Power and brownouts](/troubleshooting/power) |
 | Desktop app opens to a blank window | Backend didn't come up on `:8000` | [Desktop app](/troubleshooting/desktop) |
 
 ## Before you dig in

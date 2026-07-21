@@ -17,11 +17,13 @@ usb_max_current_enable=1
 
 **Motor torque is limited** so that a peak draw doesn't trip the power station.
 
+**Confirm rather than guess.** `vcgencmd get_throttled` on the Pi tells you whether you're
+actually looking at a power problem — and distinguishes an undervoltage history from a *thermal*
+one, which needs cooling instead. [Bit-by-bit decode](/troubleshooting/power#confirming-it-rather-than-guessing).
+
 ::: info 🚧 To write
 - The actual supported power configurations (battery, power station, wall).
 - A cabling diagram: what plugs into what, and which ports are current-limited.
-- How to *confirm* you've hit a power problem rather than guess: `vcgencmd get_throttled` on the
-  Pi, what each bit means, and what a healthy reading looks like.
 - Speaker specifics: a near-full-scale audio clip can brown out a USB DSP speakerphone into a
   mid-stream re-enumeration. The robot clamps playback gain (default `0.7`) to defend against
   this — see [SDK: Audio](/sdk/audio).

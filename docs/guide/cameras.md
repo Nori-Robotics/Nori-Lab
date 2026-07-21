@@ -23,6 +23,21 @@ protocol or your network. They'll improve when the robot's supply hardware does.
 In the SDK, `cameraView(role)` crops a tile out of the composite into its own `MediaStream`, so
 you never do quadrant math yourself. See [SDK: Video](/sdk/video).
 
+## If the frame rate drops over a long session
+
+The reflex is to blame power. On the cameras specifically, **check temperature first.**
+
+A Pi that has been streaming several cameras for a while can hit its soft thermal limit and cap
+its own clocks — which shows up as steadily falling delivered fps, not as a device disappearing.
+`vcgencmd get_throttled` tells the two apart: the thermal bits (`0x8`, `0x80000`) with **no**
+undervoltage bit means the fix is **cooling**, not a bigger supply.
+[The bit decode](/troubleshooting/power#confirming-it-rather-than-guessing).
+
+Cameras now hand their JPEG frames straight through by default, skipping a decode/re-encode round
+trip on the Pi — that's what bought the headroom back. The robot falls back to the old
+decode-and-re-encode path automatically for a camera whose hardware won't do it, or one configured
+with a rotation, and those cameras cost noticeably more CPU per frame.
+
 ## Phone as a camera
 
 Streaming a phone camera into the app requires **HTTPS** — browsers won't hand out camera access

@@ -24,6 +24,7 @@ connection. Read [the safety contract](/sdk/safety) before you ship.
 
 - [**Install**](/sdk/install) — it's not on public npm; you install from a tarball we send you.
 - [**Quick start**](/sdk/quickstart) — a connected, driving robot in one code block.
+- [**Telemetry**](/sdk/telemetry) — every field the robot streams back, and what `null` means in each.
 - [**The safety contract**](/sdk/safety) — the part you must read.
 
 ## Status

@@ -17,6 +17,7 @@ import {
   listMyListings,
   listPolicies,
   renamePolicy,
+  unpublishDataset,
   unpublishPolicy,
   type MyListing,
   type PolicyDetails,
@@ -107,24 +108,36 @@ const MarketplaceDetail = () => {
     (loaded?.entry as (PolicyListEntry & { kind?: string }) | null | undefined)?.kind ===
       "dataset";
   const installed = loaded ? installedRefs.has(loaded.details.ref) : false;
+  // Policies key listings by job ref (=== detail ref). Own DATASET cards carry
+  // the LISTING id as their ref, so match that too; unpublishing a dataset needs
+  // its upload-session ref, which the listing row now carries.
+  const myListing = useMemo(
+    () =>
+      myListings.find(
+        (l) => l.source_job_id === ref || l.listing_id === ref || l.source_upload_session_id === ref,
+      ) ?? null,
+    [myListings, ref],
+  );
+
   const withdrawListing = useCallback(async () => {
     if (!ref) return;
     setBusy(true);
     setActionErr(null);
     try {
-      await unpublishPolicy(baseUrl, fetchWithHeaders, ref);
+      if (isDataset) {
+        const sessionRef = myListing?.source_upload_session_id;
+        if (!sessionRef) throw new Error("couldn't resolve this listing's source dataset");
+        await unpublishDataset(baseUrl, fetchWithHeaders, sessionRef);
+      } else {
+        await unpublishPolicy(baseUrl, fetchWithHeaders, ref);
+      }
       await refreshMyListings();
     } catch (e) {
       setActionErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
-  }, [ref, baseUrl, fetchWithHeaders, refreshMyListings]);
-
-  const myListing = useMemo(
-    () => myListings.find((l) => l.source_job_id === ref) ?? null,
-    [myListings, ref]
-  );
+  }, [ref, isDataset, myListing, baseUrl, fetchWithHeaders, refreshMyListings]);
 
   const back = (
     <button
@@ -375,7 +388,11 @@ const MarketplaceDetail = () => {
       {/* Community status (publishing itself moved to the marketplace page's
           "Publish something to the community" card — the single publish
           surface). Owners keep status visibility + instant withdraw here. */}
-      {details.editable && myListing && (myListing.in_review || myListing.is_public) ? (
+      {/* Own POLICIES: editable=true, listing keyed by source_job_id === ref.
+          Own DATASETS: the catalog card's ref IS the listing id (editable stays
+          false on the listing branch), so match listing_id and gate on
+          source === "own" as well. */}
+      {(details.editable || details.source === "own") && myListing && (myListing.in_review || myListing.is_public) ? (
         <div className="mt-6 flex items-center justify-between gap-3 rounded-xl border border-border bg-secondary/60 px-3 py-2">
           <span className="flex items-center gap-2 text-[13px]">
             <ListingStatusChip status={myListing.status} />

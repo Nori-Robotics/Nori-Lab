@@ -180,6 +180,7 @@ const MyStuff = () => {
   const [assembleOpen, setAssembleOpen] = useState(false);
   const [exporting, setExporting] = useState<{ session_id: string; label: string } | null>(null); // dataset being downloaded
   const [deleting, setDeleting] = useState<LibraryDataset | null>(null); // pending delete confirmation
+  const [alsoUnpublish, setAlsoUnpublish] = useState(false); // "also remove from marketplace" (published items)
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
   const [deletingPolicy, setDeletingPolicy] = useState<LibraryPolicy | null>(null);
@@ -285,7 +286,7 @@ const MyStuff = () => {
     setDeleteBusy(true);
     setDeleteErr(null);
     try {
-      await deleteDataset(baseUrl, fetchWithHeaders, deleting.session_id);
+      await deleteDataset(baseUrl, fetchWithHeaders, deleting.session_id, deleting.published ? alsoUnpublish : false);
       setDeleting(null);
       await load();
     } catch (e) {
@@ -294,7 +295,7 @@ const MyStuff = () => {
     } finally {
       setDeleteBusy(false);
     }
-  }, [deleting, baseUrl, fetchWithHeaders, load]);
+  }, [deleting, alsoUnpublish, baseUrl, fetchWithHeaders, load]);
 
   const onToggleDatasetLock = useCallback(
     async (d: LibraryDataset) => {
@@ -331,7 +332,7 @@ const MyStuff = () => {
     setDeletePolicyBusy(true);
     setDeletePolicyErr(null);
     try {
-      await deletePolicy(baseUrl, fetchWithHeaders, deletingPolicy.job_id);
+      await deletePolicy(baseUrl, fetchWithHeaders, deletingPolicy.job_id, deletingPolicy.published ? alsoUnpublish : false);
       setDeletingPolicy(null);
       await load();
     } catch (e) {
@@ -339,7 +340,7 @@ const MyStuff = () => {
     } finally {
       setDeletePolicyBusy(false);
     }
-  }, [deletingPolicy, baseUrl, fetchWithHeaders, load]);
+  }, [deletingPolicy, alsoUnpublish, baseUrl, fetchWithHeaders, load]);
 
   const onRenameUpload = useCallback(
     async (sessionId: string, next: string) => {
@@ -680,17 +681,22 @@ const MyStuff = () => {
                     ) : (
                       <EditableName value={d.label} onRename={(next) => onRenameUpload(d.session_id, next)} />
                     )}
-                    <p className="mt-0.5 text-sm text-muted-foreground">Uploaded {shortDate(d.created_at)}</p>
+                    <p className="mt-0.5 text-sm text-muted-foreground">
+                      {d.origin === "community" ? "Added" : "Uploaded"} {shortDate(d.created_at)}
+                    </p>
                   </div>
-                  {assembling ? (
-                    <Pill tone="sticker">Assembling</Pill>
-                  ) : d.locked ? (
-                    <Pill tone="accent">
-                      <Lock className="mr-1 inline h-3 w-3" />Locked
-                    </Pill>
-                  ) : (
-                    <Pill tone="leaf">Uploaded</Pill>
-                  )}
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {d.origin === "community" && <Pill tone="sticker-2">Community</Pill>}
+                    {assembling ? (
+                      <Pill tone="sticker">Assembling</Pill>
+                    ) : d.locked ? (
+                      <Pill tone="accent">
+                        <Lock className="mr-1 inline h-3 w-3" />Locked
+                      </Pill>
+                    ) : (
+                      <Pill tone="leaf">{d.origin === "community" ? "In cloud" : "Uploaded"}</Pill>
+                    )}
+                  </div>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
                   {d.episode_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(d.episode_count)}</b> episodes</span>}
@@ -748,6 +754,7 @@ const MyStuff = () => {
                         className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                         onClick={() => {
                           setDeleteErr(null);
+                          setAlsoUnpublish(false);
                           setDeleting(d);
                         }}
                       >
@@ -810,6 +817,7 @@ const MyStuff = () => {
                   )}
                   <div className="flex flex-wrap items-center gap-1.5">
                     {p.policy_class && <Pill tone="accent">{p.policy_class.toUpperCase()}</Pill>}
+                    {p.origin === "community" && <Pill tone="sticker-2">Community</Pill>}
                     {p.locked && (
                       <Pill tone="accent">
                         <Lock className="mr-1 inline h-3 w-3" />Locked
@@ -898,6 +906,7 @@ const MyStuff = () => {
                     onClick={(e) => {
                       e.stopPropagation();
                       setDeletePolicyErr(null);
+                      setAlsoUnpublish(false);
                       setDeletingPolicy(p);
                     }}
                   >
@@ -956,6 +965,22 @@ const MyStuff = () => {
               ) : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {deleting?.published && (
+            <label className="flex items-start gap-2 rounded-md border border-border bg-secondary/40 px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={alsoUnpublish}
+                onChange={(e) => setAlsoUnpublish(e.target.checked)}
+              />
+              <span>
+                Also remove it from the community marketplace.
+                <span className="block text-xs text-muted-foreground">
+                  Leave unchecked to keep the public listing live — only your personal copy is deleted.
+                </span>
+              </span>
+            </label>
+          )}
           {deleteErr && (
             <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {deleteErr}
@@ -992,10 +1017,25 @@ const MyStuff = () => {
               Delete “{deletingPolicy?.title ?? "this policy"}”?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently deletes the trained policy and its checkpoint. This can’t be
-              undone. Published policies must be unpublished first.
+              This permanently deletes the trained policy and its checkpoint. This can’t be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {deletingPolicy?.published && (
+            <label className="flex items-start gap-2 rounded-md border border-border bg-secondary/40 px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={alsoUnpublish}
+                onChange={(e) => setAlsoUnpublish(e.target.checked)}
+              />
+              <span>
+                Also remove it from the community marketplace.
+                <span className="block text-xs text-muted-foreground">
+                  Leave unchecked to keep the public listing live — only your personal copy is deleted.
+                </span>
+              </span>
+            </label>
+          )}
           {deletePolicyErr && (
             <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {deletePolicyErr}

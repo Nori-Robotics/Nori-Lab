@@ -208,17 +208,42 @@ export function listPolicies(baseUrl: string, fetcher: Fetcher): Promise<PolicyL
   });
 }
 
-/** POST /nori/marketplace/policies/{listingId}/acquire. */
+/** Acquire also kicks off a one-click "add to my cloud" copy job (import_job_id). */
+export type AcquisitionResult = Acquisition & { import_job_id?: string | null };
+
+/** POST /nori/marketplace/policies/{listingId}/acquire — entitles AND enqueues a
+ * copy of the item into the caller's own cloud (poll import_job_id). */
 export function acquirePolicy(
   baseUrl: string,
   fetcher: Fetcher,
   listingId: string
-): Promise<Acquisition> {
-  return noriRequest<Acquisition>(
+): Promise<AcquisitionResult> {
+  return noriRequest<AcquisitionResult>(
     baseUrl,
     fetcher,
     `/nori/marketplace/policies/${encodeURIComponent(listingId)}/acquire`,
-    { method: "POST", action: "Acquire policy" }
+    { method: "POST", action: "Add to my cloud" }
+  );
+}
+
+/** An "add to my cloud" import job (copies a community listing into the user's
+ * cloud). Poll getImportJob until DONE; then the item shows in My Stuff. */
+export interface ImportJob {
+  id: string;
+  status: "PENDING" | "IMPORTING" | "DONE" | "FAILED";
+  kind: "policy" | "dataset";
+  result_dataset_session_id: string | null;
+  result_job_id: string | null;
+  failure_reason: string | null;
+}
+
+/** GET /nori/marketplace/imports/{id} — poll an add-to-my-cloud import job. */
+export function getImportJob(baseUrl: string, fetcher: Fetcher, importJobId: string): Promise<ImportJob> {
+  return noriRequest<ImportJob>(
+    baseUrl,
+    fetcher,
+    `/nori/marketplace/imports/${encodeURIComponent(importJobId)}`,
+    { action: "Check add-to-cloud status" }
   );
 }
 
@@ -486,6 +511,12 @@ export interface LibraryPolicy {
   final_cost_usd: number | null;
   /** Owner-set: when true, the policy can't be renamed or deleted. */
   locked?: boolean;
+  /** 'own' (trained here) | 'community' (added from a marketplace listing). */
+  origin?: "own" | "community";
+  /** The listing this was copied from (community items only). */
+  source_listing_id?: string | null;
+  /** True when the caller has a live/pending community listing for this item. */
+  published?: boolean;
 }
 
 /** One uploaded dataset with the policies trained from it. */
@@ -498,6 +529,12 @@ export interface LibraryDataset {
   frame_count: number | null;
   /** Owner-set: when true, the dataset can't be renamed or deleted. */
   locked?: boolean;
+  /** 'own' (assembled/uploaded here) | 'community' (added from a marketplace listing). */
+  origin?: "own" | "community";
+  /** The listing this was copied from (community items only). */
+  source_listing_id?: string | null;
+  /** True when the caller has a live/pending community listing for this item. */
+  published?: boolean;
   policies: LibraryPolicy[];
 }
 
@@ -732,9 +769,11 @@ export function deleteDatasetEpisodes(
 export function deleteDataset(
   baseUrl: string,
   fetcher: Fetcher,
-  sessionId: string
+  sessionId: string,
+  alsoUnpublish = false
 ): Promise<{ deleted: boolean; session_id: string }> {
-  return noriRequest(baseUrl, fetcher, `/nori/datasets/${encodeURIComponent(sessionId)}`, {
+  const qs = alsoUnpublish ? "?also_unpublish=true" : "";
+  return noriRequest(baseUrl, fetcher, `/nori/datasets/${encodeURIComponent(sessionId)}${qs}`, {
     method: "DELETE",
     action: "Delete dataset",
   });
@@ -759,9 +798,11 @@ export function setDatasetLock(
 export function deletePolicy(
   baseUrl: string,
   fetcher: Fetcher,
-  jobId: string
+  jobId: string,
+  alsoUnpublish = false
 ): Promise<{ deleted: boolean; job_id: string }> {
-  return noriRequest(baseUrl, fetcher, `/nori/library/policies/${encodeURIComponent(jobId)}`, {
+  const qs = alsoUnpublish ? "?also_unpublish=true" : "";
+  return noriRequest(baseUrl, fetcher, `/nori/library/policies/${encodeURIComponent(jobId)}${qs}`, {
     method: "DELETE",
     action: "Delete policy",
   });

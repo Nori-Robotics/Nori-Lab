@@ -145,7 +145,9 @@ The browser catcher (`datasetCapture.ts` → `lelab/browser_capture.py` →
 (already the primary path). Scope is marking, not deleting:
 
 - Deprecation banners on all three modules + a warning when a browser capture
-  starts; the record UI labels the option "legacy".
+  starts; ~~the record UI labels the option "legacy"~~ — MOOT, verified
+  2026-07-22: no UI constructs a recording DatasetCapture anymore (the Remote
+  card is the ROBOT recorder); only the listDatasets helper is still consumed.
 - New browser-capture recordings go behind an env flag (default off) once the
   raw-bundle UI covers the workflow; viewing/assembly of EXISTING captures is
   untouched.

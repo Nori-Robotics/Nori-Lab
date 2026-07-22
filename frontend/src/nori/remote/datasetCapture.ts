@@ -1,5 +1,13 @@
 // NORI: Additive file. Browser-catcher — the operator-side half of remote-session
-// dataset capture. The robot persists nothing (R5) and its LAN taps are loopback-bound
+// dataset capture.
+//
+// DEPRECATED for RECORDING (2026-07-22, STREAM_INTEGRATION_PLAN §5b): the
+// robot's raw-bundle recorder replaces this path (full-quality frames, true
+// action labels). No UI constructs a recording DatasetCapture anymore — the
+// Remote card records on the ROBOT (DatasetCaptureCard). What remains live
+// here is the static dataset LISTING helper (listDatasets), used by publish
+// flows over already-assembled captures. lelab warns on /nori/capture/start
+// and NORI_BROWSER_CAPTURE=0 refuses it outright. The robot persists nothing (R5) and its LAN taps are loopback-bound
 // on customer units, so during a remote session THIS page is the only place the data
 // exists: the composite video (teleop.videoStream()), joint telemetry (onTelemetry),
 // and the outbound control frames (onControlSent — we are the sender).

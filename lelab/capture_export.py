@@ -1,4 +1,12 @@
 # NORI: Additive file. Spool → LeRobotDataset exporter for browser captures
+#
+# DEPRECATION NOTE (2026-07-22, STREAM_INTEGRATION_PLAN §5b): the browser
+# catcher that FEEDS this exporter is deprecated for new recordings (raw-bundle
+# recorder replaces it). This exporter itself stays: assembling EXISTING
+# captures remains supported indefinitely. Datasets it produces are
+# composite-provenance — policies trained on them take the legacy composite
+# input path at rollout (the P6 provenance rule), so keep that lineage in mind
+# before training anything new from a browser capture.
 # (see browser_capture.py for the spool contract and the pipeline overview).
 #
 # Everything is aligned on ONE clock: browser wall-clock ms. Each episode's

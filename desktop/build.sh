@@ -41,22 +41,14 @@ BUNDLE="$ROOT/desktop/dist/lelab-backend"
 BIN="$BUNDLE/lelab-backend"
 [ -f "$BIN.exe" ] && BIN="$BIN.exe"
 
-# --- Shrink: strip debug/local symbols from native libs (saves ~140MB, mostly libtorch)
-#     and drop never-executed test/header fat. macOS: stripping invalidates a binary's
-#     ad-hoc code signature, so we MUST re-sign each one or dyld SIGKILLs the process at
-#     load (silent crash, empty logs). The smoke test below runs AFTER this, so it
-#     validates the stripped+signed bundle, not the fat one.
-if [ "$(uname)" = "Darwin" ]; then
-  echo "==> strip + re-sign native libs (macOS)"
-  while IFS= read -r -d '' f; do
-    strip -Sx "$f" 2>/dev/null || true
-    codesign --force --sign - "$f" 2>/dev/null || true
-  done < <(find "$BUNDLE" \( -name "*.dylib" -o -name "*.so" \) -print0)
-  codesign --force --sign - "$BIN" 2>/dev/null || true
-  rm -rf "$BUNDLE/_internal/pyarrow/include" "$BUNDLE/_internal/pyarrow/tests" 2>/dev/null || true
-  find "$BUNDLE/_internal/numpy" "$BUNDLE/_internal/pandas" -type d -name tests -prune -exec rm -rf {} + 2>/dev/null || true
-  find "$BUNDLE/_internal/torch" -type d -name include -prune -exec rm -rf {} + 2>/dev/null || true
-fi
+# --- Shrink + sign: strips debug symbols (saves ~140MB, mostly libtorch) and then
+#     re-signs every native lib. The re-sign is mandatory, not cosmetic: stripping
+#     invalidates a Mach-O's signature, and dyld SIGKILLs the process at load if it
+#     doesn't match (silent crash, empty logs). Set APPLE_SIGNING_IDENTITY to produce
+#     a notarizable Developer ID build — see desktop/NOTARIZE.md.
+#     The smoke test below runs AFTER this, so it validates the stripped+signed bundle.
+echo "==> strip + sign native libs"
+"$ROOT/desktop/sign_backend.sh" "$BUNDLE"
 
 echo "==> [5/5] smoke test (excludes didn't break imports)"
 # Boot headless, hit /health-style root, then kill. Also verifies the _child

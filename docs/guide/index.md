@@ -13,18 +13,18 @@ no client may disable it.** The app and the SDK are both just clients. That's wh
 
 ## Pick your path
 
-**I want to drive my Nori asap: **
-[Install the desktop app](/guide/install) → [set up leader arms](/guide/leader-arms) →
+**I want to drive my Nori asap:** 
+[ Install the desktop app](/guide/install) → [set up leader arms](/guide/leader-arms) →
 [first session](/guide/first-session).
 
-**I want to build software for my robot: **
-[SDK quick start](/sdk/quickstart). You don't need the desktop app for this.
+**I want to build software for my robot:** 
+[ SDK quick start](/sdk/quickstart). You don't need the desktop app for this.
 
-**I want to drive using my headset: **
-[VR](/guide/vr). The VR page is hosted — no install needed, but the robot must already be paired.
+**I want to drive using my headset:** 
+[ VR](/guide/vr). The VR page is hosted — no install needed, but the robot must already be paired.
 
-**Something is broken right now: **
-[Something's broken](/guide/broken) — find your symptom, jump to the fix. Every page in this guide
+**Something is broken right now:** 
+[ Something's broken](/guide/broken) — find your symptom, jump to the fix. Every page in this guide
 ends with the problems specific to it, so setup and fixes live together.
 
 ## What's in the box:

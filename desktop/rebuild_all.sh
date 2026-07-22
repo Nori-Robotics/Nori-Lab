@@ -21,19 +21,10 @@ echo "== [3/6] freeze backend (bundles the fresh dist) =="
 ( cd desktop && rm -rf build dist && pyinstaller lelab_desktop.spec --noconfirm \
     --distpath ./dist --workpath ./build >/tmp/rebuild_freeze.log 2>&1 )
 
-# shrink: strip native libs + re-sign (macOS) — see build.sh for the why
-if [ "$(uname)" = "Darwin" ]; then
-  echo "   strip + re-sign native libs"
-  BUNDLE=desktop/dist/lelab-backend
-  while IFS= read -r -d '' f; do
-    strip -Sx "$f" 2>/dev/null || true
-    codesign --force --sign - "$f" 2>/dev/null || true
-  done < <(find "$BUNDLE" \( -name "*.dylib" -o -name "*.so" \) -print0)
-  codesign --force --sign - "$BUNDLE/lelab-backend" 2>/dev/null || true
-  rm -rf "$BUNDLE/_internal/pyarrow/include" "$BUNDLE/_internal/pyarrow/tests" 2>/dev/null || true
-  find "$BUNDLE/_internal/numpy" "$BUNDLE/_internal/pandas" -type d -name tests -prune -exec rm -rf {} + 2>/dev/null || true
-  find "$BUNDLE/_internal/torch" -type d -name include -prune -exec rm -rf {} + 2>/dev/null || true
-fi
+# shrink + sign native libs (see desktop/sign_backend.sh for the why).
+# Set APPLE_SIGNING_IDENTITY for a notarizable build — desktop/NOTARIZE.md.
+echo "   strip + sign native libs"
+desktop/sign_backend.sh desktop/dist/lelab-backend
 
 echo "== [4/6] stage bundle + .env =="
 rm -rf desktop/tauri/resources/backend
@@ -43,15 +34,41 @@ BAKED="$(grep -o 'index-[A-Za-z0-9_-]*\.js' desktop/tauri/resources/backend/_int
 echo "   staged backend serves: $BAKED"
 [ "$BAKED" = "$FE_ASSET" ] || { echo "!! staged dist mismatch"; exit 1; }
 
-echo "== [5/6] tauri build (.app + .dmg) =="
-( cd desktop/tauri && cargo tauri build >/tmp/rebuild_tauri.log 2>&1 )
+# Build ONLY the .app. Tauri's bundle_dmg.sh is flaky (fails intermittently while
+# mounting its scratch volume) and its DMG is larger than ours, so we skip it and
+# package the disk image ourselves in the next step.
+echo "== [5/7] tauri build (.app) =="
+( cd desktop/tauri && cargo tauri build --bundles app >/tmp/rebuild_tauri.log 2>&1 )
 
-echo "== [6/6] copy DMG to ~/Downloads =="
-SRC_DMG="$(find "${CARGO_TARGET_DIR:-desktop/tauri/target}/release/bundle/dmg" -name '*.dmg' | head -1)"
+APP="$(find "${CARGO_TARGET_DIR:-desktop/tauri/target}/release/bundle/macos" -maxdepth 1 -name '*.app' | head -1)"
+[ -n "$APP" ] || { echo "!! no .app produced"; tail -30 /tmp/rebuild_tauri.log; exit 1; }
+
+# ULFO (LZFSE) compresses this payload noticeably better than the UDZO default:
+# ~356MB vs ~404MB for the same app. Pure download-size win, no runtime cost.
+echo "== [6/7] package DMG (ULFO) =="
 DEST="$HOME/Downloads/Nori-Lab-$HEAD_SHA.dmg"
-cp "$SRC_DMG" "$DEST"
+rm -f "$DEST"
+hdiutil create -volname "Nori Lab" -srcfolder "$APP" -ov -format ULFO "$DEST" >/tmp/rebuild_dmg.log 2>&1 \
+  || { echo "!! hdiutil failed"; tail -20 /tmp/rebuild_dmg.log; exit 1; }
+
+# Notarization is opt-in: without a signing identity the build is ad-hoc signed,
+# which is fine locally but cannot be distributed. See desktop/NOTARIZE.md.
+echo "== [7/7] notarize =="
+if [ -n "${APPLE_SIGNING_IDENTITY:-}" ] && [ -n "${NOTARY_PROFILE:-}" ]; then
+  echo "   submitting to Apple (this takes a few minutes)"
+  xcrun notarytool submit "$DEST" --keychain-profile "$NOTARY_PROFILE" --wait
+  # Staple so the app validates OFFLINE. Without this, a user with no network
+  # on first launch still gets a Gatekeeper block.
+  xcrun stapler staple "$DEST"
+  xcrun stapler validate "$DEST" && echo "   notarized + stapled"
+else
+  echo "   skipped (set APPLE_SIGNING_IDENTITY and NOTARY_PROFILE to notarize)"
+  echo "   this build is ad-hoc signed and NOT distributable"
+fi
+
 echo "== DONE =="
 echo "HEAD:      $HEAD_SHA"
 echo "UI asset:  $FE_ASSET"
 echo "DMG:       $DEST"
 ls -lh "$DEST"
+shasum -a 256 "$DEST"

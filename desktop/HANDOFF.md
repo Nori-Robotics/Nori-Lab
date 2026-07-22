@@ -139,7 +139,12 @@ it's a self-contained CI + platform-signing chunk that doesn't touch app code. S
 - [ ] GitHub Actions matrix (macos-14 / windows / ubuntu-22.04) running `build.sh` + `cargo
       tauri build`, uploading installers as release artifacts (one native runner per OS —
       PyInstaller can't cross-compile).
-- [ ] macOS: Apple Developer ID ($99/yr) → codesign + notarize (unsigned = Gatekeeper block).
+- [x] macOS: Apple Developer ID → codesign + notarize. **Build side is done** — see
+      [`NOTARIZE.md`](NOTARIZE.md). `sign_backend.sh` signs every nested Mach-O with hardened
+      runtime + timestamp (signing the outer `.app` does NOT cover `Resources/`), entitlements
+      in `tauri/entitlements.plist` keep CPython/torch working under hardened runtime, and
+      `rebuild_all.sh` notarizes + staples when `APPLE_SIGNING_IDENTITY` and `NOTARY_PROFILE`
+      are set. Remaining: create the Developer ID cert and run it once.
 - [ ] Windows: Authenticode cert (~$100–400/yr, OV vs EV decision) or users hit SmartScreen.
 - [ ] Linux AppImage: no signing; verify on clean Ubuntu, watch the glibc floor.
 - Depends on step 5's public `.env` being staged into the bundle before `tauri build`.

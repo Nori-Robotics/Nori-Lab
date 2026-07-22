@@ -33,16 +33,28 @@ their own subpath imports so you never pull them unless you ask for them.
 
 ## Quick start (Supabase signaling)
 
-The fastest path: use the reference **Supabase** transport with a room we provision for you (you
-do **not** need your own Supabase account — just the room credentials). See
-["Connectivity"](#connectivity-lan-stun-turn) below for when you'd additionally need TURN values.
+The fastest path: use the reference **Supabase** transport with the shared signaling project we
+host — you do **not** need your own Supabase account.
+
+These two values are **public** — the same ones our own web app ships in every browser build, and
+the anon key grants nothing on its own (signaling rooms are RLS-gated). Paste them directly:
+
+```ts
+const SUPABASE_URL = "https://qgqamrqacvkzgdduebdd.supabase.co";
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFncWFtcnFhY3ZremdkZHVlYmRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA4NDkzNDEsImV4cCI6MjA5NjQyNTM0MX0.f0dD_hWsWixOLTsrO0B-8AaJZQWjYwd_o08LiLlgpvM";
+```
+
+What you still need from us, per robot: the **room + token** we provision for you (and, for a robot
+on a private room, to be signed in as its paired owner). See
+["Connectivity"](#connectivity-lan-stun-turn) for that and for when you'd add TURN values.
 
 ```ts
 import { RemoteTeleop } from "@nori/sdk";
 import { SupabaseSignaling } from "@nori/sdk/supabase";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY); // values we give you
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY); // the public values above
 const video = document.querySelector("video")!;
 
 const teleop = new RemoteTeleop({

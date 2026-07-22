@@ -1,3 +1,83 @@
+/* Surface colours, matched to the app at lab.norirobotics.com.
+ *
+ * The app's palette is defined in `frontend/src/index.css` as HSL under two names:
+ * "paper" #fbfaf5 (light `--background`) and "ink" #14131a (dark `--background`). Those two
+ * are the values a visitor actually notices when moving between the app and the docs, so
+ * they map straight onto `--vp-c-bg`. VitePress's stock #ffffff / #1b1b1f are a cold white
+ * and a blue-grey; both read as "different site" next to the warm app chrome.
+ *
+ * The supporting tokens are derived rather than copied, because the two products layer
+ * surfaces in opposite directions: VitePress makes `-alt` (sidebar, nav, code blocks)
+ * DARKER than the page in dark mode, while the app's dark sidebar is LIGHTER than its page.
+ * We follow the app — base, then a slight lift for chrome, then the app's card colour
+ * #1f1d25 for raised blocks — so the depth ordering matches what people see in the app.
+ */
+:root {
+  --vp-c-bg: #fbfaf5;         /* paper — the app's light --background */
+  --vp-c-bg-alt: #f3f1e8;     /* the app's light --sidebar-background */
+  --vp-c-bg-soft: #f5f3ec;    /* between the two, for soft blocks */
+  --vp-c-bg-elv: #ffffff;     /* overlays lift off the paper */
+}
+
+.dark {
+  --vp-c-bg: #14131a;         /* ink — the app's dark --background */
+  --vp-c-bg-alt: #1a1922;     /* chrome lifts slightly, as it does in the app */
+  --vp-c-bg-soft: #1f1d25;    /* the app's dark --card */
+  --vp-c-bg-elv: #1f1d25;
+}
+
+/* Brand accent — Nori green, replacing VitePress's stock indigo.
+ *
+ * The source is the app's `--nori-h8ab135`, which is already tuned per mode
+ * (79 54% 45% = #89b135 light, 79 54% 56% = #a5cb52 dark).
+ *
+ * ONE IMPORTANT SPLIT: in the app that green is a FILL colour — chips, glows, buttons —
+ * never body-size text. It cannot be used as VitePress's link colour, because #89b135 on
+ * paper is 2.39:1, far under the 4.5:1 AA floor. So the green takes two different jobs:
+ *
+ *   brand-1/2 (link + heading accent TEXT)  -> a deeper leaf green that passes on paper
+ *   brand-3   (solid button FILL)           -> the signature #89b135, with INK text on top
+ *
+ * The button-text override matters: VitePress's default is white on brand-3, which is
+ * 2.50:1 on this green — illegible. Ink on the same green is 7.39:1, and it matches how the
+ * app already pairs its accent with `--accent-foreground: ink`.
+ *
+ * Every pairing below was contrast-checked; the worst is 4.65:1 (ink on the active button).
+ */
+:root {
+  --vp-c-brand-1: #4e6b1e;    /* link/accent text — 5.83:1 on paper */
+  --vp-c-brand-2: #3f5718;    /* hover — 7.77:1 */
+  --vp-c-brand-3: #89b135;    /* the signature green, as a fill */
+  --vp-c-brand-soft: rgba(137, 177, 53, 0.14);
+
+  --vp-button-brand-bg: #89b135;
+  --vp-button-brand-hover-bg: #7a9e2f;
+  --vp-button-brand-active-bg: #6b8a29;
+  --vp-button-brand-border: #89b135;
+  --vp-button-brand-hover-border: #7a9e2f;
+  --vp-button-brand-active-border: #6b8a29;
+  --vp-button-brand-text: #14131a;
+  --vp-button-brand-hover-text: #14131a;
+  --vp-button-brand-active-text: #14131a;
+}
+
+.dark {
+  --vp-c-brand-1: #a5cb52;    /* 9.90:1 on ink */
+  --vp-c-brand-2: #b8d975;    /* 11.62:1 */
+  --vp-c-brand-3: #89b135;
+  --vp-c-brand-soft: rgba(165, 203, 82, 0.16);
+
+  --vp-button-brand-bg: #89b135;
+  --vp-button-brand-hover-bg: #9dc245;
+  --vp-button-brand-active-bg: #7a9e2f;
+  --vp-button-brand-border: #89b135;
+  --vp-button-brand-hover-border: #9dc245;
+  --vp-button-brand-active-border: #7a9e2f;
+  --vp-button-brand-text: #14131a;
+  --vp-button-brand-hover-text: #14131a;
+  --vp-button-brand-active-text: #14131a;
+}
+
 /* Home hero type scale.
  *
  * VitePress ships the hero name/text at 32px, 48px @640, 56px @960 — sized for a marketing

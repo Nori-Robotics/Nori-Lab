@@ -198,6 +198,34 @@ def _read_scope(bundle: Path) -> dict | None:
     return None
 
 
+def _read_capture_source(bundle: Path) -> str | None:
+    """The dataset provenance stamped into nori_meta.json at promotion:
+    "raw_bundle" (Pi recorder, full-quality) or "browser" (deprecated composite
+    catcher). Absent on every bundle promoted before the stamp exists — treated
+    as browser-era, i.e. composite, i.e. today's behavior."""
+    meta = bundle / "nori_meta.json"
+    if not meta.is_file():
+        return None
+    try:
+        with open(meta) as f:
+            src = json.load(f).get("capture_source")
+        return src if src in ("raw_bundle", "browser") else None
+    except Exception:
+        return None
+
+
+def _resolve_use_stream(requested: bool | None, capture_source: str | None) -> bool:
+    """The P6 provenance rule (STREAM_INTEGRATION_PLAN §5): the frame source
+    must MATCH the policy's training domain. raw_bundle-trained -> stream frames
+    (same bytes as training); browser-trained or unstamped -> composite, because
+    feeding full-quality frames to a policy trained on degraded composites is
+    the cloud path's train/infer mismatch, inverted. An explicit request wins
+    either way — the operator may be A/B-testing exactly that mismatch."""
+    if requested is not None:
+        return requested
+    return capture_source == "raw_bundle"
+
+
 def _load_bundle(
     ref: str,
     joints: list[str],
@@ -372,6 +400,12 @@ class LoadBody(BaseModel):
     # Both omitted → use the checkpoint's saved values.
     temporal_ensemble_coeff: float | None = None
     n_action_steps: int | None = None
+    # LOCAL sessions: feed the policy the robot's full-quality policy stream
+    # instead of the browser's composite crops. None (default) = auto by the
+    # bundle's stamped capture_source; explicit true/false overrides (warned
+    # when it contradicts provenance). Cloud sessions ignore this — the stream
+    # is always preferred there.
+    use_stream: bool | None = None
     # Control-loop rate override (Hz). Omit to use the bundle's stamped training
     # fps (nori_meta.json), falling back to DEFAULT_FPS. ACT should execute at
     # the fps it was trained on.
@@ -535,10 +569,20 @@ def rollout_load(body: LoadBody):
             n_action_steps=body.n_action_steps,
             fps=body.fps,
         )
+        cap_src = _read_capture_source(Path(config.NORI_POLICY_CACHE) / body.ref)
+        use_stream = _resolve_use_stream(body.use_stream, cap_src)
+        if use_stream and cap_src != "raw_bundle":
+            logger.warning("[ROLLOUT] use_stream FORCED on a %s-provenance policy — "
+                           "its training frames were composite; expect a domain gap",
+                           cap_src or "unstamped")
+        sess["use_stream"] = use_stream
+        sess["frame_source"] = None
         _session.update(sess)
-        logger.info("[ROLLOUT] loaded %s on %s (%d joints, images: %s, exec: %s)",
+        logger.info("[ROLLOUT] loaded %s on %s (%d joints, images: %s, exec: %s, "
+                    "frames: %s [capture_source=%s])",
                     body.ref, sess["device"], len(body.joints),
-                    list(sess["image_shapes"]), sess["execution"])
+                    list(sess["image_shapes"]), sess["execution"],
+                    "stream-preferred" if use_stream else "composite", cap_src)
         return {
             "ref": body.ref,
             "device": sess["device"],
@@ -658,12 +702,7 @@ def rollout_act(body: ActBody):
         action_joints = _session.get("action_joints") or joints       # action dict order
         device = _session["device"]
 
-        missing = [k for k in _session["image_shapes"] if k not in body.images]
-        if missing:
-            raise HTTPException(
-                status_code=422,
-                detail=f"policy needs image feature(s) {missing} — not supplied by the client.",
-            )
+        images_b64 = _local_images(body)
 
         obs: dict[str, Any] = {
             "observation.state": torch.tensor(
@@ -671,7 +710,7 @@ def rollout_act(body: ActBody):
             ).to(device),
         }
         for key, chw in _session["image_shapes"].items():
-            obs[key] = _decode_image(body.images[key], chw).to(device)
+            obs[key] = _decode_image(images_b64[key], chw).to(device)
 
         with torch.no_grad():
             processed = _session["pre"](obs)
@@ -703,6 +742,33 @@ def rollout_act(body: ActBody):
             )
         # Only the scoped joints are commanded; the daemon holds the rest.
         return {"action": {j: v for j, v in zip(action_joints, vec)}}
+
+
+def _local_images(body: "ActBody") -> dict:
+    """Pick the local policy's frames: the robot's policy stream when this
+    session opted in (P6 provenance rule) and every needed view is fresh, else
+    the browser's composite crops. All-or-nothing per tick, exactly like the
+    cloud path — a mixed observation is worse than either source. Warns on the
+    TRANSITION into composite, not per tick."""
+    keys = list(_session["image_shapes"])
+    if _session.get("use_stream"):
+        st = _stream
+        stream_imgs = st.frames_b64(keys) if st is not None else None
+        if stream_imgs is not None:
+            _session["frame_source"] = "stream"
+            return stream_imgs
+        if _session.get("frame_source") != "composite":
+            logger.warning("[ROLLOUT] local policy wanted STREAM frames but the "
+                           "stream is %s — falling back to the deprecated composite",
+                           "stale/incomplete" if st is not None else "not armed")
+    missing = [k for k in keys if k not in body.images]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"policy needs image feature(s) {missing} — not supplied by the client.",
+        )
+    _session["frame_source"] = "composite"
+    return {k: body.images[k] for k in keys}
 
 
 def _close_cam() -> None:
@@ -763,4 +829,7 @@ def rollout_status():
             "device": _session["device"],
             "joints": _session["joints"],
             "image_keys": list(_session["image_shapes"]),
+            "use_stream": _session.get("use_stream", False),
+            "frame_source": _session.get("frame_source"),
+            "stream": _stream.status() if _stream is not None else None,
         }

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, ReactNode, useState, useCallback, useMemo } from "react";
 
 import { getAccessToken } from "../nori/auth/session";
+import { getLocalToken, LOCAL_TOKEN_HEADER } from "../lib/localAuth";
 
 interface ApiContextType {
   baseUrl: string;
@@ -56,15 +57,21 @@ export const ApiProvider: React.FC<{ children: ReactNode }> = ({
     // for all callers and only present when signed in. Without it, authed routes like
     // the LLM proxy (/nori/llm/*) reach Nori-Backend with no Bearer token and 401.
     const token = await getAccessToken();
+    // Local API token (see lib/localAuth.ts): only for requests that actually
+    // target the LeLab base URL. In direct-backend mode noriRequest routes to
+    // Nori-Backend through this same fetcher — the gate keeps the local
+    // capability secret (and an unexpected CORS header) off that cross-site path.
+    const localToken = url.startsWith(baseUrl) ? getLocalToken() : null;
     return fetch(url, {
       ...options,
       headers: {
         "Content-Type": "application/json",
         ...(token ? { "X-Nori-JWT": token } : {}),
+        ...(localToken ? { [LOCAL_TOKEN_HEADER]: localToken } : {}),
         ...options.headers,
       },
     });
-  }, []);
+  }, [baseUrl]);
 
   const value = useMemo(
     () => ({ baseUrl, wsBaseUrl, fetchWithHeaders }),

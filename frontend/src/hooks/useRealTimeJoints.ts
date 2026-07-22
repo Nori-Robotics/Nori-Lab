@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { URDFViewerElement } from "@/lib/urdfViewerHelpers";
 import { useApi } from "@/contexts/ApiContext";
+import { tokenizeWsUrl } from "@/lib/localAuth";
 
 interface JointData {
   type: "joint_update";
@@ -23,7 +24,9 @@ export const useRealTimeJoints = ({
   websocketUrl,
 }: UseRealTimeJointsProps) => {
   const { wsBaseUrl } = useApi();
-  const finalWebSocketUrl = websocketUrl || `${wsBaseUrl}/ws/joint-data`;
+  // Local API token as a query param: WS handshakes can't carry headers, and
+  // the auth cookie only flows same-origin (see lib/localAuth.ts).
+  const finalWebSocketUrl = tokenizeWsUrl(websocketUrl || `${wsBaseUrl}/ws/joint-data`);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);

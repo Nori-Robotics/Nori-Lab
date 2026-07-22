@@ -19,6 +19,7 @@
 // actions).
 
 import { cameraTileRect, type CameraLayout, type RemoteTeleop, type TelemetryView } from "@nori/sdk";
+import { lelabFetch } from "@/lib/localAuth";
 
 // Must mirror lelab/capture_export.py's exclusion — the training-side joint
 // order and the inference-side joint order MUST be derived identically.
@@ -169,7 +170,7 @@ export class PolicyRunner {
       ? await this.setupStream(teleop, cloud.robotSerial)
       : false;
 
-    const res = await fetch(`${this.baseUrl}/nori/rollout/load`, {
+    const res = await lelabFetch(`${this.baseUrl}/nori/rollout/load`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // Inference-time execution knobs (ACT); omitted keys fall back to the
@@ -357,7 +358,7 @@ export class PolicyRunner {
 
     this.inflight = true;
     try {
-      const res = await fetch(`${this.baseUrl}/nori/rollout/act`, {
+      const res = await lelabFetch(`${this.baseUrl}/nori/rollout/act`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state: tel.state, images }),
@@ -479,7 +480,7 @@ export class PolicyRunner {
     if (this.streamActive || this.teleop?.policyStreamStatus()?.streaming) {
       void this.teleop?.policyStream("stop", { timeoutMs: 3000 });
     }
-    void fetch(`${this.baseUrl}/nori/rollout/stream/close`, { method: "POST" }).catch(() => {});
+    void lelabFetch(`${this.baseUrl}/nori/rollout/stream/close`, { method: "POST" }).catch(() => {});
     this.streamActive = false;
     this.teleop = null;
     this.ref = null;
@@ -492,7 +493,7 @@ export class PolicyRunner {
   // up both ends and returns false (composite fallback, warned).
   private async setupStream(teleop: RemoteTeleop, serial: string): Promise<boolean> {
     try {
-      const r = await fetch(`${this.baseUrl}/nori/rollout/stream/open`, {
+      const r = await lelabFetch(`${this.baseUrl}/nori/rollout/stream/open`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expected_serial: serial }),
@@ -505,7 +506,7 @@ export class PolicyRunner {
       // (serial-checked) rather than trusting the robot's ok alone.
       const deadline = Date.now() + 5000;
       while (Date.now() < deadline) {
-        const sres = await fetch(`${this.baseUrl}/nori/rollout/stream/status`);
+        const sres = await lelabFetch(`${this.baseUrl}/nori/rollout/stream/status`);
         const ss = (await sres.json()) as { preamble_received?: boolean; cameras?: string[] };
         if (ss.preamble_received) {
           console.info("[policyRun] policy stream live — cameras:", ss.cameras);
@@ -517,14 +518,14 @@ export class PolicyRunner {
     } catch (e) {
       console.warn("[policyRun] policy stream unavailable — DEPRECATED composite fallback:", e);
       void teleop.policyStream("stop", { timeoutMs: 3000 });
-      void fetch(`${this.baseUrl}/nori/rollout/stream/close`, { method: "POST" }).catch(() => {});
+      void lelabFetch(`${this.baseUrl}/nori/rollout/stream/close`, { method: "POST" }).catch(() => {});
       return false;
     }
   }
 
   private async unloadQuietly(): Promise<void> {
     try {
-      await fetch(`${this.baseUrl}/nori/rollout/unload`, { method: "POST" });
+      await lelabFetch(`${this.baseUrl}/nori/rollout/unload`, { method: "POST" });
     } catch {
       /* lelab gone — nothing to unload */
     }

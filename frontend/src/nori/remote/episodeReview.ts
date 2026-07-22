@@ -10,6 +10,7 @@
 
 import { noriRequest } from "@/nori/api/client";
 import { type Fetcher } from "@/lib/apiClient";
+import { lelabFetch } from "@/lib/localAuth";
 
 export interface DatasetEpisode {
   index: number;
@@ -26,7 +27,7 @@ export interface EpisodeListing {
 }
 
 export async function listEpisodes(baseUrl: string, repoId: string): Promise<EpisodeListing> {
-  const r = await fetch(`${base(baseUrl)}/nori/capture/datasets/${encodeURIComponent(repoId)}/episodes`);
+  const r = await lelabFetch(`${base(baseUrl)}/nori/capture/datasets/${encodeURIComponent(repoId)}/episodes`);
   if (!r.ok) throw new Error(`couldn't list episodes (HTTP ${r.status})`);
   const j = (await r.json()) as { cameras?: string[]; episodes: DatasetEpisode[] };
   return { cameras: j.cameras ?? [], episodes: j.episodes };
@@ -49,7 +50,7 @@ export async function deleteEpisodes(
   repoId: string,
   indices: number[],
 ): Promise<{ deleted: number; remaining: number }> {
-  const r = await fetch(`${base(baseUrl)}/nori/capture/datasets/${encodeURIComponent(repoId)}/delete-episodes`, {
+  const r = await lelabFetch(`${base(baseUrl)}/nori/capture/datasets/${encodeURIComponent(repoId)}/delete-episodes`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ indices }),

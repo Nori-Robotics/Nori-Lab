@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useApi } from "@/contexts/ApiContext";
 import { JobProgressSnapshot } from "@/lib/jobsApi";
+import { tokenizeWsUrl } from "@/lib/localAuth";
 
 /**
  * Subscribe to backend job events on the shared /ws/joint-data channel.
@@ -33,7 +34,7 @@ export const useJobsChangedSignal = (
     const connect = () => {
       if (cancelled) return;
       try {
-        ws = new WebSocket(`${wsBaseUrl}/ws/joint-data`);
+        ws = new WebSocket(tokenizeWsUrl(`${wsBaseUrl}/ws/joint-data`));
       } catch {
         reconnectTimer = setTimeout(connect, 3000);
         return;

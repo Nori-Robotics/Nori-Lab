@@ -48,9 +48,22 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# One frame every 50 ms at the streamer's default 20 fps; 2 s of silence means
-# the stream is gone (the robot's own silence watchdog fires at ~5 s). A stale
-# view reads as MISSING, never served as live.
+# Staleness is a LIVENESS bound (how old vision may be before falling back
+# beats acting on it), not a frame-period assumption — the receiver is
+# fps-agnostic (latest-wins; the robot's NORI_POLICY_FPS just sets arrival
+# freshness). 2 s default: comfortably above any frame period (50 ms at the
+# streamer's default 20 fps), comfortably below the robot's own 5 s silence
+# watchdog, and coarse enough that a 1 s network hiccup doesn't flap
+# stream<->composite mid-run. NORI_STREAM_STALE_S tunes it — tighten for
+# continuous driving where 2 s-old vision is already too old.
+def _stale_after_default() -> float:
+    try:
+        v = float(os.environ.get("NORI_STREAM_STALE_S", "2.0"))
+        return v if v > 0 else 2.0
+    except ValueError:
+        return 2.0
+
+
 STALE_AFTER_S = 2.0
 # The arming window: how long after open() the robot may dial in. start() on
 # the robot side can legitimately take ~8 s (sink connect + preamble through
@@ -83,12 +96,15 @@ class StreamListener:
 
     def __init__(self, expected_serial: str, host: str = "", port: int = 0,
                  arm_window_s: float = ARM_WINDOW_S,
-                 stale_after_s: float = STALE_AFTER_S):
+                 stale_after_s: float | None = None):
         self.expected_serial = str(expected_serial)
         self.host = host or "0.0.0.0"
         self.port = int(port)
         self.arm_window_s = float(arm_window_s)
-        self.stale_after_s = float(stale_after_s)
+        # Resolved at CONSTRUCTION (env read here, not at class definition —
+        # a module-level default parameter would freeze the value at import,
+        # the exact silent-no-op the e2e test once tripped on).
+        self.stale_after_s = float(stale_after_s) if stale_after_s else _stale_after_default()
 
         self._srv: Optional[socket.socket] = None
         self._conn: Optional[socket.socket] = None

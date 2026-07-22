@@ -24,6 +24,7 @@ import io
 import os
 import secrets
 import threading
+import time
 from typing import Optional
 
 import numpy as np
@@ -32,6 +33,8 @@ from fastapi import FastAPI, Header, HTTPException
 from PIL import Image
 from pydantic import BaseModel
 from transformers import AutoModelForImageTextToText, AutoProcessor
+
+import rtc as rtcmod
 
 REPO_ID = os.environ.get("MOLMOACT_REPO", "allenai/MolmoAct2-SO100_101")
 NORM_TAG = os.environ.get("MOLMOACT_NORM_TAG", "so100_so101_molmoact2")
@@ -47,6 +50,14 @@ app = FastAPI(title="nori-molmoact2")
 _model = None
 _processor = None
 _lock = threading.Lock()  # single GPU: serialize predict_action calls
+# RTC (Real-Time Chunking). The flow-loop patch closes over ONE state object, but
+# the guidance target is per-CLIENT — two rollouts sharing a server would otherwise
+# steer each other's arms. Inference is already serialized behind _lock, so we keep
+# one state and swap the cached chunk in/out per session under that same lock.
+ACTION_HORIZON = 30            # this checkpoint's chunk length
+_rtc_state = rtcmod.RTCState()
+_rtc_prev: dict = {}           # session id -> previous chunk (normalized, on-device)
+_RTC_SESSION_CAP = 8           # bound the cache; robot sessions are few and long-lived
 _load_error: Optional[str] = None  # set if the background load failed
 
 
@@ -67,8 +78,15 @@ def _load_model() -> None:
             .to("cuda")
             .eval()
         )
+        # Inert until a session sets a target. Guarded: RTC is an optimisation, and
+        # nothing here may be allowed to stop the model from loading.
+        try:
+            if rtcmod.install_rtc(model, _rtc_state) is None:
+                print("[molmoact2] RTC: flow loop not found — serving un-guided", flush=True)
+        except Exception as exc:
+            print(f"[molmoact2] RTC install failed ({exc}) — serving un-guided", flush=True)
         _processor, _model = proc, model
-        print(f"[molmoact2] loaded {REPO_ID} dtype={DTYPE}", flush=True)
+        print(f"[molmoact2] loaded {REPO_ID} dtype={DTYPE} (RTC patch installed)", flush=True)
     except Exception as exc:  # surface load failures via /health instead of a dead port
         _load_error = f"{type(exc).__name__}: {exc}"
         print(f"[molmoact2] LOAD FAILED — {_load_error}", flush=True)
@@ -86,10 +104,37 @@ class ActRequest(BaseModel):
     state: list[float]     # robot joint state (6 for a single SO-100/101 arm)
     instruction: str       # natural-language task, e.g. "pick up the red cup"
     num_steps: int = 10    # flow-matching integration steps (latency <-> quality)
+    # RTC FEASIBILITY PROBE (see cloud_inference/rtc.py). RTC's per-step PiGDM
+    # correction is a VJP, so it needs (a) autograd enabled and (b) the CUDA-graph
+    # fast path off. Both are optimisations we currently rely on, and latency is
+    # already the binding constraint: after the chunk-stride fix the queue covers
+    # ~1s of motion against a 0.65-1.2s round-trip. So measure the cost BEFORE
+    # building the integration — if compute doubles, RTC needs a latency
+    # reduction (in-region GPU) to be viable at all.
+    # Cost is still bounded by MAX_NUM_STEPS and the bearer token.
+    enable_cuda_graph: bool = True
+    enable_grad: bool = False
+    # RTC: send {session, consumed, delay} to make this chunk continuous with the
+    # previous one. `consumed` aligns the cached chunk to the new timeline;
+    # `delay` is how many actions will execute WHILE this inference runs, and
+    # becomes the frozen prefix. Omit the block entirely to run without RTC.
+    rtc: Optional["RTCParams"] = None
+
+
+class RTCParams(BaseModel):
+    session: str
+    consumed: int = 0
+    delay: int = 0
 
 
 class ActResponse(BaseModel):
     actions: list[list[float]]  # chunk: N moves x DOF, ROBOT SCALE (already de-normalized)
+    # Server-side compute time, so the client can separate GPU cost from network
+    # RTT. Additive + optional: existing clients that read only `actions` are
+    # unaffected.
+    compute_ms: Optional[float] = None
+    # None when RTC wasn't requested; otherwise why it did or didn't apply.
+    rtc: Optional[dict] = None
 
 
 def _decode(b64: str) -> np.ndarray:
@@ -133,22 +178,76 @@ def act(req: ActRequest, authorization: Optional[str] = Header(None)) -> ActResp
     num_steps = max(1, min(int(req.num_steps), MAX_NUM_STEPS))  # clamp GPU cost
     images = [_decode(b) for b in req.images]
     state = np.asarray(req.state, dtype=np.float32)
-    with _lock, torch.no_grad():
-        out = _model.predict_action(
-            processor=_processor,
-            images=images,
-            task=req.instruction,
-            state=state,
-            norm_tag=NORM_TAG,
-            inference_action_mode="continuous",
-            num_steps=num_steps,
-            normalize_language=True,
-            enable_cuda_graph=True,
-        )
+    # Autograd roughly doubles activation memory, and the weights alone are ~21GB
+    # on a 24GB A10G — so the grad path can simply OOM. Report that as a clean 507
+    # rather than letting it wedge the container: "RTC does not fit on this
+    # hardware" is a legitimate measurement outcome, not a crash.
+    # RTC decides the execution knobs: its per-step PiGDM correction is a VJP, so
+    # autograd must be ON and the CUDA-graph fast path OFF (you cannot backprop a
+    # captured graph). Measured cost of that swap: 303ms -> 827ms compute.
+    rtc_req = req.rtc
+    rtc_horizon = None
+    rtc_note = None
+    if rtc_req is not None:
+        rtc_horizon = rtcmod.pick_execution_horizon(rtc_req.delay, ACTION_HORIZON)
+        if rtc_horizon is None:
+            # d > H/2: frozen prefix and free tail would overlap. Serve a normal
+            # chunk rather than a silently ill-defined one.
+            rtc_note = (f"skipped: delay {rtc_req.delay} too large for horizon "
+                        f"{ACTION_HORIZON} (needs d <= H/2)")
+    use_rtc = rtc_req is not None and rtc_horizon is not None
+    cuda_graph = False if use_rtc else bool(req.enable_cuda_graph)
+    grad_ctx = torch.enable_grad() if (use_rtc or req.enable_grad) else torch.no_grad()
+    t0 = time.perf_counter()
+    try:
+        with _lock, grad_ctx:
+            if use_rtc:
+                # Swap this session's cached chunk in under the lock (see _rtc_prev).
+                _rtc_state.prev = _rtc_prev.get(rtc_req.session)
+                _rtc_state.enabled = _rtc_state.prev is not None
+                _rtc_state.consumed = max(0, int(rtc_req.consumed))
+                _rtc_state.delay = max(0, int(rtc_req.delay))
+                _rtc_state.execution_horizon = rtc_horizon
+                _rtc_state.applied = 0
+            out = _model.predict_action(
+                processor=_processor,
+                images=images,
+                task=req.instruction,
+                state=state,
+                norm_tag=NORM_TAG,
+                inference_action_mode="continuous",
+                num_steps=num_steps,
+                normalize_language=True,
+                enable_cuda_graph=cuda_graph,
+            )
+            if use_rtc:
+                # the patched flow loop wrote the new chunk into state.prev
+                if len(_rtc_prev) >= _RTC_SESSION_CAP and rtc_req.session not in _rtc_prev:
+                    _rtc_prev.pop(next(iter(_rtc_prev)))
+                _rtc_prev[rtc_req.session] = _rtc_state.prev
+                rtc_note = {"guided_steps": _rtc_state.applied,
+                            "execution_horizon": rtc_horizon,
+                            "delay": _rtc_state.delay,
+                            "consumed": _rtc_state.consumed,
+                            "had_target": bool(_rtc_state.enabled)}
+                _rtc_state.prev = None      # don't leak one session's chunk to the next
+                _rtc_state.enabled = False
+    except torch.cuda.OutOfMemoryError as e:
+        torch.cuda.empty_cache()
+        raise HTTPException(
+            status_code=507,
+            detail=f"CUDA OOM (enable_grad={req.enable_grad}, "
+                   f"cuda_graph={req.enable_cuda_graph}): {e}",
+        ) from e
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()   # predict_action is async; time the real compute
+    compute_ms = (time.perf_counter() - t0) * 1000.0
     acts = out.actions
     if torch.is_tensor(acts):  # predict_action returns a CUDA tensor — move to host first
         acts = acts.detach().float().cpu().numpy()
     acts = np.asarray(acts, dtype=np.float32)
     if acts.ndim == 3 and acts.shape[0] == 1:  # (1, chunk, DOF) -> (chunk, DOF)
         acts = acts[0]
-    return ActResponse(actions=acts.tolist())
+    return ActResponse(actions=acts.tolist(), compute_ms=round(compute_ms, 1),
+                       rtc=(rtc_note if isinstance(rtc_note, dict)
+                            else ({"skipped": rtc_note} if rtc_note else None)))

@@ -175,12 +175,63 @@ from .dataset_episodes import router as _episodes_router  # noqa: E402
 
 app.include_router(_episodes_router)
 
+# ---- Local-origin gate: CSRF / confused-deputy defense ---------------------
+# lelab binds 127.0.0.1, but any BROWSER on this machine can be induced to send
+# requests here cross-origin (a drive-by page, or another localhost service).
+# All authority is ambient and server-side — backend session, org tokens, the
+# cloud-inference bearer — so such a request rides it: training dispatch,
+# marketplace publish, dataset deletion, cloud-GPU /act. Two facts make CORS
+# alone insufficient: (1) CORS only gates response READS — a cross-site "simple"
+# POST fires its side effects regardless; (2) the previous wildcard actively
+# APPROVED any site's preflight. So we refuse at the door, before routing:
+#
+#   * any request whose Origin is present and not a local UI origin -> 403.
+#     Browsers always attach Origin to cross-origin requests; curl/SDKs/scripts
+#     send none and pass untouched, same-origin GETs likewise.
+#   * mutating requests stamped Sec-Fetch-Site: cross-site -> 403, a backstop
+#     for Origin-stripping edge cases (every modern browser sends the header).
+#
+# Chrome's Private Network Access would block SOME of this (public->local), but
+# it ships warn-only in places, Firefox doesn't enforce it, and local->local
+# (another process serving a page on a different localhost port) bypasses it
+# entirely. Browser policy is weather; this gate is the architecture.
+#
+# NORI_EXTRA_ORIGINS (comma-separated) extends the allowlist without a code
+# change — needed for e.g. the desktop (Tauri) wrapper if its webview origin
+# isn't localhost:8000, or the phone-camera HTTPS flow (https://<laptop-ip>:8000).
+_ALLOWED_ORIGINS = {
+    "http://localhost:8000", "http://127.0.0.1:8000",   # served UI (prod)
+    "http://localhost:8080", "http://127.0.0.1:8080",   # lelab --dev (Vite)
+    "https://localhost:8000", "https://127.0.0.1:8000", # manual HTTPS runs
+}
+_ALLOWED_ORIGINS |= {
+    o.strip() for o in os.environ.get("NORI_EXTRA_ORIGINS", "").split(",") if o.strip()
+}
+
+
+@app.middleware("http")
+async def _local_origin_gate(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if origin is not None and origin not in _ALLOWED_ORIGINS:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "cross-origin request refused — lelab only serves "
+                               "its own local UI (see NORI_EXTRA_ORIGINS)"},
+        )
+    if (request.method not in ("GET", "HEAD", "OPTIONS")
+            and request.headers.get("sec-fetch-site") == "cross-site"):
+        return JSONResponse(status_code=403,
+                            content={"detail": "cross-site request refused"})
+    return await call_next(request)
+
+
 # In dev mode the React app runs on :8080 while the API runs on :8000; in
-# prod they share an origin and CORS is unnecessary. allow_credentials with
-# a wildcard origin is rejected by browsers, so we drop it.
+# prod they share an origin. The gate above REFUSES foreign origins outright;
+# this CORS layer now only grants read permission to the allowlisted local UIs
+# (the wildcard it replaces actively approved any site's preflight).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=sorted(_ALLOWED_ORIGINS),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

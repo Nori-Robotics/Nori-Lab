@@ -61,6 +61,11 @@ export interface CloudParams {
    *  Use for the first on-hardware check — watch the predicted joint targets before
    *  letting an unproven cloud policy actually drive the arm. */
   observeOnly?: boolean;
+  /** The paired robot's serial (== the session room since room-token retirement).
+   *  Enables the full-quality policy stream: lelab arms a receiver, the robot dials
+   *  it and pushes sensor-quality frames, and the composite becomes the fallback.
+   *  Omit -> composite-only (works, but warned as deprecated server-side). */
+  robotSerial?: string;
 }
 
 /** Friendly presets → raw ACT knobs. `smooth` (temporal ensembling, 0.01) is the
@@ -103,6 +108,11 @@ export class PolicyRunner {
   private ticks = 0;
   private skipLog = 0; // throttles the "tick skipped before /act" diagnostic
   private observeOnly = false; // safety dry-run: log actions, don't drive the robot
+  // The robot's policy stream is feeding lelab directly, so ticks skip the
+  // composite grab+upload entirely (STREAM_INTEGRATION_PLAN §4 step 5). Flips
+  // back on a 422 from /act — the server telling us it fell back and needs
+  // composite frames in the body again.
+  private streamActive = false;
   // Encoder gate state as we FOUND it, so stop() restores rather than force-pauses
   // (force-pausing froze the preview of a page that was still on screen).
   private videoWasPaused = false;
@@ -150,6 +160,14 @@ export class PolicyRunner {
     // out-votes our ~10 Hz sendAction() and the arm never reaches the commanded
     // pose (valid actions, no motion). Released in stop().
     teleop.setPolicyDriving(true);
+
+    // Full-quality observations: arm the lelab receiver and have the ROBOT dial
+    // it (stream > composite). Must happen BEFORE /load so view validation can
+    // see the preamble's cameras. Every failure falls back to the (deprecated)
+    // composite path, loudly — never silently.
+    this.streamActive = cloud?.robotSerial
+      ? await this.setupStream(teleop, cloud.robotSerial)
+      : false;
 
     const res = await fetch(`${this.baseUrl}/nori/rollout/load`, {
       method: "POST",
@@ -321,7 +339,9 @@ export class PolicyRunner {
     }
 
     const images: Record<string, string> = {};
-    for (const src of this.sources) {
+    // While the robot's stream feeds lelab directly, ticks carry ONLY joint
+    // state — no canvas grabs, no JPEG encodes, no composite upload.
+    for (const src of this.streamActive ? [] : this.sources) {
       const jpeg = this.grab(src);
       if (!jpeg) {
         if (this.skipLog++ % 15 === 0)
@@ -342,6 +362,15 @@ export class PolicyRunner {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state: tel.state, images }),
       });
+      if (res.status === 422 && this.streamActive) {
+        // The server needed composite frames we stopped sending — its stream
+        // source went stale/disconnected and it fell back. Re-attach composite
+        // from the next tick; NOT a failure (don't feed the watchdog).
+        this.streamActive = false;
+        console.warn("[policyRun] policy stream lost — re-attaching DEPRECATED composite frames");
+        this.consecutiveFailures = 0;
+        return;
+      }
       if (!res.ok) throw new Error(`act HTTP ${res.status}`);
       const { action, warming } = (await res.json()) as {
         action: Record<string, number> | null;
@@ -356,6 +385,22 @@ export class PolicyRunner {
           console.warn("[policyRun] cloud queue warming — skipping tick");
         this.consecutiveFailures = 0;
         return;
+      }
+      // COMMANDED vs ACHIEVED, per joint. The action_status channel can't answer
+      // "is this joint actually moving?" for a streaming policy — a tracked action
+      // never converges, so it never terminalises. This does answer it: `action` is
+      // what we asked for, tel.state is what the arm reports. A joint whose command
+      // varies while its observation stays flat is being dropped or overridden
+      // downstream; a joint whose COMMAND is itself flat is an upstream (model)
+      // problem. Logged once a second so the two are directly comparable.
+      if (this.ticks % 10 === 0) {
+        const obs = tel.state ?? {};
+        const row = Object.keys(action)
+          .filter((k) => k in obs)
+          .map((k) => `${k.replace(/^(left|right)_arm_/, "").replace(/\.pos$/, "")}` +
+                      ` cmd=${action[k].toFixed(1)} obs=${obs[k].toFixed(1)}`)
+          .join("  ");
+        console.info(`[policyRun] cmd-vs-obs | ${row}`);
       }
       // The one and only robot-bound artifact of this whole subsystem — SKIPPED
       // in observe-only mode (log the predicted targets, drive nothing).
@@ -375,10 +420,21 @@ export class PolicyRunner {
           void this.teleop.awaitAction(id, { timeoutMs: 1500 }).then((st) => {
             // "done" is the boring case; everything else names a real problem
             // (blocked -> "stall:<joint>", clamped -> a target hit its range limit).
-            if (st.state !== "done") {
-              console.warn(`[policyRun] daemon verdict: ${st.state}`,
-                           st.reason ? `(${st.reason})` : "");
-            }
+            if (st.state === "done") return;
+            // A streaming policy rewrites setpoints every ~100 ms, so a tracked
+            // action almost never CONVERGES -> "done"/"clamped" are rare and a
+            // client-fallback timeout is expected. That timeout is not evidence the
+            // daemon is quiet: "blocked" (incl. stall) is checked before the
+            // convergence test and would have fired promptly. Report the last
+            // non-terminal status too, so a silent daemon (null: no Phase-E support
+            // or status not reaching us) is distinguishable from a live one that
+            // simply never terminalised.
+            // stop() nulls this.teleop, and this resolves up to timeoutMs later — so
+            // ending a run mid-flight would otherwise throw out of a floating promise.
+            const last = this.teleop?.actionStatus(id) ?? null;
+            const seen = last ? `${last.state}${last.reason ? ` (${last.reason})` : ""}` : "NONE";
+            console.warn(`[policyRun] daemon verdict: ${st.state}`,
+                         st.reason ? `(${st.reason})` : "", `| last status seen: ${seen}`);
           });
         } else {
           this.teleop.sendAction(action);
@@ -417,10 +473,53 @@ export class PolicyRunner {
     this.teleop?.setPolicyDriving(false);
     if (this.videoWasPaused) this.teleop?.pauseVideo();
     else this.teleop?.resumeVideo();
+    // Tear the observation stream down with the run: tell the robot to stop
+    // pushing, release the lelab listener. Best-effort — a dead session or an
+    // un-armed stream must not block stop().
+    if (this.streamActive || this.teleop?.policyStreamStatus()?.streaming) {
+      void this.teleop?.policyStream("stop", { timeoutMs: 3000 });
+    }
+    void fetch(`${this.baseUrl}/nori/rollout/stream/close`, { method: "POST" }).catch(() => {});
+    this.streamActive = false;
     this.teleop = null;
     this.ref = null;
     await this.unloadQuietly();
     this.onPhase({ kind: "stopped", reason });
+  }
+
+  // Arm lelab's receiver, point the robot at it, wait for the preamble to land.
+  // Returns true only when frames can actually flow; every failure path cleans
+  // up both ends and returns false (composite fallback, warned).
+  private async setupStream(teleop: RemoteTeleop, serial: string): Promise<boolean> {
+    try {
+      const r = await fetch(`${this.baseUrl}/nori/rollout/stream/open`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_serial: serial }),
+      });
+      if (!r.ok) throw new Error(`stream/open HTTP ${r.status}`);
+      const { host, port } = (await r.json()) as { host: string; port: number };
+      const st = await teleop.policyStream("start", { dest: "laptop", target: `${host}:${port}` });
+      if (!st.ok) throw new Error(st.error ?? "robot refused the policy stream");
+      // The robot connected somewhere — confirm OUR listener got the preamble
+      // (serial-checked) rather than trusting the robot's ok alone.
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const sres = await fetch(`${this.baseUrl}/nori/rollout/stream/status`);
+        const ss = (await sres.json()) as { preamble_received?: boolean; cameras?: string[] };
+        if (ss.preamble_received) {
+          console.info("[policyRun] policy stream live — cameras:", ss.cameras);
+          return true;
+        }
+        await new Promise((res) => setTimeout(res, 250));
+      }
+      throw new Error("robot reported started, but no preamble reached lelab in 5s");
+    } catch (e) {
+      console.warn("[policyRun] policy stream unavailable — DEPRECATED composite fallback:", e);
+      void teleop.policyStream("stop", { timeoutMs: 3000 });
+      void fetch(`${this.baseUrl}/nori/rollout/stream/close`, { method: "POST" }).catch(() => {});
+      return false;
+    }
   }
 
   private async unloadQuietly(): Promise<void> {

@@ -42,6 +42,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from . import nori_cam_zmq as camzmq
+from . import policy_stream_rx as streamrx
 from . import nori_cloud_rollout as cloudmod
 from .utils import config
 
@@ -55,6 +56,74 @@ DEFAULT_FPS = 10
 _act_dbg_counter = 0  # throttles the per-tick rollout debug line to ~1/sec
 
 _lock = threading.Lock()  # single-flight inference + load/unload mutex
+
+# The armed/live policy-stream receiver (STREAM_INTEGRATION_PLAN §2). Module-
+# level, NOT session state: the orchestration arms it BEFORE /rollout/load
+# (the robot needs a target to dial), so it must survive the load path's
+# previous-session cleanup. Closed by /stream/close and by /unload.
+_stream = None  # Optional[streamrx.StreamListener]
+
+
+def _detect_host() -> str:
+    """The LAN address the robot should dial. Default-route interface trick
+    (no packet is sent); NORI_STREAM_HOST overrides for multi-NIC laptops."""
+    env = os.environ.get("NORI_STREAM_HOST", "").strip()
+    if env:
+        return env
+    import socket as _socket
+    sk = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+    try:
+        sk.connect(("10.255.255.255", 1))
+        return sk.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        sk.close()
+
+
+class StreamOpenBody(BaseModel):
+    # Supplied by the FRONTEND APP from its pairing/session state (the SDK does
+    # not know the serial). The receiver drops any stream whose preamble names
+    # a different robot — the v1 stand-in for sink auth.
+    expected_serial: str
+    port: int = 0  # 0 = ephemeral
+
+
+@router.post("/stream/open")
+def stream_open(body: StreamOpenBody):
+    """Arm the policy-stream receiver. Returns the {host, port} the browser
+    hands the robot as `target` in {type:"policy_stream", action:"start"}.
+    Re-opening replaces any previous listener (a retry is open->start again)."""
+    global _stream
+    serial = body.expected_serial.strip()
+    if not serial:
+        raise HTTPException(status_code=422, detail="expected_serial is required")
+    with _lock:
+        if _stream is not None:
+            _stream.close()
+        lst = streamrx.StreamListener(
+            serial, port=body.port or int(os.environ.get("NORI_STREAM_PORT", "0")))
+        lst.open()  # binds all interfaces; we advertise the routable address
+        _stream = lst
+    return {"host": _detect_host(), "port": lst.port}
+
+
+@router.post("/stream/close")
+def stream_close():
+    global _stream
+    with _lock:
+        had = _stream is not None
+        if _stream is not None:
+            _stream.close()
+            _stream = None
+    return {"closed": had}
+
+
+@router.get("/stream/status")
+def stream_status():
+    st = _stream
+    return st.status() if st is not None else {
+        "armed": False, "connected": False, "preamble_received": False}
 _session: dict[str, Any] = {}  # ref, policy, pre, post, device, joints, image_shapes
 
 
@@ -127,6 +196,34 @@ def _read_scope(bundle: Path) -> dict | None:
     except Exception:
         logger.warning("[ROLLOUT] unreadable scope in nori_meta.json (%s)", bundle)
     return None
+
+
+def _read_capture_source(bundle: Path) -> str | None:
+    """The dataset provenance stamped into nori_meta.json at promotion:
+    "raw_bundle" (Pi recorder, full-quality) or "browser" (deprecated composite
+    catcher). Absent on every bundle promoted before the stamp exists — treated
+    as browser-era, i.e. composite, i.e. today's behavior."""
+    meta = bundle / "nori_meta.json"
+    if not meta.is_file():
+        return None
+    try:
+        with open(meta) as f:
+            src = json.load(f).get("capture_source")
+        return src if src in ("raw_bundle", "browser") else None
+    except Exception:
+        return None
+
+
+def _resolve_use_stream(requested: bool | None, capture_source: str | None) -> bool:
+    """The P6 provenance rule (STREAM_INTEGRATION_PLAN §5): the frame source
+    must MATCH the policy's training domain. raw_bundle-trained -> stream frames
+    (same bytes as training); browser-trained or unstamped -> composite, because
+    feeding full-quality frames to a policy trained on degraded composites is
+    the cloud path's train/infer mismatch, inverted. An explicit request wins
+    either way — the operator may be A/B-testing exactly that mismatch."""
+    if requested is not None:
+        return requested
+    return capture_source == "raw_bundle"
 
 
 def _load_bundle(
@@ -303,6 +400,12 @@ class LoadBody(BaseModel):
     # Both omitted → use the checkpoint's saved values.
     temporal_ensemble_coeff: float | None = None
     n_action_steps: int | None = None
+    # LOCAL sessions: feed the policy the robot's full-quality policy stream
+    # instead of the browser's composite crops. None (default) = auto by the
+    # bundle's stamped capture_source; explicit true/false overrides (warned
+    # when it contradicts provenance). Cloud sessions ignore this — the stream
+    # is always preferred there.
+    use_stream: bool | None = None
     # Control-loop rate override (Hz). Omit to use the bundle's stamped training
     # fps (nori_meta.json), falling back to DEFAULT_FPS. ACT should execute at
     # the fps it was trained on.
@@ -360,13 +463,16 @@ def _cloud_load(body: LoadBody) -> dict:
     if not instruction:
         raise HTTPException(status_code=422,
                             detail="a cloud VLA needs an instruction (natural-language task)")
-    views = body.views or _env_views() or cloudmod.DEFAULT_CLOUD_VIEWS
     fps = body.fps if (body.fps and body.fps > 0) else _env_fps()
     # Joint mapping: the model's 6-DoF output maps to ONE arm's keys, in the
     # model's canonical order (arm_keys). Validate those keys exist in the live
     # session so a bimanual/single-arm or left/right mismatch fails at /load, not
     # silently mid-rollout.
     arm = (body.arm or _env_arm()).strip().lower()
+    # Resolved AFTER `arm`: the default view pair includes that arm's wrist tile,
+    # so driving the right arm must not feed the left wrist (see
+    # default_cloud_views for why a wrist view belongs in the pair at all).
+    views = body.views or _env_views() or cloudmod.default_cloud_views(arm)
     try:
         akeys = cloudmod.arm_keys(arm)
     except ValueError as e:
@@ -398,9 +504,19 @@ def _cloud_load(body: LoadBody) -> dict:
         watermark=cloudmod._env_int("NORI_INFER_WATERMARK", cloudmod.REFILL_WATERMARK),
         max_queue=cloudmod._env_int("NORI_INFER_MAX_QUEUE", cloudmod.MAX_QUEUE),
         replace_on_refill=cloudmod._env_bool("NORI_INFER_REPLACE", True),
+        # fps drives the chunk STRIDE: the model authors 30 actions per second of
+        # motion, so serving one per tick at 15fps halves the speed. NORI_INFER_STRIDE
+        # forces a value (1 = the old one-action-per-tick behaviour).
+        fps=float(fps),
+        chunk_hz=(cloudmod.MOLMOACT2_CHUNK_HZ
+                  if not os.environ.get("NORI_INFER_STRIDE")
+                  else float(fps) * cloudmod._env_int("NORI_INFER_STRIDE", 1)),
         bounds=cloudmod.MOLMOACT2_BOUNDS,
         calib=calib,
     )
+    logger.info("[CLOUD-ROLLOUT] chunk stride=%d (fps=%s, chunk authored at %sHz) -- "
+                "queue holds %.2fs of motion; the refill round-trip must fit inside that",
+                roll.stride, fps, roll.chunk_hz, roll.max_queue / (roll.chunk_hz or 1))
     with _lock:
         _close_cam()   # release any previous session's camera subscriber
         _session.clear()
@@ -453,10 +569,20 @@ def rollout_load(body: LoadBody):
             n_action_steps=body.n_action_steps,
             fps=body.fps,
         )
+        cap_src = _read_capture_source(Path(config.NORI_POLICY_CACHE) / body.ref)
+        use_stream = _resolve_use_stream(body.use_stream, cap_src)
+        if use_stream and cap_src != "raw_bundle":
+            logger.warning("[ROLLOUT] use_stream FORCED on a %s-provenance policy — "
+                           "its training frames were composite; expect a domain gap",
+                           cap_src or "unstamped")
+        sess["use_stream"] = use_stream
+        sess["frame_source"] = None
         _session.update(sess)
-        logger.info("[ROLLOUT] loaded %s on %s (%d joints, images: %s, exec: %s)",
+        logger.info("[ROLLOUT] loaded %s on %s (%d joints, images: %s, exec: %s, "
+                    "frames: %s [capture_source=%s])",
                     body.ref, sess["device"], len(body.joints),
-                    list(sess["image_shapes"]), sess["execution"])
+                    list(sess["image_shapes"]), sess["execution"],
+                    "stream-preferred" if use_stream else "composite", cap_src)
         return {
             "ref": body.ref,
             "device": sess["device"],
@@ -472,6 +598,36 @@ class ActBody(BaseModel):
     images: dict[str, str] = {}
 
 
+_dump_tick = 0
+
+
+def _dump_frames(images: list[str], views: list[str]) -> None:
+    """Write the exact frames handed to the policy to NORI_INFER_DUMP_FRAMES.
+
+    Diagnostic only, and deliberately cheap to leave off: a single env var, no
+    cost when unset. Filenames carry the tick and the view key so a sequence can
+    be flipped through in order. Never raises — a debug aid must not be able to
+    stop a rollout."""
+    global _dump_tick
+    out = os.environ.get("NORI_INFER_DUMP_FRAMES")
+    if not out:
+        return
+    every = max(1, int(os.environ.get("NORI_INFER_DUMP_EVERY", "30")))
+    tick = _dump_tick
+    _dump_tick += 1
+    if tick % every:
+        return
+    try:
+        d = Path(out).expanduser()
+        d.mkdir(parents=True, exist_ok=True)
+        for key, b64 in zip(views, images):
+            raw = b64.split(",", 1)[1] if b64.lstrip().startswith("data:") else b64
+            short = key.replace("observation.images.", "")
+            (d / f"t{tick:05d}_{short}.jpg").write_bytes(base64.b64decode(raw))
+    except Exception as e:
+        logger.warning("[ROLLOUT] frame dump failed (%s) — continuing", e)
+
+
 def _cloud_act(body: ActBody) -> dict:
     """Serve one action from the cloud chunk queue (lock already held). Maps the
     browser's {featureKey: dataURL} dict to the ordered view list the model wants,
@@ -483,12 +639,26 @@ def _cloud_act(body: ActBody) -> dict:
     # source the recorder/training data uses). Fall back to the browser's crops of
     # the ABR-degraded composite when that source isn't configured/reachable, or
     # when any view is stale — a partial/frozen obs is worse than the composite.
-    cam = _session.get("cam")
-    zmq_imgs = cam.frames_b64(views) if cam else None
-    if zmq_imgs is not None:
-        images = [zmq_imgs[v] for v in views]
-        _session["frame_source"] = "zmq"
-    else:
+    # Source preference (STREAM_INTEGRATION_PLAN §2): the robot's policy
+    # stream > the DEPRECATED direct-SUB tap > the browser composite. The
+    # composite is a warned legacy fallback now that browser capture is
+    # deprecated for inference — warn on the TRANSITION into it, not per tick
+    # (15 Hz of identical warnings is noise, a silent fallback is worse).
+    prev_src = _session.get("frame_source")
+    images = None
+    st = _stream
+    if st is not None:
+        stream_imgs = st.frames_b64(views)
+        if stream_imgs is not None:
+            images = [stream_imgs[v] for v in views]
+            _session["frame_source"] = "stream"
+    if images is None:
+        cam = _session.get("cam")
+        zmq_imgs = cam.frames_b64(views) if cam else None
+        if zmq_imgs is not None:
+            images = [zmq_imgs[v] for v in views]
+            _session["frame_source"] = "zmq"
+    if images is None:
         missing = [v for v in views if v not in body.images]
         if missing:
             raise HTTPException(
@@ -497,6 +667,17 @@ def _cloud_act(body: ActBody) -> dict:
             )
         images = [body.images[v] for v in views]
         _session["frame_source"] = "composite"
+        if prev_src != "composite":
+            logger.warning(
+                "[ROLLOUT] observation source is the DEPRECATED browser composite"
+                + (" (stream went stale/disconnected)" if prev_src == "stream" else "")
+                + " — full-quality path: arm /stream/open and start the robot's policy stream")
+    # NORI_INFER_DUMP_FRAMES=<dir>: write the images we ACTUALLY send, so the
+    # policy's input can be inspected rather than reasoned about. A whole day of
+    # this spike was spent theorising about frame quality without once looking at
+    # a frame. Off unless the env var is set; writes every DUMP_EVERY-th tick so a
+    # run yields a handful of files, not thousands.
+    _dump_frames(images, views)
     # State in the MODEL's joint order (arm_keys), not Nori's alphabetical sort.
     state = [float(body.state.get(k, 0.0)) for k in arm_keys]
     try:
@@ -521,12 +702,7 @@ def rollout_act(body: ActBody):
         action_joints = _session.get("action_joints") or joints       # action dict order
         device = _session["device"]
 
-        missing = [k for k in _session["image_shapes"] if k not in body.images]
-        if missing:
-            raise HTTPException(
-                status_code=422,
-                detail=f"policy needs image feature(s) {missing} — not supplied by the client.",
-            )
+        images_b64 = _local_images(body)
 
         obs: dict[str, Any] = {
             "observation.state": torch.tensor(
@@ -534,7 +710,7 @@ def rollout_act(body: ActBody):
             ).to(device),
         }
         for key, chw in _session["image_shapes"].items():
-            obs[key] = _decode_image(body.images[key], chw).to(device)
+            obs[key] = _decode_image(images_b64[key], chw).to(device)
 
         with torch.no_grad():
             processed = _session["pre"](obs)
@@ -568,23 +744,64 @@ def rollout_act(body: ActBody):
         return {"action": {j: v for j, v in zip(action_joints, vec)}}
 
 
+def _local_images(body: "ActBody") -> dict:
+    """Pick the local policy's frames: the robot's policy stream when this
+    session opted in (P6 provenance rule) and every needed view is fresh, else
+    the browser's composite crops. All-or-nothing per tick, exactly like the
+    cloud path — a mixed observation is worse than either source. Warns on the
+    TRANSITION into composite, not per tick."""
+    keys = list(_session["image_shapes"])
+    if _session.get("use_stream"):
+        st = _stream
+        stream_imgs = st.frames_b64(keys) if st is not None else None
+        if stream_imgs is not None:
+            _session["frame_source"] = "stream"
+            return stream_imgs
+        if _session.get("frame_source") != "composite":
+            logger.warning("[ROLLOUT] local policy wanted STREAM frames but the "
+                           "stream is %s — falling back to the deprecated composite",
+                           "stale/incomplete" if st is not None else "not armed")
+    missing = [k for k in keys if k not in body.images]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"policy needs image feature(s) {missing} — not supplied by the client.",
+        )
+    _session["frame_source"] = "composite"
+    return {k: body.images[k] for k in keys}
+
+
 def _close_cam() -> None:
-    """Release the ZMQ camera subscriber (daemon threads + sockets) of the session
-    being torn down, so a re-load doesn't leak subscribers onto the same ports."""
+    """Release the per-session resources that hold sockets: the ZMQ camera
+    subscriber (daemon threads) and the cloud client's POOLED HTTP connection.
+    Both must go on teardown or a re-load leaks — subscribers onto the same
+    ports, and an idle keep-alive connection per rollout."""
     cam = _session.get("cam")
     if cam:
         try:
             cam.close()
         except Exception:
             logger.warning("[ROLLOUT] camera source close failed", exc_info=True)
+    roll = _session.get("cloud")
+    if roll is not None and hasattr(roll, "close"):
+        try:
+            roll.close()
+        except Exception:
+            logger.warning("[ROLLOUT] cloud client close failed", exc_info=True)
 
 
 @router.post("/unload")
 def rollout_unload():
+    global _stream
     with _lock:
         had = _session.get("ref")
         _close_cam()
         _session.clear()
+        # The stream listener is per-rollout-session (plan §1): tearing down the
+        # session tears down the observation path with it.
+        if _stream is not None:
+            _stream.close()
+            _stream = None
     return {"unloaded": had}
 
 
@@ -605,10 +822,14 @@ def rollout_status():
                 # fallback to the degraded composite is visible in the field.
                 "frame_source": _session.get("frame_source", "unknown"),
                 "cameras": _session["cam"].status() if _session.get("cam") else None,
+                "stream": _stream.status() if _stream is not None else None,
             }
         return {
             "loaded": _session["ref"],
             "device": _session["device"],
             "joints": _session["joints"],
             "image_keys": list(_session["image_shapes"]),
+            "use_stream": _session.get("use_stream", False),
+            "frame_source": _session.get("frame_source"),
+            "stream": _stream.status() if _stream is not None else None,
         }

@@ -1,6 +1,14 @@
 # NORI: Additive file. Browser-catcher spool — the lelab half of remote-session
 # dataset capture (the "browser catcher").
 #
+# DEPRECATED (2026-07-22, STREAM_INTEGRATION_PLAN §5b) for NEW recordings: the
+# Pi raw-bundle recorder is the recording path — full-quality frames instead of
+# the ABR-degraded composite this spool receives, and true action labels
+# instead of the action=state[t+1] approximation. This module stays for
+# viewing/assembling EXISTING captures indefinitely; starting NEW captures
+# warns, and NORI_BROWSER_CAPTURE=0 refuses them outright. Flip that default
+# only once the raw-bundle UI provably covers the whole recording workflow.
+#
 # During a REMOTE teleop session the browser already receives everything a
 # dataset needs: the composite video track (SDK videoStream()), ~15 Hz joint
 # telemetry (onTelemetry), and it is the SENDER of every control frame. The
@@ -40,6 +48,7 @@
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -115,6 +124,16 @@ class CaptureStartBody(BaseModel):
 
 @router.post("/start")
 def capture_start(body: CaptureStartBody):
+    # Deprecation gate (§5b): default ALLOW-with-warning so nobody is stranded
+    # mid-transition; =0 refuses new captures and names the replacement.
+    if os.environ.get("NORI_BROWSER_CAPTURE", "1").strip().lower() in ("0", "false", "no", "off"):
+        raise HTTPException(
+            status_code=403,
+            detail="browser capture is deprecated and disabled (NORI_BROWSER_CAPTURE=0) — "
+                   "record on the robot instead (raw-bundle recorder, full quality)")
+    logger.warning("[CAPTURE] DEPRECATED browser capture started — the raw-bundle "
+                   "recorder is the recording path (composite-quality frames, "
+                   "approximated action labels; see STREAM_INTEGRATION_PLAN §5b)")
     capture_id = uuid.uuid4().hex
     d = _captures_root() / capture_id
     d.mkdir(parents=True, exist_ok=False)

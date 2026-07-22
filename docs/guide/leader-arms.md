@@ -24,7 +24,7 @@ Calibration lands in:
 ~/.cache/huggingface/lerobot/calibration/teleoperators/nori_l2_dual_leader/
 ```
 
-<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
+<!-- TODO
 ::: info 🚧 To write
 - **Motor IDs.** Both arms share a serial bus, so every motor needs a unique ID before anything
   works. Explain the ID scheme, and why a fresh motor out of the box always needs this.
@@ -35,21 +35,23 @@ Calibration lands in:
 :::
 -->
 
-## The three gotchas
+## Calibration
+It is essential that when you start calibration, you hold the arm in the position where all motors are in the middle of their motion range. This is also where the Nori arm calibration starts, and the two must start in the same position for the leader arms to properly mirror motion. If you see strange issues with inverted or skewed motion when using the leader arms, starting calibration at the wrong position is likely the culprit.
 
-Almost every leader-arm problem is one of these. They're worth knowing before you start, and
-they're the first things to check when something breaks.
 
-**A charge-only USB cable looks exactly like a data cable.** It carries no data lines, and it is
-the single most common cause of "no arm found."
+## Common Issues
 
-**Hubs swallow devices.** An unpowered hub, or a hub daisy-chained off another hub, will
+Worth knowing before you start, and the first thing to check if something breaks or feels off:
+
+- **A charge-only USB cable looks exactly like a data cable.** It carries no data lines, and it is the single most common cause of "no arm found."
+
+- **Hubs swallow devices.** An unpowered hub, or a hub daisy-chained off another hub, will
 intermittently drop the arms.
 
-**Calibration is cached on disk** and reused across sessions. An arm that behaves as though it's
-calibrated for a *different* arm usually is.
+- **Calibration is cached on disk** and reused across sessions. An arm that behaves as though it's calibrated for a *different* arm usually is.
 
-## When it goes wrong
+
+## Troubleshooting
 
 ### The app says no leader arm is found
 

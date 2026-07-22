@@ -1,0 +1,80 @@
+/* Home hero type scale.
+ *
+ * VitePress ships the hero name/text at 32px, 48px @640, 56px @960 — sized for a marketing
+ * splash, which is louder than a docs landing page wants. These bring it down roughly a
+ * quarter while keeping the same three-step responsive ramp.
+ *
+ * The default rules are scoped (`.name[data-v-<hash>]`), and that hash changes whenever
+ * VitePress is upgraded — so we deliberately do NOT match on it. `.VPHome .VPHero .name` is
+ * (0,3,0) specificity, which beats the (0,2,0) scoped rule regardless of source order or
+ * hash churn. If a VitePress upgrade ever renames these classes the hero simply reverts to
+ * its default size; it won't break.
+ */
+.VPHome .VPHero .name,
+.VPHome .VPHero .text {
+  font-size: 26px;
+  line-height: 34px;
+}
+
+.VPHome .VPHero .tagline {
+  font-size: 16px;
+  line-height: 25px;
+}
+
+@media (min-width: 640px) {
+  .VPHome .VPHero .name,
+  .VPHome .VPHero .text {
+    font-size: 36px;
+    line-height: 44px;
+  }
+
+  .VPHome .VPHero .tagline {
+    font-size: 17px;
+    line-height: 27px;
+  }
+}
+
+@media (min-width: 960px) {
+  .VPHome .VPHero .name,
+  .VPHome .VPHero .text {
+    font-size: 42px;
+    line-height: 50px;
+  }
+
+  .VPHome .VPHero .tagline {
+    font-size: 18px;
+    line-height: 28px;
+  }
+}
+
+/* BETA pill, rendered above the hero title via the home-hero-info-before slot.
+ * Uses theme tokens rather than literal colours so it tracks light/dark automatically.
+ *
+ * Alignment mirrors how VitePress aligns the hero itself: the title/tagline are
+ * `width: fit-content` blocks centred with `margin: 0 auto`, flipping to `margin: 0` at
+ * 960px when the hero has an image beside it. The pill copies that exactly (hence
+ * `display: block` + `fit-content` rather than `inline-block` — auto margins don't centre
+ * an inline-block), so it stays glued to the title at every width instead of drifting. */
+.nori-beta-pill {
+  display: block;
+  width: fit-content;
+  margin: 0 auto 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--vp-c-brand-1);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 18px;
+  text-transform: uppercase;
+  color: var(--vp-c-brand-1);
+  background-color: var(--vp-c-brand-soft);
+  white-space: nowrap;
+}
+
+@media (min-width: 960px) {
+  .VPHome .VPHero.has-image .nori-beta-pill {
+    margin-left: 0;
+    margin-right: 0;
+  }
+}

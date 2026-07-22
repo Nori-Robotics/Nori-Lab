@@ -10,12 +10,12 @@
 7. To stop, just disconnect at any time. After disconnecting for a while, Nori's arms will go limp to protect the motors.
 8. Nori will automatically sleep after being left idle, and will be woken up by a tap of your finger on Nori's face, or by connecting via the app. Powering off is not necessary between sessions within a day or two, but prolonged sleeping can drain your battery.
 
-## The one thing to know before you move an arm
+## Before motor control...
 
 The robot has two different kinds of E-stop:
 
 - The **physical E-stop** (the red button at the back) cuts electrical power to the motors only. The robot's computer and other non-motor systems stay powered. A raised arm can go limp and fall when motor power is removed. Restore motor power by twisting the button.
-- The **software E-stop**, available in the app, on Nori's face, or through `teleop.command("estop")`, which stops motion and latches, but leaves motor torque engaged (raised arms will not go limp).
+- The **software E-stop**, available in the app, on Nori's face, or through `teleop.command("estop")`, stops motion and latches, but leaves motor torque engaged (raised arms will not go limp).
 
 In contrast, the **master switch** controls power to the entire robot.
 
@@ -26,6 +26,18 @@ current for too long, has its torque cut and latched off to save the motor.
 That joint goes **limp**, so a raised arm can drop. Read `latch_reason` to tell the cases apart before you reset.
 
 Full behavior in [the safety contract](/sdk/safety) and [safety states](/guide/safety-states).
+
+## Understanding the kiosk
+Nori's face is an easy way to see and diagnose errors:
+- The top right indicator dot has several states: white for ready, red for a motor control error, and green for connected. Tap on the dot at any time to see a text reminder.
+- Nori's face, beyond having interactive expressions, will also change to indicate errors such as high temperature warning, or weak network signal.
+
+The settings dashboard also exposes useful controls:
+- Wifi setup and picking nicknames (as covered above)
+- Full LAN access for developers
+- Default allow mic on / auto-accept calls from operator
+- Arm recalibration, which is needed only if you swapped out a motor and need to resweep joints. Read more [here](/guide/leader-arms).
+
 
 ## If it doesn't connect
 

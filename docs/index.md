@@ -3,7 +3,7 @@ layout: home
 
 hero:
   name: Nori
-  text: Docs & troubleshooting (BETA)
+  text: Docs & troubleshooting
   tagline: Set up a robot, drive it from anywhere, and build on top of it with the @nori/sdk.
   image:
     src: /nori-logo.png

@@ -2,6 +2,13 @@
 
 Record demonstrations by teleoperating the robot, then train a policy on them and run it back.
 
+## Recording a dataset:
+- You can begin recording when connected to the robot while on the Remote Operation page of the Nori Lab app. 
+- You will see the usual live video preview on the app while recording, and this tends to dynamically drop bit rate to lessen strain on the Raspberry Pi while recording is underway. 
+- Do not worry about your training data -- it is saved on-board the pi at full quality, and will upload to the cloud once your session is complete. 
+- You must be disconnected as an operator for data upload to begin, and you will see a visual indicator on Nori's kiosk for its duration.
+- Afterwards you can download your data from the My Stuff page of the app.
+
 <!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
 - **Recording a dataset.** Starting/stopping an episode, what a good episode looks like, how many
@@ -17,6 +24,7 @@ Record demonstrations by teleoperating the robot, then train a policy on them an
 - **Marketplace.** Publishing a policy and using someone else's.
 :::
 -->
+<!--
 
 ## Why training is cloud and inference is local
 
@@ -28,3 +36,4 @@ trade, not an oversight.
 
 **Training is cloud** — it needs GPUs you don't have, and it's not latency-sensitive. Nothing
 about training touches the robot.
+-->

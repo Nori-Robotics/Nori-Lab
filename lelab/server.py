@@ -175,6 +175,17 @@ from .dataset_episodes import router as _episodes_router  # noqa: E402
 
 app.include_router(_episodes_router)
 
+# Local-API auth (rollout phase: warn-only). API routes require the local
+# capability token — delivered via the launch URL, then carried by an HttpOnly
+# SameSite=Strict cookie; static frontend files and /nori/config stay public.
+# LELAB_AUTH=warn (default) only logs would-be rejections; "enforce" makes them
+# real. Added BEFORE CORSMiddleware so CORS stays outermost and preflights are
+# answered before auth runs (OPTIONS is exempt in the middleware regardless).
+# See lelab/local_auth.py for the threat model.
+from .local_auth import LocalAuthMiddleware  # noqa: E402
+
+app.add_middleware(LocalAuthMiddleware, routes_provider=lambda: app.routes)
+
 # In dev mode the React app runs on :8080 while the API runs on :8000; in
 # prod they share an origin and CORS is unnecessary. allow_credentials with
 # a wildcard origin is rejected by browsers, so we drop it.

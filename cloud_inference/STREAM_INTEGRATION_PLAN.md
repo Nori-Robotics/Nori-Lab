@@ -153,6 +153,9 @@ The browser catcher (`datasetCapture.ts` → `lelab/browser_capture.py` →
   untouched.
 - Removal is a later decision, after the raw-bundle path has proven it covers
   every workflow.
+- PENDING (2026-07-22): Michael to verify the raw-bundle capture pipeline
+  end-to-end; NORI_BROWSER_CAPTURE stays default-ALLOW (warned) until then,
+  flips to default-off on his confirmation.
 
 ## 6. Phases
 

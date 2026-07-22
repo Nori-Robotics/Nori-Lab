@@ -110,4 +110,4 @@ If you still find an orphan on `:8000`, that's a bug worth
 
 ### The app can't see my hardware
 
-That's not a desktop-app problem — go to [Leader arms](/guide/leader-arms#when-it-goes-wrong).
+That's not a desktop-app problem — go to [Leader arms](/guide/leader-arms#troubleshooting).

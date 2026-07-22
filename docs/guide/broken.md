@@ -10,8 +10,8 @@ as the setup for that topic.
 | Video is low-res / low-fps | Working as intended — it's the robot's power budget | [Cameras](/guide/cameras#video-quality) |
 | Camera fps falls off over a long session | Thermal throttling, not power. Needs cooling | [Cameras](/guide/cameras) |
 | A camera vanishes mid-session | USB current cap on the Pi | [Power](/guide/power#brownouts) |
-| App can't see a leader arm | Charge-only cable, or a hub swallowing it | [Leader arms](/guide/leader-arms#when-it-goes-wrong) |
-| An arm moves the wrong joint / wrong direction | Motor IDs, or stale calibration | [Leader arms](/guide/leader-arms#when-it-goes-wrong) |
+| App can't see a leader arm | Charge-only cable, or a hub swallowing it | [Leader arms](/guide/leader-arms#troubleshooting) |
+| An arm moves the wrong joint / wrong direction | Motor IDs, or stale calibration | [Leader arms](/guide/leader-arms#troubleshooting) |
 | "Enter VR" is disabled | Not a secure context (needs HTTPS) | [VR](/guide/vr#when-it-goes-wrong) |
 | No audio after joining a call | Autoplay policy, or the robot-side consent prompt | [Audio](/guide/audio) |
 | Robot's speaker disconnects mid-clip | Brownout — the clip was too loud | [Power](/guide/power#brownouts) |

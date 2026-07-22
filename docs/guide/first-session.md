@@ -7,34 +7,28 @@
 4. Connect to your Nori on the landing page (Nori logo) or anywhere on the Remote Operation, Coding or Agent pages (connection persists within the app).
 5. It may take a few seconds to connect. Once your see it light up green, check telemetry: you will see stats from the robot, its safety status, your connection, and more. Remember to take off any camera covers that your Nori may have been shipped with.
 6. Drive it: the keyboard control panel is the easiest way to get started. Make sure you're focused on the page, and give it a try. Tweak sensitivity at any time to moderate the speed.
-7. To stop, just disconnect at any time. 
-8. Nori will automatically sleep after being left idle, and will be woken up by a tap of your finger on Nori's face, or by connecting via the app. Powering off is not necessary between sessions within a day or two, but prolonged sleeping can still drain your battery.
+7. To stop, just disconnect at any time. After disconnecting for a while, Nori's arms will go limp to protect the motors.
+8. Nori will automatically sleep after being left idle, and will be woken up by a tap of your finger on Nori's face, or by connecting via the app. Powering off is not necessary between sessions within a day or two, but prolonged sleeping can drain your battery.
 
 ## The one thing to know before you move an arm
 
 The robot has two different kinds of E-stop:
 
-- The **physical E-stop** cuts electrical power to the motors only. The robot's computer and other
-  non-motor systems stay powered. A raised arm can go limp and fall when motor power is removed.
-- The **software E-stop**, available in the app or through `teleop.command("estop")`, blocks motion
-  and latches while leaving motor torque engaged.
+- The **physical E-stop** (the red button at the back) cuts electrical power to the motors only. The robot's computer and other non-motor systems stay powered. A raised arm can go limp and fall when motor power is removed. Restore motor power by twisting the button.
+- The **software E-stop**, available in the app, on Nori's face, or through `teleop.command("estop")`, which stops motion and latches, but leaves motor torque engaged (raised arms will not go limp).
 
-The **master switch** is different again: it controls power to the entire robot.
+In contrast, the **master switch** controls power to the entire robot.
 
-Clearing a software E-stop is deliberate and nothing else does it for you: `reset_latch`. That's
-the design — a latch you can clear by accident isn't a latch. Releasing the physical E-stop is
-required to restore motor power; a software command cannot restore power that the physical E-stop
-has cut.
+Clearing a software E-stop is deliberate and can only be done via: `reset_latch`. Releasing the physical E-stop is required to restore motor power; a software command cannot restore power that the physical E-stop has cut.
 
 **The robot can also latch itself.** A servo that gets too hot, or a joint that pulls too much
-current for too long, has its torque cut and latched off to save the motor — no human involved.
-That joint goes **limp**, so a raised arm can drop. Read `latch_reason` to tell the cases apart
-before you reset.
+current for too long, has its torque cut and latched off to save the motor.
+That joint goes **limp**, so a raised arm can drop. Read `latch_reason` to tell the cases apart before you reset.
 
-Full behavior in [the safety contract](/sdk/safety) and [safety states](/troubleshooting/safety-states).
+Full behavior in [the safety contract](/sdk/safety) and [safety states](/guide/safety-states).
 
 ## If it doesn't connect
 
 The single most common failure is a session that sits at `connecting` and never reaches
 `connected`. That's almost always the network, not you — see
-[Connection troubleshooting](/troubleshooting/connection).
+[Connection troubleshooting](/guide/remote#connection-trouble).

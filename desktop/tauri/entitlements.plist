@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for the notarized macOS build.
+
+  Notarization REQUIRES hardened runtime (`codesign --options runtime`), but the
+  hardened runtime's default restrictions are incompatible with an embedded
+  CPython + torch stack. Each exception below exists for a specific reason —
+  none is speculative, and none should be removed without re-testing a signed
+  build end to end (boot the backend, import torch, run inference).
+
+  We deliberately do NOT enable App Sandbox. A sandboxed app cannot open
+  arbitrary USB serial devices (/dev/tty.usbmodem*), which is the entire point
+  of this app. Sandbox is not required for Developer ID distribution — only for
+  the Mac App Store.
+-->
+<plist version="1.0">
+<dict>
+    <!-- torch compiles kernels at runtime; without JIT the inference path dies
+         with a code-signing kill the moment a graph is compiled. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- CPython's ctypes/libffi builds executable trampolines on the heap.
+         PyInstaller's bootloader relies on this too. -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- Python extension modules are dlopen()'d by path at runtime. Library
+         validation would require every one to carry our Team ID; some wheels
+         ship libraries signed by third parties (or unsigned), so validation
+         must be off or imports fail at load. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- The PyInstaller bootloader sets DYLD_* variables to point the loader at
+         the bundled _internal/ directory. The hardened runtime strips these by
+         default, which would break every native import. -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+
+    <!-- Cameras are used for dataset recording (OpenCV in the backend child
+         process, and getUserMedia in the webview for the phone-camera path). -->
+    <key>com.apple.security.device.camera</key>
+    <true/>
+
+    <!-- USB serial access to the SO-101 leader/follower arms. -->
+    <key>com.apple.security.device.usb</key>
+    <true/>
+</dict>
+</plist>

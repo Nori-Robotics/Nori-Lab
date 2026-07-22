@@ -33,14 +33,12 @@ export default defineConfig({
     nav: [
       { text: "Guide", link: "/guide/", activeMatch: "/guide/" },
       { text: "SDK", link: "/sdk/", activeMatch: "/sdk/" },
-      {
-        text: "Troubleshooting",
-        link: "/troubleshooting/",
-        activeMatch: "/troubleshooting/",
-      },
     ],
 
     sidebar: {
+      // One page per topic: each page carries its own setup AND its own fixes, so there is no
+      // separate Troubleshooting tree to bounce between. `/guide/broken` is the symptom-first
+      // way in for someone who doesn't yet know which topic they're in.
       "/guide/": [
         {
           text: "Getting started",
@@ -48,6 +46,7 @@ export default defineConfig({
             { text: "What is Nori?", link: "/guide/" },
             { text: "Install the desktop app", link: "/guide/install" },
             { text: "Your first session", link: "/guide/first-session" },
+            { text: "Something's broken", link: "/guide/broken" },
           ],
         },
         {
@@ -63,7 +62,16 @@ export default defineConfig({
           items: [
             { text: "Remote teleoperation", link: "/guide/remote" },
             { text: "VR", link: "/guide/vr" },
+            { text: "Audio and calls", link: "/guide/audio" },
             { text: "Recording and training", link: "/guide/training" },
+          ],
+        },
+        {
+          text: "Reference",
+          items: [
+            { text: "Safety states", link: "/guide/safety-states" },
+            { text: "Getting help", link: "/guide/getting-help" },
+            { text: "Licenses & attribution", link: "/licenses" },
           ],
         },
       ],
@@ -106,28 +114,6 @@ export default defineConfig({
         },
       ],
 
-      "/troubleshooting/": [
-        {
-          text: "Troubleshooting",
-          items: [
-            { text: "Start here", link: "/troubleshooting/" },
-            { text: "Connection and video", link: "/troubleshooting/connection" },
-            { text: "Audio", link: "/troubleshooting/audio" },
-            { text: "Leader arms and USB", link: "/troubleshooting/leader-arms" },
-            { text: "VR and headsets", link: "/troubleshooting/vr" },
-            { text: "Power and brownouts", link: "/troubleshooting/power" },
-            { text: "Desktop app", link: "/troubleshooting/desktop" },
-          ],
-        },
-        {
-          text: "Reference",
-          items: [
-            { text: "Safety states", link: "/troubleshooting/safety-states" },
-            { text: "Getting help", link: "/troubleshooting/getting-help" },
-            { text: "Licenses & attribution", link: "/licenses" },
-          ],
-        },
-      ],
     },
 
     // Ships a client-side index — no external search service, so it keeps working on any host.

@@ -45,4 +45,4 @@ See `DEFAULT_BINDINGS` for the full map.
 
 Using Nori's hosted VR page instead of building your own: [Guide: VR](/guide/vr).
 
-Headset problems: [VR troubleshooting](/troubleshooting/vr).
+Headset problems: [VR troubleshooting](/guide/vr#when-it-goes-wrong).

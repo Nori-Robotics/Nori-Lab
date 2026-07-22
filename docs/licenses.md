@@ -10,7 +10,7 @@ is `v0` and has not shipped to a customer; this page is a ship blocker and will 
 notices before it does.
 
 If you need the current inventory before then — for your own compliance review, or because you're
-redistributing something built on Nori — [ask us](/troubleshooting/getting-help) and we'll send it.
+redistributing something built on Nori — [ask us](/guide/getting-help) and we'll send it.
 
 Components known to be in scope include SCServo_Linux (MIT), nlohmann/json (MIT), GStreamer and
 its plugins (LGPL-2.1, with some GPL packages in the robot image), pynput (LGPL), and openh264

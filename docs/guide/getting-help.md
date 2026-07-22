@@ -16,7 +16,7 @@ A report we can act on beats a fast one. Include:
 
 **The safety state.** `telemetry.safety` at the moment it went wrong — `ok`, `safe_hold`, or
 `latched`. This single field routes the whole diagnosis, and a robot in `latched` is not a bug.
-See [safety states](/troubleshooting/safety-states).
+See [safety states](/guide/safety-states).
 
 **The connection state.** Where `onConnState` stalled — particularly whether it ever reached
 `connected`.
@@ -24,10 +24,10 @@ See [safety states](/troubleshooting/safety-states).
 **Your network.** Corporate/university Wi-Fi, hotel, VPN, mobile hotspot? If a session won't
 connect, this is usually the answer. Relay credentials are now minted automatically at connect, so
 also tell us whether the session log showed `TURN: using minted credentials` or
-`TURN: mint failed`. See [connection troubleshooting](/troubleshooting/connection).
+`TURN: mint failed`. See [connection troubleshooting](/guide/remote#connection-trouble).
 
 **Whether it correlates with load.** A peripheral that drops under load and is fine when idle is a
-[power problem](/troubleshooting/power), not a software one.
+[power problem](/guide/power#brownouts), not a software one.
 
 **Logs**, if you can get them.
 
@@ -44,16 +44,16 @@ robot-side daemon logs.
 Don't spend your afternoon on these — they're expected:
 
 - **Low-res, ~15 fps video.** It's the robot's power budget, not a bug.
-  [Why](/troubleshooting/connection#video-quality).
+  [Why](/guide/cameras#video-quality).
 - **`perceive()` returns `null` on real hardware.** The on-Pi detector doesn't exist yet.
   [Perception](/sdk/perception).
-- **A stall stops one joint, not the robot.** By design. [Safety states](/troubleshooting/safety-states).
+- **A stall stops one joint, not the robot.** By design. [Safety states](/guide/safety-states).
 - **Silence after `joinCall()`** until someone at the robot accepts the prompt. By design.
-  [Audio](/troubleshooting/audio).
+  [Audio](/guide/audio).
 - **Sessions that hang at `connecting` on strict networks.** You need the TURN relay path; the app
-  fetches credentials for you at connect. [Connection](/troubleshooting/connection).
+  fetches credentials for you at connect. [Connection](/guide/remote#connection-trouble).
 - **A robot that latched itself with nobody touching it.** Over-temp and over-current motor
-  protection do that on purpose. [Safety states](/troubleshooting/safety-states).
+  protection do that on purpose. [Safety states](/guide/safety-states).
 - **`batteryPercent` reading `null`.** Means unknown, not empty — many robots have no monitor
   fitted. [Telemetry](/sdk/telemetry#battery).
 

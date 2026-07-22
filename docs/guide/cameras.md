@@ -10,9 +10,10 @@
 :::
 -->
 
-## What the video feed actually is
+## What the video feed actually is {#video-quality}
 
 Important for setting expectations, and worth reading before filing a video bug:
+**low resolution and ~15 fps is expected, not a bug.**
 
 The robot sends **one H.264 track** containing **all cameras tiled into a composite grid** —
 typically 320×240 per tile at 15 fps. There are no per-camera tracks on the wire. This is
@@ -22,8 +23,14 @@ one encode is far cheaper than N.
 That also means resolution and frame rate are capped by the robot's **power budget**, not by the
 protocol or your network. They'll improve when the robot's supply hardware does.
 
+Two things that are *not* the lever you want:
+
+- `setVideoQuality("low" | "normal")` changes **bitrate only** — bandwidth, not robot CPU.
+- Asking for a higher resolution isn't possible today; a live-switchable resolution API is designed
+  and lands when there's power headroom for it.
+
 In the SDK, `cameraView(role)` crops a tile out of the composite into its own `MediaStream`, so
-you never do quadrant math yourself. See [SDK: Video](/sdk/video).
+you never do quadrant math yourself. Full expectations: [SDK: Video](/sdk/video).
 
 ## If the frame rate drops over a long session
 
@@ -33,7 +40,7 @@ A Pi that has been streaming several cameras for a while can hit its soft therma
 its own clocks — which shows up as steadily falling delivered fps, not as a device disappearing.
 `vcgencmd get_throttled` tells the two apart: the thermal bits (`0x8`, `0x80000`) with **no**
 undervoltage bit means the fix is **cooling**, not a bigger supply.
-[The bit decode](/troubleshooting/power#confirming-it-rather-than-guessing).
+[The bit decode](/guide/power#confirming).
 
 Cameras now hand their JPEG frames straight through by default, skipping a decode/re-encode round
 trip on the Pi — that's what bought the headroom back. The robot falls back to the old

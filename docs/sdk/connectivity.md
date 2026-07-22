@@ -77,4 +77,4 @@ See the nori-protocol `CLIENTS.md` § "Camera frames over the LAN" for the port 
 
 ## Debugging a connection
 
-Symptom-first checklist: [Connection troubleshooting](/troubleshooting/connection).
+Symptom-first checklist: [Connection troubleshooting](/guide/remote#connection-trouble).

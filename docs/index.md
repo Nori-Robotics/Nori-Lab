@@ -17,7 +17,7 @@ hero:
       link: /sdk/
     - theme: alt
       text: Something is broken
-      link: /troubleshooting/
+      link: /guide/broken
 
 features:
   - title: Guide
@@ -28,9 +28,9 @@ features:
     details: Connect to a robot over WebRTC, stream video and telemetry, and drive it from the browser in ~20 lines. The robot defends itself.
     link: /sdk/
     linkText: Read the SDK docs
-  - title: Troubleshooting
-    details: Connection stuck at "connecting", no video, an arm the app can't see, a robot that browns out. Symptom-first fixes.
-    link: /troubleshooting/
+  - title: Something's broken
+    details: Connection stuck at "connecting", no video, an arm the app can't see, a robot that browns out. Symptom-first, then straight to the fix on the topic's own page.
+    link: /guide/broken
     linkText: Fix it
 ---
 
@@ -40,11 +40,11 @@ features:
   [run your first session](/guide/first-session).
 - **You're writing software against a robot.** → [SDK quick start](/sdk/quickstart). Read
   [the safety contract](/sdk/safety) before you ship anything that moves an arm.
-- **Something is broken right now.** → [Troubleshooting](/troubleshooting/).
+- **Something is broken right now.** → [Something's broken](/guide/broken).
 
 ## Status
 
 Nori is `v0` and ships to a small set of collaborating teams. Pages carry a **Status** note
 where the software is ahead of the hardware, or where a surface is implemented but not yet
 verified on a real robot — those notes are load-bearing, not boilerplate. If a page contradicts
-what your robot actually does, that's a bug in the docs: [tell us](/troubleshooting/getting-help).
+what your robot actually does, that's a bug in the docs: [tell us](/guide/getting-help).

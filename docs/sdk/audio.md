@@ -82,4 +82,4 @@ and camera control, and what the operator hears while waiting for someone at the
 :::
 -->
 
-Audio problems: [Audio troubleshooting](/troubleshooting/audio).
+Audio problems: [Audio troubleshooting](/guide/audio).

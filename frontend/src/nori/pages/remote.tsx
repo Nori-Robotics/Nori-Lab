@@ -801,7 +801,7 @@ const Remote = () => {
                   />
                 </div>
                 {/* On a laptop: hand off a link to the hosted VR page to open on the headset. */}
-                <VrHandoff room={settings.room} />
+                <VrHandoff />
               </div>
             )}
           </div>

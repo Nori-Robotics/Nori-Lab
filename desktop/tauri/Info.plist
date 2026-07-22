@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Extra Info.plist keys merged into the generated bundle by the Tauri bundler.
+
+  These are TCC (privacy) usage strings. macOS does not merely warn when one is
+  missing: the first time the process touches the corresponding device, the OS
+  terminates it. Recording a dataset opens a camera, so without
+  NSCameraUsageDescription the backend dies mid-record with no useful error.
+  The string shown here is what the user reads in the permission prompt, so it
+  should explain the "why", not just name the device.
+-->
+<plist version="1.0">
+<dict>
+    <key>NSCameraUsageDescription</key>
+    <string>Nori Lab uses your cameras to record demonstration datasets and to stream a live view while you teleoperate the robot.</string>
+
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Nori Lab can record audio alongside video when capturing demonstration datasets.</string>
+
+    <!-- Cameras attached over USB (and the arms themselves) surface as removable
+         devices; macOS 13+ prompts before an app may talk to them. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Nori Lab connects to your robot and to phone cameras on your local network.</string>
+</dict>
+</plist>

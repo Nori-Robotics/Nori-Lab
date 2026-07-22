@@ -1,4 +1,4 @@
-# Audio
+# Audio and calls
 
 ## No audio after joining a call
 
@@ -58,4 +58,4 @@ restart.
 **Configure the speaker by name**, never by number: set `NORI_SPEAKER` to a dmix alias (`nori_out`)
 or `hw:CARD=<name>`.
 
-More: [Power and brownouts](/troubleshooting/power).
+More: [Power and brownouts](/guide/power#brownouts).

@@ -3,5 +3,17 @@
   "installCommand": "npm ci",
   "buildCommand": "npm run build",
   "outputDirectory": ".vitepress/dist",
-  "cleanUrls": true
+  "cleanUrls": true,
+  "redirects": [
+    { "source": "/troubleshooting", "destination": "/guide/broken" },
+    { "source": "/troubleshooting/connection", "destination": "/guide/remote#connection-trouble" },
+    { "source": "/troubleshooting/desktop", "destination": "/guide/install#when-it-goes-wrong" },
+    { "source": "/troubleshooting/leader-arms", "destination": "/guide/leader-arms#when-it-goes-wrong" },
+    { "source": "/troubleshooting/power", "destination": "/guide/power#brownouts" },
+    { "source": "/troubleshooting/vr", "destination": "/guide/vr#when-it-goes-wrong" },
+    { "source": "/troubleshooting/audio", "destination": "/guide/audio" },
+    { "source": "/troubleshooting/safety-states", "destination": "/guide/safety-states" },
+    { "source": "/troubleshooting/getting-help", "destination": "/guide/getting-help" },
+    { "source": "/troubleshooting/:path*", "destination": "/guide/broken" }
+  ]
 }

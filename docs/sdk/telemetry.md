@@ -102,4 +102,4 @@ one.
 The same transitions also arrive as log lines (`motor_fault` / `motor_unreadable` /
 `motor_recovered`), so you can log edges rather than diffing the map yourself.
 
-Diagnosing what you see: [Safety states](/troubleshooting/safety-states).
+Diagnosing what you see: [Safety states](/guide/safety-states).

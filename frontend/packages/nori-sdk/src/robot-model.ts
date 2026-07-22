@@ -215,7 +215,6 @@ export function buildRobotModel(opts: RobotModelOptions = {}): RobotModel {
 
   // body
   root.add(box(0.25, 1.0, 0.1, M(0x5e6268), [0, 1.0, 0]));
-  root.add(box(0.19, 0.22, 0.19, M(0x7a7e84), [0, 0.7, -0.12]));
   root.add(box(0.33, 0.12, 0.15, shellMat, [0, 1.45, 0]));
   root.add(box(0.15, 0.1, 0.1, shellMat, [0, 1.55, 0]));
 

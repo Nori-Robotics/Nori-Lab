@@ -169,6 +169,14 @@ def _wait_for_port(port: int, timeout: int = 30) -> bool:
     return False
 
 
+def _tokened_url(port: int) -> str:
+    """Launch URL carrying the local API token (see lelab/local_auth.py): the
+    server exchanges `?token=` for the auth cookie on first load. `main()`
+    guarantees LELAB_TOKEN is set before any server starts."""
+    token = os.environ.get("LELAB_TOKEN", "")
+    return f"http://localhost:{port}/" + (f"?token={token}" if token else "")
+
+
 def _open_browser_when_ready():
     """Background-thread helper: poll the port, open the browser when up."""
     for _ in range(60):
@@ -179,7 +187,7 @@ def _open_browser_when_ready():
             time.sleep(0.5)
             continue
         logger.info("🌐 Opening browser...")
-        webbrowser.open(f"http://localhost:{BACKEND_PORT}/")
+        webbrowser.open(_tokened_url(BACKEND_PORT))
         return
 
 
@@ -194,6 +202,9 @@ def _run_prod():
     _reclaim_port(BACKEND_PORT, "backend")
 
     logger.info("🚀 Starting LeLab on http://localhost:%d ...", BACKEND_PORT)
+    # Printed for manual opens (other browser / another device): the token in the
+    # URL is what authenticates the browser to the local API.
+    logger.info("   Open in a browser: %s", _tokened_url(BACKEND_PORT))
 
     threading.Thread(target=_open_browser_when_ready, daemon=True).start()
 
@@ -264,7 +275,10 @@ def _run_dev():
         sys.exit(1)
 
     logger.info("🌐 Opening browser...")
-    webbrowser.open(f"http://localhost:{FRONTEND_DEV_PORT}/")
+    # Dev pages live on the Vite origin; the SPA ignores the extra query param
+    # today, but carrying it keeps the URL shape identical across modes for when
+    # the frontend learns to forward it (merge 2 of the local-auth rollout).
+    webbrowser.open(_tokened_url(FRONTEND_DEV_PORT))
 
     logger.info("✅ Dev mode running — Ctrl+C to stop")
     logger.info("   Frontend: http://localhost:%d", FRONTEND_DEV_PORT)
@@ -327,6 +341,14 @@ def main():
         help="Dev mode: Vite HMR + uvicorn --reload (requires Node.js)",
     )
     args = parser.parse_args()
+
+    # Resolve the local API token BEFORE any server starts: the in-process
+    # uvicorn (prod) and the --reload subprocess (dev, env=os.environ.copy())
+    # both read LELAB_TOKEN from the environment. setdefault keeps an
+    # explicitly-exported LELAB_TOKEN authoritative.
+    from lelab.local_auth import get_or_create_local_token
+
+    os.environ.setdefault("LELAB_TOKEN", get_or_create_local_token())
 
     if args.dev:
         _run_dev()

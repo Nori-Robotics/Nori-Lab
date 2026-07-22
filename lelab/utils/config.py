@@ -44,6 +44,11 @@ FOLLOWER_CONFIG_FILE = os.path.join(CONFIG_STORAGE_PATH, "follower_config.txt")
 # Robot config records (per-robot JSON metadata)
 ROBOTS_PATH = os.path.expanduser("~/.cache/huggingface/lerobot/robots")
 
+# Local-API auth token (see lelab/local_auth.py): per-install secret the browser
+# must present to call the local API. Created 0600 on first use; LELAB_TOKEN env
+# overrides it (the desktop shell will pass one explicitly).
+LOCAL_AUTH_TOKEN_FILE = os.path.expanduser("~/.cache/huggingface/lerobot/local_auth_token")
+
 # Tag stamped on every dataset pushed to the Hub from LeLab, so we can later
 # query the Hub for LeLab-produced datasets and compute usage metrics.
 LELAB_TAG = "LeLab"

@@ -24,8 +24,14 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    """FastAPI TestClient bound to the real `lelab.server.app`."""
+def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    """FastAPI TestClient bound to the real `lelab.server.app`.
+
+    Local-API auth is switched off: these tests target feature handlers, not the
+    auth layer (which has its own suite in test_local_auth.py). "off" also keeps
+    the middleware from touching the real ~/.cache token file.
+    """
+    monkeypatch.setenv("LELAB_AUTH", "off")
     from lelab.server import app
 
     with TestClient(app) as c:
@@ -67,6 +73,7 @@ def tmp_lerobot_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(cfg, "CONFIG_STORAGE_PATH", str(saved_dir))
     monkeypatch.setattr(cfg, "LEADER_CONFIG_FILE", str(saved_dir / "leader_config.txt"))
     monkeypatch.setattr(cfg, "FOLLOWER_CONFIG_FILE", str(saved_dir / "follower_config.txt"))
+    monkeypatch.setattr(cfg, "LOCAL_AUTH_TOKEN_FILE", str(cache / "local_auth_token"))
 
     return cache
 

@@ -16,6 +16,11 @@
 # removes pre-5 APIs MolmoAct2's trust_remote_code stack depends on. 4.57.x
 # is the proven-good line (Gate A measured on it).
 transformers>=4.57.0,<5
+# protobuf + sentencepiece: needed by the 4.57.x processor load path (the
+# 2026-07-23 pinned rebuild failed with "requires the protobuf library" —
+# earlier images only had it transitively).
+protobuf
+sentencepiece
 accelerate
 fastapi
 uvicorn[standard]

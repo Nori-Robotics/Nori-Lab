@@ -570,8 +570,17 @@ class CloudRollout:
                 timeout=httpx.Timeout(ACT_TIMEOUT, connect=CONNECT_TIMEOUT),
                 limits=httpx.Limits(max_connections=4, max_keepalive_connections=4,
                                     keepalive_expiry=KEEPALIVE_EXPIRY_S),
+                # Send BOTH auth headers (INFERENCE_ENDPOINT_PLAN step 3):
+                # X-Nori-Token is the app-level credential the server checks
+                # first; Authorization stays for the Space-transition server. On
+                # a *protected* Inference Endpoint HF's edge requires an HF token
+                # in Authorization — set NORI_INFER_HF_TOKEN and it rides there
+                # (the app still authenticates via X-Nori-Token). Host-agnostic:
+                # NORI_INFER_URL stays the only switch.
                 headers={"Content-Type": "application/json",
-                         "Authorization": f"Bearer {self.token}"},
+                         "Authorization": "Bearer " + (
+                             os.environ.get("NORI_INFER_HF_TOKEN") or self.token),
+                         "X-Nori-Token": self.token},
             )
         return self._http
 

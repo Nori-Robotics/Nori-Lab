@@ -75,3 +75,26 @@ The exact subdomain is shown on the Space page (Embed → Direct URL). It is
 A GPU Space bills while **Running**. Set **Sleep after inactivity** in Settings
 (e.g. 15 min) for the spike so it pauses when idle; the robot rollout wakes it
 (cold start ≈ first-boot download unless persistent storage is attached).
+
+## Inference Endpoint (step 4 — the migration target)
+
+The SAME image runs as an Inference Endpoint custom container. Create with
+(values per INFERENCE_ENDPOINT_PLAN §2.4):
+
+- **repository**: `allenai/MolmoAct2-SO100_101` — mounted at `/repository`; the
+  server loads from the mount when present (no 21GB boot download) and falls
+  back to the Hub download, so the image stays Space-compatible.
+- **container port**: `7860` (or set a `PORT` env — the CMD honours it). A port
+  mismatch is the #1 "stuck initializing" cause.
+- **health_route**: `/ready` — 503 until the model is loaded (do NOT use `/` or
+  `/health`; they stay 200-while-loading for the Space's readiness probe).
+- **type**: `protected` (HF token at the edge). App auth rides `X-Nori-Token`
+  (primary; constant-time). The rollout client sends both headers; set
+  `NORI_INFER_HF_TOKEN` on the laptop so Authorization carries an HF token with
+  `inference.endpoints.infer.write` for the edge.
+- **scaling**: `min_replica=1` (scale-to-zero is unusable for a control loop),
+  `max_replica=2`, `scaling_metric=pendingRequests`, scale-to-zero disabled.
+- **secrets**: `NORI_INFER_TOKEN` (same value as `~/.nori_infer_token`).
+- ⚠️ RTC's session cache assumes ONE replica — RTC is default-off and measured
+  non-viable here, but if it is ever enabled, pin `max_replica=1` or add sticky
+  sessions.

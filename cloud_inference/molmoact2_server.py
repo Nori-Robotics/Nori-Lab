@@ -25,6 +25,7 @@ import os
 import secrets
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -37,6 +38,11 @@ from transformers import AutoModelForImageTextToText, AutoProcessor
 import rtc as rtcmod
 
 REPO_ID = os.environ.get("MOLMOACT_REPO", "allenai/MolmoAct2-SO100_101")
+# Inference Endpoints mount the endpoint's model repo at /repository (platform
+# fast-path — no 21GB Hub download at boot). Load from there when present, else
+# fall back to the Hub download so the SAME image still runs as a Docker Space
+# during the transition. Override the probe location with MODEL_PATH.
+MODEL_PATH = os.environ.get("MODEL_PATH", "/repository")
 NORM_TAG = os.environ.get("MOLMOACT_NORM_TAG", "so100_so101_molmoact2")
 AUTH_TOKEN = os.environ.get("NORI_INFER_TOKEN")  # REQUIRED — the rollout sends it
 # bf16 fits <16GB (A10G/L4). Set MOLMOACT_BF16=0 to run fp32 (~26GB, needs L40S/48GB).
@@ -59,6 +65,20 @@ _rtc_state = rtcmod.RTCState()
 _rtc_prev: dict = {}           # session id -> previous chunk (normalized, on-device)
 _RTC_SESSION_CAP = 8           # bound the cache; robot sessions are few and long-lived
 _load_error: Optional[str] = None  # set if the background load failed
+_model_source: Optional[str] = None  # /repository mount or the Hub repo id
+
+
+def _resolve_model_source() -> str:
+    """Prefer the platform-mounted weights (Inference Endpoints: /repository);
+    fall back to the Hub repo id (Docker Space / bare GPU box). A non-empty dir
+    is treated as the mount — trust_remote_code loads the model code from it."""
+    p = Path(MODEL_PATH)
+    try:
+        if p.is_dir() and any(p.iterdir()):
+            return str(p)
+    except OSError:
+        pass
+    return REPO_ID
 
 
 def _load_model() -> None:
@@ -66,14 +86,19 @@ def _load_model() -> None:
 
     MolmoAct2 is ~21GB — a blocking startup event would keep the port dark for
     minutes and a HuggingFace Space health-probe would kill the container as
-    unhealthy before the model ever finishes loading. /health reports progress.
+    unhealthy before the model ever finishes loading. /health reports progress;
+    /ready gives probes the 503-until-loaded semantic (Endpoints health_route).
     """
-    global _model, _processor, _load_error
+    global _model, _processor, _load_error, _model_source
     try:
-        proc = AutoProcessor.from_pretrained(REPO_ID, trust_remote_code=True)
+        _model_source = _resolve_model_source()
+        print(f"[molmoact2] loading from {_model_source} "
+              f"({'mounted /repository' if _model_source != REPO_ID else 'Hub download'})",
+              flush=True)
+        proc = AutoProcessor.from_pretrained(_model_source, trust_remote_code=True)
         model = (
             AutoModelForImageTextToText.from_pretrained(
-                REPO_ID, trust_remote_code=True, dtype=DTYPE
+                _model_source, trust_remote_code=True, dtype=DTYPE
             )
             .to("cuda")
             .eval()
@@ -86,7 +111,7 @@ def _load_model() -> None:
         except Exception as exc:
             print(f"[molmoact2] RTC install failed ({exc}) — serving un-guided", flush=True)
         _processor, _model = proc, model
-        print(f"[molmoact2] loaded {REPO_ID} dtype={DTYPE} (RTC patch installed)", flush=True)
+        print(f"[molmoact2] loaded {_model_source} dtype={DTYPE} (RTC patch installed)", flush=True)
     except Exception as exc:  # surface load failures via /health instead of a dead port
         _load_error = f"{type(exc).__name__}: {exc}"
         print(f"[molmoact2] LOAD FAILED — {_load_error}", flush=True)
@@ -97,6 +122,21 @@ def _startup() -> None:
     if not AUTH_TOKEN:
         raise RuntimeError("NORI_INFER_TOKEN must be set (bearer token for /act)")
     threading.Thread(target=_load_model, name="molmoact2-load", daemon=True).start()
+
+
+def _require_auth(x_nori_token: Optional[str], authorization: Optional[str]) -> None:
+    """App-level auth for /act and /point. `X-Nori-Token` is the PRIMARY
+    credential: on a *protected* Inference Endpoint HF's edge consumes the
+    `Authorization` header (it must carry an HF token to get past the proxy), so
+    our own bearer can no longer ride it — custom headers pass through untouched.
+    `Authorization: Bearer <token>` stays accepted for the Space-transition
+    client (which sends BOTH). Each comparison is constant-time; checked BEFORE
+    any model work so unauthenticated calls never touch the GPU."""
+    if x_nori_token and secrets.compare_digest(x_nori_token, AUTH_TOKEN):
+        return
+    if authorization and secrets.compare_digest(authorization, f"Bearer {AUTH_TOKEN}"):
+        return
+    raise HTTPException(status_code=401, detail="bad or missing auth token")
 
 
 class ActRequest(BaseModel):
@@ -147,7 +187,7 @@ def _decode(b64: str) -> np.ndarray:
 def _status() -> dict:
     status = "ready" if _model is not None else ("error" if _load_error else "loading")
     return {"ok": _model is not None, "status": status, "error": _load_error,
-            "repo": REPO_ID, "dtype": str(DTYPE)}
+            "repo": REPO_ID, "source": _model_source, "dtype": str(DTYPE)}
 
 
 @app.get("/")
@@ -164,6 +204,20 @@ def health() -> dict:
     return _status()
 
 
+@app.get("/ready")
+def ready() -> dict:
+    """Readiness with 503-until-loaded semantics — set this as the Inference
+    Endpoint's `health_route` so the platform routes no traffic (and marks the
+    replica initializing) until the model is actually servable. Kept SEPARATE
+    from `/` and `/health`, which must stay 200-while-loading: a Docker Space
+    routes external traffic only after a 2xx on `/`, so a 503 there would keep
+    the Space dark for the whole model load."""
+    if _model is None:
+        detail = f"model load failed: {_load_error}" if _load_error else "model loading"
+        raise HTTPException(status_code=503, detail=detail)
+    return _status()
+
+
 class PointRequest(BaseModel):
     image: str             # base64 JPEG/PNG, one camera view
     query: str = "the red cup"
@@ -177,15 +231,15 @@ class PointResponse(BaseModel):
 
 
 @app.post("/point", response_model=PointResponse)
-def point(req: PointRequest, authorization: Optional[str] = Header(None)) -> PointResponse:
+def point(req: PointRequest, authorization: Optional[str] = Header(None),
+          x_nori_token: Optional[str] = Header(None)) -> PointResponse:
     """Perception probe (diagnostic, not on the control path): ask the Molmo2-ER
     backbone — a pixel-accurate pointing model — to point at `query` in ONE
     frame. Separates "does the model SEE the target in our camera domain" from
     "does it act correctly": wrong/absent points on live robot frames = visual
     domain gap (no calibration work can fix it); correct points + wrong motion
     = the failure is downstream of perception."""
-    if not authorization or not secrets.compare_digest(authorization, f"Bearer {AUTH_TOKEN}"):
-        raise HTTPException(status_code=401, detail="bad or missing bearer token")
+    _require_auth(x_nori_token, authorization)
     if _model is None:
         detail = f"model load failed: {_load_error}" if _load_error else "model not loaded yet"
         raise HTTPException(status_code=503, detail=detail)
@@ -225,11 +279,9 @@ def point(req: PointRequest, authorization: Optional[str] = Header(None)) -> Poi
 
 
 @app.post("/act", response_model=ActResponse)
-def act(req: ActRequest, authorization: Optional[str] = Header(None)) -> ActResponse:
-    # Constant-time compare so a bad token can't be recovered via response timing.
-    # Checked BEFORE any model work so unauthenticated calls never touch the GPU.
-    if not authorization or not secrets.compare_digest(authorization, f"Bearer {AUTH_TOKEN}"):
-        raise HTTPException(status_code=401, detail="bad or missing bearer token")
+def act(req: ActRequest, authorization: Optional[str] = Header(None),
+        x_nori_token: Optional[str] = Header(None)) -> ActResponse:
+    _require_auth(x_nori_token, authorization)
     if _model is None:
         detail = f"model load failed: {_load_error}" if _load_error else "model not loaded yet"
         raise HTTPException(status_code=503, detail=detail)

@@ -426,6 +426,13 @@ class LoadBody(BaseModel):
     #   robot is bimanual; the VLA commands 6 of the 12 joints and the daemon
     #   holds the rest. Omit to use NORI_INFER_ARM (default "left").
     arm: str | None = None
+    #   policy_kind — which policy family the endpoint serves ("molmoact2",
+    #   "pi05", "groot"). The multi-policy server reports its kind + chunk
+    #   semantics in /health `meta` (INFERENCE_ENDPOINT_PLAN step 5/6); /load
+    #   validates an explicit value against it (fail at load, not mid-rollout).
+    #   Omit = trust the endpoint. Legacy single-model servers (no meta) are
+    #   treated as molmoact2.
+    policy_kind: str | None = None
 
 
 def _env_arm() -> str:
@@ -491,7 +498,32 @@ def _cloud_load(body: LoadBody) -> dict:
     except Exception as e:
         raise HTTPException(status_code=502,
                             detail=f"cloud endpoint {endpoint} unreachable: {type(e).__name__}: {e}")
-    calib = cloudmod.load_calibration(arm)  # per-joint convention remap, or None
+    # Per-policy chunk semantics from the endpoint's /health meta (step-5 server).
+    # A legacy single-model server has no meta -> molmoact2 semantics, unchanged.
+    meta = health.get("meta") or {}
+    endpoint_kind = (meta.get("kind") or health.get("kind") or "molmoact2").lower()
+    if body.policy_kind and endpoint_kind != body.policy_kind.strip().lower():
+        raise HTTPException(
+            status_code=422,
+            detail=(f"endpoint {endpoint} serves policy kind {endpoint_kind!r}, "
+                    f"but this load requested {body.policy_kind!r} — check NORI_INFER_URL"))
+    # chunk_hz: the rate the chunk was AUTHORED at. meta wins; molmoact2 default
+    # otherwise. pi05/groot endpoints MUST carry meta (their server always does).
+    meta_chunk_hz = float(meta.get("chunk_hz") or 0.0) or cloudmod.MOLMOACT2_CHUNK_HZ
+    # Bounds + calibration are MolmoAct2 CONVENTIONS (SO-100/101 model space +
+    # the nori<->fleet affine). A Nori finetune (pi05/groot) is trained in OUR
+    # joint space — applying the molmoact2 calib would corrupt its actions.
+    is_molmoact2 = endpoint_kind == "molmoact2"
+    calib = cloudmod.load_calibration(arm) if is_molmoact2 else None
+    bounds = cloudmod.MOLMOACT2_BOUNDS if is_molmoact2 else None
+    # Views: a Nori-finetune checkpoint names its camera FEATURE KEYS in meta
+    # (same observation.images.* namespace our tiles use) — trust those when the
+    # caller didn't pick. MolmoAct2's meta lists ROLES, not keys — keep the
+    # existing arm-aware default for it.
+    if not is_molmoact2 and not (body.views or _env_views()):
+        meta_cams = [c for c in (meta.get("cameras") or []) if isinstance(c, str)]
+        if meta_cams and all(c.startswith("observation.images.") for c in meta_cams):
+            views = meta_cams
     # Queue-tuning knobs (env-overridable so we can retune against real latency
     # without a redeploy): watermark must cover the refill round-trip; max_queue
     # bounds staleness; replace_on_refill = receding horizon (jump to freshest plan).
@@ -508,10 +540,10 @@ def _cloud_load(body: LoadBody) -> dict:
         # motion, so serving one per tick at 15fps halves the speed. NORI_INFER_STRIDE
         # forces a value (1 = the old one-action-per-tick behaviour).
         fps=float(fps),
-        chunk_hz=(cloudmod.MOLMOACT2_CHUNK_HZ
+        chunk_hz=(meta_chunk_hz
                   if not os.environ.get("NORI_INFER_STRIDE")
                   else float(fps) * cloudmod._env_int("NORI_INFER_STRIDE", 1)),
-        bounds=cloudmod.MOLMOACT2_BOUNDS,
+        bounds=bounds,
         calib=calib,
     )
     logger.info("[CLOUD-ROLLOUT] chunk stride=%d (fps=%s, chunk authored at %sHz) -- "
@@ -524,6 +556,7 @@ def _cloud_load(body: LoadBody) -> dict:
             "mode": "cloud",
             "ref": body.ref,
             "cloud": roll,
+            "policy_kind": endpoint_kind,
             "joints": list(body.joints),
             "arm": arm,
             "arm_keys": akeys,   # state extraction order == model order
@@ -542,6 +575,8 @@ def _cloud_load(body: LoadBody) -> dict:
         "ref": body.ref,
         "provider": "cloud",
         "device": "cloud",
+        "policy_kind": endpoint_kind,
+        "chunk_hz": roll.chunk_hz,
         "arm": arm,
         "calibrated": calib is not None,
         "action_joints": akeys,

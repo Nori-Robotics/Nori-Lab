@@ -695,6 +695,15 @@ const MyStuff = () => {
                           ? "Safe in your cloud — the robot is clearing its local copy. Keep Nori powered on until it finishes."
                           : "Uploading from the robot — this finishes while the robot is idle."}
                 </p>
+                {/* The latest assembly attempt with this recording FAILED — show
+                    which episode and why (e.g. a camera gap), so the user knows to
+                    re-record rather than retry. Hidden while a new attempt runs;
+                    the backend clears it once a later attempt succeeds. */}
+                {b.last_assembly_error && !assembling && (
+                  <p className="mt-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
+                    Couldn't assemble into a dataset: {b.last_assembly_error}
+                  </p>
+                )}
               </article>
             );
           })}

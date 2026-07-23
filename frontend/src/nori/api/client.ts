@@ -620,6 +620,10 @@ export interface RawBundleEntry {
    *  cloud but the robot still holds its on-disk copy — the UI shows "Finishing on
    *  robot…" until this is set, so "In cloud" also means the SD-card space is back. */
   local_deleted_at?: string | null;
+  /** The MOST RECENT assembly job using this recording FAILED with this reason
+   *  (e.g. "all were excluded (episode-0002: camera gap 7.2s)"). null when the
+   *  latest attempt succeeded or is still running — a new attempt clears it. */
+  last_assembly_error?: string | null;
 }
 
 export interface RobotRecordings {

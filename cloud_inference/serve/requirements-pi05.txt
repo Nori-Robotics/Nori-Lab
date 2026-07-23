@@ -1,0 +1,19 @@
+# MODEL_KIND=pi05 — installed ON TOP OF pytorch/pytorch:2.5.1-cuda12.1.
+# Do NOT list torch/torchvision/torchaudio (base image ships the matched trio;
+# pip may still try to bump torch via lerobot's spec — if the resolver fights,
+# add --no-deps discipline or constrain to the base image's torch).
+#
+# lerobot pinned to the SAME commit as lelab's pyproject so a checkpoint trained
+# through our pipeline loads with identical code. The [pi] extra pulls the pi05
+# policy deps (paligemma tokenizer machinery etc.).
+#
+# AIRGAP/GATED NOTE: pi05's pre/post-processors resolve the GATED
+# google/paligemma-3b-pt-224 tokenizer at load — bake it into the image's HF
+# cache (or run with network + an accepted-license HF token). See
+# INFERENCE_ENDPOINT_PLAN Gate B + vla-ops-plan.
+lerobot[pi] @ git+https://github.com/huggingface/lerobot.git@82dffde7fad11cba91f7916b050fbe7d7eea35ab
+fastapi
+uvicorn[standard]
+pillow
+numpy
+requests

@@ -23,11 +23,15 @@
 
 ## 0. The two decision gates (settle BEFORE building)
 
-**Gate A — L4 latency.** Our 303 ms/request is measured on A10G (~600 GB/s
-memory bandwidth). L4 is ~300 GB/s and a 5B bf16 decode is bandwidth-bound —
-expect ~450–600 ms. Still inside the 1 s chunk budget, but halves headroom.
-**Measure on a throwaway L4 endpoint before choosing the SKU**; fallback is
-A10G at $1.00/hr (same price as the Space, plus autoscaling).
+**Gate A — L4 latency. RESOLVED 2026-07-23: L4 PASSES — 292 ms median
+compute (n=12 warm, real 640x480 robot frames, spread 290–294), marginally
+FASTER than the 303 ms A10G baseline.** The bandwidth-bound prediction
+(~450–600 ms) was wrong; the workload is not memory-bandwidth-limited.
+Measured by flipping the production Space itself to `l4x1` (same container,
+same code — org plan 402'd a throwaway Space). **Step-4 endpoint SKU = L4
+gcp us-east4 $0.70/hr (≈$511/mo min-1).** The Space now RUNS on l4x1
+($0.80/hr vs a10g's $1.00) — kept there since it measured equal-fast;
+revert = request_space_hardware(a10g-small) + restart.
 
 **Gate B — which pi0.5 checkpoint. RESOLVED 2026-07-22 by session-2's
 research relay (memory: vla-model-landscape + vla-ops-plan).** `lerobot/

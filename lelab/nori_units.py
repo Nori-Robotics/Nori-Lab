@@ -76,6 +76,70 @@ def affine_from_robot_json(robot: dict, arm: str) -> Optional[dict]:
     return {"A": A, "B": B, "A_inverse": list(A), "B_inverse": list(B)}
 
 
+def convention_path() -> Path:
+    """The shipped per-MODEL convention constant: nori-degrees -> model-degrees,
+    one file per checkpoint, IN THE REPO (a property of the model, not of any
+    robot). Produced once by cloud_inference/extract_convention.py from any
+    hardware-validated quantile calibration + the robot.json of the SAME robot
+    it was derived on. NORI_MODEL_CONVENTION overrides for experiments."""
+    return Path(os.environ.get(
+        "NORI_MODEL_CONVENTION",
+        str(Path(__file__).parent / "model_conventions" / "molmoact2_so100.json")))
+
+
+def compose_with_convention(convention: dict, robot: dict, arm: str) -> Optional[dict]:
+    """Full nori-normalized -> model-degrees affine for THIS robot:
+    (per-model constant) o (this robot's exact map from robot.json).
+    model = Ac*(a*n + b) + Bc  =>  A = Ac*a, B = Ac*b + Bc."""
+    exact = affine_from_robot_json(robot, arm)
+    if exact is None:
+        return None
+    try:
+        Ac, Bc = convention["A"], convention["B"]
+        Ac_i = convention.get("A_inverse", Ac)
+        Bc_i = convention.get("B_inverse", Bc)
+        if not all(len(v) == len(JOINTS) for v in (Ac, Bc, Ac_i, Bc_i)):
+            return None
+        return {
+            "A": [ac * a for ac, a in zip(Ac, exact["A"])],
+            "B": [ac * b + bc for ac, b, bc in zip(Ac, exact["B"], Bc)],
+            "A_inverse": [ac * a for ac, a in zip(Ac_i, exact["A"])],
+            "B_inverse": [ac * b + bc for ac, b, bc in zip(Ac_i, exact["B"], Bc_i)],
+        }
+    except (KeyError, TypeError):
+        return None
+
+
+def load_composed_calibration(arm: str) -> Optional[dict]:
+    """Zero-touch units mapping: shipped model convention o streamed robot.json.
+    Both halves are automatic (the repo ships one; the robot streams the other),
+    so a new robot/laptop needs NO manual calibration step. Returns None if
+    either half is missing — the caller decides how loudly to complain."""
+    cp = convention_path()
+    if not cp.is_file():
+        return None
+    rp = streamed_calib_path()
+    if not rp.is_file():
+        logger.warning("[NORI-UNITS] model convention present (%s) but no streamed "
+                       "robot.json at %s — start a policy stream once to deliver it", cp, rp)
+        return None
+    try:
+        convention = json.loads(cp.read_text())
+        robot = json.loads(rp.read_text())
+    except (OSError, ValueError) as e:
+        logger.warning("[NORI-UNITS] unreadable convention/robot.json (%s)", e)
+        return None
+    cal = compose_with_convention(convention, robot, arm)
+    if cal is None:
+        logger.warning("[NORI-UNITS] convention o robot.json composition failed "
+                       "(incomplete %s-arm calibration?)", arm)
+        return None
+    logger.info("[NORI-UNITS] units = shipped model convention o streamed robot.json "
+                "(%s arm) — zero-touch. A=%s B=%s", arm,
+                [round(a, 4) for a in cal["A"]], [round(b, 2) for b in cal["B"]])
+    return cal
+
+
 def load_streamed_calibration(arm: str) -> Optional[dict]:
     """Units affine from the policy-stream-delivered robot.json, if present."""
     p = streamed_calib_path()

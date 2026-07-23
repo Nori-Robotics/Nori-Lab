@@ -179,18 +179,23 @@ def load_calibration(arm: str) -> Optional[dict]:
     path = os.environ.get("NORI_INFER_CALIB")
     p = Path(path) if path else (Path.home() / ".nori_joint_calib.json")
     if not p.is_file():
-        # No hand-derived file: fall back to the EXACT affine computed from the
-        # robot's own calibration, delivered by the policy-stream preamble and
-        # persisted by policy_stream_rx (never goes stale across motor recals).
-        # A capture-derived file, when present, still wins — it can carry the
-        # measured asymmetric gains the exact mapping doesn't model.
-        from .nori_units import load_streamed_calibration
-        cal = load_streamed_calibration(arm)
+        # No hand-derived file: zero-touch fallback = (shipped per-MODEL
+        # convention constant) o (this robot's exact map from the policy-stream-
+        # delivered robot.json). Both halves are automatic; neither goes stale
+        # across motor recals. NOTE: the exact robot map ALONE is deliberately
+        # not used — the model convention carries large per-joint zero offsets
+        # (~+217deg shoulder_lift) that robot.json cannot know, so an
+        # un-composed exact map mis-steers worse than no conversion.
+        # A hand-derived file, when present, still wins (it can carry measured
+        # asymmetric gains, e.g. the wrist_roll behaviour tuning).
+        from .nori_units import load_composed_calibration
+        cal = load_composed_calibration(arm)
         if cal is None:
-            logger.warning("[CLOUD-ROLLOUT] NO units calibration (no %s, no streamed "
-                           "robot.json) — state/actions pass through RAW; expect a "
-                           "wrong first pose. Start a policy stream or run "
-                           "cloud_inference/derive_calibration.py.", p)
+            logger.warning("[CLOUD-ROLLOUT] NO units calibration (no %s; no shipped "
+                           "convention o streamed robot.json) — state/actions pass "
+                           "through RAW; expect a wrong first pose. Run "
+                           "cloud_inference/derive_calibration.py, or produce the "
+                           "convention once with cloud_inference/extract_convention.py.", p)
         return cal
     try:
         d = json.loads(p.read_text())

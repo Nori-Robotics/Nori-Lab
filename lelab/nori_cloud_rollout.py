@@ -179,7 +179,19 @@ def load_calibration(arm: str) -> Optional[dict]:
     path = os.environ.get("NORI_INFER_CALIB")
     p = Path(path) if path else (Path.home() / ".nori_joint_calib.json")
     if not p.is_file():
-        return None
+        # No hand-derived file: fall back to the EXACT affine computed from the
+        # robot's own calibration, delivered by the policy-stream preamble and
+        # persisted by policy_stream_rx (never goes stale across motor recals).
+        # A capture-derived file, when present, still wins — it can carry the
+        # measured asymmetric gains the exact mapping doesn't model.
+        from .nori_units import load_streamed_calibration
+        cal = load_streamed_calibration(arm)
+        if cal is None:
+            logger.warning("[CLOUD-ROLLOUT] NO units calibration (no %s, no streamed "
+                           "robot.json) — state/actions pass through RAW; expect a "
+                           "wrong first pose. Start a policy stream or run "
+                           "cloud_inference/derive_calibration.py.", p)
+        return cal
     try:
         d = json.loads(p.read_text())
         cal = d.get(arm, d)

@@ -145,7 +145,7 @@ the above.
 | 1 | Mint Endpoints-scoped token | user |
 | 2 | Throwaway L4 endpoint; measure MolmoAct2 latency (Gate A) | token |
 | 3 | Server deltas: `/repository` weights, port decl, `X-Nori-Token` | nothing |
-| 4 | MolmoAct2 endpoint (SKU per Gate A); validate; flip `NORI_INFER_URL`; pause Space | 1–3 |
+| 4 | ✅ DONE 2026-07-23 — `molmoact2-l4` (L4 gcp us-east4, authenticated, min1/max2) live; validated (auth matrix + 315ms compute + observe-only robot run); `NORI_INFER_URL` flipped; Space PAUSED | 1–3 |
 | 5 | Adapter refactor (`MODEL_KIND`) + pi05 adapter | Gate B checkpoint |
 | 6 | pi0.5 endpoint (scale-to-zero OK) + `/load policy_kind` client wiring | 5 |
 | 7 | Retire Space permanently once endpoint has a week of runs | 4 |

@@ -652,7 +652,27 @@ class CloudRollout:
             }
 
 
+def _edge_auth_headers() -> dict:
+    """Headers that pass BOTH gates on any host we serve from: an authenticated
+    Inference Endpoint's HF edge (Authorization must carry an HF token —
+    NORI_INFER_HF_TOKEN) and our app auth (X-Nori-Token). Harmless extras for
+    the public Space, which ignores headers on /health."""
+    hdrs = {}
+    tok = infer_token()
+    hf = os.environ.get("NORI_INFER_HF_TOKEN")
+    if hf or tok:
+        hdrs["Authorization"] = f"Bearer {hf or tok}"
+    if tok:
+        hdrs["X-Nori-Token"] = tok
+    return hdrs
+
+
 def health_check(endpoint: str, timeout: float = HEALTH_TIMEOUT) -> dict:
-    """GET /health (no auth). Wakes a sleeping Space and reports load status."""
-    with urllib.request.urlopen(f"{endpoint.rstrip('/')}/health", timeout=timeout) as r:
+    """GET /health. The SERVER needs no auth here, but an authenticated
+    Inference Endpoint 401s headerless requests at the EDGE before they reach
+    the server (the 2026-07-23 'unreachable: 401' load failure) — so send the
+    same dual headers the /act client uses."""
+    req = urllib.request.Request(f"{endpoint.rstrip('/')}/health",
+                                 headers=_edge_auth_headers())
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.load(r)

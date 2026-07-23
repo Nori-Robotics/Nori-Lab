@@ -1,0 +1,15 @@
+# MODEL_KIND=molmoact2 — installed ON TOP OF pytorch/pytorch:2.5.1-cuda12.1.
+# Mirrors cloud_inference/space/requirements.txt (the proven stack). Do NOT list
+# torch/torchvision/torchaudio (base image ships the matched ABI trio).
+# transformers>=4.57.0 is MANDATORY (MolmoAct2's processor imports
+# transformers.video_utils.VideoInput, added in 4.57.0).
+transformers>=4.57.0
+accelerate
+fastapi
+uvicorn[standard]
+pillow
+numpy
+einops
+av
+scipy
+requests

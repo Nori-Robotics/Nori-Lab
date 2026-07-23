@@ -1,5 +1,12 @@
 # HF Inference Endpoints: MolmoAct2 migration + a pi0.5 endpoint
 
+> ASSIGNED 2026-07-23: **session 2 executes steps 3, 5, 6 + the training lanes**
+> (multi-flavor HF Jobs layer + gated-repo prebakes) — user directive "add pi05
+> and GR00T N1.7 before finetuning". Session 1 keeps live rollout + finetune
+> data. Steps 1-2-4 stay blocked on the user's Endpoints-scoped token.
+> ⚠️ Coordinate Space deploys between sessions — a restart is ~10-15 min of
+> endpoint downtime and kills live robot runs.
+>
 > Status 2026-07-22: PLAN. Decision made: stay on HuggingFace (cloud-provider
 > research 2026-07-22 recommends HF-inference-now regardless of the eventual
 > training answer). This plan migrates the MolmoAct2 Docker Space to a real
@@ -22,20 +29,36 @@ expect ~450–600 ms. Still inside the 1 s chunk budget, but halves headroom.
 **Measure on a throwaway L4 endpoint before choosing the SKU**; fallback is
 A10G at $1.00/hr (same price as the Space, plus autoscaling).
 
-**Gate B — which pi0.5 checkpoint.** `lerobot/pi05_base` ships NO
-normalization stats — it cannot run zero-shot, full stop (verified: empty
-`"features"`; every LeRobot base card says "fine-tune on your use case").
-Options, in order of realism:
-1. **openpi `pi05_droid`** — ships DROID stats; genuinely runs without
-   finetuning, but for DROID-class (Franka) setups. Serves marketplace
-   customers with that hardware; does NOT drive our SO-101-class robot.
-2. **A Nori-finetuned pi0.5** — the real path for OUR robot (session-2
-   training Tracks 2/3: flavor layer + backbone-through-the-airgap). The
-   endpoint built here serves it the day it exists.
-3. If newer research surfaces a stats-bearing SO-100 pi0.5 checkpoint, slot
-   it in here — none found as of 2026-07-22.
-The plan builds the endpoint + adapter for whichever checkpoint passes this
-gate; the serving architecture is checkpoint-independent.
+**Gate B — which pi0.5 checkpoint. RESOLVED 2026-07-22 by session-2's
+research relay (memory: vla-model-landscape + vla-ops-plan).** `lerobot/
+pi05_base` ships NO normalization stats — it cannot run zero-shot, full stop
+(verified: empty `"features"`; every LeRobot base card says "fine-tune on
+your use case"). Session 2 confirms the landscape: π-series has ZERO SO-101
+coverage in pretraining (UR5e/Franka/Trossen/ARX only); no stats-bearing
+SO-100 pi0.5 checkpoint exists anywhere; π*0.6 has no released weights; and
+even on its OWN platform, `pi05_droid` true zero-shot measures 39.2% —
+below MolmoAct2's 56.7% unseen-objects ceiling on SO-100. Verdict:
+1. **There is no zero-shot pi0.5 for our robot.** MolmoAct2 stays the
+   zero-shot baseline (only open model with SO-101 in pretraining + best
+   published random-camera-pose robustness, 87.1% vs π0.5-DROID's 45.2%).
+2. **The pi0.5 endpoint serves a Nori finetune** — and session 2 delivered
+   the exact recipe: LeRobot `--policy.type=pi05` on `pi05_base` (NOT
+   pi05_droid — wrong embodiment prior), full FT >70GB → a100-large
+   $2.50/hr ≈ $10/run, or `--policy.train_expert_only=true` (~300M
+   trainable) as the cheap tier. Footguns: QUANTILES norm needs q01/q99
+   (`augment_dataset_quantile_stats.py` first; initial loss ~40,000 =
+   stats missing — STOP); gated `google/paligemma-3b-pt-224` tokenizer
+   must be prebaked for the airgap; keep max action dims 32 (issue #2963).
+   ~154 eps/5k steps community proof → `move_red_cup_final` (127 eps)
+   qualifies. License note: weights are GEMMA terms, not Apache.
+3. **GR00T N1.7 (3B) is the top finetune challenger** (not pi0.5): ~50-ep
+   post-train, ~35GB peak → l40sx1 $1.80/hr ≈ $5-10/run, LeRobot-native
+   (`--policy.type=groot`, v3 datasets). The Phase-B `MODEL_KIND` adapter
+   pattern should plan for a third `groot` adapter (inference fits A10G).
+   N1.7 ONLY — N1.5/1.6 are noncommercial-licensed.
+The serving architecture below is checkpoint-independent; Phase B's first
+real payload is whichever finetune lands first (3-way on-robot A/B:
+MolmoAct2 zero-shot vs GR00T-N1.7-FT vs pi05-FT is the target experiment).
 
 ## 1. Prerequisite (user action, blocks everything)
 
@@ -56,12 +79,13 @@ The Space's Dockerfile is already ~portable. Deltas:
 2. **Port + health.** Declare the container port explicitly (mismatch = the
    documented #1 "stuck initializing" cause). Our `/health` already has the
    right semantics (200 only when loaded, 503 while loading).
-3. **Auth.** Whether HF's gateway forwards `Authorization` to custom
-   containers is UNVERIFIED (the Space forced-public wart's cousin). Server
-   gains `X-Nori-Token` (checked with the same constant-time compare,
-   `Authorization` still accepted); client sends both. Endpoint starts
-   `type=public` (our bearer still gates /act — same posture as the Space);
-   flip to `authenticated` only after verifying header forwarding.
+3. **Auth.** Session-2 research (2026-07-22): `Authorization` is consumed
+   by HF's edge on protected endpoints — custom headers DO pass through.
+   So `X-Nori-Token` is the PRIMARY app-level credential (constant-time
+   compare; `Authorization` still accepted for the Space-transition
+   client); client sends both. Endpoint can start `type=protected`
+   (HF-token at edge) + our header inside — defense in depth, and it kills
+   the must-be-public Space wart outright.
 4. **Create** (values, not vibes):
    - instance: per Gate A — L4 gcp us-east4 or A10G aws us-east-1
    - `min_replica=1` — scale-to-zero is UNUSABLE for a control loop (5–6 min
@@ -124,13 +148,15 @@ the above.
 
 ## 5. Open items / unverified
 
-- `Authorization` forwarding on custom-container endpoints (mitigated by
-  `X-Nori-Token` regardless).
 - `/repository` mount semantics with `trust_remote_code` custom code — the
   mount is documented; loading remote-code models FROM it needs one test.
 - Real L4 latency for each model (Gate A).
-- Which pi0.5 checkpoint (Gate B) — blocked on session-2's research if it
-  exists beyond the recorded training relay; nothing found in repos as of
-  2026-07-22.
 - Endpoint quota for the org (the catalog showed quota 0 pre-token; assumed
   to follow the Endpoints entitlement).
+
+Resolved 2026-07-22 (session-2 relay): Gate B (no zero-shot pi0.5 exists for
+SO-101; endpoint serves a Nori finetune, recipes in Gate B above);
+`Authorization` forwarding (edge consumes it; custom headers pass —
+`X-Nori-Token` is primary). Session 2's ops plan also confirms scale-to-zero
+cold requests 502 unless held with `X-Scale-Up-Timeout`, and pending-requests
+scaling as the right metric for /act bursts — both already reflected above.

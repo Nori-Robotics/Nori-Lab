@@ -164,6 +164,66 @@ def health() -> dict:
     return _status()
 
 
+class PointRequest(BaseModel):
+    image: str             # base64 JPEG/PNG, one camera view
+    query: str = "the red cup"
+    max_new_tokens: int = 96
+
+
+class PointResponse(BaseModel):
+    raw: str                       # the VLM's verbatim generation
+    points: list[list[float]]      # parsed [[x, y], ...] in PERCENT of image size
+    compute_ms: Optional[float] = None
+
+
+@app.post("/point", response_model=PointResponse)
+def point(req: PointRequest, authorization: Optional[str] = Header(None)) -> PointResponse:
+    """Perception probe (diagnostic, not on the control path): ask the Molmo2-ER
+    backbone — a pixel-accurate pointing model — to point at `query` in ONE
+    frame. Separates "does the model SEE the target in our camera domain" from
+    "does it act correctly": wrong/absent points on live robot frames = visual
+    domain gap (no calibration work can fix it); correct points + wrong motion
+    = the failure is downstream of perception."""
+    if not authorization or not secrets.compare_digest(authorization, f"Bearer {AUTH_TOKEN}"):
+        raise HTTPException(status_code=401, detail="bad or missing bearer token")
+    if _model is None:
+        detail = f"model load failed: {_load_error}" if _load_error else "model not loaded yet"
+        raise HTTPException(status_code=503, detail=detail)
+    img = Image.fromarray(_decode(req.image))
+    prompt = f"Point to {req.query}."
+    t0 = time.time()
+    try:
+        with _lock, torch.inference_mode():
+            # Preferred: the processor's chat template (Molmo2 family). Fallback:
+            # the classic Molmo processor.process() API. Both produce tensors the
+            # underlying ImageTextToText model can generate from.
+            try:
+                inputs = _processor.apply_chat_template(
+                    [{"role": "user",
+                      "content": [{"type": "image", "image": img},
+                                  {"type": "text", "text": prompt}]}],
+                    add_generation_prompt=True, tokenize=True,
+                    return_dict=True, return_tensors="pt")
+            except Exception:
+                inputs = _processor.process(images=[img], text=prompt)
+                inputs = {k: (v.unsqueeze(0) if hasattr(v, "dim") and v.dim() in (1, 3) else v)
+                          for k, v in inputs.items()}
+            inputs = {k: (v.to(_model.device) if hasattr(v, "to") else v)
+                      for k, v in inputs.items()}
+            out = _model.generate(**inputs, max_new_tokens=int(req.max_new_tokens))
+            n_in = inputs["input_ids"].shape[1] if "input_ids" in inputs else 0
+            text = _processor.tokenizer.decode(out[0][n_in:], skip_special_tokens=False)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"pointing failed: {type(exc).__name__}: {exc}")
+    # Parse Molmo point markup: <point x="53.1" y="42.2" ...> (single) and the
+    # <points x1=".." y1=".." x2=".." ...> multi-point form. Percent coordinates.
+    import re
+    pts = [[float(x), float(y)] for x, y in
+           re.findall(r'x\d*="([0-9.]+)"\s+y\d*="([0-9.]+)"', text)]
+    return PointResponse(raw=text, points=pts,
+                         compute_ms=round((time.time() - t0) * 1000.0, 1))
+
+
 @app.post("/act", response_model=ActResponse)
 def act(req: ActRequest, authorization: Optional[str] = Header(None)) -> ActResponse:
     # Constant-time compare so a bad token can't be recovered via response timing.

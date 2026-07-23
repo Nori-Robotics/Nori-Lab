@@ -26,6 +26,7 @@
 // DatasetCapture.available() and hide the UI when false.
 
 import type { RemoteTeleop, TelemetryView } from "@nori/sdk";
+import { lelabFetch } from "@/lib/localAuth";
 
 export interface CaptureEpisode {
   index: number;
@@ -99,7 +100,7 @@ export class DatasetCapture {
 
   static async available(baseUrl: string): Promise<boolean> {
     try {
-      const r = await fetch(`${baseUrl.replace(/\/$/, "")}/nori/capture/ping`);
+      const r = await lelabFetch(`${baseUrl.replace(/\/$/, "")}/nori/capture/ping`);
       return r.ok;
     } catch {
       return false;
@@ -108,14 +109,14 @@ export class DatasetCapture {
 
   /** Local cache datasets, newest first (for the append picker + the list). */
   static async listDatasets(baseUrl: string): Promise<CaptureDatasetEntry[]> {
-    const r = await fetch(`${baseUrl.replace(/\/$/, "")}/nori/capture/datasets`);
+    const r = await lelabFetch(`${baseUrl.replace(/\/$/, "")}/nori/capture/datasets`);
     if (!r.ok) throw new Error(`list datasets: HTTP ${r.status}`);
     return ((await r.json()) as { datasets: CaptureDatasetEntry[] }).datasets;
   }
 
   /** Rename a local cache dataset (409 on collision, 422 on a bad name). */
   static async renameDataset(baseUrl: string, repoId: string, newRepoId: string): Promise<string> {
-    const r = await fetch(`${baseUrl.replace(/\/$/, "")}/nori/capture/datasets/rename`, {
+    const r = await lelabFetch(`${baseUrl.replace(/\/$/, "")}/nori/capture/datasets/rename`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ repo_id: repoId, new_repo_id: newRepoId }),
@@ -192,7 +193,7 @@ export class DatasetCapture {
       this.episodeChunks.push(blob); // keep for the at-capture review preview
       this.chunkChain = this.chunkChain.then(async () => {
         try {
-          await fetch(`${this.baseUrl}/nori/capture/${this.captureId}/video/${index}`, {
+          await lelabFetch(`${this.baseUrl}/nori/capture/${this.captureId}/video/${index}`, {
             method: "POST",
             headers: { "Content-Type": "application/octet-stream" },
             body: blob,
@@ -292,7 +293,7 @@ export class DatasetCapture {
     await this.post(`/nori/capture/${id}/finish`, { fps, name, append_to: appendTo });
     for (;;) {
       await new Promise((r) => setTimeout(r, 2000));
-      const st = (await (await fetch(`${this.baseUrl}/nori/capture/${id}`)).json()) as {
+      const st = (await (await lelabFetch(`${this.baseUrl}/nori/capture/${id}`)).json()) as {
         export: { status: string; repo_id: string | null; error: string | null };
       };
       if (st.export.status === "done" && st.export.repo_id) {
@@ -333,7 +334,7 @@ export class DatasetCapture {
   }
 
   private async post(path: string, body: unknown): Promise<unknown> {
-    const r = await fetch(`${this.baseUrl}${path}`, {
+    const r = await lelabFetch(`${this.baseUrl}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

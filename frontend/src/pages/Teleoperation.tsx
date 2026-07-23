@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import VisualizerPanel from "@/components/control/VisualizerPanel";
 import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/contexts/ApiContext";
+import { lelabFetch } from "@/lib/localAuth";
 
 const TeleoperationPage = () => {
   const navigate = useNavigate();
@@ -48,7 +49,10 @@ const TeleoperationPage = () => {
       } catch {
         /* sessionStorage may be unavailable; the stop below still runs */
       }
-      fetch(`${baseUrl}/stop-teleoperation`, {
+      // lelabFetch: pagehide fires outside React, so this can't use
+      // fetchWithHeaders — but it still needs the local API token (this is
+      // exactly the no-preflight POST the auth layer exists to gate).
+      lelabFetch(`${baseUrl}/stop-teleoperation`, {
         method: "POST",
         keepalive: true,
       }).catch(() => {});

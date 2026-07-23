@@ -11,7 +11,11 @@
 # transformers==4.51.3, which predates video_utils entirely.
 # (Earlier revisions of this file blamed a "removed is_tf_available" — wrong:
 # that symbol survives through 4.57.3 and goes only in v5.0.0.)
-transformers>=4.57.0
+# UPPER BOUND is load-bearing: an unpinned build on 2026-07-23 resolved to
+# transformers 5.14.1 and the Space died at startup (RUNTIME_ERROR) — v5
+# removes pre-5 APIs MolmoAct2's trust_remote_code stack depends on. 4.57.x
+# is the proven-good line (Gate A measured on it).
+transformers>=4.57.0,<5
 accelerate
 fastapi
 uvicorn[standard]

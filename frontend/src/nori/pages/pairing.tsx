@@ -188,7 +188,7 @@ const Pairing = () => {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              Paired robots{paired.length > 1 ? " — select which to connect" : ""}
+              Paired robots{paired.length > 1 ? " — select which to use" : ""}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -259,7 +259,7 @@ const Pairing = () => {
                   </div>
                   {active ? (
                     <span className="shrink-0 rounded bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                      Connected
+                      Selected
                     </span>
                   ) : (
                     <Button
@@ -268,7 +268,7 @@ const Pairing = () => {
                       onClick={() => onSelect(s)}
                       disabled={busy}
                     >
-                      Connect
+                      Select
                     </Button>
                   )}
                   {confirming ? (

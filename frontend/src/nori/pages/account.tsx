@@ -261,7 +261,7 @@ const Account = () => {
                   </span>
                   {active && (
                     <span className="shrink-0 rounded bg-nori-h8ab135/25 px-2 py-0.5 text-xs font-medium text-nori-h4d6a1e">
-                      Connected
+                      Selected
                     </span>
                   )}
                 </div>

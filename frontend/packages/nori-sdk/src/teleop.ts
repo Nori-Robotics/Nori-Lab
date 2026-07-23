@@ -1414,7 +1414,15 @@ export class RemoteTeleop {
   }
 
   private sendReady() {
-    this.o.signaling.sendReady({});
+    // Forward this session's TURN creds so the ROBOT can gather relay candidates
+    // too. Without them a host-only robot is unreachable through a relay (the
+    // relay can't route to LAN/tailnet addrs, and coturn drops the robot's
+    // inbound checks — its public addr was never signaled, so no permission
+    // exists). Creds are short-lived and backend-minted; see ReadyTurn.
+    const turn = this.o.turnUrls.length
+      ? { urls: this.o.turnUrls, username: this.o.turnUser, credential: this.o.turnCred }
+      : undefined;
+    this.o.signaling.sendReady(turn ? { turn } : {});
   }
 
   private freshPeer(): RTCPeerConnection {

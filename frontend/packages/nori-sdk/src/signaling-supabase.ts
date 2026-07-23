@@ -87,7 +87,7 @@ export class SupabaseSignaling implements SignalingTransport {
     });
   }
 
-  sendReady(payload: { mac?: string }): void {
+  sendReady(payload: { mac?: string; turn?: import("./signaling").ReadyTurn }): void {
     this.channel?.send({ type: "broadcast", event: "ready", payload });
   }
 

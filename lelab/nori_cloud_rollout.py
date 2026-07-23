@@ -379,8 +379,9 @@ class CloudRollout:
         if trigger:
             threading.Thread(target=self._refill, name="cloud-refill", daemon=True).start()
         if action is not None:
-            action = self._clamp(action)          # model-space bounds (guard) first
-            action = self._cal_inverse(action)    # then model -> Nori convention
+            model_action = self._clamp(action)    # model-space bounds (guard) first
+            action = self._cal_inverse(model_action)  # then model -> Nori convention
+            self._trace(state, model_action, action)
             # Name-based map: action[i] is action_keys[i], which is built in the
             # model's canonical joint order (arm_keys) — so the RIGHT joint gets
             # the RIGHT value regardless of Nori's alphabetical telemetry sort.
@@ -393,6 +394,30 @@ class CloudRollout:
             raise CloudRolloutError(
                 f"endpoint still not serving after {WARMING_GRACE_S:.0f}s — treating as down")
         return {"action": None, "queue": qlen, "warming": True}
+
+    def _trace(self, state_nori, model_action, action_nori) -> None:
+        """Per-tick joint-level flight recorder (NORI_INFER_TRACE=<path>): one JSON
+        line per served action with the raw observed state, the state the model saw
+        (forward-calibrated), the model-space action, and the command sent to the
+        robot. This is the only ground truth for diagnosing live behavior — replay
+        cannot validate the calibration (the model echoes its input-state
+        convention), so post-run analysis of these lines is how a bad joint is
+        localised. Overhead: one small write per tick, only when enabled."""
+        path = os.environ.get("NORI_INFER_TRACE")
+        if not path:
+            return
+        try:
+            rec = {
+                "t": round(time.time(), 3),
+                "state": [round(float(s), 3) for s in state_nori],
+                "model_state": self._cal_forward([float(s) for s in state_nori]),
+                "model_action": [round(float(v), 3) for v in model_action],
+                "action": [round(float(v), 3) for v in action_nori],
+            }
+            with open(os.path.expanduser(path), "a") as f:
+                f.write(json.dumps(rec) + "\n")
+        except OSError:  # tracing must never break the control loop
+            pass
 
     def _cal_forward(self, state: list[float]) -> list[float]:
         """Nori state -> model convention (A*s + B)."""

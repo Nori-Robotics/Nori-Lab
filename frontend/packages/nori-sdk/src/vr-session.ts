@@ -137,8 +137,8 @@ const TUNE_ZONES = [
 // real robot DOF. State + count come straight from RemoteTeleop.recordState(); a poke calls
 // RemoteTeleop.record(...). See docs/offline_recorder_design.md for the session/episode model.
 const REC_UP = 0.30;   // metres above the right controller (stacked clear of TUNE_UP=0.17)
-const REC_W = 0.21;
-const REC_H = 0.14;    // 1.5:1, matches the 480x320 canvas
+const REC_W = 0.18;
+const REC_H = 0.12;    // 1.5:1, matches the 480x320 canvas
 const REC_POKE_DEPTH = 0.035;   // left tip within this of the panel plane (local m) = a poke
 const REC_POKE_MARGIN = 0.012;  // slack added around each button's rect for the hit-test
 const REC_REARM_DEPTH = 0.07;   // tip must pull this far off the plane before it can fire again
@@ -1129,21 +1129,22 @@ export class VrSession {
   // control the operator hunts through mid-task.
   private recZones(): { id: string; x: number; y: number; w: number; h: number; label: string; tone: string }[] {
     if (this.recPhase === "recording") {
-      return [{ id: "episode_stop", x: 0, y: -0.005, w: 0.16, h: 0.062, label: "■ Stop episode", tone: "red" }];
+      return [{ id: "episode_stop", x: 0, y: -0.01, w: 0.12, h: 0.05, label: "■ Stop episode", tone: "red" }];
     }
     if (this.recPhase === "session") {
-      const z = [{ id: "episode_start", x: 0, y: 0.03, w: 0.17, h: 0.055, label: "● Record", tone: "red" }];
+      // Rows sit fully below the title/status text (text bottom ≈ local y 0.034).
+      const z = [{ id: "episode_start", x: 0, y: 0.006, w: 0.12, h: 0.044, label: "● Record", tone: "red" }];
       if (this.recKept > 0) {
         // A take is bankable, so offer Discard-last beside Finish (keep-by-default in VR; no
         // in-headset video review — that's a laptop affordance).
-        z.push({ id: "session_end", x: -0.05, y: -0.042, w: 0.085, h: 0.05, label: "Finish", tone: "slate" });
-        z.push({ id: "episode_discard", x: 0.05, y: -0.042, w: 0.085, h: 0.05, label: "Discard", tone: "darkred" });
+        z.push({ id: "session_end", x: -0.045, y: -0.039, w: 0.075, h: 0.036, label: "Finish", tone: "slate" });
+        z.push({ id: "episode_discard", x: 0.045, y: -0.039, w: 0.075, h: 0.036, label: "Discard", tone: "darkred" });
       } else {
-        z.push({ id: "session_end", x: 0, y: -0.042, w: 0.13, h: 0.05, label: "Finish session", tone: "slate" });
+        z.push({ id: "session_end", x: 0, y: -0.039, w: 0.105, h: 0.036, label: "Finish session", tone: "slate" });
       }
       return z;
     }
-    return [{ id: "session_start", x: 0, y: -0.005, w: 0.16, h: 0.062, label: "Start session", tone: "blue" }];
+    return [{ id: "session_start", x: 0, y: -0.01, w: 0.12, h: 0.05, label: "Start session", tone: "blue" }];
   }
 
   // A poke fired on zone `id`: send the record() command AND advance the local phase
@@ -1310,15 +1311,15 @@ export class VrSession {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "#94a3b8";
-    ctx.font = "bold 24px system-ui, sans-serif";
-    ctx.fillText("RECORD DATASET", W / 2, 34);
+    ctx.font = "bold 22px system-ui, sans-serif";
+    ctx.fillText("RECORD DATASET", W / 2, 30);
     const status =
       this.recPhase === "recording" ? `● recording episode ${this.recKept + 1}`
       : this.recPhase === "session" ? `session open · ${this.recKept} kept`
       : "no session open";
     ctx.fillStyle = this.recPhase === "recording" ? "#f87171" : "#cbd5e1";
-    ctx.font = "20px system-ui, sans-serif";
-    ctx.fillText(status, W / 2, 64);
+    ctx.font = "18px system-ui, sans-serif";
+    ctx.fillText(status, W / 2, 58);
 
     const fills: Record<string, string> = {
       blue: "rgba(37,99,235,0.92)",
@@ -1338,7 +1339,7 @@ export class VrSession {
       this.roundRect(ctx, cx - w / 2, cy - h / 2, w, h, 18);
       ctx.stroke();
       ctx.fillStyle = "#f1f5f9";
-      ctx.font = `bold ${z.w >= 0.13 ? 30 : 24}px system-ui, sans-serif`;
+      ctx.font = `bold ${z.w >= 0.1 ? 26 : 21}px system-ui, sans-serif`;
       ctx.fillText(z.label, cx, cy + 1);
     }
     ctx.textAlign = "start"; // restore shared-ctx default

@@ -9,9 +9,19 @@
 # is SAFE in a Docker Space: we control the whole image. The managed
 # Inference-Endpoint toolkit cannot do this because it hard-pins
 # transformers==4.51.3, which predates video_utils entirely.
-# (Earlier revisions of this file blamed a "removed is_tf_available" — wrong:
-# that symbol survives through 4.57.3 and goes only in v5.0.0.)
-transformers>=4.57.0
+# EXACT PIN — history of wrong blames on this line, do not loosen casually:
+#   - "removed is_tf_available" (wrong; survives to v5)
+#   - "v5 breaks trust_remote_code" (wrong; 2026-07-23's v5 crash was a MISSING
+#     PROTOBUF, and 4.57.x can't load this model AT ALL — its stock-Qwen2
+#     tokenizer path crashes on the repo's list-typed extra_special_tokens).
+# 5.14.x is what every working image actually resolved to (>=4.57.0 floated to
+# latest); ==5.14.1 verified loading MolmoAct2Processor on 2026-07-23.
+transformers==5.14.1
+# protobuf: REQUIRED by the load path but no longer pulled transitively by the
+# 2026-07-23 dependency resolution (the actual cause of that day's first two
+# build failures). sentencepiece kept as its usual partner.
+protobuf
+sentencepiece
 accelerate
 fastapi
 uvicorn[standard]

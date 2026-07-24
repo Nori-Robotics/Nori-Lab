@@ -45,6 +45,12 @@ COPY --chown=user:user rtc.py .
 RUN mkdir -p /home/user/.cache/huggingface && chown -R user:user /home/user /app
 USER user
 
-# HF Spaces expose the container on 7860 (declared as app_port in README.md).
+# PORT: Spaces route to 7860 (declared as app_port in README.md). Inference
+# Endpoints take the container port from the endpoint config — set the endpoint's
+# port to 7860 too, or override with a PORT env var here. A port mismatch is the
+# documented #1 cause of an endpoint stuck "initializing", hence the explicit
+# declaration + env override. (Also set the endpoint's health_route=/ready — it
+# 503s until the model is loaded; "/" and /health stay 200-while-loading for the
+# Space's readiness probe.)
 EXPOSE 7860
-CMD ["uvicorn", "molmoact2_server:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["sh", "-c", "uvicorn molmoact2_server:app --host 0.0.0.0 --port ${PORT:-7860}"]

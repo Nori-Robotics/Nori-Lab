@@ -1466,6 +1466,28 @@ class NoriDispatchBody(BaseModel):
     steps: int | None = None
 
 
+def _robot_calibration_canonical_sha() -> str | None:
+    """Canonical-content sha256 of ~/.nori_robot_calib.json (stream-preamble
+    copy of the robot's robot.json). Mirrors the backend's
+    compute/calibration_check.canonical_calibration_sha256 — the two MUST hash
+    identically (sorted keys, no whitespace; CONTENT not file bytes, because
+    the laptop copy is re-serialized so a byte hash could never match the
+    recorder's stamp). None when absent/unreadable — the backend then runs its
+    warn-only path; never blocks dispatch."""
+    import hashlib
+
+    from .policy_stream_rx import _calib_path
+
+    try:
+        content = json.loads(_calib_path().read_text())
+        if not isinstance(content, dict) or not content:
+            return None
+        blob = json.dumps(content, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    except Exception:  # noqa: BLE001 — advisory; absence is a legitimate state
+        return None
+
+
 @app.post("/nori/training/dispatch")
 def nori_dispatch_training(body: NoriDispatchBody, request: Request):
     client = _nori_client(request)
@@ -1474,6 +1496,12 @@ def nori_dispatch_training(body: NoriDispatchBody, request: Request):
         payload["resume_from_job_id"] = body.resume_from_job_id
     if body.steps is not None:
         payload["steps"] = body.steps
+    # Calibration pre-flight (backend gate, 2026-07-23): the robot's current
+    # canonical calibration hash rides along so dispatch can refuse datasets
+    # recorded under a different joint convention (recalibrated since recording).
+    sha = _robot_calibration_canonical_sha()
+    if sha:
+        payload["robot_calibration_sha256"] = sha
     return _nori_proxy(lambda: client.dispatch_training(payload))
 
 

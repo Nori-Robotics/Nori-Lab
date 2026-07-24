@@ -422,10 +422,18 @@ class LoadBody(BaseModel):
     instruction: str | None = None
     num_steps: int | None = None
     views: list[str] | None = None
-    #   arm — which arm a single-arm cloud VLA drives ("left"/"right"). The Nori
-    #   robot is bimanual; the VLA commands 6 of the 12 joints and the daemon
-    #   holds the rest. Omit to use NORI_INFER_ARM (default "left").
+    #   arm — which arm a single-arm cloud VLA drives ("left"/"right"), or
+    #   "both": TWO independent endpoint sessions (one per arm), each fed its
+    #   own wrist view + the shared overhead, merged into one 12-joint command
+    #   per tick (MolmoAct2 only — the model is inherently single-arm). The
+    #   Nori robot is bimanual; with one arm the daemon holds the other. Omit
+    #   to use NORI_INFER_ARM (default "left").
     arm: str | None = None
+    #   instruction_left / instruction_right — per-arm task overrides for
+    #   arm="both" (e.g. "hold the bowl" / "pick up the red cup"); either
+    #   falls back to `instruction`.
+    instruction_left: str | None = None
+    instruction_right: str | None = None
     #   policy_kind — which policy family the endpoint serves ("molmoact2",
     #   "pi05", "groot"). The multi-policy server reports its kind + chunk
     #   semantics in /health `meta` (INFERENCE_ENDPOINT_PLAN step 5/6); /load
@@ -437,7 +445,7 @@ class LoadBody(BaseModel):
 
 def _env_arm() -> str:
     a = (os.environ.get("NORI_INFER_ARM") or "left").strip().lower()
-    return a if a in ("left", "right") else "left"
+    return a if a in ("left", "right", "both") else "left"
 
 
 def _env_views() -> list[str] | None:
@@ -472,23 +480,24 @@ def _cloud_load(body: LoadBody) -> dict:
                             detail="a cloud VLA needs an instruction (natural-language task)")
     fps = body.fps if (body.fps and body.fps > 0) else _env_fps()
     # Joint mapping: the model's 6-DoF output maps to ONE arm's keys, in the
-    # model's canonical order (arm_keys). Validate those keys exist in the live
-    # session so a bimanual/single-arm or left/right mismatch fails at /load, not
-    # silently mid-rollout.
+    # model's canonical order (arm_keys). arm="both" runs TWO independent lanes
+    # (one endpoint session per arm) merged into one command per tick. Validate
+    # the keys exist in the live session so a bimanual/single-arm or left/right
+    # mismatch fails at /load, not silently mid-rollout.
     arm = (body.arm or _env_arm()).strip().lower()
-    # Resolved AFTER `arm`: the default view pair includes that arm's wrist tile,
-    # so driving the right arm must not feed the left wrist (see
-    # default_cloud_views for why a wrist view belongs in the pair at all).
-    views = body.views or _env_views() or cloudmod.default_cloud_views(arm)
-    try:
-        akeys = cloudmod.arm_keys(arm)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    missing = [k for k in akeys if k not in set(body.joints)]
+    arms = ["left", "right"] if arm == "both" else [arm]
+    per_arm_keys: dict[str, list[str]] = {}
+    for a in arms:
+        try:
+            per_arm_keys[a] = cloudmod.arm_keys(a)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+    have = set(body.joints)
+    missing = [k for a in arms for k in per_arm_keys[a] if k not in have]
     if missing:
         raise HTTPException(
             status_code=422,
-            detail=(f"cloud VLA drives the {arm!r} arm but the session is missing "
+            detail=(f"cloud VLA drives the {arm!r} arm(s) but the session is missing "
                     f"joint(s) {missing}. Session joints: {sorted(body.joints)}."),
         )
     # Fail fast on an unreachable endpoint; a not-yet-"ready" Space is fine (this
@@ -514,76 +523,119 @@ def _cloud_load(body: LoadBody) -> dict:
     # the nori<->fleet affine). A Nori finetune (pi05/groot) is trained in OUR
     # joint space — applying the molmoact2 calib would corrupt its actions.
     is_molmoact2 = endpoint_kind == "molmoact2"
-    calib = cloudmod.load_calibration(arm) if is_molmoact2 else None
     bounds = cloudmod.MOLMOACT2_BOUNDS if is_molmoact2 else None
-    # Views: a Nori-finetune checkpoint names its camera FEATURE KEYS in meta
-    # (same observation.images.* namespace our tiles use) — trust those when the
-    # caller didn't pick. MolmoAct2's meta lists ROLES, not keys — keep the
-    # existing arm-aware default for it.
-    if not is_molmoact2 and not (body.views or _env_views()):
-        meta_cams = [c for c in (meta.get("cameras") or []) if isinstance(c, str)]
-        if meta_cams and all(c.startswith("observation.images.") for c in meta_cams):
-            views = meta_cams
+    # Dual-lane bimanual is a single-arm-VLA feature: two per-arm sessions of
+    # the SAME single-arm model. A Nori finetune drives its trained joints
+    # directly through one session — "both" is meaningless there.
+    if arm == "both" and not is_molmoact2:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"arm='both' runs two per-arm lanes of a single-arm VLA "
+                    f"(molmoact2); endpoint serves {endpoint_kind!r} — load it "
+                    f"normally, it drives its trained joints in one session"))
+    # Views. Single arm: caller/env choice, else the arm's wrist + overhead;
+    # a Nori-finetune checkpoint may name its camera FEATURE KEYS in meta —
+    # trust those when the caller didn't pick (MolmoAct2 meta lists ROLES, not
+    # keys). arm="both": each lane gets ITS OWN wrist + the shared overhead —
+    # one flat views list can't scope per lane, so explicit views are refused.
+    explicit_views = body.views or _env_views()
+    if arm == "both":
+        if explicit_views:
+            raise HTTPException(
+                status_code=422,
+                detail=("views cannot be set with arm='both' (they are per-arm: "
+                        "each lane sees its own wrist + overhead) — omit views"))
+        lane_views = {a: cloudmod.default_cloud_views(a) for a in arms}
+    else:
+        views = explicit_views or cloudmod.default_cloud_views(arm)
+        if not is_molmoact2 and not explicit_views:
+            meta_cams = [c for c in (meta.get("cameras") or []) if isinstance(c, str)]
+            if meta_cams and all(c.startswith("observation.images.") for c in meta_cams):
+                views = meta_cams
+        lane_views = {arm: list(views)}
+    union_views: list[str] = []
+    for a in arms:
+        for v in lane_views[a]:
+            if v not in union_views:
+                union_views.append(v)
+
+    # Per-arm instruction: instruction_left/right override the shared one (the
+    # arms usually do DIFFERENT things — "hold the bowl" / "pick up the cup").
+    def _instr(a: str) -> str:
+        ov = body.instruction_left if a == "left" else body.instruction_right
+        return (ov or instruction).strip()
+
     # Queue-tuning knobs (env-overridable so we can retune against real latency
     # without a redeploy): watermark must cover the refill round-trip; max_queue
-    # bounds staleness; replace_on_refill = receding horizon (jump to freshest plan).
-    roll = cloudmod.CloudRollout(
-        endpoint=endpoint,
-        token=token,
-        instruction=instruction,
-        action_keys=akeys,
-        num_steps=body.num_steps or cloudmod._env_int("NORI_INFER_NUM_STEPS", cloudmod.DEFAULT_NUM_STEPS),
-        watermark=cloudmod._env_int("NORI_INFER_WATERMARK", cloudmod.REFILL_WATERMARK),
-        max_queue=cloudmod._env_int("NORI_INFER_MAX_QUEUE", cloudmod.MAX_QUEUE),
-        replace_on_refill=cloudmod._env_bool("NORI_INFER_REPLACE", True),
-        # fps drives the chunk STRIDE: the model authors 30 actions per second of
-        # motion, so serving one per tick at 15fps halves the speed. NORI_INFER_STRIDE
-        # forces a value (1 = the old one-action-per-tick behaviour).
-        fps=float(fps),
-        chunk_hz=(meta_chunk_hz
-                  if not os.environ.get("NORI_INFER_STRIDE")
-                  else float(fps) * cloudmod._env_int("NORI_INFER_STRIDE", 1)),
-        bounds=bounds,
-        calib=calib,
-    )
+    # bounds staleness; replace_on_refill = receding horizon (jump to freshest
+    # plan). With two lanes the endpoint serves both sessions, so a refill
+    # round-trip can ~double under GPU contention — the watermark knob is the
+    # lever if refills start missing the queue.
+    lanes: list[dict] = []
+    for a in arms:
+        calib = cloudmod.load_calibration(a) if is_molmoact2 else None
+        roll = cloudmod.CloudRollout(
+            endpoint=endpoint,
+            token=token,
+            instruction=_instr(a),
+            action_keys=per_arm_keys[a],
+            num_steps=body.num_steps or cloudmod._env_int("NORI_INFER_NUM_STEPS", cloudmod.DEFAULT_NUM_STEPS),
+            watermark=cloudmod._env_int("NORI_INFER_WATERMARK", cloudmod.REFILL_WATERMARK),
+            max_queue=cloudmod._env_int("NORI_INFER_MAX_QUEUE", cloudmod.MAX_QUEUE),
+            replace_on_refill=cloudmod._env_bool("NORI_INFER_REPLACE", True),
+            # fps drives the chunk STRIDE: the model authors 30 actions per second of
+            # motion, so serving one per tick at 15fps halves the speed. NORI_INFER_STRIDE
+            # forces a value (1 = the old one-action-per-tick behaviour).
+            fps=float(fps),
+            chunk_hz=(meta_chunk_hz
+                      if not os.environ.get("NORI_INFER_STRIDE")
+                      else float(fps) * cloudmod._env_int("NORI_INFER_STRIDE", 1)),
+            bounds=bounds,
+            calib=calib,
+        )
+        lanes.append({"arm": a, "roll": roll, "views": list(lane_views[a]),
+                      "arm_keys": per_arm_keys[a], "calibrated": calib is not None})
+    roll0 = lanes[0]["roll"]
     logger.info("[CLOUD-ROLLOUT] chunk stride=%d (fps=%s, chunk authored at %sHz) -- "
                 "queue holds %.2fs of motion; the refill round-trip must fit inside that",
-                roll.stride, fps, roll.chunk_hz, roll.max_queue / (roll.chunk_hz or 1))
+                roll0.stride, fps, roll0.chunk_hz, roll0.max_queue / (roll0.chunk_hz or 1))
     with _lock:
         _close_cam()   # release any previous session's camera subscriber
         _session.clear()
         _session.update({
             "mode": "cloud",
             "ref": body.ref,
-            "cloud": roll,
+            "lanes": lanes,
             "policy_kind": endpoint_kind,
             "joints": list(body.joints),
             "arm": arm,
-            "arm_keys": akeys,   # state extraction order == model order
-            "views": list(views),
+            "views": union_views,   # union across lanes (camera source + UI)
             "fps": fps,
             "instruction": instruction,
             # Full-quality per-camera frames straight off the Pi's capture layer
             # (the source RECORDING uses). None -> browser composite crops.
-            "cam": camzmq.build_source(list(views)),
+            "cam": camzmq.build_source(list(union_views)),
         })
-    logger.info("[ROLLOUT] cloud load %s -> %s (arm=%s, views=%s, fps=%d, calib=%s, "
-                "queue: wm=%d max=%d replace=%s, endpoint=%s)",
-                body.ref, endpoint, arm, views, fps, "on" if calib else "off",
-                roll.watermark, roll.max_queue, roll.replace_on_refill, health.get("status"))
+    for ln in lanes:
+        logger.info("[ROLLOUT] cloud load %s -> %s (arm=%s, views=%s, fps=%d, calib=%s, "
+                    "queue: wm=%d max=%d replace=%s, endpoint=%s)",
+                    body.ref, endpoint, ln["arm"], ln["views"], fps,
+                    "on" if ln["calibrated"] else "off",
+                    ln["roll"].watermark, ln["roll"].max_queue,
+                    ln["roll"].replace_on_refill, health.get("status"))
     return {
         "ref": body.ref,
         "provider": "cloud",
         "device": "cloud",
         "policy_kind": endpoint_kind,
-        "chunk_hz": roll.chunk_hz,
+        "chunk_hz": roll0.chunk_hz,
         "arm": arm,
-        "calibrated": calib is not None,
-        "action_joints": akeys,
+        "calibrated": all(ln["calibrated"] for ln in lanes),
+        "action_joints": [k for ln in lanes for k in ln["arm_keys"]],
         "joints": list(body.joints),
         # empty shapes: the client only needs the KEYS to know which tiles to grab;
         # the cloud server resizes frames itself (VLA processor).
-        "image_keys": {v: [] for v in views},
+        "image_keys": {v: [] for v in union_views},
         "fps": fps,
         "endpoint_status": health.get("status"),
     }
@@ -664,12 +716,13 @@ def _dump_frames(images: list[str], views: list[str]) -> None:
 
 
 def _cloud_act(body: ActBody) -> dict:
-    """Serve one action from the cloud chunk queue (lock already held). Maps the
-    browser's {featureKey: dataURL} dict to the ordered view list the model wants,
-    then hands off to CloudRollout.serve() (fast: pop + maybe kick an async refill)."""
-    roll: cloudmod.CloudRollout = _session["cloud"]
-    views: list[str] = _session["views"]
-    arm_keys: list[str] = _session["arm_keys"]
+    """Serve one action from the cloud chunk queue(s) (lock already held). Maps
+    the browser's {featureKey: dataURL} dict to each lane's ordered view list,
+    hands off to CloudRollout.serve() per lane (fast: pop + maybe kick an async
+    refill), and merges the per-arm actions into one command. Single-arm = one
+    lane; arm='both' = two."""
+    lanes: list[dict] = _session["lanes"]
+    views: list[str] = _session["views"]   # union across lanes (frame gathering)
     # Prefer FULL-QUALITY per-camera frames from the Pi's capture layer (the same
     # source the recorder/training data uses). Fall back to the browser's crops of
     # the ABR-degraded composite when that source isn't configured/reachable, or
@@ -713,14 +766,37 @@ def _cloud_act(body: ActBody) -> dict:
     # a frame. Off unless the env var is set; writes every DUMP_EVERY-th tick so a
     # run yields a handful of files, not thousands.
     _dump_frames(images, views)
-    # State in the MODEL's joint order (arm_keys), not Nori's alphabetical sort.
-    state = [float(body.state.get(k, 0.0)) for k in arm_keys]
-    try:
-        return roll.serve(images, state)
-    except cloudmod.CloudRolloutError as e:
-        # buffer empty AND last refill failed -> 503 so the browser's failure
-        # watchdog stops the rollout (it counts non-2xx toward its 5-strike halt).
-        raise HTTPException(status_code=503, detail=f"cloud inference unavailable: {e}")
+    imgs_by_key = dict(zip(views, images))
+    # Serve every lane each tick: each buffers its own observation (its wrist +
+    # overhead), pops its next action, and refills independently (concurrent
+    # daemon threads; the endpoint serves one session per arm). While ANY lane
+    # is still warming we command NOTHING — driving one arm against a frozen
+    # partner is worse than waiting, and replace_on_refill re-plans the primed
+    # lane from a fresh observation once both are ready, so the few actions it
+    # popped meanwhile are safely discarded, not silently skipped motion.
+    merged: dict[str, float] = {}
+    queues: list[int] = []
+    warming = False
+    for ln in lanes:
+        lane_images = [imgs_by_key[v] for v in ln["views"]]
+        # State in the MODEL's joint order (arm_keys), not Nori's alphabetical sort.
+        state = [float(body.state.get(k, 0.0)) for k in ln["arm_keys"]]
+        try:
+            out = ln["roll"].serve(lane_images, state)
+        except cloudmod.CloudRolloutError as e:
+            # buffer empty AND last refill failed -> 503 so the browser's failure
+            # watchdog stops the rollout (non-2xx counts toward its 5-strike halt).
+            # One dead lane halts BOTH arms — a half-driven bimanual task is unsafe.
+            raise HTTPException(status_code=503,
+                                detail=f"cloud inference unavailable ({ln['arm']} arm): {e}")
+        queues.append(int(out.get("queue") or 0))
+        if out.get("action") is None:
+            warming = True
+        else:
+            merged.update(out["action"])
+    if warming:
+        return {"action": None, "queue": min(queues, default=0), "warming": True}
+    return {"action": merged, "queue": min(queues, default=0), "warming": False}
 
 
 @router.post("/act")
@@ -817,12 +893,14 @@ def _close_cam() -> None:
             cam.close()
         except Exception:
             logger.warning("[ROLLOUT] camera source close failed", exc_info=True)
-    roll = _session.get("cloud")
-    if roll is not None and hasattr(roll, "close"):
-        try:
-            roll.close()
-        except Exception:
-            logger.warning("[ROLLOUT] cloud client close failed", exc_info=True)
+    for ln in (_session.get("lanes") or []):
+        roll = ln.get("roll")
+        if roll is not None and hasattr(roll, "close"):
+            try:
+                roll.close()
+            except Exception:
+                logger.warning("[ROLLOUT] cloud client close failed (%s arm)",
+                               ln.get("arm"), exc_info=True)
 
 
 @router.post("/unload")
@@ -846,13 +924,18 @@ def rollout_status():
         if not _session:
             return {"loaded": None}
         if _session.get("mode") == "cloud":
+            lanes = _session["lanes"]
             return {
                 "loaded": _session["ref"],
                 "provider": "cloud",
                 "device": "cloud",
                 "joints": _session["joints"],
+                "arm": _session.get("arm"),
                 "image_keys": list(_session["views"]),
-                "cloud": _session["cloud"].status(),
+                # single lane keeps the historical shape; arm="both" reports
+                # one status per arm so a starving lane is visible in the field.
+                "cloud": (lanes[0]["roll"].status() if len(lanes) == 1
+                          else {ln["arm"]: ln["roll"].status() for ln in lanes}),
                 # Which frame path the policy is actually being fed, so a silent
                 # fallback to the degraded composite is visible in the field.
                 "frame_source": _session.get("frame_source", "unknown"),

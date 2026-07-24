@@ -76,8 +76,10 @@ def chain(tmp_path, monkeypatch):
     roll = cr.CloudRollout(endpoint="http://fake", token="t", instruction="smoke",
                            action_keys=cr.arm_keys("left"), fps=15, caller=fake_cloud)
     nr._session.clear()
-    nr._session.update({"mode": "cloud", "ref": "smoke", "cloud": roll,
-                        "views": VIEWS, "arm_keys": cr.arm_keys("left"), "cam": None})
+    nr._session.update({"mode": "cloud", "ref": "smoke",
+                        "lanes": [{"arm": "left", "roll": roll, "views": list(VIEWS),
+                                   "arm_keys": cr.arm_keys("left"), "calibrated": False}],
+                        "views": VIEWS, "cam": None})
     yield calls, tmp_path
     nr._session.clear()
     nr.stream_close()

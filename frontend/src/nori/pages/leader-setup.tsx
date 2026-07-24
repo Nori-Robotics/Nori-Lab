@@ -1,5 +1,6 @@
 // NORI: local-hardware setup page for Nori L2 dual leaders.
-// Both leader arms are expected on one shared USB serial bus.
+// Supports BOTH topologies: the arms daisy-chained on one shared USB serial bus,
+// or one USB cable per arm (two ports — saved per side, read per side).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -81,19 +82,29 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function portFromResponse(response: LeaderPortsResponse): string {
-  const left = asRecord(response.ports?.left);
-  const stable = left?.stable_path;
-  const device = left?.device;
+function sidePortFromResponse(response: LeaderPortsResponse, side: "left" | "right"): string {
+  const rec = asRecord(response.ports?.[side]);
+  const stable = rec?.stable_path;
+  const device = rec?.device;
   if (typeof stable === "string" && stable) return stable;
   if (typeof device === "string" && device) return device;
+  return "";
+}
 
-  // Prefer a full dual bus, but accept a bus with a single complete arm (can_left OR
-  // can_right) so one-arm setups auto-detect instead of reporting "not found".
-  const sharedProbe =
-    response.probes?.find((probe) => probe.can_left && probe.can_right) ??
-    response.probes?.find((probe) => probe.can_left || probe.can_right);
-  return sharedProbe?.open_path ?? "";
+/** Per-side saved ports from an auto-detect response. Identical strings = the
+ * shared-bus (daisy-chain) topology; different = one USB cable per arm. */
+function portsFromResponse(response: LeaderPortsResponse): { left: string; right: string } {
+  let left = sidePortFromResponse(response, "left");
+  let right = sidePortFromResponse(response, "right");
+  if (!left && !right) {
+    // Prefer a full dual bus, but accept a bus with a single complete arm (can_left OR
+    // can_right) so one-arm setups auto-detect instead of reporting "not found".
+    const sharedProbe =
+      response.probes?.find((probe) => probe.can_left && probe.can_right) ??
+      response.probes?.find((probe) => probe.can_left || probe.can_right);
+    left = right = sharedProbe?.open_path ?? "";
+  }
+  return { left: left || right, right: right || left };
 }
 
 function formatAge(timestamp: number | null): string {
@@ -264,7 +275,11 @@ const LeaderSetup = ({
   const { toast } = useToast();
 
   const [calibrationId, setCalibrationId] = useState(DEFAULT_CALIBRATION_ID);
+  // Manual single-port entry (shared-bus topology / override). When auto-detect
+  // finds one cable PER ARM instead, `dualPorts` holds both and the manual field
+  // stays empty — live reads then resolve each side's saved port server-side.
   const [sharedPort, setSharedPort] = useState("");
+  const [dualPorts, setDualPorts] = useState<{ left: string; right: string } | null>(null);
   // True once an auto-detect has run and found no USB leader bus (arm unplugged, a
   // charge-only cable, or a hub swallowing it) — drives a plain-language hint instead
   // of leaving a consumer staring at an empty field.
@@ -320,6 +335,7 @@ const LeaderSetup = ({
       if (!trimmed) throw new Error("Leader USB port is required");
       const response = await saveLeaderPorts(baseUrl, fetchWithHeaders, trimmed, trimmed);
       setSharedPort(trimmed);
+      setDualPorts(null);
       return response;
     },
     [baseUrl, fetchWithHeaders]
@@ -327,13 +343,21 @@ const LeaderSetup = ({
 
   const autoDetectPort = useCallback(async () => {
     const response = await autoSaveLeaderPorts(baseUrl, fetchWithHeaders);
-    const detected = portFromResponse(response);
-    if (!detected) {
+    const detected = portsFromResponse(response);
+    if (!detected.left && !detected.right) {
       setNoArmFound(true);
       throw new Error(response.message || "Could not find a leader arm on any USB bus");
     }
     setNoArmFound(false);
-    setSharedPort(detected);
+    if (detected.left === detected.right) {
+      setSharedPort(detected.left);
+      setDualPorts(null);
+    } else {
+      // One cable per arm: don't collapse into the single-port field — reads
+      // resolve per side from the saved config.
+      setSharedPort("");
+      setDualPorts(detected);
+    }
     return response;
   }, [baseUrl, fetchWithHeaders]);
 
@@ -350,18 +374,24 @@ const LeaderSetup = ({
   }, [baseUrl, fetchWithHeaders]);
 
   const readLiveOnce = useCallback(async () => {
+    // NEVER pin the live read to the manual field: an explicit ?port= forces BOTH
+    // sides onto that one bus server-side, which blanks the second arm in the
+    // two-cable topology. The server resolves each side's saved port itself.
     const frame = await readLeaderLive(
       baseUrl,
       fetchWithHeaders,
-      calibrationId.trim() || DEFAULT_CALIBRATION_ID,
-      sharedPort.trim() || undefined
+      calibrationId.trim() || DEFAULT_CALIBRATION_ID
     );
     setLiveFrame(frame);
     setLiveError(null);
     setLastLiveAt(Date.now());
-    if (!sharedPort.trim() && frame.port) setSharedPort(frame.port);
+    // Backfill the manual field only with a SINGLE resolved port (the frame joins
+    // dual ports with ", " — that composite is display-only, never an input value).
+    if (!sharedPort.trim() && !dualPorts && frame.port && !frame.port.includes(",")) {
+      setSharedPort(frame.port);
+    }
     return frame;
-  }, [baseUrl, calibrationId, fetchWithHeaders, sharedPort]);
+  }, [baseUrl, calibrationId, dualPorts, fetchWithHeaders, sharedPort]);
 
   useEffect(() => {
     // No local LeLab (hosted build) -> the unavailable-guard renders below, but hooks
@@ -380,7 +410,7 @@ const LeaderSetup = ({
     // Don't poll live telemetry until a leader USB port is known (auto-detected or
     // manually saved). Before setup there's no hardware to read, so polling would just
     // spam the backend with requests that resolve to a "not connected" frame.
-    if (!sharedPort.trim()) {
+    if (!sharedPort.trim() && !dualPorts) {
       setLiveFrame(null);
       setLiveError(null);
       return undefined;
@@ -407,7 +437,7 @@ const LeaderSetup = ({
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [readLiveOnce, sharedPort]);
+  }, [readLiveOnce, sharedPort, dualPorts]);
 
   useEffect(() => {
     return () => {
@@ -439,7 +469,7 @@ const LeaderSetup = ({
     return () => window.clearInterval(id);
   }, [autoStatus?.active, autoStatus?.side, refreshAutoStatus]);
 
-  const portReady = Boolean(sharedPort.trim());
+  const portReady = Boolean(sharedPort.trim()) || dualPorts !== null;
   const bothVisible = useMemo(() => {
     const left = liveFrame?.leaders?.left?.visible ?? 0;
     const right = liveFrame?.leaders?.right?.visible ?? 0;
@@ -613,6 +643,12 @@ const LeaderSetup = ({
                 auto
               </Button>
             </div>
+            {dualPorts && (
+              <p className="font-mono text-[11px] leading-relaxed text-nori-h5c564b">
+                one cable per arm · left <span className="text-nori-h2a6b33">{dualPorts.left}</span>
+                {" · "}right <span className="text-nori-h2a6b33">{dualPorts.right}</span>
+              </p>
+            )}
             {noArmFound && !portReady && busy == null && (
               <p className="text-xs leading-relaxed text-nori-h8a5a12">
                 No leader arm found. Check that it’s plugged in with a{" "}

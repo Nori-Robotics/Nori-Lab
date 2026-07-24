@@ -396,8 +396,9 @@ class CloudRollout:
         if trigger:
             threading.Thread(target=self._refill, name="cloud-refill", daemon=True).start()
         if action is not None:
-            action = self._clamp(action)          # model-space bounds (guard) first
-            action = self._cal_inverse(action)    # then model -> Nori convention
+            model_action = self._clamp(action)    # model-space bounds (guard) first
+            action = self._cal_inverse(model_action)  # then model -> Nori convention
+            self._trace(state, model_action, action)
             # Name-based map: action[i] is action_keys[i], which is built in the
             # model's canonical joint order (arm_keys) — so the RIGHT joint gets
             # the RIGHT value regardless of Nori's alphabetical telemetry sort.
@@ -410,6 +411,30 @@ class CloudRollout:
             raise CloudRolloutError(
                 f"endpoint still not serving after {WARMING_GRACE_S:.0f}s — treating as down")
         return {"action": None, "queue": qlen, "warming": True}
+
+    def _trace(self, state_nori, model_action, action_nori) -> None:
+        """Per-tick joint-level flight recorder (NORI_INFER_TRACE=<path>): one JSON
+        line per served action with the raw observed state, the state the model saw
+        (forward-calibrated), the model-space action, and the command sent to the
+        robot. This is the only ground truth for diagnosing live behavior — replay
+        cannot validate the calibration (the model echoes its input-state
+        convention), so post-run analysis of these lines is how a bad joint is
+        localised. Overhead: one small write per tick, only when enabled."""
+        path = os.environ.get("NORI_INFER_TRACE")
+        if not path:
+            return
+        try:
+            rec = {
+                "t": round(time.time(), 3),
+                "state": [round(float(s), 3) for s in state_nori],
+                "model_state": self._cal_forward([float(s) for s in state_nori]),
+                "model_action": [round(float(v), 3) for v in model_action],
+                "action": [round(float(v), 3) for v in action_nori],
+            }
+            with open(os.path.expanduser(path), "a") as f:
+                f.write(json.dumps(rec) + "\n")
+        except OSError:  # tracing must never break the control loop
+            pass
 
     def _cal_forward(self, state: list[float]) -> list[float]:
         """Nori state -> model convention (A*s + B)."""
@@ -562,8 +587,17 @@ class CloudRollout:
                 timeout=httpx.Timeout(ACT_TIMEOUT, connect=CONNECT_TIMEOUT),
                 limits=httpx.Limits(max_connections=4, max_keepalive_connections=4,
                                     keepalive_expiry=KEEPALIVE_EXPIRY_S),
+                # Send BOTH auth headers (INFERENCE_ENDPOINT_PLAN step 3):
+                # X-Nori-Token is the app-level credential the server checks
+                # first; Authorization stays for the Space-transition server. On
+                # a *protected* Inference Endpoint HF's edge requires an HF token
+                # in Authorization — set NORI_INFER_HF_TOKEN and it rides there
+                # (the app still authenticates via X-Nori-Token). Host-agnostic:
+                # NORI_INFER_URL stays the only switch.
                 headers={"Content-Type": "application/json",
-                         "Authorization": f"Bearer {self.token}"},
+                         "Authorization": "Bearer " + (
+                             os.environ.get("NORI_INFER_HF_TOKEN") or self.token),
+                         "X-Nori-Token": self.token},
             )
         return self._http
 
@@ -635,7 +669,27 @@ class CloudRollout:
             }
 
 
+def _edge_auth_headers() -> dict:
+    """Headers that pass BOTH gates on any host we serve from: an authenticated
+    Inference Endpoint's HF edge (Authorization must carry an HF token —
+    NORI_INFER_HF_TOKEN) and our app auth (X-Nori-Token). Harmless extras for
+    the public Space, which ignores headers on /health."""
+    hdrs = {}
+    tok = infer_token()
+    hf = os.environ.get("NORI_INFER_HF_TOKEN")
+    if hf or tok:
+        hdrs["Authorization"] = f"Bearer {hf or tok}"
+    if tok:
+        hdrs["X-Nori-Token"] = tok
+    return hdrs
+
+
 def health_check(endpoint: str, timeout: float = HEALTH_TIMEOUT) -> dict:
-    """GET /health (no auth). Wakes a sleeping Space and reports load status."""
-    with urllib.request.urlopen(f"{endpoint.rstrip('/')}/health", timeout=timeout) as r:
+    """GET /health. The SERVER needs no auth here, but an authenticated
+    Inference Endpoint 401s headerless requests at the EDGE before they reach
+    the server (the 2026-07-23 'unreachable: 401' load failure) — so send the
+    same dual headers the /act client uses."""
+    req = urllib.request.Request(f"{endpoint.rstrip('/')}/health",
+                                 headers=_edge_auth_headers())
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.load(r)

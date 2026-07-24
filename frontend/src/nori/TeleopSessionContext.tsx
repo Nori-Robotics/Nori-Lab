@@ -123,6 +123,15 @@ export interface TeleopSessionValue {
   // on purpose. Keyed so concurrent registrants can't clobber each other; always unregister in
   // an effect cleanup so a page that unmounts mid-run can't wedge the timer off forever.
   setSessionBusy: (key: string, busy: boolean) => void;
+  // Signal genuine operator presence from a surface the DOM-based idle timer can't observe —
+  // specifically the in-headset VR loop, whose WebXR controller input fires no pointer/key
+  // events. The VR page forwards real controller input here so an actively-driving operator
+  // isn't wrongly flagged idle and disconnected mid-drive.
+  noteActivity: () => void;
+  // Idle "Are you still there?" prompt state, surfaced so an immersive surface (VR) can mirror
+  // the countdown in-headset — the 2D dialog is invisible under an active WebXR session.
+  idlePromptOpen: boolean;
+  idleSecondsLeft: number;
 }
 
 const TeleopSessionContext = createContext<TeleopSessionValue | undefined>(undefined);
@@ -394,12 +403,16 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
     setSessionBusy,
+    noteActivity: idle.noteActivity,
+    idlePromptOpen: idle.promptOpen,
+    idleSecondsLeft: idle.secondsLeft,
   }), [
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
     recordState, connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
     setSessionBusy,
+    idle.noteActivity, idle.promptOpen, idle.secondsLeft,
   ]);
 
   return (

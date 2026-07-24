@@ -25,6 +25,7 @@ export default function VrLanding() {
     teleop, running, connecting, connState,
     settings, setSetting: set, connect, disconnect, appendLog, tel,
     setCurrentsListener, daemonStatus,
+    noteActivity, idlePromptOpen, idleSecondsLeft,
   } = useTeleopSession();
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -70,6 +71,13 @@ export default function VrLanding() {
   useEffect(() => {
     vrRef.current?.setMotorsOnline(!daemonStatus || daemonStatus.state === "online");
   }, [daemonStatus]);
+  // Mirror the app's idle "Are you still there?" countdown into the headset — the 2D dialog is
+  // invisible under an active WebXR session. Controller input feeds the same timer (onActivity
+  // below), so an actively-driving operator never reaches this; it only surfaces if they go
+  // genuinely still, and moving dismisses it.
+  useEffect(() => {
+    vrRef.current?.setIdlePrompt(idlePromptOpen, idleSecondsLeft);
+  }, [idlePromptOpen, idleSecondsLeft]);
 
   // Detect headset support once, and force a fresh clutch squeeze after any link drop (no snap).
   useEffect(() => { VrSession.isSupported().then(setXrSupported); }, []);
@@ -95,6 +103,9 @@ export default function VrLanding() {
       videoEl: videoRef.current,
       onLog: appendLog,
       onEnd: () => { setInVr(false); vrRef.current = null; },
+      // Real VR controller input keeps the idle-disconnect clock alive — WebXR input fires no DOM
+      // events, so without this an operator driving in-headset would be auto-disconnected as "idle".
+      onActivity: noteActivity,
       tuning: { sensitivity: settings.vrSensitivity, gripperOpenRate: settings.vrGripperOpen },
       // In-VR poke-panel changes persist here too, so this page's sliders stay in sync.
       onTuningChange: (t) => {
@@ -110,7 +121,7 @@ export default function VrLanding() {
       appendLog("enter VR failed: " + (e instanceof Error ? e.message : String(e)));
       vrRef.current = null;
     }
-  }, [teleop, appendLog, settings.vrSensitivity, settings.vrGripperOpen, set]);
+  }, [teleop, appendLog, settings.vrSensitivity, settings.vrGripperOpen, set, noteActivity]);
 
   const handleDisconnect = useCallback(async () => {
     await vrRef.current?.stop();

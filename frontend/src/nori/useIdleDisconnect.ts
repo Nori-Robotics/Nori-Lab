@@ -41,6 +41,11 @@ export interface IdleDisconnectState {
   secondsLeft: number;
   /** The operator answered "yes" — dismiss and restart the idle clock. */
   confirmPresent: () => void;
+  /** Register genuine presence from an input source this hook can't see via DOM events —
+   *  specifically the in-headset VR loop, whose WebXR controller input never surfaces as
+   *  pointer/key events. Stamps the idle clock and, if the prompt is already up, dismisses it
+   *  (so the operator doesn't have to find the 2D dialog button that's invisible in VR). */
+  noteActivity: () => void;
 }
 
 export function useIdleDisconnect({
@@ -71,6 +76,18 @@ export function useIdleDisconnect({
     deadlineRef.current = null;
     setPromptOpen(false);
     setSecondsLeft(Math.ceil(GRACE_MS / 1000));
+  }, []);
+
+  // Same effect as a DOM activity event (stamp the clock), plus: if the prompt is already up,
+  // real input answers it. Kept separate from confirmPresent only so the non-prompting common
+  // case — called ~once/second from the VR loop — touches no React state.
+  const noteActivity = useCallback(() => {
+    lastActivityRef.current = Date.now();
+    if (deadlineRef.current !== null) {
+      deadlineRef.current = null;
+      setPromptOpen(false);
+      setSecondsLeft(Math.ceil(GRACE_MS / 1000));
+    }
   }, []);
 
   // Stamp activity. Attached only while armed so an idle disconnected app costs nothing.
@@ -121,5 +138,5 @@ export function useIdleDisconnect({
     return () => clearInterval(id);
   }, [armed, busy]);
 
-  return { promptOpen, secondsLeft, confirmPresent };
+  return { promptOpen, secondsLeft, confirmPresent, noteActivity };
 }

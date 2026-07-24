@@ -428,9 +428,19 @@ const CommunityPublishCard = () => {
                   >
                     <h2 className="text-lg font-bold text-foreground">Publish to the community?</h2>
                     <p className="mt-2 text-sm text-muted-foreground">
-                      This makes your {kind === "policy" ? "policy" : "dataset"} — <span className="font-medium text-foreground">including all of its data</span> — public
-                      to everyone on the community marketplace: anyone can view, add it to their
-                      cloud, and {kind === "policy" ? "deploy" : "train on"} it.
+                      {kind === "policy" ? (
+                        <>
+                          This makes your policy — <span className="font-medium text-foreground">including all of its data</span> — public
+                          to everyone on the community marketplace: anyone can view, add it to their
+                          cloud, and deploy it.
+                        </>
+                      ) : (
+                        <>
+                          This makes your dataset — <span className="font-medium text-foreground">including all its video data</span> — public
+                          to everyone on the community marketplace. Human faces will be blurred, but
+                          otherwise anyone can view, add it to their cloud, and train on it.
+                        </>
+                      )}
                     </p>
                     <p className="mt-2 rounded-lg bg-secondary px-3 py-2 text-sm text-muted-foreground">
                       You can <span className="font-medium text-foreground">unpublish it at any time</span> — that takes the listing down

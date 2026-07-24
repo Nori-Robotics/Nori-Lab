@@ -460,3 +460,96 @@ def test_one_dead_port_does_not_blank_the_other(
     assert frame["leaders"]["right"]["visible"] == 0
     assert any("unreachable" in w for w in frame["warnings"])
     manager.close()
+
+
+def test_auto_save_preserves_other_side_when_one_arm_silent(
+    leader_cache: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The setup panel auto-runs detection on mount; a probe that catches only ONE
+    arm (the other still enumerating) must NOT collapse a saved two-port config."""
+    from lelab import nori_leader_setup as leader
+
+    leader.save_leader_ports(
+        leader.PortIdentity(device="/dev/ttyUSB0", serial_number="LEFT1"),
+        leader.PortIdentity(device="/dev/ttyUSB1", serial_number="RIGHT1"),
+    )
+    # Only the right arm's port answers this probe round.
+    identities = [leader.PortIdentity(device="/dev/ttyUSB1", serial_number="RIGHT1")]
+    monkeypatch.setattr(leader, "detect_serial_ports", lambda: identities)
+
+    def fake_probe(identity, **_kwargs):
+        hits = list(leader.RIGHT_LEADER_IDS)
+        return leader.PortProbe(
+            open_path=identity.device, identity=identity.to_json(),
+            expected_hits=hits, left_hits=[], right_hits=hits, all_hits=[],
+            can_left=False, can_right=True,
+        )
+
+    monkeypatch.setattr(leader, "probe_port", fake_probe)
+    result = leader.auto_save_detected_ports()
+    assert result["success"] is True
+    saved = leader.load_leader_ports()
+    assert saved["left"].open_path == "/dev/ttyUSB0"   # preserved, NOT clobbered
+    assert saved["right"].open_path == "/dev/ttyUSB1"
+
+
+def test_dead_port_bus_is_dropped_and_replug_recovers(
+    leader_cache: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A yanked cable's stale fd must be dropped (reads fail forever on it) and the
+    port reopened on replug — within the retry window the arm comes back."""
+    from lelab import nori_leader_setup as leader
+
+    leader.save_leader_ports(
+        leader.PortIdentity(device="/dev/ttyUSB0"),
+        leader.PortIdentity(device="/dev/ttyUSB1"),
+    )
+    monkeypatch.setattr(leader, "LIVE_PORT_RETRY_SEC", 0.0)
+    right_alive = {"open": True, "read": True}
+
+    class FakeBus:
+        def __init__(self, port: str, **_kwargs) -> None:
+            self.port = port
+
+        def open(self) -> None:
+            if self.port.endswith("USB1") and not right_alive["open"]:
+                raise OSError("no such device")
+
+        def close(self) -> None:
+            pass
+
+        def read_positions(self, motor_ids):
+            ids = tuple(motor_ids)
+            if self.port.endswith("USB1"):
+                if not right_alive["read"]:
+                    raise OSError("device disconnected")
+                return {m: 2000 + m for m in ids if m in leader.RIGHT_LEADER_IDS}
+            return {m: 2000 + m for m in ids if m in leader.LEFT_LEADER_IDS}
+
+    monkeypatch.setattr(leader, "SCSBus", FakeBus)
+    monkeypatch.setattr(leader, "load_leader_calibration", lambda _cid: {})
+    manager = leader.SharedLivePositionManager()
+
+    # Healthy: both arms.
+    f1 = manager.read(calibration_id="demo")
+    assert f1["leaders"]["left"]["visible"] == 6 and f1["leaders"]["right"]["visible"] == 6
+
+    # Yank right: read fails -> bus dropped, left keeps serving with a warning.
+    right_alive["read"] = False
+    right_alive["open"] = False
+    f2 = manager.read(calibration_id="demo")
+    assert f2["leaders"]["left"]["visible"] == 6
+    assert f2["leaders"]["right"]["visible"] == 0
+    assert any("unreachable" in w or "retry" in w for w in f2["warnings"])
+
+    # Replug right: fresh open succeeds -> right comes back (retry window is 0).
+    right_alive["open"] = True
+    right_alive["read"] = True
+    # right motors are in missing-backoff; step past it
+    manager._missing_until.clear()
+    manager._miss_counts.clear()
+    f3 = manager.read(calibration_id="demo")
+    assert f3["leaders"]["right"]["visible"] == 6
+    manager.close()

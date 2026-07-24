@@ -71,6 +71,10 @@ DEFAULT_CALIBRATION_ID = "nori_l2_dual_leader_dev"
 LIVE_READ_TIMEOUT = 0.012
 LIVE_MISSING_RETRY_BASE_SEC = 0.25
 LIVE_MISSING_RETRY_MAX_SEC = 1.0
+# How long to wait before re-attempting a leader port whose device couldn't be
+# opened / whose fd died (arm unplugged). Bounds per-frame open() churn while
+# keeping replug recovery near-instant.
+LIVE_PORT_RETRY_SEC = 1.0
 
 # All leader arms share ONE serial bus, and macOS happily opens the same /dev/cu.*
 # twice — two concurrent readers then split the reply bytes between their file
@@ -492,7 +496,25 @@ def auto_save_detected_ports() -> dict[str, Any]:
             "probes": all_json,
         }
     identity = PortIdentity.from_json(solo.identity)
-    return {"success": True, "ports": save_leader_ports(identity, identity), "probes": all_json}
+    # NON-DESTRUCTIVE fallback: the setup panel auto-runs detection on mount, so a
+    # one-arm probe (the other arm still enumerating / momentarily unplugged) must
+    # not collapse a saved TWO-PORT config back to single-port — that was the bug
+    # where plugging arms in one at a time left only the first one connected.
+    # Keep the absent side's previously saved port when it differs.
+    left_identity = right_identity = identity
+    try:
+        saved = load_leader_ports()
+        if left_probe is None and saved["left"].key != identity.key:
+            left_identity = saved["left"]
+        if right_probe is None and saved["right"].key != identity.key:
+            right_identity = saved["right"]
+    except RuntimeError:
+        pass  # nothing saved yet — plain single-arm setup
+    return {
+        "success": True,
+        "ports": save_leader_ports(left_identity, right_identity),
+        "probes": all_json,
+    }
 
 
 def _port_for_side(side: LeaderSide) -> str:
@@ -1280,6 +1302,7 @@ class SharedLivePositionManager:
         self._lock = threading.Lock()
         self._buses: dict[str, SCSBus] = {}          # open_path -> open bus
         self._port_ids: dict[str, tuple[int, ...]] = {}  # open_path -> motor IDs it serves
+        self._port_retry_at: dict[str, float] = {}   # open_path -> next (re)open attempt
         self._calibration_id: str | None = None
         self._calibration: dict[str, Any] = {}
         self._warnings: list[str] = []
@@ -1317,31 +1340,55 @@ class SharedLivePositionManager:
                 logger.debug("failed to close leader live bus", exc_info=True)
         self._buses = {}
         self._port_ids = {}
+        self._port_retry_at = {}
         self._calibration_id = None
         self._calibration = {}
         self._warnings = []
         self._missing_until = {}
         self._miss_counts = {}
 
-    def _ensure_open(self, side_ports: dict[LeaderSide, str], calibration_id: str) -> None:
+    def _drop_bus_unlocked(self, open_path: str, now: float) -> None:
+        """A port's fd went bad (cable yanked): close + forget it so the next read
+        re-opens a FRESH fd — a replugged device never answers on the old one."""
+        bus = self._buses.pop(open_path, None)
+        if bus is not None:
+            try:
+                bus.close()
+            except Exception:
+                logger.debug("failed to close dead leader bus %s", open_path, exc_info=True)
+        self._port_retry_at[open_path] = now + LIVE_PORT_RETRY_SEC
+
+    def _ensure_open(self, side_ports: dict[LeaderSide, str], calibration_id: str, now: float) -> list[str]:
+        """(Re)open buses for the wanted port->IDs mapping. PER-PORT fail-soft: one
+        missing/unopenable device (its arm unplugged) must not take down the other
+        port. Returns open-failure notes; raises only when NO port could be opened."""
         # port -> the IDs it serves (both sides' IDs when the ports collapse).
         wanted: dict[str, tuple[int, ...]] = {}
         for side, open_path in side_ports.items():
             wanted[open_path] = tuple(wanted.get(open_path, ())) + leader_ids(side)
-        if self._buses and self._port_ids == wanted and self._calibration_id == calibration_id:
-            return
-        self._close_unlocked()
-        self._load_calibration_unlocked(calibration_id)
-        try:
-            for open_path in wanted:
+        if self._port_ids != wanted or self._calibration_id != calibration_id:
+            self._close_unlocked()
+            self._load_calibration_unlocked(calibration_id)
+            self._port_ids = wanted
+            self._calibration_id = calibration_id
+        open_errors: list[str] = []
+        for open_path in wanted:
+            if open_path in self._buses:
+                continue
+            if self._port_retry_at.get(open_path, 0.0) > now:
+                open_errors.append(f"{open_path}: waiting to retry")
+                continue
+            try:
                 bus = SCSBus(open_path, timeout=LIVE_READ_TIMEOUT)
                 bus.open()
                 self._buses[open_path] = bus
-        except Exception:
-            self._close_unlocked()
-            raise
-        self._port_ids = wanted
-        self._calibration_id = calibration_id
+                self._port_retry_at.pop(open_path, None)
+            except Exception as exc:
+                self._port_retry_at[open_path] = now + LIVE_PORT_RETRY_SEC
+                open_errors.append(f"{open_path}: {exc}")
+        if not self._buses:
+            raise RuntimeError("; ".join(open_errors) or "no leader port could be opened")
+        return open_errors
 
     def _ids_for_live_read(self, candidate_ids: Iterable[int], now: float) -> tuple[int, ...]:
         healthy: list[int] = []
@@ -1380,48 +1427,59 @@ class SharedLivePositionManager:
     def read(self, *, port: str | None = None, calibration_id: str = DEFAULT_CALIBRATION_ID) -> dict[str, Any]:
         side_ports = self._resolve_side_ports(port)
         with self._lock:
-            try:
-                raw_positions: dict[int, int] = {}
-                attempted: list[int] = []
-                port_errors: list[str] = []
-                # _BUS_LOCK covers only the wire traffic and is released before
-                # observe_positions: manual sample() takes manual-lock -> _BUS_LOCK,
-                # so holding _BUS_LOCK while taking the manual lock would deadlock.
-                with _BUS_LOCK:
-                    self._ensure_open(side_ports, calibration_id)
-                    if not self._buses:
-                        raise RuntimeError("leader live reader failed to open")
-                    now = time.monotonic()
-                    for open_path, ids in self._port_ids.items():
-                        read_ids = self._ids_for_live_read(ids, now)
-                        if not read_ids:
-                            continue
-                        try:
-                            raw_positions.update(self._buses[open_path].read_positions(read_ids))
-                            attempted.extend(read_ids)
-                        except Exception as exc:
-                            # One dead cable must not blank the other arm: count its
-                            # motors missing (backoff) and keep serving the live port.
-                            attempted.extend(read_ids)
-                            port_errors.append(f"{open_path}: {exc}")
-                    if port_errors and len(port_errors) == len(self._port_ids):
-                        raise RuntimeError("; ".join(port_errors))
-                self._update_missing_backoff(attempted, raw_positions, now)
-                manual_manager.observe_positions(raw_positions)
-                frame = _format_shared_live_positions(
-                    raw_positions,
-                    port=", ".join(self._port_ids),
-                    calibration=self._calibration,
-                    warnings=self._warnings,
-                )
-                if port_errors:
-                    frame["warnings"] = list(frame["warnings"]) + [
-                        f"leader port unreachable: {err}" for err in port_errors
-                    ]
-                return frame
-            except Exception:
-                self._close_unlocked()
-                raise
+            raw_positions: dict[int, int] = {}
+            attempted: list[int] = []
+            port_errors: list[str] = []
+            # _BUS_LOCK covers only the wire traffic and is released before
+            # observe_positions: manual sample() takes manual-lock -> _BUS_LOCK,
+            # so holding _BUS_LOCK while taking the manual lock would deadlock.
+            with _BUS_LOCK:
+                now = time.monotonic()
+                try:
+                    port_errors.extend(self._ensure_open(side_ports, calibration_id, now))
+                except Exception:
+                    # NOTHING opened — the true disconnected state.
+                    self._close_unlocked()
+                    raise
+                for open_path, ids in self._port_ids.items():
+                    bus = self._buses.get(open_path)
+                    read_ids = self._ids_for_live_read(ids, now)
+                    if not read_ids:
+                        continue
+                    if bus is None:
+                        # Port not open this frame (unplugged / awaiting retry):
+                        # its motors count as missing so the backoff keeps their
+                        # retries cheap, and the frame carries a warning below.
+                        attempted.extend(read_ids)
+                        continue
+                    try:
+                        raw_positions.update(bus.read_positions(read_ids))
+                        attempted.extend(read_ids)
+                    except Exception as exc:
+                        # One dead cable must not blank the other arm — and a dead
+                        # fd must be DROPPED so a replug reopens fresh (the old fd
+                        # never answers again).
+                        attempted.extend(read_ids)
+                        port_errors.append(f"{open_path}: {exc}")
+                        self._drop_bus_unlocked(open_path, now)
+                if not self._buses:
+                    # Every port is now dead — surface the disconnected frame.
+                    errs = "; ".join(port_errors) or "all leader ports unreadable"
+                    self._close_unlocked()
+                    raise RuntimeError(errs)
+            self._update_missing_backoff(attempted, raw_positions, now)
+            manual_manager.observe_positions(raw_positions)
+            frame = _format_shared_live_positions(
+                raw_positions,
+                port=", ".join(self._port_ids),
+                calibration=self._calibration,
+                warnings=self._warnings,
+            )
+            if port_errors:
+                frame["warnings"] = list(frame["warnings"]) + [
+                    f"leader port unreachable: {err}" for err in port_errors
+                ]
+            return frame
 
 
 def _format_shared_live_positions(

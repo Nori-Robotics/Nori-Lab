@@ -56,8 +56,14 @@ export interface CloudParams {
   instruction: string;
   numSteps?: number;
   views?: string[];
-  /** Which arm a single-arm VLA drives; omit to use the server default (NORI_INFER_ARM). */
-  arm?: "left" | "right";
+  /** Which arm a single-arm VLA drives, or "both": two per-arm endpoint
+   *  sessions merged into one bimanual command (each arm sees its own wrist +
+   *  the overhead). Omit to use the server default (NORI_INFER_ARM). */
+  arm?: "left" | "right" | "both";
+  /** Per-arm task overrides for arm="both" (the arms usually do different
+   *  things); either falls back to `instruction`. */
+  instructionLeft?: string;
+  instructionRight?: string;
   /** Safety dry-run: compute + log actions each tick but send NOTHING to the robot.
    *  Use for the first on-hardware check — watch the predicted joint targets before
    *  letting an unproven cloud policy actually drive the arm. */
@@ -186,6 +192,8 @@ export class PolicyRunner {
           ? {
               provider: "cloud",
               instruction: cloud.instruction,
+              instruction_left: cloud.instructionLeft || null,
+              instruction_right: cloud.instructionRight || null,
               num_steps: cloud.numSteps ?? null,
               views: cloud.views ?? null,
               arm: cloud.arm ?? null,

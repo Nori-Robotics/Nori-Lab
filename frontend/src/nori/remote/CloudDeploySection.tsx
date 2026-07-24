@@ -26,7 +26,11 @@ export function CloudDeploySection() {
   const { toast } = useToast();
 
   const [instruction, setInstruction] = useState("");
-  const [arm, setArm] = useState<"left" | "right">("left");
+  const [arm, setArm] = useState<"left" | "right" | "both">("left");
+  // arm="both": optional per-arm task overrides (each falls back to the main
+  // task) — two per-arm model sessions merged into one bimanual command.
+  const [instructionLeft, setInstructionLeft] = useState("");
+  const [instructionRight, setInstructionRight] = useState("");
   // Default to observe-only: an unproven cloud policy should NOT drive the arm on
   // its first run — watch the predicted targets in the console first, then untick.
   const [observeOnly, setObserveOnly] = useState(true);
@@ -53,6 +57,8 @@ export function CloudDeploySection() {
       await runner.start(teleop, CLOUD_REF, undefined, {
         instruction: instruction.trim(),
         arm,
+        instructionLeft: arm === "both" ? instructionLeft.trim() || undefined : undefined,
+        instructionRight: arm === "both" ? instructionRight.trim() || undefined : undefined,
         observeOnly,
         // The session room IS the paired robot's serial (room-token retirement).
         // Present -> policyRun arms the full-quality policy stream; absent ->
@@ -66,7 +72,7 @@ export function CloudDeploySection() {
         variant: "destructive",
       });
     }
-  }, [baseUrl, teleop, instruction, arm, observeOnly, settings.room, toast]);
+  }, [baseUrl, teleop, instruction, arm, instructionLeft, instructionRight, observeOnly, settings.room, toast]);
 
   const stop = useCallback(() => void runnerRef.current?.stop(), []);
 
@@ -80,7 +86,9 @@ export function CloudDeploySection() {
       </div>
       <p className="text-xs leading-relaxed text-nori-h6f6858">
         Runs a remote vision-language model. Type a task, pick the arm, and it drives that arm from
-        the cloud (the other arm is held). Experimental — validate behavior before trusting it.
+        the cloud (the other arm is held). Pick <span className="font-semibold">both</span> to run one
+        model session per arm, merged into a bimanual command — optionally give each arm its own task.
+        Experimental — validate behavior before trusting it.
       </p>
 
       <input
@@ -92,10 +100,31 @@ export function CloudDeploySection() {
         className="w-full rounded-md border border-nori-h14131a/15 bg-white/70 dark:bg-white/10 px-3 py-1.5 text-sm text-nori-h14131a placeholder:text-nori-h857b6b focus:outline-none focus:ring-1 focus:ring-nori-hb06a1c disabled:opacity-50"
       />
 
+      {arm === "both" && (
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+          <input
+            type="text"
+            value={instructionLeft}
+            disabled={busy}
+            onChange={(e) => setInstructionLeft(e.target.value)}
+            placeholder="Left arm task (optional — defaults to the task above)"
+            className="w-full rounded-md border border-nori-h14131a/15 bg-white/70 dark:bg-white/10 px-3 py-1.5 text-xs text-nori-h14131a placeholder:text-nori-h857b6b focus:outline-none focus:ring-1 focus:ring-nori-hb06a1c disabled:opacity-50"
+          />
+          <input
+            type="text"
+            value={instructionRight}
+            disabled={busy}
+            onChange={(e) => setInstructionRight(e.target.value)}
+            placeholder="Right arm task (optional — defaults to the task above)"
+            className="w-full rounded-md border border-nori-h14131a/15 bg-white/70 dark:bg-white/10 px-3 py-1.5 text-xs text-nori-h14131a placeholder:text-nori-h857b6b focus:outline-none focus:ring-1 focus:ring-nori-hb06a1c disabled:opacity-50"
+          />
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-nori-h6f6858">arm</span>
         <div className="flex gap-1.5">
-          {(["left", "right"] as const).map((a) => (
+          {(["left", "right", "both"] as const).map((a) => (
             <button
               key={a}
               type="button"

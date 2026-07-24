@@ -106,9 +106,11 @@ def cloud_session():
     views = ["observation.images.overhead"]
     roll = StubRoll()
     nr._session.clear()
-    nr._session.update({"mode": "cloud", "ref": "test", "cloud": roll,
-                        "views": views, "arm_keys": ["left_arm_shoulder_pan.pos"],
-                        "cam": None})
+    nr._session.update({"mode": "cloud", "ref": "test",
+                        "lanes": [{"arm": "left", "roll": roll, "views": list(views),
+                                   "arm_keys": ["left_arm_shoulder_pan.pos"],
+                                   "calibrated": False}],
+                        "views": views, "cam": None})
     yield views, roll
     nr._session.clear()
 

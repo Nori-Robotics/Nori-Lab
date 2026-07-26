@@ -1580,6 +1580,26 @@ def nori_recording_episodes(session_id: str, request: Request):
     return _nori_proxy(lambda: client.list_recording_episodes(session_id))
 
 
+class NoriEpisodeNameBody(BaseModel):
+    name: str = ""
+
+
+@app.patch("/nori/library/recordings/{session_id}/episode/{index}/name")
+def nori_name_recording_episode(session_id: str, index: int, body: NoriEpisodeNameBody,
+                                request: Request):
+    """Name/annotate one raw-recording episode ("" clears)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.name_recording_episode(session_id, index, body.name))
+
+
+@app.patch("/nori/datasets/{session_id}/episodes/{index}/name")
+def nori_name_dataset_episode(session_id: str, index: int, body: NoriEpisodeNameBody,
+                              request: Request):
+    """Name/annotate one episode of an assembled cloud dataset ("" clears)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.name_dataset_episode(session_id, index, body.name))
+
+
 class NoriJobNameBody(BaseModel):
     title: str | None = None
 

@@ -17,6 +17,9 @@ export interface DatasetEpisode {
   length: number;
   task: string;
   duration_s: number;
+  /** Operator's per-episode name/annotation ("" / absent when unnamed).
+   * Editable for cloud + raw sources; local datasets don't carry one. */
+  name?: string;
 }
 
 const base = (u: string) => u.replace(/\/$/, "");
@@ -134,6 +137,40 @@ export async function listRecordingEpisodes(
     fetcher,
     `/nori/library/recordings/${encodeURIComponent(sessionId)}/episodes`,
     { action: "List recording episodes" },
+  );
+}
+
+/** Name/annotate one raw-recording episode ("" clears). Stored beside the
+ * bundle on the backend, and carried into any dataset later assembled from it. */
+export async function nameRecordingEpisode(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string,
+  index: number,
+  name: string,
+): Promise<{ index: number; name: string }> {
+  return noriRequest<{ index: number; name: string }>(
+    baseUrl,
+    fetcher,
+    `/nori/library/recordings/${encodeURIComponent(sessionId)}/episode/${index}/name`,
+    { method: "PATCH", body: { name }, action: "Name episode" },
+  );
+}
+
+/** Name/annotate one episode of an assembled cloud dataset ("" clears).
+ * Sidecar metadata only — training data untouched; survives delete/renumber. */
+export async function nameCloudEpisode(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string,
+  index: number,
+  name: string,
+): Promise<{ episode_index: number; name: string }> {
+  return noriRequest<{ episode_index: number; name: string }>(
+    baseUrl,
+    fetcher,
+    `/nori/datasets/${encodeURIComponent(sessionId)}/episodes/${index}/name`,
+    { method: "PATCH", body: { name }, action: "Name episode" },
   );
 }
 

@@ -520,6 +520,24 @@ class NoriClient:
         proxied."""
         return self._request("GET", f"{API}/library/recordings/{session_id}/episodes")
 
+    def name_recording_episode(self, session_id: str, index: int, name: str) -> dict[str, Any]:
+        """PATCH /library/recordings/{session_id}/episode/{index}/name — set the
+        operator's per-episode annotation on a raw recording ("" clears). Stored
+        in the bundle's HF prefix, so it travels into assembly."""
+        return self._request(
+            "PATCH", f"{API}/library/recordings/{session_id}/episode/{index}/name",
+            json={"name": name},
+        )
+
+    def name_dataset_episode(self, session_id: str, index: int, name: str) -> dict[str, Any]:
+        """PATCH /datasets/{session_id}/episodes/{index}/name — set the operator's
+        per-episode annotation on an ASSEMBLED dataset ("" clears). Sidecar-only
+        (display/curation metadata; the training data is untouched)."""
+        return self._request(
+            "PATCH", f"{API}/datasets/{session_id}/episodes/{index}/name",
+            json={"name": name},
+        )
+
     # --- Recording -> dataset assembly (raw_bundle promotion) --------------
     def list_raw_bundles(self) -> dict[str, Any]:
         """GET /datasets/raw-bundles — the caller's robot recordings (raw_bundle

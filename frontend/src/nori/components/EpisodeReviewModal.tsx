@@ -12,7 +12,7 @@
 // Clips load lazily (only the ones you play are fetched/transcoded).
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, X, Play, Trash2, ChevronDown } from "lucide-react";
+import { Loader2, X, Play, Trash2, ChevronDown, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useApi } from "@/contexts/ApiContext";
 import { useNori } from "@/nori/NoriContext";
@@ -27,6 +27,8 @@ import {
   episodeThumbUrl,
   cloudEpisodeThumbUrl,
   recordingThumbUrl,
+  nameCloudEpisode,
+  nameRecordingEpisode,
   type DatasetEpisode,
 } from "@/nori/remote/episodeReview";
 import {
@@ -80,6 +82,13 @@ export function EpisodeReviewModal({
   const [sessionFilter, setSessionFilter] = useState<string | null>(null); // null = all sessions
   const [confirmSessionKey, setConfirmSessionKey] = useState<string | null>(null); // delete confirm
   const [rebuilding, setRebuilding] = useState(false); // a delete rebuild is running
+  // Per-episode name editing (cloud + raw only — local datasets carry no name).
+  const [editingName, setEditingName] = useState<number | null>(null);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
+  // Enter/Escape both unmount the input, which fires its blur — this ref keeps
+  // that trailing blur from double-saving (Enter) or saving a cancel (Escape).
+  const skipNameBlur = useRef(false);
   const cancelled = useRef(false);
   useEffect(() => () => {
     cancelled.current = true;
@@ -186,6 +195,39 @@ export function EpisodeReviewModal({
       n.has(i) ? n.delete(i) : n.add(i);
       return n;
     });
+
+  // Names are editable wherever the backend stores them: raw recordings (into
+  // the bundle, so assembly inherits the name) and assembled cloud datasets
+  // (provenance sidecar). Local lerobot-cache datasets have no name store.
+  const canName = source.kind !== "local";
+
+  const startNameEdit = (ep: DatasetEpisode) => {
+    skipNameBlur.current = false;
+    setEditingName(ep.index);
+    setNameDraft(ep.name ?? "");
+  };
+
+  const saveName = useCallback(
+    async (index: number) => {
+      if (source.kind === "local") return;
+      const name = nameDraft.trim();
+      setSavingName(true);
+      try {
+        if (source.kind === "raw") {
+          await nameRecordingEpisode(baseUrl, fetchWithHeaders, source.sessionId, index, name);
+        } else {
+          await nameCloudEpisode(baseUrl, fetchWithHeaders, source.sessionId, index, name);
+        }
+        setEpisodes((eps) => (eps ?? []).map((e) => (e.index === index ? { ...e, name } : e)));
+        setEditingName(null);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setSavingName(false);
+      }
+    },
+    [baseUrl, fetchWithHeaders, source, nameDraft],
+  );
 
   const doDelete = useCallback(async () => {
     if (source.kind === "cloud") {
@@ -411,8 +453,54 @@ export function EpisodeReviewModal({
                       )}
                     </div>
                     <div className="flex items-center justify-between gap-2 px-2.5 py-2">
-                      <div className="min-w-0">
-                        <p className="font-mono text-xs text-nori-h14131a">ep {ep.index}</p>
+                      <div className="min-w-0 flex-1">
+                        {editingName === ep.index ? (
+                          <input
+                            type="text"
+                            autoFocus
+                            value={nameDraft}
+                            maxLength={120}
+                            disabled={savingName}
+                            onChange={(e) => setNameDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                skipNameBlur.current = true;
+                                void saveName(ep.index);
+                              }
+                              if (e.key === "Escape") {
+                                skipNameBlur.current = true;
+                                setEditingName(null);
+                              }
+                            }}
+                            onBlur={() => {
+                              if (skipNameBlur.current) {
+                                skipNameBlur.current = false;
+                                return;
+                              }
+                              void saveName(ep.index);
+                            }}
+                            placeholder={`name ep ${ep.index}…`}
+                            className="w-full rounded-md border border-border bg-card px-1.5 py-0.5 text-xs text-nori-h14131a focus:outline-none focus:ring-1 focus:ring-nori-hb03a29 disabled:opacity-50"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={!canName}
+                            onClick={() => canName && startNameEdit(ep)}
+                            className="group/name flex w-full min-w-0 items-center gap-1 text-left disabled:pointer-events-none"
+                            title={canName ? "Name this episode" : undefined}
+                          >
+                            <p className="truncate font-mono text-xs text-nori-h14131a">
+                              ep {ep.index}
+                              {ep.name ? (
+                                <span className="font-sans font-medium"> · {ep.name}</span>
+                              ) : null}
+                            </p>
+                            {canName && (
+                              <Pencil className="h-3 w-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/name:opacity-100" />
+                            )}
+                          </button>
+                        )}
                         <p className="truncate text-[11px] text-muted-foreground">
                           {ep.duration_s}s · {ep.length}fr
                         </p>

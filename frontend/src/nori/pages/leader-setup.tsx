@@ -1,9 +1,12 @@
 // NORI: local-hardware setup page for Nori L2 dual leaders.
-// Supports BOTH topologies: the arms daisy-chained on one shared USB serial bus,
-// or one USB cable per arm (two ports — saved per side, read per side).
+// Every arm uses motor IDs 1-6; side comes ONLY from the saved port assignment.
+// Topologies: one USB cable per arm (two ports — saved per side, read per side)
+// or a single arm saved as both sides (shows as the left leader; solo routing
+// picks the follower).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ArrowLeftRight,
   Check,
   Crosshair,
   Gauge,
@@ -40,6 +43,7 @@ import {
   readLeaderLive,
   saveLeaderPorts,
   stopLeaderLive,
+  swapLeaderSides,
   type AutoStatus,
   type LeaderLiveResponse,
   type LeaderPortsResponse,
@@ -91,18 +95,16 @@ function sidePortFromResponse(response: LeaderPortsResponse, side: "left" | "rig
   return "";
 }
 
-/** Per-side saved ports from an auto-detect response. Identical strings = the
- * shared-bus (daisy-chain) topology; different = one USB cable per arm. */
+/** Per-side saved ports from an auto-detect/swap response. Identical strings =
+ * single-arm setup; different = one USB cable per arm. */
 function portsFromResponse(response: LeaderPortsResponse): { left: string; right: string } {
   let left = sidePortFromResponse(response, "left");
   let right = sidePortFromResponse(response, "right");
   if (!left && !right) {
-    // Prefer a full dual bus, but accept a bus with a single complete arm (can_left OR
-    // can_right) so one-arm setups auto-detect instead of reporting "not found".
-    const sharedProbe =
-      response.probes?.find((probe) => probe.can_left && probe.can_right) ??
-      response.probes?.find((probe) => probe.can_left || probe.can_right);
-    left = right = sharedProbe?.open_path ?? "";
+    // Fall back to any complete arm (all arms answer IDs 1-6 now, so a probe can
+    // only say "leader arm here", never which side).
+    const armProbe = response.probes?.find((probe) => probe.is_leader);
+    left = right = armProbe?.open_path ?? "";
   }
   return { left: left || right, right: right || left };
 }
@@ -114,8 +116,9 @@ function formatAge(timestamp: number | null): string {
   return `${Math.round(ageMs / 1000)}s`;
 }
 
-function jointId(side: LeaderSide, joint: string): number {
-  return JOINTS.indexOf(joint) + 1 + (side === "right" ? 6 : 0);
+function jointId(_side: LeaderSide, joint: string): number {
+  // Every arm uses motor IDs 1-6; side never shifts the ID range anymore.
+  return JOINTS.indexOf(joint) + 1;
 }
 
 function recordValue(record: Record<string, number> | undefined, id: number): number | null {
@@ -360,6 +363,21 @@ const LeaderSetup = ({
     }
     return response;
   }, [baseUrl, fetchWithHeaders]);
+
+  const swapSides = useCallback(async () => {
+    // All arms answer the same motor IDs (1-6), so auto-detect can only guess
+    // which cable is which side; this flips the guess (ports + calibration).
+    const response = await swapLeaderSides(
+      baseUrl,
+      fetchWithHeaders,
+      calibrationId.trim() || DEFAULT_CALIBRATION_ID
+    );
+    const detected = portsFromResponse(response);
+    if (detected.left && detected.left !== detected.right) {
+      setDualPorts(detected);
+    }
+    return response;
+  }, [baseUrl, calibrationId, fetchWithHeaders]);
 
   const refreshManualStatus = useCallback(async () => {
     const status = await getManualStatus(baseUrl, fetchWithHeaders);
@@ -644,10 +662,25 @@ const LeaderSetup = ({
               </Button>
             </div>
             {dualPorts && (
-              <p className="font-mono text-[11px] leading-relaxed text-nori-h5c564b">
-                one cable per arm · left <span className="text-nori-h2a6b33">{dualPorts.left}</span>
-                {" · "}right <span className="text-nori-h2a6b33">{dualPorts.right}</span>
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-mono text-[11px] leading-relaxed text-nori-h5c564b">
+                  one cable per arm · left <span className="text-nori-h2a6b33">{dualPorts.left}</span>
+                  {" · "}right <span className="text-nori-h2a6b33">{dualPorts.right}</span>
+                </p>
+                {/* Identical arms = identical IDs: detection guesses which cable is
+                    which side, so give the operator a one-tap way to flip it. */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => run("Swap sides", swapSides)}
+                  disabled={busy != null}
+                  className={`h-7 px-2 text-[11px] ${OUTLINE_BUTTON_CLASS}`}
+                  title="Wrong way round? Swap which arm is left and which is right (ports and calibration follow the arm)"
+                >
+                  <ArrowLeftRight className="mr-1.5 h-3.5 w-3.5" />
+                  swap sides
+                </Button>
+              </div>
             )}
             {noArmFound && !portReady && busy == null && (
               <p className="text-xs leading-relaxed text-nori-h8a5a12">

@@ -39,9 +39,13 @@ REG_LOCK = 55
 REG_TORQUE_ENABLE = 40
 REG_PRESENT_POSITION = 56
 
-LEFT_LEADER_IDS = (1, 2, 3, 4, 5, 6)
-RIGHT_LEADER_IDS = (7, 8, 9, 10, 11, 12)
-ALL_LEADER_IDS = LEFT_LEADER_IDS + RIGHT_LEADER_IDS
+# Every leader arm now ships with motor IDs 1-6 regardless of side. Which arm is
+# "left" vs "right" is decided ONLY by the saved per-side port assignment (see
+# auto_save_detected_ports / swap_leader_sides) — never by ID range. The old
+# scheme (right arm on 7-12) survives only as a legacy probe so an un-migrated
+# arm produces a clear "re-ID to 1-6" hint instead of silently not detecting.
+LEADER_ARM_IDS = (1, 2, 3, 4, 5, 6)
+LEGACY_RIGHT_LEADER_IDS = (7, 8, 9, 10, 11, 12)
 
 JOINT_LAYOUT: list[tuple[str, str, bool]] = [
     ("shoulder_pan", "M100_100", False),
@@ -106,8 +110,8 @@ def _checksum(parts: Iterable[int]) -> int:
     return (~sum(int(p) & 0xFF for p in parts)) & 0xFF
 
 
-def leader_ids(side: LeaderSide) -> tuple[int, ...]:
-    return LEFT_LEADER_IDS if side == "left" else RIGHT_LEADER_IDS
+def leader_ids(side: LeaderSide) -> tuple[int, ...]:  # noqa: ARG001 - side kept for call-site clarity
+    return LEADER_ARM_IDS
 
 
 def leader_joint_specs(side: LeaderSide) -> list[tuple[str, int, str, bool]]:
@@ -168,11 +172,13 @@ class PortProbe:
     open_path: str
     identity: dict[str, Any]
     expected_hits: list[int]
-    left_hits: list[int]
-    right_hits: list[int]
+    # Servos still answering the retired right-arm IDs 7-12: this arm predates the
+    # all-arms-are-1-6 convention and needs re-IDing before it can be detected.
+    legacy_hits: list[int]
     all_hits: list[int]
-    can_left: bool
-    can_right: bool
+    # A complete leader arm (all of IDs 1-6 answered). Side is unknowable from the
+    # wire — it comes from the saved port assignment.
+    is_leader: bool
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -341,8 +347,8 @@ _PORT_SKIP_TOKENS = ("bluetooth", "debug-console", "wlan", "airpod")
 # instead of blocklisting an open-ended set of Bluetooth names.
 _USB_SERIAL_TOKENS = ("usbmodem", "usbserial", "ttyusb", "ttyacm")
 
-# Hard cap per probed port. A silent-but-real USB serial port answers all 12 pings
-# well inside this; anything slower is not our bus and gets abandoned.
+# Hard cap per probed port. A silent-but-real USB serial port answers the probe
+# pings well inside this; anything slower is not our bus and gets abandoned.
 PROBE_TIMEOUT_SEC = 3.0
 
 
@@ -372,6 +378,7 @@ def probe_port(
     timeout_sec: float = PROBE_TIMEOUT_SEC,
 ) -> PortProbe:
     expected_hits: list[int] = []
+    legacy_hits: list[int] = []
     all_hits: list[int] = []
     if _is_probeable_port(identity):
         # Probe in a worker thread with a hard deadline: serial open() has no timeout
@@ -387,12 +394,18 @@ def probe_port(
                     if cancelled.is_set():
                         return
                     hits: list[int] = []
-                    for motor_id in ALL_LEADER_IDS:
+                    for motor_id in LEADER_ARM_IDS:
                         if cancelled.is_set():
                             return
                         if bus.ping(motor_id):
                             hits.append(motor_id)
                     result["expected"] = hits
+                    # Incomplete arm: also sweep the retired 7-12 range so a
+                    # not-yet-re-ID'd arm is reported as such instead of invisible.
+                    if len(hits) < len(LEADER_ARM_IDS) and not cancelled.is_set():
+                        result["legacy"] = [
+                            motor_id for motor_id in LEGACY_RIGHT_LEADER_IDS if bus.ping(motor_id)
+                        ]
                     if include_all and not cancelled.is_set():
                         result["all"] = scan_ids(bus)
             except Exception:
@@ -413,21 +426,18 @@ def probe_port(
                 if worker.is_alive():
                     cancelled.set()
                 expected_hits = list(result.get("expected", []))
+                legacy_hits = list(result.get("legacy", []))
                 all_hits = list(result.get("all", []))
         finally:
             if locked:
                 _BUS_LOCK.release()
-    left_hits = [motor_id for motor_id in expected_hits if motor_id in LEFT_LEADER_IDS]
-    right_hits = [motor_id for motor_id in expected_hits if motor_id in RIGHT_LEADER_IDS]
     return PortProbe(
         open_path=identity.open_path,
         identity=identity.to_json(),
         expected_hits=expected_hits,
-        left_hits=left_hits,
-        right_hits=right_hits,
+        legacy_hits=legacy_hits,
         all_hits=all_hits,
-        can_left=set(left_hits) == set(LEFT_LEADER_IDS),
-        can_right=set(right_hits) == set(RIGHT_LEADER_IDS),
+        is_leader=set(expected_hits) == set(LEADER_ARM_IDS),
     )
 
 
@@ -466,55 +476,116 @@ def save_ports_from_paths(left_port: str, right_port: str | None = None) -> dict
 def auto_save_detected_ports() -> dict[str, Any]:
     probes = [probe_port(identity) for identity in detect_serial_ports()]
     all_json = [probe.to_json() for probe in probes]
-    # Topologies, in preference order:
-    #  1. SHARED BUS — both arms daisy-chained on one cable (one port answers all
-    #     12 IDs). The original Nori L2 wiring.
-    #  2. TWO PORTS — each arm on its own USB cable: one port answers the left IDs
-    #     (1-6), another the right IDs (7-12). Save each side's own port; the live
-    #     reader opens both.
-    #  3. SINGLE ARM — one 6-servo arm on one port (IDs 1-6 OR 7-12) drives
-    #     whichever robot side the operator selects downstream (solo routing).
-    shared = next((probe for probe in probes if probe.can_left and probe.can_right), None)
-    if shared is not None:
-        identity = PortIdentity.from_json(shared.identity)
-        return {"success": True, "ports": save_leader_ports(identity, identity), "probes": all_json}
+    # Every arm answers the SAME IDs (1-6), so a probe can say "this port has a
+    # leader arm" but never which side it is. Topologies:
+    #  * TWO ARMS — one USB cable per arm. Side assignment: keep whatever the
+    #    saved config already says about a known port (stable across replugs and
+    #    an operator's "Swap sides"); brand-new ports are dealt out in sorted
+    #    order — an arbitrary but deterministic guess the operator can flip.
+    #  * SINGLE ARM — one port saved for both sides; the live reader surfaces it
+    #    as the LEFT leader and solo routing picks the follower downstream.
+    arms = [probe for probe in probes if probe.is_leader]
+    if not arms:
+        message = "Could not find a leader arm on any USB bus"
+        legacy = sorted({motor_id for probe in probes for motor_id in probe.legacy_hits})
+        if legacy:
+            message += (
+                f" — found servos on retired IDs {legacy}: all arms now use IDs 1-6, "
+                "re-ID this arm before it can be detected"
+            )
+        return {"success": False, "message": message, "probes": all_json}
 
-    left_probe = next((probe for probe in probes if probe.can_left), None)
-    right_probe = next((probe for probe in probes if probe.can_right), None)
-    if left_probe is not None and right_probe is not None:
-        ports = save_leader_ports(
-            PortIdentity.from_json(left_probe.identity),
-            PortIdentity.from_json(right_probe.identity),
+    try:
+        saved: dict[LeaderSide, PortIdentity] | None = load_leader_ports()
+    except RuntimeError:
+        saved = None
+
+    if len(arms) >= 2:
+        by_key = {PortIdentity.from_json(probe.identity).key: probe for probe in arms}
+        chosen: dict[LeaderSide, PortIdentity] = {}
+        if saved is not None and saved["left"].key != saved["right"].key:
+            for side in ("left", "right"):
+                match = by_key.get(saved[side].key)
+                if match is not None:
+                    chosen[side] = PortIdentity.from_json(match.identity)
+        taken = {identity.key for identity in chosen.values()}
+        remaining = sorted(
+            (key for key in by_key if key not in taken),
         )
-        return {"success": True, "ports": ports, "probes": all_json}
-
-    solo = left_probe or right_probe
-    if solo is None:
-        return {
-            "success": False,
-            "message": "Could not find a leader arm on any USB bus",
+        guessed = False
+        for side in ("left", "right"):
+            if side not in chosen and remaining:
+                chosen[side] = PortIdentity.from_json(by_key[remaining.pop(0)].identity)
+                guessed = True
+        result: dict[str, Any] = {
+            "success": True,
+            "ports": save_leader_ports(chosen["left"], chosen["right"]),
             "probes": all_json,
         }
-    identity = PortIdentity.from_json(solo.identity)
-    # NON-DESTRUCTIVE fallback: the setup panel auto-runs detection on mount, so a
-    # one-arm probe (the other arm still enumerating / momentarily unplugged) must
-    # not collapse a saved TWO-PORT config back to single-port — that was the bug
-    # where plugging arms in one at a time left only the first one connected.
-    # Keep the absent side's previously saved port when it differs.
+        if guessed:
+            result["message"] = (
+                "Two leader arms found; sides were assigned by guess — if left and "
+                "right are reversed, use swap sides"
+            )
+        return result
+
+    identity = PortIdentity.from_json(arms[0].identity)
+    # NON-DESTRUCTIVE single-arm handling: the setup panel auto-runs detection on
+    # mount, so a one-arm probe (the other arm still enumerating / momentarily
+    # unplugged) must not collapse a saved TWO-PORT config. A known port keeps its
+    # saved side and the other side keeps its saved port; only a genuinely new
+    # arm falls through to the mirror (same port both sides) single-arm setup.
     left_identity = right_identity = identity
-    try:
-        saved = load_leader_ports()
-        if left_probe is None and saved["left"].key != identity.key:
-            left_identity = saved["left"]
-        if right_probe is None and saved["right"].key != identity.key:
+    if saved is not None and saved["left"].key != saved["right"].key:
+        if identity.key == saved["left"].key:
             right_identity = saved["right"]
-    except RuntimeError:
-        pass  # nothing saved yet — plain single-arm setup
+        elif identity.key == saved["right"].key:
+            left_identity = saved["left"]
     return {
         "success": True,
         "ports": save_leader_ports(left_identity, right_identity),
         "probes": all_json,
     }
+
+
+def _rehome_side_calibration(side_payload: dict[str, Any], side: LeaderSide) -> dict[str, Any]:
+    """Relabel a per-arm calibration payload as `side` (target names follow the label;
+    centers/ranges/ids stay with the physical arm)."""
+    out = dict(side_payload)
+    motors: dict[str, dict[str, Any]] = {}
+    for joint, cal in (side_payload.get("motors") or {}).items():
+        cal = dict(cal)
+        cal["target_name"] = leader_target_name(side, joint)
+        motors[joint] = cal
+    out["motors"] = motors
+    return out
+
+
+def swap_leader_sides(calibration_id: str = DEFAULT_CALIBRATION_ID) -> dict[str, Any]:
+    """Swap which physical arm is "left" vs "right".
+
+    With every arm on IDs 1-6 detection can only guess side assignment; this flips
+    the guess. Swaps the saved port assignment AND the per-side calibration payloads
+    (each physical arm keeps its own centers/ranges — only the side label moves)."""
+    saved = load_leader_ports()
+    ports = save_leader_ports(saved["right"], saved["left"])
+    calibration: dict[str, Any] | None = None
+    try:
+        payload = load_leader_calibration(calibration_id)
+    except RuntimeError:
+        payload = None
+    if payload is not None:
+        leaders = payload.get("leaders", {})
+        swapped: dict[str, Any] = {}
+        if "right" in leaders:
+            swapped["left"] = _rehome_side_calibration(leaders["right"], "left")
+        if "left" in leaders:
+            swapped["right"] = _rehome_side_calibration(leaders["left"], "right")
+        payload["leaders"] = swapped
+        write_leader_calibration(payload, calibration_id)
+        calibration = payload
+    shared_live_manager.invalidate_calibration()
+    return {"success": True, "ports": ports, "calibration": calibration}
 
 
 def _port_for_side(side: LeaderSide) -> str:
@@ -567,7 +638,9 @@ def identify_leader_motors(
     cycles: int = 1,
 ) -> dict[str, Any]:
     resolved = port or _port_for_side("left")
-    ids = range(1, 254) if all_ids else ALL_LEADER_IDS
+    # Diagnostics ping the legacy 7-12 range too, so an arm that predates the
+    # all-arms-are-1-6 convention shows up here instead of nowhere.
+    ids = range(1, 254) if all_ids else LEADER_ARM_IDS + LEGACY_RIGHT_LEADER_IDS
     snapshots: list[dict[int, bool]] = []
     with _BUS_LOCK, SCSBus(resolved) as bus:
         for _ in range(max(1, cycles)):
@@ -629,7 +702,7 @@ def _merge_side_calibration(
     # NOTE: callers must invoke shared_live_manager.invalidate_calibration() after
     # releasing their own locks (never from inside ManualCalibrationManager._lock —
     # live reads hold the shared lock and then take the manual lock via
-    # observe_positions, so the reverse order would deadlock).
+    # observe_live_positions, so the reverse order would deadlock).
     return payload
 
 
@@ -925,9 +998,18 @@ class ManualCalibrationManager:
             self._observe_positions_unlocked(positions)
             return {"success": True, "positions": positions, "session": session.to_json()}
 
-    def observe_positions(self, positions: dict[int, int]) -> None:
+    def observe_live_positions(self, side_positions: dict[str, dict[int, int]]) -> None:
+        """Feed shared-live-reader positions into an active session.
+
+        Positions arrive PER SIDE (both arms use IDs 1-6, so a flat id-keyed dict
+        would mix the two arms) — only the session's own side is observed."""
         with self._lock:
-            self._observe_positions_unlocked(positions)
+            session = self._session
+            if not session or not session.active:
+                return
+            positions = side_positions.get(session.side)
+            if positions:
+                self._observe_positions_unlocked(positions)
 
     def _observe_positions_unlocked(self, positions: dict[int, int]) -> None:
         session = self._session
@@ -973,7 +1055,7 @@ class ManualCalibrationManager:
                 "calibration": payload,
             }
         # Outside self._lock: the shared reader's lock ordering is shared->manual
-        # (via observe_positions), so taking it while holding the manual lock deadlocks.
+        # (via observe_live_positions), so taking it while holding the manual lock deadlocks.
         shared_live_manager.invalidate_calibration()
         return result
 
@@ -1187,15 +1269,16 @@ class AutoCalibrationManager:
         # updated_at, and the live view freezes on a stale frame.
         if not active:
             return None
-        raw_positions: dict[int, int] = {}
+        side_positions: dict[str, dict[int, int]] = {}
         for side, positions in positions_by_side.items():
             if side not in ("left", "right"):
                 continue
             joint_ids = expected_joint_ids(side)  # type: ignore[arg-type]
-            for joint, position in positions.items():
-                motor_id = joint_ids.get(joint)
-                if motor_id is not None:
-                    raw_positions[motor_id] = int(position)
+            side_positions[side] = {
+                joint_ids[joint]: int(position)
+                for joint, position in positions.items()
+                if joint in joint_ids
+            }
         try:
             calibration = load_leader_calibration(calibration_id)
         except RuntimeError:
@@ -1205,13 +1288,13 @@ class AutoCalibrationManager:
         # fall through to a real bus read that would interleave with — and corrupt —
         # the calibration traffic.
         frame = _format_shared_live_positions(
-            raw_positions,
+            side_positions,
             port=port or "",
             calibration=calibration,
             warnings=leader_calibration_warnings(calibration) if calibration else [],
         )
         frame["calibrating"] = True
-        if not raw_positions:
+        if not any(side_positions.values()):
             frame["connected"] = False
             frame["reason"] = "auto calibration in progress"
         return frame
@@ -1234,8 +1317,12 @@ class DualLeaderReader:
         self.left_bus = SCSBus(self.left_identity.open_path)
         self.left_bus.open()
         if self.shared_bus:
+            # Same port for both sides = single-arm mirror setup (all arms use IDs
+            # 1-6 now, so two arms can never share one bus).
             self.right_bus = self.left_bus
-            self.left_bus.disable_torque(self._side_ids("left") + self._side_ids("right"))
+            self.left_bus.disable_torque(
+                tuple(dict.fromkeys(self._side_ids("left") + self._side_ids("right")))
+            )
             return
         self.right_bus = SCSBus(self.right_identity.open_path)
         try:
@@ -1292,22 +1379,24 @@ def read_live_targets(calibration_id: str = DEFAULT_CALIBRATION_ID) -> dict[str,
 class SharedLivePositionManager:
     """Persistent live reader for UI telemetry.
 
-    Supports BOTH leader topologies: a shared bus (both arms daisy-chained on one
-    port — one open bus reads all 12 IDs) and two-port (each arm on its own USB
-    cable — one open bus per port, each reading only its own side's IDs). The
-    topology comes from the saved per-side ports; identical ports collapse to the
-    single shared bus."""
+    Every arm answers IDs 1-6, so positions are tracked PER PORT and mapped to
+    sides via the saved per-side port assignment: two-port (one arm per USB
+    cable — one open bus per port) or single-arm (both sides saved to the same
+    port — one bus, surfaced as the LEFT leader; solo routing picks the follower
+    downstream)."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._buses: dict[str, SCSBus] = {}          # open_path -> open bus
-        self._port_ids: dict[str, tuple[int, ...]] = {}  # open_path -> motor IDs it serves
+        self._port_sides: dict[str, tuple[LeaderSide, ...]] = {}  # open_path -> sides it serves
         self._port_retry_at: dict[str, float] = {}   # open_path -> next (re)open attempt
         self._calibration_id: str | None = None
         self._calibration: dict[str, Any] = {}
         self._warnings: list[str] = []
-        self._missing_until: dict[int, float] = {}
-        self._miss_counts: dict[int, int] = {}
+        # Missing-motor backoff keyed by (open_path, motor_id): the same ID exists
+        # on every port, so a bare ID would conflate the two arms.
+        self._missing_until: dict[tuple[str, int], float] = {}
+        self._miss_counts: dict[tuple[str, int], int] = {}
 
     def close(self) -> None:
         with self._lock:
@@ -1339,7 +1428,7 @@ class SharedLivePositionManager:
             except Exception:
                 logger.debug("failed to close leader live bus", exc_info=True)
         self._buses = {}
-        self._port_ids = {}
+        self._port_sides = {}
         self._port_retry_at = {}
         self._calibration_id = None
         self._calibration = {}
@@ -1359,17 +1448,17 @@ class SharedLivePositionManager:
         self._port_retry_at[open_path] = now + LIVE_PORT_RETRY_SEC
 
     def _ensure_open(self, side_ports: dict[LeaderSide, str], calibration_id: str, now: float) -> list[str]:
-        """(Re)open buses for the wanted port->IDs mapping. PER-PORT fail-soft: one
+        """(Re)open buses for the wanted port->sides mapping. PER-PORT fail-soft: one
         missing/unopenable device (its arm unplugged) must not take down the other
         port. Returns open-failure notes; raises only when NO port could be opened."""
-        # port -> the IDs it serves (both sides' IDs when the ports collapse).
-        wanted: dict[str, tuple[int, ...]] = {}
+        # port -> the sides it serves (both sides in the single-arm setup).
+        wanted: dict[str, tuple[LeaderSide, ...]] = {}
         for side, open_path in side_ports.items():
-            wanted[open_path] = tuple(wanted.get(open_path, ())) + leader_ids(side)
-        if self._port_ids != wanted or self._calibration_id != calibration_id:
+            wanted[open_path] = tuple(wanted.get(open_path, ())) + (side,)
+        if self._port_sides != wanted or self._calibration_id != calibration_id:
             self._close_unlocked()
             self._load_calibration_unlocked(calibration_id)
-            self._port_ids = wanted
+            self._port_sides = wanted
             self._calibration_id = calibration_id
         open_errors: list[str] = []
         for open_path in wanted:
@@ -1390,13 +1479,14 @@ class SharedLivePositionManager:
             raise RuntimeError("; ".join(open_errors) or "no leader port could be opened")
         return open_errors
 
-    def _ids_for_live_read(self, candidate_ids: Iterable[int], now: float) -> tuple[int, ...]:
+    def _ids_for_live_read(self, open_path: str, now: float) -> tuple[int, ...]:
         healthy: list[int] = []
         due_missing: list[int] = []
-        for motor_id in candidate_ids:
-            if self._missing_until.get(motor_id, 0.0) > now:
+        for motor_id in LEADER_ARM_IDS:
+            key = (open_path, motor_id)
+            if self._missing_until.get(key, 0.0) > now:
                 continue
-            if self._miss_counts.get(motor_id, 0) > 0:
+            if self._miss_counts.get(key, 0) > 0:
                 due_missing.append(motor_id)
             else:
                 healthy.append(motor_id)
@@ -1404,21 +1494,27 @@ class SharedLivePositionManager:
         # cannot spend the entire live-read budget timing out.
         return tuple(healthy + due_missing[:1])
 
-    def _update_missing_backoff(self, attempted_ids: Iterable[int], raw_positions: dict[int, int], now: float) -> None:
-        for motor_id in attempted_ids:
-            if motor_id in raw_positions:
-                self._miss_counts.pop(motor_id, None)
-                self._missing_until.pop(motor_id, None)
+    def _update_missing_backoff(
+        self,
+        attempted: Iterable[tuple[str, int]],
+        port_positions: dict[str, dict[int, int]],
+        now: float,
+    ) -> None:
+        for key in attempted:
+            open_path, motor_id = key
+            if motor_id in port_positions.get(open_path, {}):
+                self._miss_counts.pop(key, None)
+                self._missing_until.pop(key, None)
                 continue
-            misses = self._miss_counts.get(motor_id, 0) + 1
-            self._miss_counts[motor_id] = misses
+            misses = self._miss_counts.get(key, 0) + 1
+            self._miss_counts[key] = misses
             delay = min(LIVE_MISSING_RETRY_MAX_SEC, LIVE_MISSING_RETRY_BASE_SEC * (2 ** min(misses - 1, 3)))
-            self._missing_until[motor_id] = now + delay
+            self._missing_until[key] = now + delay
 
     def _resolve_side_ports(self, port: str | None) -> dict[LeaderSide, str]:
         # An explicit port pins BOTH sides to it (diagnostics / legacy callers);
         # otherwise each side reads from its own saved port (identical in the
-        # shared-bus topology, distinct in the two-cable topology).
+        # single-arm setup, distinct in the two-cable topology).
         if port:
             return {"left": port, "right": port}
         saved = load_leader_ports()
@@ -1427,11 +1523,11 @@ class SharedLivePositionManager:
     def read(self, *, port: str | None = None, calibration_id: str = DEFAULT_CALIBRATION_ID) -> dict[str, Any]:
         side_ports = self._resolve_side_ports(port)
         with self._lock:
-            raw_positions: dict[int, int] = {}
-            attempted: list[int] = []
+            port_positions: dict[str, dict[int, int]] = {}
+            attempted: list[tuple[str, int]] = []
             port_errors: list[str] = []
             # _BUS_LOCK covers only the wire traffic and is released before
-            # observe_positions: manual sample() takes manual-lock -> _BUS_LOCK,
+            # observe_live_positions: manual sample() takes manual-lock -> _BUS_LOCK,
             # so holding _BUS_LOCK while taking the manual lock would deadlock.
             with _BUS_LOCK:
                 now = time.monotonic()
@@ -1441,25 +1537,25 @@ class SharedLivePositionManager:
                     # NOTHING opened — the true disconnected state.
                     self._close_unlocked()
                     raise
-                for open_path, ids in self._port_ids.items():
+                for open_path in self._port_sides:
                     bus = self._buses.get(open_path)
-                    read_ids = self._ids_for_live_read(ids, now)
+                    read_ids = self._ids_for_live_read(open_path, now)
                     if not read_ids:
                         continue
                     if bus is None:
                         # Port not open this frame (unplugged / awaiting retry):
                         # its motors count as missing so the backoff keeps their
                         # retries cheap, and the frame carries a warning below.
-                        attempted.extend(read_ids)
+                        attempted.extend((open_path, motor_id) for motor_id in read_ids)
                         continue
                     try:
-                        raw_positions.update(bus.read_positions(read_ids))
-                        attempted.extend(read_ids)
+                        port_positions[open_path] = bus.read_positions(read_ids)
+                        attempted.extend((open_path, motor_id) for motor_id in read_ids)
                     except Exception as exc:
                         # One dead cable must not blank the other arm — and a dead
                         # fd must be DROPPED so a replug reopens fresh (the old fd
                         # never answers again).
-                        attempted.extend(read_ids)
+                        attempted.extend((open_path, motor_id) for motor_id in read_ids)
                         port_errors.append(f"{open_path}: {exc}")
                         self._drop_bus_unlocked(open_path, now)
                 if not self._buses:
@@ -1467,11 +1563,25 @@ class SharedLivePositionManager:
                     errs = "; ".join(port_errors) or "all leader ports unreadable"
                     self._close_unlocked()
                     raise RuntimeError(errs)
-            self._update_missing_backoff(attempted, raw_positions, now)
-            manual_manager.observe_positions(raw_positions)
+            self._update_missing_backoff(attempted, port_positions, now)
+            # Side mapping happens HERE, not on the wire: each side shows its own
+            # port's readings.
+            side_positions = {
+                side: port_positions.get(open_path, {})
+                for side, open_path in side_ports.items()
+            }
+            # Calibration observes BEFORE single-arm collapsing: a right-side
+            # manual session in the single-arm setup still needs the arm's data.
+            manual_manager.observe_live_positions(side_positions)
+            if side_ports["left"] == side_ports["right"]:
+                # ONE physical arm saved for both sides: it's a single arm, not
+                # two — surface it on the left panel only. Mirroring it onto both
+                # sides would read downstream as two connected leaders, disabling
+                # single-leader solo routing and driving both followers at once.
+                side_positions = {"left": side_positions["left"], "right": {}}
             frame = _format_shared_live_positions(
-                raw_positions,
-                port=", ".join(self._port_ids),
+                side_positions,
+                port=", ".join(self._port_sides),
                 calibration=self._calibration,
                 warnings=self._warnings,
             )
@@ -1483,7 +1593,7 @@ class SharedLivePositionManager:
 
 
 def _format_shared_live_positions(
-    raw_positions: dict[int, int],
+    side_positions: dict[str, dict[int, int]],
     *,
     port: str,
     calibration: dict[str, Any],
@@ -1493,8 +1603,9 @@ def _format_shared_live_positions(
     for side in ("left", "right"):
         side_motors: dict[str, Any] = {}
         side_cal = calibration.get("leaders", {}).get(side, {}).get("motors", {})
+        raw_by_id = side_positions.get(side, {})
         for joint, motor_id, _norm_mode, _circular in leader_joint_specs(side):  # type: ignore[arg-type]
-            raw = raw_positions.get(motor_id)
+            raw = raw_by_id.get(motor_id)
             cal = side_cal.get(joint)
             target = normalize_leader_raw(raw, cal) if raw is not None and cal else None
             side_motors[joint] = {

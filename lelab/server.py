@@ -64,6 +64,7 @@ from .nori_leader_setup import (
     save_ports_from_paths,
     set_connected_servo_id,
     set_direction as set_nori_leader_direction,
+    swap_leader_sides as swap_nori_leader_sides,
 )
 
 # Import our custom recording functionality
@@ -999,6 +1000,17 @@ def nori_leader_ports_auto_save():
 @app.post("/nori/leader/ports")
 def nori_leader_ports_save(body: NoriLeaderPortSaveBody):
     return _leader_guard(lambda: save_ports_from_paths(body.left_port, body.right_port))
+
+
+@app.post("/nori/leader/ports/swap")
+def nori_leader_ports_swap(calibration_id: str = DEFAULT_LEADER_CALIBRATION_ID):
+    # All arms carry IDs 1-6, so detection can only guess which port is which side;
+    # this flips the guess (ports AND per-side calibration payloads).
+    def run():
+        close_shared_live_reader()
+        return swap_nori_leader_sides(calibration_id)
+
+    return _leader_guard(run)
 
 
 @app.post("/nori/leader/set-id")

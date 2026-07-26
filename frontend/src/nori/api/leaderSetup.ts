@@ -7,11 +7,12 @@ export interface LeaderPortProbe {
   open_path: string;
   identity: Record<string, unknown>;
   expected_hits: number[];
-  left_hits: number[];
-  right_hits: number[];
+  /** Servos still on the retired right-arm IDs 7-12 (arm needs re-IDing to 1-6). */
+  legacy_hits: number[];
   all_hits: number[];
-  can_left: boolean;
-  can_right: boolean;
+  /** Complete arm: all of IDs 1-6 answered. Side comes from the saved port
+   * assignment — every arm answers the same IDs, so the wire can't tell. */
+  is_leader: boolean;
 }
 
 export interface LeaderPortsResponse {
@@ -95,6 +96,18 @@ export function saveLeaderPorts(
     method: "POST",
     body: { left_port: leftPort, right_port: rightPort || null },
     action: "Save leader ports",
+  });
+}
+
+export function swapLeaderSides(
+  baseUrl: string,
+  fetcher: Fetcher,
+  calibrationId?: string
+): Promise<LeaderPortsResponse> {
+  const query = calibrationId ? `?calibration_id=${encodeURIComponent(calibrationId)}` : "";
+  return apiRequest<LeaderPortsResponse>(baseUrl, fetcher, `/nori/leader/ports/swap${query}`, {
+    method: "POST",
+    action: "Swap leader sides",
   });
 }
 

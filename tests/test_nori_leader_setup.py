@@ -19,6 +19,8 @@ def leader_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_expected_leader_ids_and_targets() -> None:
     from lelab import nori_leader_setup as leader
 
+    # Every arm carries IDs 1-6 now — both sides expect the SAME ids; only the
+    # target names differ.
     assert leader.expected_joint_ids("left") == {
         "shoulder_pan": 1,
         "shoulder_lift": 2,
@@ -27,7 +29,7 @@ def test_expected_leader_ids_and_targets() -> None:
         "wrist_roll": 5,
         "gripper": 6,
     }
-    assert leader.expected_joint_ids("right")["shoulder_pan"] == 7
+    assert leader.expected_joint_ids("right") == leader.expected_joint_ids("left")
     assert leader.leader_target_name("left", "wrist_roll") == "left_arm_wrist_roll.pos"
     assert leader.leader_target_name("right", "gripper") == "right_arm_gripper.pos"
 
@@ -199,12 +201,11 @@ def test_read_shared_live_positions_maps_both_leaders(
             pass
 
         def read_positions(self, motor_ids):
-            assert tuple(motor_ids) == leader.ALL_LEADER_IDS
+            assert tuple(motor_ids) == leader.LEADER_ARM_IDS
             return {
                 1: 2058,
                 5: 2500,
-                7: 2048,
-                12: 3072,
+                6: 3072,
             }
 
     monkeypatch.setattr(leader, "SCSBus", FakeBus)
@@ -212,12 +213,15 @@ def test_read_shared_live_positions_maps_both_leaders(
 
     result = leader.read_shared_live_positions(port="/dev/ttyUSB0", calibration_id="demo")
 
+    # One pinned port = ONE physical arm: it surfaces as the LEFT leader only
+    # (mirroring onto both sides would read downstream as two connected leaders
+    # and break single-leader solo routing).
     assert result["port"] == "/dev/ttyUSB0"
-    assert result["leaders"]["left"]["visible"] == 2
-    assert result["leaders"]["right"]["visible"] == 2
+    assert result["leaders"]["left"]["visible"] == 3
+    assert result["leaders"]["right"]["visible"] == 0
     assert result["leaders"]["left"]["motors"]["shoulder_pan"]["target"] == pytest.approx(10 * 360 / 4095)
     assert result["leaders"]["left"]["motors"]["wrist_roll"]["raw"] == 2500
-    assert result["leaders"]["right"]["motors"]["gripper"]["target"] == 100
+    assert result["leaders"]["left"]["motors"]["gripper"]["target"] == 100
     leader.close_shared_live_reader()
 
 
@@ -239,7 +243,8 @@ def test_shared_live_reader_backs_off_missing_arm(monkeypatch: pytest.MonkeyPatc
         def read_positions(self, motor_ids):
             ids = tuple(motor_ids)
             calls.append(ids)
-            return {motor_id: 2000 + motor_id for motor_id in ids if motor_id in leader.LEFT_LEADER_IDS}
+            # Gripper (id 6) never answers — e.g. a broken servo on the chain.
+            return {motor_id: 2000 + motor_id for motor_id in ids if motor_id != 6}
 
     monkeypatch.setattr(leader, "SCSBus", FakeBus)
     monkeypatch.setattr(leader, "load_leader_calibration", lambda _calibration_id: {})
@@ -248,12 +253,62 @@ def test_shared_live_reader_backs_off_missing_arm(monkeypatch: pytest.MonkeyPatc
     first = manager.read(port="/dev/ttyUSB0", calibration_id="demo")
     second = manager.read(port="/dev/ttyUSB0", calibration_id="demo")
 
-    assert calls[0] == leader.ALL_LEADER_IDS
-    assert calls[1] == leader.LEFT_LEADER_IDS
-    assert first["leaders"]["left"]["visible"] == 6
+    assert calls[0] == leader.LEADER_ARM_IDS
+    # The missing motor is in backoff on the immediate next frame.
+    assert calls[1] == (1, 2, 3, 4, 5)
+    # A pinned single port is a single arm: left side only.
+    assert first["leaders"]["left"]["visible"] == 5
     assert first["leaders"]["right"]["visible"] == 0
-    assert second["leaders"]["left"]["visible"] == 6
+    assert second["leaders"]["left"]["visible"] == 5
     assert second["leaders"]["right"]["visible"] == 0
+
+
+def test_single_arm_right_session_still_observed_by_live_reads(
+    leader_cache: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Single-arm setup (same port both sides) surfaces as the LEFT leader in the
+    frame — but a RIGHT-side manual calibration session must still receive the
+    arm's live positions (observation happens before the left-only collapse)."""
+    from lelab import nori_leader_setup as leader
+
+    identity = leader.PortIdentity(device="/dev/ttyUSB0")
+    leader.save_leader_ports(identity, identity)
+
+    class FakeBus:
+        def __init__(self, port: str, **_kwargs) -> None:
+            pass
+
+        def open(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+        def read_positions(self, motor_ids):
+            return {m: 1500 + m for m in motor_ids}
+
+    monkeypatch.setattr(leader, "SCSBus", FakeBus)
+    monkeypatch.setattr(leader, "load_leader_calibration", lambda _cid: {})
+    session = leader.ManualSession(
+        id="demo",
+        side="right",
+        calibration_id="demo",
+        port_identity=identity,
+        ids=leader.LEADER_ARM_IDS,
+        center={1: 2048},
+        mins={1: 2048},
+        maxes={1: 2048},
+    )
+    monkeypatch.setattr(leader.manual_manager, "_session", session)
+    manager = leader.SharedLivePositionManager()
+
+    frame = manager.read(calibration_id="demo")
+
+    assert frame["leaders"]["left"]["visible"] == 6
+    assert frame["leaders"]["right"]["visible"] == 0
+    assert session.mins[1] == 1501  # right-side session observed the live read
+    manager.close()
 
 
 def test_manual_start_captures_center_and_initial_ranges(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -272,7 +327,7 @@ def test_manual_start_captures_center_and_initial_ranges(monkeypatch: pytest.Mon
             pass
 
         def ping(self, motor_id: int) -> bool:
-            return motor_id in leader.LEFT_LEADER_IDS
+            return motor_id in leader.LEADER_ARM_IDS
 
         def read_positions(self, motor_ids):
             return {motor_id: 2000 + motor_id for motor_id in motor_ids}
@@ -290,10 +345,13 @@ def test_manual_start_captures_center_and_initial_ranges(monkeypatch: pytest.Mon
     assert session["center"][1] == 2001
     assert session["mins"][5] == 2005
     assert session["maxes"][5] == 2005
-    assert disabled == [leader.LEFT_LEADER_IDS]
+    assert disabled == [leader.LEADER_ARM_IDS]
 
 
-def test_manual_manager_observes_live_positions_for_ranges() -> None:
+def test_manual_manager_observes_only_its_own_side() -> None:
+    """Both arms answer IDs 1-6, so live positions arrive PER SIDE — a left-side
+    session must never fold the right arm's identically-numbered motors into its
+    ranges."""
     from lelab import nori_leader_setup as leader
 
     manager = leader.ManualCalibrationManager()
@@ -302,21 +360,20 @@ def test_manual_manager_observes_live_positions_for_ranges() -> None:
         side="left",
         calibration_id="demo",
         port_identity=leader.PortIdentity(device="/dev/ttyUSB0"),
-        ids=leader.LEFT_LEADER_IDS,
+        ids=leader.LEADER_ARM_IDS,
         center={1: 2048, 2: 2048},
         mins={1: 2048, 2: 2048},
         maxes={1: 2048, 2: 2048},
     )
 
-    manager.observe_positions({1: 1800, 2: 2300, 7: 1000})
-    manager.observe_positions({1: 2200, 2: 1900})
+    manager.observe_live_positions({"left": {1: 1800, 2: 2300}, "right": {1: 100, 2: 3900}})
+    manager.observe_live_positions({"left": {1: 2200, 2: 1900}})
 
     session = manager.status()["session"]
-    assert session["mins"][1] == 1800
+    assert session["mins"][1] == 1800  # NOT the right arm's 100
     assert session["maxes"][1] == 2200
     assert session["mins"][2] == 1900
-    assert session["maxes"][2] == 2300
-    assert 7 not in session["mins"]
+    assert session["maxes"][2] == 2300  # NOT the right arm's 3900
 
 
 def test_auto_manager_live_frame_uses_position_callback_state() -> None:
@@ -339,53 +396,154 @@ def test_auto_manager_live_frame_uses_position_callback_state() -> None:
     assert frame["leaders"]["left"]["motors"]["wrist_roll"]["raw"] == 2500
 
 
+def _fake_arm_probe(leader, identity, *, complete: bool = True, legacy: list[int] | None = None):
+    hits = list(leader.LEADER_ARM_IDS) if complete else []
+    return leader.PortProbe(
+        open_path=identity.device,
+        identity=identity.to_json(),
+        expected_hits=hits,
+        legacy_hits=list(legacy or []),
+        all_hits=[],
+        is_leader=complete,
+    )
+
+
 def test_auto_save_pairs_two_single_arm_ports(
     leader_cache: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Each arm on its own USB cable: auto-detect must save DIFFERENT ports per
-    side (the regression: it saved the first arm's port for both sides, so only
-    the first-plugged arm ever connected)."""
+    side. Both arms answer the same IDs (1-6), so with nothing saved the sides
+    are dealt out deterministically (sorted) and flagged as a guess."""
     from lelab import nori_leader_setup as leader
 
-    ids_by_port = {
-        "/dev/ttyUSB0": list(leader.LEFT_LEADER_IDS),
-        "/dev/ttyUSB1": list(leader.RIGHT_LEADER_IDS),
-    }
     identities = [
-        leader.PortIdentity(device="/dev/ttyUSB0"),
         leader.PortIdentity(device="/dev/ttyUSB1"),
+        leader.PortIdentity(device="/dev/ttyUSB0"),
     ]
     monkeypatch.setattr(leader, "detect_serial_ports", lambda: identities)
-
-    def fake_probe(identity, **_kwargs):
-        hits = ids_by_port[identity.device]
-        return leader.PortProbe(
-            open_path=identity.device,
-            identity=identity.to_json(),
-            expected_hits=hits,
-            left_hits=[m for m in hits if m in leader.LEFT_LEADER_IDS],
-            right_hits=[m for m in hits if m in leader.RIGHT_LEADER_IDS],
-            all_hits=[],
-            can_left=set(hits) >= set(leader.LEFT_LEADER_IDS),
-            can_right=set(hits) >= set(leader.RIGHT_LEADER_IDS),
-        )
-
-    monkeypatch.setattr(leader, "probe_port", fake_probe)
+    monkeypatch.setattr(leader, "probe_port", lambda identity, **_kw: _fake_arm_probe(leader, identity))
 
     result = leader.auto_save_detected_ports()
     assert result["success"] is True
+    assert "swap sides" in result.get("message", "")
     saved = leader.load_leader_ports()
     assert saved["left"].open_path == "/dev/ttyUSB0"
     assert saved["right"].open_path == "/dev/ttyUSB1"
+
+
+def test_auto_save_keeps_saved_side_assignment(
+    leader_cache: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A saved (possibly operator-swapped) assignment must survive re-detection —
+    sorted order would put USB0 on the left, but the saved config says otherwise."""
+    from lelab import nori_leader_setup as leader
+
+    leader.save_leader_ports(
+        leader.PortIdentity(device="/dev/ttyUSB1", serial_number="ARM-B"),
+        leader.PortIdentity(device="/dev/ttyUSB0", serial_number="ARM-A"),
+    )
+    identities = [
+        leader.PortIdentity(device="/dev/ttyUSB0", serial_number="ARM-A"),
+        leader.PortIdentity(device="/dev/ttyUSB1", serial_number="ARM-B"),
+    ]
+    monkeypatch.setattr(leader, "detect_serial_ports", lambda: identities)
+    monkeypatch.setattr(leader, "probe_port", lambda identity, **_kw: _fake_arm_probe(leader, identity))
+
+    result = leader.auto_save_detected_ports()
+    assert result["success"] is True
+    assert "message" not in result  # nothing guessed
+    saved = leader.load_leader_ports()
+    assert saved["left"].serial_number == "ARM-B"
+    assert saved["right"].serial_number == "ARM-A"
+
+
+def test_auto_save_reports_legacy_ids(
+    leader_cache: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An arm still on the retired 7-12 IDs must produce a re-ID hint, not a bare
+    'no leader arm found'."""
+    from lelab import nori_leader_setup as leader
+
+    identities = [leader.PortIdentity(device="/dev/ttyUSB0")]
+    monkeypatch.setattr(leader, "detect_serial_ports", lambda: identities)
+    monkeypatch.setattr(
+        leader,
+        "probe_port",
+        lambda identity, **_kw: _fake_arm_probe(
+            leader, identity, complete=False, legacy=list(leader.LEGACY_RIGHT_LEADER_IDS)
+        ),
+    )
+
+    result = leader.auto_save_detected_ports()
+    assert result["success"] is False
+    assert "re-ID" in result["message"]
+    assert "1-6" in result["message"]
+
+
+def test_swap_leader_sides_swaps_ports_and_calibration(leader_cache: Path) -> None:
+    from lelab import nori_leader_setup as leader
+
+    leader.save_leader_ports(
+        leader.PortIdentity(device="/dev/ttyUSB0", serial_number="ARM-A"),
+        leader.PortIdentity(device="/dev/ttyUSB1", serial_number="ARM-B"),
+    )
+    payload = leader.empty_calibration_payload("demo")
+    payload["leaders"] = {
+        "left": {
+            "port": {"device": "/dev/ttyUSB0"},
+            "motors": {
+                "gripper": {
+                    "id": 6,
+                    "center_raw": 111,
+                    "norm_mode": "0_100",
+                    "circular": False,
+                    "direction": 1,
+                    "target_name": "left_arm_gripper.pos",
+                }
+            },
+        },
+        "right": {
+            "port": {"device": "/dev/ttyUSB1"},
+            "motors": {
+                "gripper": {
+                    "id": 6,
+                    "center_raw": 222,
+                    "norm_mode": "0_100",
+                    "circular": False,
+                    "direction": 1,
+                    "target_name": "right_arm_gripper.pos",
+                }
+            },
+        },
+    }
+    leader.write_leader_calibration(payload, "demo")
+
+    result = leader.swap_leader_sides("demo")
+
+    assert result["success"] is True
+    saved = leader.load_leader_ports()
+    assert saved["left"].serial_number == "ARM-B"
+    assert saved["right"].serial_number == "ARM-A"
+    calibration = leader.load_leader_calibration("demo")
+    # Each physical arm keeps its own numbers; only the side label + target move.
+    left_gripper = calibration["leaders"]["left"]["motors"]["gripper"]
+    right_gripper = calibration["leaders"]["right"]["motors"]["gripper"]
+    assert left_gripper["center_raw"] == 222
+    assert left_gripper["target_name"] == "left_arm_gripper.pos"
+    assert right_gripper["center_raw"] == 111
+    assert right_gripper["target_name"] == "right_arm_gripper.pos"
 
 
 def test_shared_live_reader_reads_both_ports(
     leader_cache: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Two-port topology: the live reader opens BOTH saved ports and reads each
-    side's IDs from its own bus, merging into one frame."""
+    """Two-port topology: the live reader opens BOTH saved ports, reads IDs 1-6
+    from each, and maps each port's readings to ITS side only (the two arms use
+    identical IDs — positions must never cross-contaminate)."""
     from lelab import nori_leader_setup as leader
 
     leader.save_leader_ports(
@@ -407,19 +565,22 @@ def test_shared_live_reader_reads_both_ports(
         def read_positions(self, motor_ids):
             ids = tuple(motor_ids)
             reads.setdefault(self.port, []).append(ids)
-            side_ids = leader.LEFT_LEADER_IDS if self.port.endswith("USB0") else leader.RIGHT_LEADER_IDS
-            return {m: 2000 + m for m in ids if m in side_ids}
+            base = 2000 if self.port.endswith("USB0") else 3000
+            return {m: base + m for m in ids}
 
     monkeypatch.setattr(leader, "SCSBus", FakeBus)
     monkeypatch.setattr(leader, "load_leader_calibration", lambda _cid: {})
     manager = leader.SharedLivePositionManager()
 
     frame = manager.read(calibration_id="demo")
-    # Each port was asked only for its OWN side's IDs, and both sides are visible.
-    assert reads["/dev/ttyUSB0"][0] == leader.LEFT_LEADER_IDS
-    assert reads["/dev/ttyUSB1"][0] == leader.RIGHT_LEADER_IDS
+    # Each port was asked for the full arm IDs, and each side shows only its own
+    # port's readings.
+    assert reads["/dev/ttyUSB0"][0] == leader.LEADER_ARM_IDS
+    assert reads["/dev/ttyUSB1"][0] == leader.LEADER_ARM_IDS
     assert frame["leaders"]["left"]["visible"] == 6
     assert frame["leaders"]["right"]["visible"] == 6
+    assert frame["leaders"]["left"]["motors"]["shoulder_pan"]["raw"] == 2001
+    assert frame["leaders"]["right"]["motors"]["shoulder_pan"]["raw"] == 3001
     manager.close()
 
 
@@ -474,19 +635,12 @@ def test_auto_save_preserves_other_side_when_one_arm_silent(
         leader.PortIdentity(device="/dev/ttyUSB0", serial_number="LEFT1"),
         leader.PortIdentity(device="/dev/ttyUSB1", serial_number="RIGHT1"),
     )
-    # Only the right arm's port answers this probe round.
+    # Only the right arm's port answers this probe round; its side is known from
+    # the saved assignment (all arms answer the same IDs).
     identities = [leader.PortIdentity(device="/dev/ttyUSB1", serial_number="RIGHT1")]
     monkeypatch.setattr(leader, "detect_serial_ports", lambda: identities)
+    monkeypatch.setattr(leader, "probe_port", lambda identity, **_kw: _fake_arm_probe(leader, identity))
 
-    def fake_probe(identity, **_kwargs):
-        hits = list(leader.RIGHT_LEADER_IDS)
-        return leader.PortProbe(
-            open_path=identity.device, identity=identity.to_json(),
-            expected_hits=hits, left_hits=[], right_hits=hits, all_hits=[],
-            can_left=False, can_right=True,
-        )
-
-    monkeypatch.setattr(leader, "probe_port", fake_probe)
     result = leader.auto_save_detected_ports()
     assert result["success"] is True
     saved = leader.load_leader_ports()
@@ -525,8 +679,8 @@ def test_dead_port_bus_is_dropped_and_replug_recovers(
             if self.port.endswith("USB1"):
                 if not right_alive["read"]:
                     raise OSError("device disconnected")
-                return {m: 2000 + m for m in ids if m in leader.RIGHT_LEADER_IDS}
-            return {m: 2000 + m for m in ids if m in leader.LEFT_LEADER_IDS}
+                return {m: 3000 + m for m in ids}
+            return {m: 2000 + m for m in ids}
 
     monkeypatch.setattr(leader, "SCSBus", FakeBus)
     monkeypatch.setattr(leader, "load_leader_calibration", lambda _cid: {})

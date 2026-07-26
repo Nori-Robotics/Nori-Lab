@@ -281,6 +281,16 @@ export function DatasetCaptureCard() {
                   Finish session
                 </Button>
               </div>
+              {/* Name the NEXT take before starting it (stays editable while
+                  recording and at review; Keep attaches it to that episode). */}
+              <input
+                type="text"
+                value={nameDraft}
+                maxLength={120}
+                onChange={(e) => setNameDraft(e.target.value)}
+                placeholder={`name the next take (optional) — e.g. "recover from slip", "cell B3"`}
+                className="w-full max-w-md rounded-md border border-nori-h14131a/15 bg-white/70 dark:bg-white/10 px-3 py-1.5 text-sm text-nori-h14131a placeholder:text-nori-h857b6b focus:outline-none focus:ring-1 focus:ring-nori-hb06a1c"
+              />
               <div className="flex flex-wrap items-center gap-2">
                 <Button onClick={startEpisode} disabled={busy || !connected}>
                   {busy ? "Starting…" : "Start episode"}
@@ -306,13 +316,28 @@ export function DatasetCaptureCard() {
 
           {/* ---- an episode is recording ---- */}
           {phase.kind === "recording" && (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button onClick={() => void stopEpisode()} variant="destructive" disabled={busy}>
-                {busy ? "Stopping…" : "Stop episode"}
-              </Button>
-              <span className="text-sm text-nori-h6f6858">
-                recording episode {episodeCount + 1} of “{task.trim() || "teleop session"}”
-              </span>
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button onClick={() => void stopEpisode()} variant="destructive" disabled={busy}>
+                  {busy ? "Stopping…" : "Stop episode"}
+                </Button>
+                <span className="text-sm text-nori-h6f6858">
+                  recording episode {episodeCount + 1} of “{task.trim() || "teleop session"}”
+                  {nameDraft.trim() && (
+                    <>
+                      {" "}· named <span className="font-medium text-nori-h14131a">{nameDraft.trim()}</span>
+                    </>
+                  )}
+                </span>
+              </div>
+              <input
+                type="text"
+                value={nameDraft}
+                maxLength={120}
+                onChange={(e) => setNameDraft(e.target.value)}
+                placeholder="name this take (optional)"
+                className="w-full max-w-md rounded-md border border-nori-h14131a/15 bg-white/70 dark:bg-white/10 px-3 py-1.5 text-sm text-nori-h14131a placeholder:text-nori-h857b6b focus:outline-none focus:ring-1 focus:ring-nori-hb06a1c"
+              />
             </div>
           )}
 

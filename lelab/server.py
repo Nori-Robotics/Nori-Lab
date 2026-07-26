@@ -51,6 +51,7 @@ from .jobs import (
 from .nori_client import ManifestError, NoriBackendError, NoriClient  # NORI: cloud API client
 from .nori_leader_setup import (
     DEFAULT_CALIBRATION_ID as DEFAULT_LEADER_CALIBRATION_ID,
+    assign_leader_ports as assign_nori_leader_ports,
     auto_manager as nori_leader_auto_manager,
     auto_save_detected_ports,
     close_shared_live_reader,
@@ -937,6 +938,12 @@ class NoriLeaderPortSaveBody(BaseModel):
     right_port: str | None = None
 
 
+class NoriLeaderAssignBody(BaseModel):
+    left_port: str
+    right_port: str
+    calibration_id: str = DEFAULT_LEADER_CALIBRATION_ID
+
+
 class NoriLeaderSetIdBody(BaseModel):
     target_id: int | None = None
     side: NoriLeaderSide | None = None
@@ -1000,6 +1007,18 @@ def nori_leader_ports_auto_save():
 @app.post("/nori/leader/ports")
 def nori_leader_ports_save(body: NoriLeaderPortSaveBody):
     return _leader_guard(lambda: save_ports_from_paths(body.left_port, body.right_port))
+
+
+@app.post("/nori/leader/ports/assign")
+def nori_leader_ports_assign(body: NoriLeaderAssignBody):
+    # Explicit "this arm is left, that arm is right" declaration (all arms answer
+    # IDs 1-6, so only the operator can say which is which). Calibration payloads
+    # follow their physical arm across the reassignment.
+    def run():
+        close_shared_live_reader()
+        return assign_nori_leader_ports(body.left_port, body.right_port, body.calibration_id)
+
+    return _leader_guard(run)
 
 
 @app.post("/nori/leader/ports/swap")

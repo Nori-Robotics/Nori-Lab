@@ -537,6 +537,102 @@ def test_swap_leader_sides_swaps_ports_and_calibration(leader_cache: Path) -> No
     assert right_gripper["target_name"] == "right_arm_gripper.pos"
 
 
+def test_assign_leader_ports_rehomes_calibration_by_arm(
+    leader_cache: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit assignment: the operator declares which port is which side; each
+    arm's calibration follows it (matched by serial via live port enumeration,
+    even when the caller passes bare device paths)."""
+    from lelab import nori_leader_setup as leader
+
+    identities = [
+        leader.PortIdentity(device="/dev/ttyUSB0", serial_number="ARM-A"),
+        leader.PortIdentity(device="/dev/ttyUSB1", serial_number="ARM-B"),
+    ]
+    monkeypatch.setattr(leader, "detect_serial_ports", lambda: identities)
+    leader.save_leader_ports(identities[0], identities[1])  # ARM-A left, ARM-B right
+    payload = leader.empty_calibration_payload("demo")
+    payload["leaders"] = {
+        "left": {
+            "port": identities[0].to_json(),
+            "motors": {
+                "gripper": {
+                    "id": 6,
+                    "center_raw": 111,
+                    "norm_mode": "0_100",
+                    "circular": False,
+                    "direction": 1,
+                    "target_name": "left_arm_gripper.pos",
+                }
+            },
+        },
+        "right": {
+            "port": identities[1].to_json(),
+            "motors": {
+                "gripper": {
+                    "id": 6,
+                    "center_raw": 222,
+                    "norm_mode": "0_100",
+                    "circular": False,
+                    "direction": 1,
+                    "target_name": "right_arm_gripper.pos",
+                }
+            },
+        },
+    }
+    leader.write_leader_calibration(payload, "demo")
+
+    # Operator declares the opposite: ARM-B (USB1) is left, ARM-A (USB0) is right.
+    result = leader.assign_leader_ports("/dev/ttyUSB1", "/dev/ttyUSB0", "demo")
+
+    assert result["success"] is True
+    saved = leader.load_leader_ports()
+    assert saved["left"].serial_number == "ARM-B"  # resolved from enumeration
+    assert saved["right"].serial_number == "ARM-A"
+    calibration = leader.load_leader_calibration("demo")
+    left_gripper = calibration["leaders"]["left"]["motors"]["gripper"]
+    right_gripper = calibration["leaders"]["right"]["motors"]["gripper"]
+    assert left_gripper["center_raw"] == 222  # ARM-B's numbers followed it to left
+    assert left_gripper["target_name"] == "left_arm_gripper.pos"
+    assert right_gripper["center_raw"] == 111
+    assert right_gripper["target_name"] == "right_arm_gripper.pos"
+
+
+def test_assign_leader_ports_keeps_calibration_for_unknown_port(
+    leader_cache: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Assigning a never-calibrated port to a side must not destroy that side's
+    existing calibration payload."""
+    from lelab import nori_leader_setup as leader
+
+    monkeypatch.setattr(leader, "detect_serial_ports", lambda: [])
+    payload = leader.empty_calibration_payload("demo")
+    payload["leaders"] = {
+        "left": {
+            "port": {"device": "/dev/ttyOLD", "serial_number": "GONE"},
+            "motors": {
+                "gripper": {
+                    "id": 6,
+                    "center_raw": 111,
+                    "norm_mode": "0_100",
+                    "circular": False,
+                    "direction": 1,
+                    "target_name": "left_arm_gripper.pos",
+                }
+            },
+        },
+    }
+    leader.write_leader_calibration(payload, "demo")
+
+    result = leader.assign_leader_ports("/dev/ttyNEW0", "/dev/ttyNEW1", "demo")
+
+    assert result["success"] is True
+    calibration = leader.load_leader_calibration("demo")
+    assert calibration["leaders"]["left"]["motors"]["gripper"]["center_raw"] == 111
+
+
 def test_shared_live_reader_reads_both_ports(
     leader_cache: Path,
     monkeypatch: pytest.MonkeyPatch,

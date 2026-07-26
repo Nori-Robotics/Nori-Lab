@@ -588,6 +588,77 @@ def swap_leader_sides(calibration_id: str = DEFAULT_CALIBRATION_ID) -> dict[str,
     return {"success": True, "ports": ports, "calibration": calibration}
 
 
+def assign_leader_ports(
+    left_port: str,
+    right_port: str,
+    calibration_id: str = DEFAULT_CALIBRATION_ID,
+) -> dict[str, Any]:
+    """Explicitly declare which arm (port) is "left" and which is "right".
+
+    Saves the assignment and re-homes any per-side calibration to FOLLOW its
+    physical arm: each new side takes the payload whose recorded port identity
+    matches the arm now assigned to it (centers/ranges travel with the arm; only
+    the side label and target names change). A side whose port has no recorded
+    calibration keeps whatever that side already had — assignment must never
+    silently destroy a calibration."""
+    # Resolve the given paths against live enumeration when possible so the saved
+    # identities carry serial numbers — recorded calibration port identities key
+    # on serials, and detection's stable-across-replug matching needs them too.
+    detected = detect_serial_ports()
+
+    def _resolve_identity(port: str) -> PortIdentity:
+        for identity in detected:
+            if port in (identity.device, identity.stable_path):
+                return identity
+        return PortIdentity(device=port, stable_path=_by_id_for_device(port))
+
+    left = _resolve_identity(left_port)
+    right = _resolve_identity(right_port)
+    ports = save_leader_ports(left, right)
+    calibration: dict[str, Any] | None = None
+    try:
+        payload = load_leader_calibration(calibration_id)
+    except RuntimeError:
+        payload = None
+    if payload is not None and not _same_serial_identity(left, right):
+        leaders = payload.get("leaders", {})
+
+        def _recorded_identity(side: LeaderSide) -> PortIdentity | None:
+            side_payload = leaders.get(side)
+            if not side_payload:
+                return None
+            port_json = side_payload.get("port")
+            return PortIdentity.from_json(port_json) if port_json else None
+
+        recorded = {side: _recorded_identity(side) for side in ("left", "right")}
+        rehomed: dict[str, Any] = {}
+        consumed: set[str] = set()
+        for side, identity in (("left", left), ("right", right)):
+            source = next(
+                (
+                    s
+                    for s in ("left", "right")
+                    if recorded[s] is not None and _same_serial_identity(recorded[s], identity)
+                ),
+                None,
+            )
+            if source is not None:
+                rehomed[side] = _rehome_side_calibration(leaders[source], side)  # type: ignore[arg-type]
+                consumed.add(source)
+        for side in ("left", "right"):
+            # Unknown port (or a legacy calibration file without port identities):
+            # keep the side's existing payload rather than dropping it — unless the
+            # matching pass moved it to the other side.
+            if side not in rehomed and side not in consumed and leaders.get(side):
+                rehomed[side] = leaders[side]
+        if rehomed != leaders:
+            payload["leaders"] = rehomed
+            write_leader_calibration(payload, calibration_id)
+        calibration = payload
+    shared_live_manager.invalidate_calibration()
+    return {"success": True, "ports": ports, "calibration": calibration}
+
+
 def _port_for_side(side: LeaderSide) -> str:
     return load_leader_ports()[side].open_path
 

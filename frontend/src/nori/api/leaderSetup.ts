@@ -99,6 +99,24 @@ export function saveLeaderPorts(
   });
 }
 
+export function assignLeaderSides(
+  baseUrl: string,
+  fetcher: Fetcher,
+  leftPort: string,
+  rightPort: string,
+  calibrationId?: string
+): Promise<LeaderPortsResponse> {
+  return apiRequest<LeaderPortsResponse>(baseUrl, fetcher, "/nori/leader/ports/assign", {
+    method: "POST",
+    body: {
+      left_port: leftPort,
+      right_port: rightPort,
+      ...(calibrationId ? { calibration_id: calibrationId } : {}),
+    },
+    action: "Assign leader sides",
+  });
+}
+
 export function swapLeaderSides(
   baseUrl: string,
   fetcher: Fetcher,

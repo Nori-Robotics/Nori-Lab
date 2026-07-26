@@ -6,7 +6,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeftRight,
   Check,
   Crosshair,
   Gauge,
@@ -40,10 +39,10 @@ import {
   manualCancel,
   manualFinish,
   manualStart,
+  assignLeaderSides,
   readLeaderLive,
   saveLeaderPorts,
   stopLeaderLive,
-  swapLeaderSides,
   type AutoStatus,
   type LeaderLiveResponse,
   type LeaderPortsResponse,
@@ -364,20 +363,28 @@ const LeaderSetup = ({
     return response;
   }, [baseUrl, fetchWithHeaders]);
 
-  const swapSides = useCallback(async () => {
-    // All arms answer the same motor IDs (1-6), so auto-detect can only guess
-    // which cable is which side; this flips the guess (ports + calibration).
-    const response = await swapLeaderSides(
-      baseUrl,
-      fetchWithHeaders,
-      calibrationId.trim() || DEFAULT_CALIBRATION_ID
-    );
-    const detected = portsFromResponse(response);
-    if (detected.left && detected.left !== detected.right) {
-      setDualPorts(detected);
-    }
-    return response;
-  }, [baseUrl, calibrationId, fetchWithHeaders]);
+  const assignSide = useCallback(
+    // Declare that the arm on `port` is `side`. All arms answer the same motor
+    // IDs (1-6), so only the operator can say which cable is which — the other
+    // detected cable takes the opposite side, and calibration follows each arm.
+    async (port: string, side: LeaderSide) => {
+      if (!dualPorts) return undefined;
+      const other = port === dualPorts.left ? dualPorts.right : dualPorts.left;
+      const response = await assignLeaderSides(
+        baseUrl,
+        fetchWithHeaders,
+        side === "left" ? port : other,
+        side === "left" ? other : port,
+        calibrationId.trim() || DEFAULT_CALIBRATION_ID
+      );
+      const detected = portsFromResponse(response);
+      if (detected.left && detected.left !== detected.right) {
+        setDualPorts(detected);
+      }
+      return response;
+    },
+    [baseUrl, calibrationId, dualPorts, fetchWithHeaders]
+  );
 
   const refreshManualStatus = useCallback(async () => {
     const status = await getManualStatus(baseUrl, fetchWithHeaders);
@@ -662,24 +669,47 @@ const LeaderSetup = ({
               </Button>
             </div>
             {dualPorts && (
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="font-mono text-[11px] leading-relaxed text-nori-h5c564b">
-                  one cable per arm · left <span className="text-nori-h2a6b33">{dualPorts.left}</span>
-                  {" · "}right <span className="text-nori-h2a6b33">{dualPorts.right}</span>
+              <div className="space-y-1">
+                {/* Identical arms = identical IDs: detection can only guess which
+                    cable is which side. Let the operator declare it per arm —
+                    tapping the other side reassigns (the second cable takes the
+                    opposite side, calibration follows each physical arm). */}
+                <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-nori-h7a7060">
+                  one cable per arm · tap to reassign
                 </p>
-                {/* Identical arms = identical IDs: detection guesses which cable is
-                    which side, so give the operator a one-tap way to flip it. */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => run("Swap sides", swapSides)}
-                  disabled={busy != null}
-                  className={`h-7 px-2 text-[11px] ${OUTLINE_BUTTON_CLASS}`}
-                  title="Wrong way round? Swap which arm is left and which is right (ports and calibration follow the arm)"
-                >
-                  <ArrowLeftRight className="mr-1.5 h-3.5 w-3.5" />
-                  swap sides
-                </Button>
+                {(["left", "right"] as const).map((side) => (
+                  <div key={side} className="flex items-center gap-2">
+                    <div className="inline-flex overflow-hidden rounded-md border border-nori-h14131a/15">
+                      {(["left", "right"] as const).map((choice) => (
+                        <button
+                          key={choice}
+                          type="button"
+                          disabled={busy != null}
+                          onClick={() => {
+                            if (choice !== side) {
+                              void run("Assign leader sides", () => assignSide(dualPorts[side], choice));
+                            }
+                          }}
+                          title={
+                            choice === side
+                              ? `This arm is the ${side} leader`
+                              : `Mark this arm as the ${choice} leader (the other cable becomes ${side})`
+                          }
+                          className={`px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                            choice === side
+                              ? "bg-nori-he4f3e2 text-nori-h2a6b33"
+                              : "bg-transparent text-nori-h7a7060 hover:text-nori-h14131a"
+                          }`}
+                        >
+                          {choice}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="font-mono text-[11px] leading-relaxed text-nori-h2a6b33">
+                      {dualPorts[side]}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
             {noArmFound && !portReady && busy == null && (

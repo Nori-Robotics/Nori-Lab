@@ -12,6 +12,7 @@
 // Clips load lazily (only the ones you play are fetched/transcoded).
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Loader2, X, Play, Trash2, ChevronDown, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useApi } from "@/contexts/ApiContext";
@@ -269,7 +270,9 @@ export function EpisodeReviewModal({
     (ep) => sessionFilter === null || episodeSessions[ep.index] === sessionFilter,
   );
 
-  return (
+  // Portaled to <body>: see ExportModal — the layout's animated page wrapper can
+  // become the containing block for position:fixed, leaving an undimmed strip.
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 backdrop-blur-sm"
       onClick={onClose}
@@ -561,6 +564,7 @@ export function EpisodeReviewModal({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

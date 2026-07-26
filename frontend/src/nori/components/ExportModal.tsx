@@ -11,6 +11,7 @@
 // can't set. To re-enable: add the CORS rule documented in the backend
 // src/storage/verify_aws_setup.py checklist, then restore the streaming path here.
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, Copy, Download, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useApi } from "@/contexts/ApiContext";
@@ -93,7 +94,12 @@ export function ExportModal({
     }
   }, [job]);
 
-  return (
+  // Portaled to <body>: the page content sits inside an animated wrapper
+  // (NoriLayout's page fade-in), and an animating transform turns that wrapper
+  // into the containing block for position:fixed — the overlay then starts at
+  // the wrapper's top instead of the viewport's, leaving an undimmed strip
+  // above it. From <body> the overlay always spans the real viewport.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="w-full max-w-md rounded-[20px] bg-card p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between">
@@ -153,6 +159,7 @@ export function ExportModal({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -3,6 +3,7 @@
 // append onto an existing one (joint contract enforced backend-side; a mismatch
 // surfaces as a job failure here).
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useApi } from "@/contexts/ApiContext";
@@ -87,7 +88,9 @@ export function AssembleModal({
 
   const running = phase === "running";
 
-  return (
+  // Portaled to <body>: see ExportModal — the layout's animated page wrapper can
+  // become the containing block for position:fixed, leaving an undimmed strip.
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onClick={onClose}
@@ -202,6 +205,7 @@ export function AssembleModal({
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

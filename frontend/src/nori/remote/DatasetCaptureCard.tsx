@@ -18,8 +18,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useApi } from "@/contexts/ApiContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { EphemeralEpisodeRecorder } from "@/nori/remote/episodePreview";
+import {
+  addPendingNames,
+  applyPendingNames,
+  pendingNameCount,
+} from "@/nori/remote/pendingEpisodeNames";
 
 type Phase =
   | { kind: "idle" }                              // no session
@@ -29,6 +35,7 @@ type Phase =
 
 export function DatasetCaptureCard() {
   const { teleop, running, connState, recordState } = useTeleopSession();
+  const { baseUrl, fetchWithHeaders } = useApi();
   const connected = running && connState === "connected";
 
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -39,6 +46,14 @@ export function DatasetCaptureCard() {
   const [episodeCount, setEpisodeCount] = useState(0);   // kept episodes this session
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  // Record-time episode names. The recorder wire has no name field, so names
+  // are held per kept episode and queued at Finish session; a background loop
+  // applies them to the uploaded recording (pendingEpisodeNames.ts).
+  const [nameDraft, setNameDraft] = useState("");
+  const namesRef = useRef<string[]>([]);          // per kept episode, this session
+  const sessionStartRef = useRef<string>("");     // ISO, session_start time
+  const [pendingSessions, setPendingSessions] = useState(() => pendingNameCount());
+  const [namesApplied, setNamesApplied] = useState(false);
 
   const previewRef = useRef<EphemeralEpisodeRecorder>(new EphemeralEpisodeRecorder());
 
@@ -70,6 +85,10 @@ export function DatasetCaptureCard() {
     if (!teleop) return;
     setEpisodeCount(0);
     setError(null);
+    namesRef.current = [];
+    setNameDraft("");
+    setNamesApplied(false);
+    sessionStartRef.current = new Date().toISOString();
     // Opens ONE robot session dir; every episode below goes into it and the whole
     // session ships as one bundle (W2.11 one-bundle-per-session).
     teleop.record("session_start", task.trim() || "teleop session");
@@ -79,8 +98,41 @@ export function DatasetCaptureCard() {
   const finishSession = useCallback(() => {
     // Close the robot session — it uploads (as one bundle) when the robot idles.
     teleop?.record("session_end");
+    // Queue any typed episode names; the poll below applies them once the
+    // bundle lands in My Stuff. The task stored MUST be the effective string
+    // sent to the robot (it's the match verifier).
+    addPendingNames({
+      startedAt: sessionStartRef.current,
+      task: task.trim() || "teleop session",
+      names: namesRef.current,
+    });
+    setPendingSessions(pendingNameCount());
     setPhase({ kind: "idle" });
-  }, [teleop]);
+  }, [teleop, task]);
+
+  // Apply pending record-time names whenever some exist: once now, then every
+  // 30 s while this page is open (the bundle uploads only after the robot goes
+  // idle, so this routinely completes minutes after Finish session).
+  useEffect(() => {
+    if (pendingSessions === 0) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const res = await applyPendingNames(baseUrl, fetchWithHeaders);
+        if (stop) return;
+        setPendingSessions(res.pending);
+        if (res.applied > 0) setNamesApplied(true);
+      } catch {
+        // Backend unreachable — leave pending; next tick retries.
+      }
+    };
+    void tick();
+    const iv = window.setInterval(() => void tick(), 30_000);
+    return () => {
+      stop = true;
+      window.clearInterval(iv);
+    };
+  }, [pendingSessions, baseUrl, fetchWithHeaders]);
 
   const startEpisode = useCallback(() => {
     if (!teleop || busy) return;
@@ -125,9 +177,13 @@ export function DatasetCaptureCard() {
 
   const keepEpisode = useCallback(() => {
     if (phase.kind === "review" && phase.url) URL.revokeObjectURL(phase.url);
+    // Names array stays parallel to KEPT episodes in order — push even when
+    // empty so later names land on the right episode index.
+    namesRef.current.push(nameDraft.trim());
+    setNameDraft("");
     setEpisodeCount((n) => n + 1);
     setPhase({ kind: "session" });
-  }, [phase]);
+  }, [phase, nameDraft]);
 
   const rejectEpisode = useCallback(() => {
     if (phase.kind !== "review") return;
@@ -138,6 +194,7 @@ export function DatasetCaptureCard() {
       // session yet (recorder.py _episode_discard).
       teleop?.record("episode_discard");
       if (phase.url) URL.revokeObjectURL(phase.url);
+      setNameDraft("");
       setPhase({ kind: "session" });
     } finally {
       setReviewBusy(false);
@@ -285,6 +342,14 @@ export function DatasetCaptureCard() {
                   )}
                 </div>
               )}
+              <input
+                type="text"
+                value={nameDraft}
+                maxLength={120}
+                onChange={(e) => setNameDraft(e.target.value)}
+                placeholder={`name this take (optional) — e.g. "recover from slip", "cell B3"`}
+                className="w-full max-w-md rounded-md border border-nori-h14131a/15 bg-white/70 dark:bg-white/10 px-3 py-1.5 text-sm text-nori-h14131a placeholder:text-nori-h857b6b focus:outline-none focus:ring-1 focus:ring-nori-hb06a1c"
+              />
               <div className="flex flex-wrap items-center gap-3">
                 <Button onClick={keepEpisode} disabled={reviewBusy}>
                   Keep
@@ -293,7 +358,8 @@ export function DatasetCaptureCard() {
                   Reject
                 </Button>
                 <span className="text-xs text-nori-h6f6858">
-                  Keep adds it to the session, reject deletes it.
+                  Keep adds it to the session, reject deletes it. The name shows up on the
+                  episode in My Stuff (it never becomes the task).
                 </span>
               </div>
             </div>
@@ -310,6 +376,16 @@ export function DatasetCaptureCard() {
             </p>
           )}
           {error && <p className="text-sm text-red-700">{error}</p>}
+          {pendingSessions > 0 && (
+            <p className="text-xs text-nori-h6f6858">
+              episode names from {pendingSessions} session{pendingSessions === 1 ? "" : "s"} will be
+              applied automatically when the recording uploads to My Stuff (keep this page open, or
+              name them later in Review episodes).
+            </p>
+          )}
+          {pendingSessions === 0 && namesApplied && (
+            <p className="text-xs text-nori-h6f6858">✓ episode names applied to the uploaded recording.</p>
+          )}
         </div>
       )}
     </div>

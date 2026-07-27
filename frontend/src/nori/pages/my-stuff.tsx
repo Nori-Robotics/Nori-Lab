@@ -632,7 +632,12 @@ const MyStuff = () => {
                       />
                     )}
                     <div className="min-w-0">
-                      <p className="text-base font-bold text-nori-h14131a">{b.label}</p>
+                      {/* Recordings rename through the same owner-scoped upload-label
+                          endpoint as datasets (raw bundles are upload sessions too). */}
+                      <EditableName
+                        value={b.label}
+                        onRename={(next) => onRenameUpload(b.session_id, next)}
+                      />
                       <p className="mt-0.5 text-sm text-muted-foreground">
                         {b.status === "PROMOTED" && b.finalized_at
                           ? `Uploaded ${shortDate(b.finalized_at)}`

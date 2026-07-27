@@ -6,9 +6,15 @@
 # Run with env MODEL_KIND matching the build arg (the arg only picks which
 # requirements file is installed; the env picks the adapter at boot).
 #
-# Base = the SAME proven torch stack as the Space (torch 2.5.1 + cu121); never
-# reinstall torch/torchvision/torchaudio on top (ABI break, see space/Dockerfile).
-FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime
+# Base per kind (BUILD_BASE arg):
+#   molmoact2 -> pytorch/pytorch:2.5.1-cuda12.1 (the proven Space stack; never
+#     reinstall torch/torchvision/torchaudio on top — ABI break, space/Dockerfile)
+#   pi05      -> python:3.12-slim (the pinned lerobot REQUIRES py>=3.12, which no
+#     pytorch/pytorch image ships; lerobot's own dep spec then installs the torch
+#     it wants — CUDA-bundled pip wheels, host driver via the endpoint runtime.
+#     This mirrors lelab's local venv, the combo the pi05 load path was proven on.)
+ARG BUILD_BASE=pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime
+FROM ${BUILD_BASE}
 
 ARG MODEL_KIND=molmoact2
 

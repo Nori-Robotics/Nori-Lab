@@ -16,9 +16,22 @@ import { useApi } from "@/contexts/ApiContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { PolicyRunner, type PolicyRunPhase } from "@/nori/remote/policyRun";
 
-// A cloud VLA isn't in the local policy cache; this sentinel ref is only used for
-// display/logging server-side — the actual endpoint comes from NORI_INFER_URL.
-const CLOUD_REF = "cloud:molmoact2";
+// A cloud VLA isn't in the local policy cache; this sentinel ref is only used
+// for display/logging server-side — the actual endpoint comes from
+// NORI_INFER_URL (or NORI_INFER_URL_<KIND> for non-default models).
+type CloudModel = "molmoact2" | "pi05";
+const MODEL_INFO: Record<CloudModel, { label: string; blurb: string }> = {
+  molmoact2: {
+    label: "MolmoAct2",
+    blurb:
+      "zero-shot single-arm VLA — pick an arm (or both: two per-arm sessions merged).",
+  },
+  pi05: {
+    label: "pi05",
+    blurb:
+      "your Nori finetune — a bimanual checkpoint drives BOTH arms natively in one session.",
+  },
+};
 
 export function CloudDeploySection() {
   const { baseUrl } = useApi();
@@ -26,6 +39,7 @@ export function CloudDeploySection() {
   const { toast } = useToast();
 
   const [instruction, setInstruction] = useState("");
+  const [model, setModel] = useState<CloudModel>("molmoact2");
   const [arm, setArm] = useState<"left" | "right" | "both">("left");
   // arm="both": optional per-arm task overrides (each falls back to the main
   // task) — two per-arm model sessions merged into one bimanual command.
@@ -54,11 +68,15 @@ export function CloudDeploySection() {
     const runner = runnerRef.current;
     runner.onPhase = setPhase;
     try {
-      await runner.start(teleop, CLOUD_REF, undefined, {
+      // Per-arm instruction overrides are a dual-lane (MolmoAct2) feature; a
+      // native-bimanual finetune plans both arms from the ONE instruction.
+      const perArm = arm === "both" && model === "molmoact2";
+      await runner.start(teleop, `cloud:${model}`, undefined, {
         instruction: instruction.trim(),
+        policyKind: model,
         arm,
-        instructionLeft: arm === "both" ? instructionLeft.trim() || undefined : undefined,
-        instructionRight: arm === "both" ? instructionRight.trim() || undefined : undefined,
+        instructionLeft: perArm ? instructionLeft.trim() || undefined : undefined,
+        instructionRight: perArm ? instructionRight.trim() || undefined : undefined,
         observeOnly,
         // The session room IS the paired robot's serial (room-token retirement).
         // Present -> policyRun arms the full-quality policy stream; absent ->
@@ -72,7 +90,7 @@ export function CloudDeploySection() {
         variant: "destructive",
       });
     }
-  }, [baseUrl, teleop, instruction, arm, instructionLeft, instructionRight, observeOnly, settings.room, toast]);
+  }, [baseUrl, teleop, instruction, model, arm, instructionLeft, instructionRight, observeOnly, settings.room, toast]);
 
   const stop = useCallback(() => void runnerRef.current?.stop(), []);
 
@@ -80,16 +98,38 @@ export function CloudDeploySection() {
     <div className="space-y-2 border-t border-nori-h14131a/10 pt-3">
       <div className="flex items-center gap-2">
         <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">
-          {"// cloud VLA (MolmoAct2)"}
+          {"// cloud VLA"}
         </span>
         {busy && <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-red-500" />}
       </div>
       <p className="text-xs leading-relaxed text-nori-h6f6858">
-        Runs a remote vision-language model. Type a task, pick the arm, and it drives that arm from
-        the cloud (the other arm is held). Pick <span className="font-semibold">both</span> to run one
-        model session per arm, merged into a bimanual command — optionally give each arm its own task.
-        Experimental — validate behavior before trusting it.
+        Runs a remote vision-language model. Type a task, pick the model and arm(s), and it drives
+        from the cloud. <span className="font-semibold">{MODEL_INFO[model].label}</span>:{" "}
+        {MODEL_INFO[model].blurb} Experimental — validate behavior before trusting it.
       </p>
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-nori-h6f6858">model</span>
+        <div className="flex gap-1.5">
+          {(Object.keys(MODEL_INFO) as CloudModel[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setModel(m);
+                // A bimanual pi05 finetune drives both arms — preselect it.
+                if (m === "pi05") setArm("both");
+              }}
+              className={`rounded-full px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors disabled:opacity-50 ${
+                model === m ? "bg-nori-hb06a1c text-white dark:text-neutral-900" : "bg-white/70 dark:bg-white/10 text-nori-h6f6858 hover:text-nori-h14131a"
+              }`}
+            >
+              {MODEL_INFO[m].label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <input
         type="text"
@@ -100,7 +140,7 @@ export function CloudDeploySection() {
         className="w-full rounded-md border border-nori-h14131a/15 bg-white/70 dark:bg-white/10 px-3 py-1.5 text-sm text-nori-h14131a placeholder:text-nori-h857b6b focus:outline-none focus:ring-1 focus:ring-nori-hb06a1c disabled:opacity-50"
       />
 
-      {arm === "both" && (
+      {arm === "both" && model === "molmoact2" && (
         <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
           <input
             type="text"

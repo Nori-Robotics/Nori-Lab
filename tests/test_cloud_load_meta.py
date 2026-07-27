@@ -35,8 +35,8 @@ def env(monkeypatch):
     (health payload) plus a capture slot for the CloudRollout kwargs."""
     cap: dict = {"health": {"status": "ready"}}
 
-    monkeypatch.setattr(rollout.cloudmod, "infer_url", lambda: "http://endpoint")
-    monkeypatch.setattr(rollout.cloudmod, "infer_token", lambda: "tok")
+    monkeypatch.setattr(rollout.cloudmod, "infer_url", lambda kind=None: "http://endpoint")
+    monkeypatch.setattr(rollout.cloudmod, "infer_token", lambda kind=None: "tok")
     monkeypatch.setattr(rollout.cloudmod, "health_check",
                         lambda ep, **k: cap["health"])
     monkeypatch.setattr(rollout.cloudmod, "load_calibration",

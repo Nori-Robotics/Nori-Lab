@@ -56,6 +56,10 @@ export interface CloudParams {
   instruction: string;
   numSteps?: number;
   views?: string[];
+  /** Which model family the endpoint must serve ("molmoact2" | "pi05" | …).
+   *  Routes lelab to the per-kind endpoint (NORI_INFER_URL_<KIND>) and makes
+   *  /load refuse a mismatched server. Omit = default endpoint (molmoact2). */
+  policyKind?: string;
   /** Which arm a single-arm VLA drives, or "both": two per-arm endpoint
    *  sessions merged into one bimanual command (each arm sees its own wrist +
    *  the overhead). Omit to use the server default (NORI_INFER_ARM). */
@@ -197,6 +201,7 @@ export class PolicyRunner {
               num_steps: cloud.numSteps ?? null,
               views: cloud.views ?? null,
               arm: cloud.arm ?? null,
+              policy_kind: cloud.policyKind ?? null,
             }
           : {}),
       }),

@@ -466,11 +466,14 @@ def _cloud_load(body: LoadBody) -> dict:
     """Set up a cloud-VLA rollout session: no local weights — just an endpoint,
     a bearer token, and a chunk queue. The browser loop is identical to the
     local path (it grabs the returned `image_keys` and POSTs /act each tick)."""
-    endpoint = cloudmod.infer_url()
-    token = cloudmod.infer_token()
+    requested_kind = (body.policy_kind or "").strip().lower() or None
+    endpoint = cloudmod.infer_url(requested_kind)
+    token = cloudmod.infer_token(requested_kind)
     if not endpoint:
-        raise HTTPException(status_code=503,
-                            detail="cloud inference not configured — set NORI_INFER_URL")
+        raise HTTPException(
+            status_code=503,
+            detail=("cloud inference not configured — set NORI_INFER_URL"
+                    + (f" or NORI_INFER_URL_{requested_kind.upper()}" if requested_kind else "")))
     if not token:
         raise HTTPException(status_code=503,
                             detail="cloud inference token missing — set NORI_INFER_TOKEN or ~/.nori_infer_token")
@@ -479,29 +482,11 @@ def _cloud_load(body: LoadBody) -> dict:
         raise HTTPException(status_code=422,
                             detail="a cloud VLA needs an instruction (natural-language task)")
     fps = body.fps if (body.fps and body.fps > 0) else _env_fps()
-    # Joint mapping: the model's 6-DoF output maps to ONE arm's keys, in the
-    # model's canonical order (arm_keys). arm="both" runs TWO independent lanes
-    # (one endpoint session per arm) merged into one command per tick. Validate
-    # the keys exist in the live session so a bimanual/single-arm or left/right
-    # mismatch fails at /load, not silently mid-rollout.
     arm = (body.arm or _env_arm()).strip().lower()
-    arms = ["left", "right"] if arm == "both" else [arm]
-    per_arm_keys: dict[str, list[str]] = {}
-    for a in arms:
-        try:
-            per_arm_keys[a] = cloudmod.arm_keys(a)
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
-    have = set(body.joints)
-    missing = [k for a in arms for k in per_arm_keys[a] if k not in have]
-    if missing:
-        raise HTTPException(
-            status_code=422,
-            detail=(f"cloud VLA drives the {arm!r} arm(s) but the session is missing "
-                    f"joint(s) {missing}. Session joints: {sorted(body.joints)}."),
-        )
     # Fail fast on an unreachable endpoint; a not-yet-"ready" Space is fine (this
     # also wakes a sleeping Space — refills retry until the model finishes loading).
+    # Health comes BEFORE joint scoping: the lane shape depends on the endpoint's
+    # declared action dimension (meta.dof).
     try:
         health = cloudmod.health_check(endpoint)
     except Exception as e:
@@ -515,7 +500,8 @@ def _cloud_load(body: LoadBody) -> dict:
         raise HTTPException(
             status_code=422,
             detail=(f"endpoint {endpoint} serves policy kind {endpoint_kind!r}, "
-                    f"but this load requested {body.policy_kind!r} — check NORI_INFER_URL"))
+                    f"but this load requested {body.policy_kind!r} — check NORI_INFER_URL"
+                    + (f"_{requested_kind.upper()}" if requested_kind else "")))
     # chunk_hz: the rate the chunk was AUTHORED at. meta wins; molmoact2 default
     # otherwise. pi05/groot endpoints MUST carry meta (their server always does).
     meta_chunk_hz = float(meta.get("chunk_hz") or 0.0) or cloudmod.MOLMOACT2_CHUNK_HZ
@@ -524,44 +510,101 @@ def _cloud_load(body: LoadBody) -> dict:
     # joint space — applying the molmoact2 calib would corrupt its actions.
     is_molmoact2 = endpoint_kind == "molmoact2"
     bounds = cloudmod.MOLMOACT2_BOUNDS if is_molmoact2 else None
-    # Dual-lane bimanual is a single-arm-VLA feature: two per-arm sessions of
-    # the SAME single-arm model. A Nori finetune drives its trained joints
-    # directly through one session — "both" is meaningless there.
-    if arm == "both" and not is_molmoact2:
+    dof = int(meta.get("dof") or 0)
+
+    # Lane shape (joint mapping):
+    #   * molmoact2 / 6-dim finetune — the model's 6-DoF output maps to ONE
+    #     arm's keys (arm_keys order); arm="both" runs TWO independent per-arm
+    #     lanes merged into one command per tick.
+    #   * 12-dim Nori finetune (pi05 trained on the bimanual dataset) — NATIVE
+    #     bimanual: ONE session sees full state and outputs all 12 joints
+    #     (left block then right, the fleet dataset convention). arm must be
+    #     "both"; a single arm is meaningless for a 12-dim checkpoint.
+    native_bimanual = (not is_molmoact2) and dof == 12
+    if native_bimanual and arm != "both":
         raise HTTPException(
             status_code=422,
-            detail=(f"arm='both' runs two per-arm lanes of a single-arm VLA "
-                    f"(molmoact2); endpoint serves {endpoint_kind!r} — load it "
-                    f"normally, it drives its trained joints in one session"))
+            detail=(f"this {endpoint_kind} checkpoint outputs 12 joints (native "
+                    f"bimanual) — it drives both arms in one session; use arm='both'"))
+    if arm == "both" and not is_molmoact2 and not native_bimanual:
+        if dof != 6:
+            raise HTTPException(
+                status_code=422,
+                detail=(f"endpoint serves {endpoint_kind!r} with action dim "
+                        f"{dof or 'unknown'} — arm='both' needs a 12-dim native-"
+                        f"bimanual finetune (one session) or a 6-dim single-arm "
+                        f"model (two per-arm lanes)"))
+    if native_bimanual:
+        lane_arms = ["both"]
+        per_arm_keys: dict[str, list[str]] = {
+            "both": cloudmod.arm_keys("left") + cloudmod.arm_keys("right")}
+    else:
+        lane_arms = ["left", "right"] if arm == "both" else [arm]
+        per_arm_keys = {}
+        for a in lane_arms:
+            try:
+                per_arm_keys[a] = cloudmod.arm_keys(a)
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail=str(e))
+    # Validate the keys exist in the live session so a bimanual/single-arm or
+    # left/right mismatch fails at /load, not silently mid-rollout.
+    have = set(body.joints)
+    missing = [k for a in lane_arms for k in per_arm_keys[a] if k not in have]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"cloud VLA drives the {arm!r} arm(s) but the session is missing "
+                    f"joint(s) {missing}. Session joints: {sorted(body.joints)}."),
+        )
     # Views. Single arm: caller/env choice, else the arm's wrist + overhead;
     # a Nori-finetune checkpoint may name its camera FEATURE KEYS in meta —
     # trust those when the caller didn't pick (MolmoAct2 meta lists ROLES, not
-    # keys). arm="both": each lane gets ITS OWN wrist + the shared overhead —
-    # one flat views list can't scope per lane, so explicit views are refused.
+    # keys). Native bimanual: ONE session — meta camera keys win, else both
+    # wrists + overhead. Dual-lane "both": each lane gets ITS OWN wrist + the
+    # shared overhead — one flat views list can't scope per lane, so explicit
+    # views are refused.
     explicit_views = body.views or _env_views()
-    if arm == "both":
+    meta_cams = [c for c in (meta.get("cameras") or []) if isinstance(c, str)]
+    meta_cam_keys = (meta_cams if meta_cams and all(
+        c.startswith("observation.images.") for c in meta_cams) else None)
+    if native_bimanual:
+        views = explicit_views or meta_cam_keys or [
+            "observation.images.left_wrist",
+            "observation.images.right_wrist",
+            "observation.images.overhead",
+        ]
+        lane_views = {"both": list(views)}
+    elif arm == "both":
         if explicit_views:
             raise HTTPException(
                 status_code=422,
                 detail=("views cannot be set with arm='both' (they are per-arm: "
                         "each lane sees its own wrist + overhead) — omit views"))
-        lane_views = {a: cloudmod.default_cloud_views(a) for a in arms}
+        lane_views = {a: cloudmod.default_cloud_views(a) for a in lane_arms}
     else:
         views = explicit_views or cloudmod.default_cloud_views(arm)
-        if not is_molmoact2 and not explicit_views:
-            meta_cams = [c for c in (meta.get("cameras") or []) if isinstance(c, str)]
-            if meta_cams and all(c.startswith("observation.images.") for c in meta_cams):
-                views = meta_cams
+        if not is_molmoact2 and not explicit_views and meta_cam_keys:
+            views = meta_cam_keys
         lane_views = {arm: list(views)}
     union_views: list[str] = []
-    for a in arms:
+    for a in lane_arms:
         for v in lane_views[a]:
             if v not in union_views:
                 union_views.append(v)
 
     # Per-arm instruction: instruction_left/right override the shared one (the
     # arms usually do DIFFERENT things — "hold the bowl" / "pick up the cup").
+    # A native-bimanual model plans BOTH arms from ONE instruction — per-arm
+    # overrides can't be honoured, so refuse them rather than silently drop one.
+    if native_bimanual and (body.instruction_left or body.instruction_right):
+        raise HTTPException(
+            status_code=422,
+            detail=("this checkpoint plans both arms from one instruction — use "
+                    "the shared instruction, not instruction_left/right"))
+
     def _instr(a: str) -> str:
+        if a == "both":
+            return instruction
         ov = body.instruction_left if a == "left" else body.instruction_right
         return (ov or instruction).strip()
 
@@ -572,7 +615,7 @@ def _cloud_load(body: LoadBody) -> dict:
     # round-trip can ~double under GPU contention — the watermark knob is the
     # lever if refills start missing the queue.
     lanes: list[dict] = []
-    for a in arms:
+    for a in lane_arms:
         calib = cloudmod.load_calibration(a) if is_molmoact2 else None
         roll = cloudmod.CloudRollout(
             endpoint=endpoint,

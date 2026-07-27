@@ -1,7 +1,7 @@
-# MODEL_KIND=pi05 — installed ON TOP OF pytorch/pytorch:2.5.1-cuda12.1.
-# Do NOT list torch/torchvision/torchaudio (base image ships the matched trio;
-# pip may still try to bump torch via lerobot's spec — if the resolver fights,
-# add --no-deps discipline or constrain to the base image's torch).
+# MODEL_KIND=pi05 — installed on python:3.12-slim (BUILD_BASE arg in the
+# Dockerfile): the pinned lerobot REQUIRES py>=3.12, which no pytorch/pytorch
+# base ships. torch arrives via lerobot's own dep spec (CUDA-bundled pip
+# wheels) — do NOT pin torch here unless lerobot's resolver fights.
 #
 # lerobot pinned to the SAME commit as lelab's pyproject so a checkpoint trained
 # through our pipeline loads with identical code. The [pi] extra pulls the pi05

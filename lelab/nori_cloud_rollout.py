@@ -242,9 +242,15 @@ def arm_keys(arm: str) -> list[str]:
     return [f"{a}_arm_{j}.pos" for j in MOLMOACT2_JOINTS]
 
 
-def infer_token() -> Optional[str]:
-    """Bearer token for /act. File first (matches ~/.nori_infer_token written by
-    the Space deploy), then env — so the token is never hardcoded or logged."""
+def infer_token(kind: Optional[str] = None) -> Optional[str]:
+    """Bearer token for /act. Per-kind env (NORI_INFER_TOKEN_PI05, …) wins so
+    endpoints with different tokens can coexist; then the shared file (matches
+    ~/.nori_infer_token written by the Space deploy), then the shared env — the
+    token is never hardcoded or logged."""
+    if kind:
+        tok = os.environ.get(f"NORI_INFER_TOKEN_{kind.strip().upper()}")
+        if tok:
+            return tok
     p = Path.home() / ".nori_infer_token"
     if p.is_file():
         tok = p.read_text().strip()
@@ -253,8 +259,16 @@ def infer_token() -> Optional[str]:
     return os.environ.get("NORI_INFER_TOKEN")
 
 
-def infer_url() -> Optional[str]:
-    """Base URL of the cloud inference server. Swap this to move HF -> AWS/Modal."""
+def infer_url(kind: Optional[str] = None) -> Optional[str]:
+    """Base URL of the cloud inference server. Swap this to move HF -> AWS/Modal.
+    One endpoint per model kind (INFERENCE_ENDPOINT_PLAN §B.4): a per-kind env
+    (NORI_INFER_URL_PI05, NORI_INFER_URL_GROOT, …) wins over the shared
+    NORI_INFER_URL, so /load {policy_kind:"pi05"} reaches the pi05 endpoint
+    while MolmoAct2 sessions keep the default."""
+    if kind:
+        url = os.environ.get(f"NORI_INFER_URL_{kind.strip().upper()}")
+        if url:
+            return url.rstrip("/")
     url = os.environ.get("NORI_INFER_URL")
     return url.rstrip("/") if url else None
 

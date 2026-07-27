@@ -48,8 +48,8 @@ class _FakeRollout:
 def env(monkeypatch):
     cap: dict = {"health": {"status": "ready"}, "rollouts": [], "calib_arms": []}
 
-    monkeypatch.setattr(rollout.cloudmod, "infer_url", lambda: "http://endpoint")
-    monkeypatch.setattr(rollout.cloudmod, "infer_token", lambda: "tok")
+    monkeypatch.setattr(rollout.cloudmod, "infer_url", lambda kind=None: "http://endpoint")
+    monkeypatch.setattr(rollout.cloudmod, "infer_token", lambda kind=None: "tok")
     monkeypatch.setattr(rollout.cloudmod, "health_check", lambda ep, **k: cap["health"])
 
     def fake_calib(arm):
@@ -122,11 +122,89 @@ def test_both_refuses_explicit_views(env):
     assert e.value.status_code == 422 and "per-arm" in e.value.detail
 
 
-def test_both_refuses_non_molmoact2_endpoint(env):
+def test_both_refuses_undeclared_dof_endpoint(env):
+    # A non-molmoact2 endpoint that declares no action dim: neither native
+    # bimanual (12) nor per-arm lanes (6) is provably right — refuse.
     env["health"] = {"status": "ready", "meta": {"kind": "pi05", "chunk_hz": 15}}
     with pytest.raises(HTTPException) as e:
         rollout._cloud_load(_body())
-    assert e.value.status_code == 422 and "single-arm" in e.value.detail
+    assert e.value.status_code == 422 and "action dim" in e.value.detail
+
+
+# ---- pi05 (Nori finetune) lane shapes -------------------------------------
+
+PI05_META = {"status": "ready",
+             "meta": {"kind": "pi05", "chunk_hz": 15, "horizon": 50, "dof": 12,
+                      "state_dim": 12,
+                      "cameras": [L_WRIST, R_WRIST, OVERHEAD]}}
+
+
+def test_pi05_native_bimanual_single_lane(env):
+    env["health"] = PI05_META
+    out = rollout._cloud_load(_body(ref="cloud:pi05", policy_kind="pi05"))
+    lanes = rollout._session["lanes"]
+    assert len(lanes) == 1 and lanes[0]["arm"] == "both"
+    # one session drives all 12 joints, left block then right
+    assert lanes[0]["arm_keys"] == LEFT_KEYS + RIGHT_KEYS
+    # camera keys come from the checkpoint's meta, in its order
+    assert lanes[0]["views"] == [L_WRIST, R_WRIST, OVERHEAD]
+    # no molmoact2 conventions on a Nori finetune
+    assert env["rollouts"][0].kw["calib"] is None
+    assert env["rollouts"][0].kw["bounds"] is None
+    assert env["rollouts"][0].kw["chunk_hz"] == 15
+    assert out["action_joints"] == LEFT_KEYS + RIGHT_KEYS and out["arm"] == "both"
+
+
+def test_pi05_native_refuses_single_arm(env):
+    env["health"] = PI05_META
+    with pytest.raises(HTTPException) as e:
+        rollout._cloud_load(_body(arm="left", policy_kind="pi05"))
+    assert e.value.status_code == 422 and "both" in e.value.detail
+
+
+def test_pi05_native_refuses_per_arm_instructions(env):
+    env["health"] = PI05_META
+    with pytest.raises(HTTPException) as e:
+        rollout._cloud_load(_body(policy_kind="pi05", instruction_left="hold the bowl"))
+    assert e.value.status_code == 422 and "one instruction" in e.value.detail
+
+
+def test_pi05_single_arm_finetune_dual_lanes(env):
+    # A 6-dim (single-arm) pi05 finetune behaves like molmoact2's dual lanes,
+    # minus the molmoact2 conventions (no bounds, no units calib).
+    env["health"] = {"status": "ready",
+                     "meta": {"kind": "pi05", "chunk_hz": 15, "dof": 6,
+                              "cameras": []}}
+    rollout._cloud_load(_body(policy_kind="pi05"))
+    lanes = rollout._session["lanes"]
+    assert [ln["arm"] for ln in lanes] == ["left", "right"]
+    assert all(r.kw["calib"] is None and r.kw["bounds"] is None
+               for r in env["rollouts"])
+    assert env["calib_arms"] == []   # molmoact2 units calib never consulted
+
+
+def test_pi05_native_act_serves_full_state(env):
+    env["health"] = PI05_META
+    rollout._cloud_load(_body(policy_kind="pi05"))
+    out = _act()
+    (imgs, state), = env["rollouts"][0].serve_calls
+    assert len(imgs) == 3 and len(state) == 12
+    assert out["action"] is not None and len(out["action"]) == 12
+
+
+def test_kind_scoped_endpoint_env(env, monkeypatch):
+    # policy_kind routes to NORI_INFER_URL_<KIND> via infer_url(kind) — verify
+    # the kind is actually passed through.
+    seen = {}
+
+    def url(kind=None):
+        seen["kind"] = kind
+        return "http://pi05-endpoint"
+
+    monkeypatch.setattr(rollout.cloudmod, "infer_url", url)
+    env["health"] = PI05_META
+    rollout._cloud_load(_body(policy_kind="pi05"))
+    assert seen["kind"] == "pi05"
 
 
 def test_both_requires_both_arms_joints(env):

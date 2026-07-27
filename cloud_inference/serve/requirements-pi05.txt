@@ -2,12 +2,14 @@
 # Dockerfile): the pinned lerobot REQUIRES py>=3.12, which no pytorch/pytorch
 # base ships.
 #
-# torch is PINNED to 2.5.1: letting lerobot's spec resolve torch pulled a
-# build whose CUDA runtime the endpoint L4s' driver can't init ("No
-# accelerated backend detected" -> silent CPU serving). 2.5.1's cu12 wheels
-# are the SAME CUDA family the proven molmoact2 image runs on this hardware.
-torch==2.5.1
-torchvision==0.20.1
+# torch is PINNED: letting lerobot's spec resolve torch pulled the newest
+# allowed build (2.10.x), whose CUDA runtime the endpoint L4s' driver can't
+# init ("No accelerated backend detected" -> silent CPU serving). lerobot
+# requires torch>=2.7,<2.11, so pin the OLDEST allowed: 2.7.1 ships cu126
+# wheels — the same CUDA-12 family the proven molmoact2 image (cu121) runs
+# on this exact hardware.
+torch==2.7.1
+torchvision==0.22.1
 #
 # lerobot pinned to the SAME commit as lelab's pyproject so a checkpoint trained
 # through our pipeline loads with identical code. The [pi] extra pulls the pi05

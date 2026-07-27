@@ -282,18 +282,10 @@ const LeaderSetup = ({
   // stays empty — live reads then resolve each side's saved port server-side.
   const [sharedPort, setSharedPort] = useState("");
   const [dualPorts, setDualPorts] = useState<{ left: string; right: string } | null>(null);
-  // Display order of the two cables, FROZEN at first detection: a reassignment
-  // changes only each row's left/right highlight — the port rows themselves must
-  // never trade places (a row that jumps under your finger reads as a glitch).
+  // Display order of the two cables, written ONCE when detection finds them and
+  // never recomputed: a reassignment changes only each row's left/right
+  // highlight — the port rows themselves must never trade places.
   const [portOrder, setPortOrder] = useState<string[]>([]);
-  useEffect(() => {
-    setPortOrder((prev) => {
-      if (!dualPorts) return [];
-      const current = [dualPorts.left, dualPorts.right];
-      const kept = prev.filter((port) => current.includes(port));
-      return [...kept, ...current.filter((port) => !kept.includes(port))];
-    });
-  }, [dualPorts]);
   // True once an auto-detect has run and found no USB leader bus (arm unplugged, a
   // charge-only cable, or a hub swallowing it) — drives a plain-language hint instead
   // of leaving a consumer staring at an empty field.
@@ -350,6 +342,7 @@ const LeaderSetup = ({
       const response = await saveLeaderPorts(baseUrl, fetchWithHeaders, trimmed, trimmed);
       setSharedPort(trimmed);
       setDualPorts(null);
+      setPortOrder([]);
       return response;
     },
     [baseUrl, fetchWithHeaders]
@@ -366,11 +359,13 @@ const LeaderSetup = ({
     if (detected.left === detected.right) {
       setSharedPort(detected.left);
       setDualPorts(null);
+      setPortOrder([]);
     } else {
       // One cable per arm: don't collapse into the single-port field — reads
       // resolve per side from the saved config.
       setSharedPort("");
       setDualPorts(detected);
+      setPortOrder([detected.left, detected.right]);
     }
     return response;
   }, [baseUrl, fetchWithHeaders]);
@@ -689,9 +684,11 @@ const LeaderSetup = ({
                 <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-nori-h7a7060">
                   one cable per arm · tap to reassign
                 </p>
-                {/* Rows are keyed by CABLE, in frozen first-seen order — a
-                    reassignment flips each row's highlight, never its position. */}
-                {portOrder.map((port) => {
+                {/* Rows are keyed by CABLE, in the order detection first found
+                    them — a reassignment flips each row's highlight, never its
+                    position. (Fallback covers a dualPorts set without a stored
+                    order, which shouldn't happen in practice.) */}
+                {(portOrder.length ? portOrder : [dualPorts.left, dualPorts.right]).map((port) => {
                   const side: LeaderSide = port === dualPorts.left ? "left" : "right";
                   return (
                     <div key={port} className="flex items-center gap-2">

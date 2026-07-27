@@ -282,6 +282,18 @@ const LeaderSetup = ({
   // stays empty — live reads then resolve each side's saved port server-side.
   const [sharedPort, setSharedPort] = useState("");
   const [dualPorts, setDualPorts] = useState<{ left: string; right: string } | null>(null);
+  // Display order of the two cables, FROZEN at first detection: a reassignment
+  // changes only each row's left/right highlight — the port rows themselves must
+  // never trade places (a row that jumps under your finger reads as a glitch).
+  const [portOrder, setPortOrder] = useState<string[]>([]);
+  useEffect(() => {
+    setPortOrder((prev) => {
+      if (!dualPorts) return [];
+      const current = [dualPorts.left, dualPorts.right];
+      const kept = prev.filter((port) => current.includes(port));
+      return [...kept, ...current.filter((port) => !kept.includes(port))];
+    });
+  }, [dualPorts]);
   // True once an auto-detect has run and found no USB leader bus (arm unplugged, a
   // charge-only cable, or a hub swallowing it) — drives a plain-language hint instead
   // of leaving a consumer staring at an empty field.
@@ -677,39 +689,44 @@ const LeaderSetup = ({
                 <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-nori-h7a7060">
                   one cable per arm · tap to reassign
                 </p>
-                {(["left", "right"] as const).map((side) => (
-                  <div key={side} className="flex items-center gap-2">
-                    <div className="inline-flex overflow-hidden rounded-md border border-nori-h14131a/15">
-                      {(["left", "right"] as const).map((choice) => (
-                        <button
-                          key={choice}
-                          type="button"
-                          disabled={busy != null}
-                          onClick={() => {
-                            if (choice !== side) {
-                              void run("Assign leader sides", () => assignSide(dualPorts[side], choice));
+                {/* Rows are keyed by CABLE, in frozen first-seen order — a
+                    reassignment flips each row's highlight, never its position. */}
+                {portOrder.map((port) => {
+                  const side: LeaderSide = port === dualPorts.left ? "left" : "right";
+                  return (
+                    <div key={port} className="flex items-center gap-2">
+                      <div className="inline-flex overflow-hidden rounded-md border border-nori-h14131a/15">
+                        {(["left", "right"] as const).map((choice) => (
+                          <button
+                            key={choice}
+                            type="button"
+                            disabled={busy != null}
+                            onClick={() => {
+                              if (choice !== side) {
+                                void run("Assign leader sides", () => assignSide(port, choice));
+                              }
+                            }}
+                            title={
+                              choice === side
+                                ? `This arm is the ${side} leader`
+                                : `Mark this arm as the ${choice} leader (the other cable becomes ${side})`
                             }
-                          }}
-                          title={
-                            choice === side
-                              ? `This arm is the ${side} leader`
-                              : `Mark this arm as the ${choice} leader (the other cable becomes ${side})`
-                          }
-                          className={`px-2 py-0.5 text-[11px] font-medium transition-colors ${
-                            choice === side
-                              ? "bg-nori-he4f3e2 text-nori-h2a6b33"
-                              : "bg-transparent text-nori-h7a7060 hover:text-nori-h14131a"
-                          }`}
-                        >
-                          {choice}
-                        </button>
-                      ))}
+                            className={`px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                              choice === side
+                                ? "bg-nori-he4f3e2 text-nori-h2a6b33"
+                                : "bg-transparent text-nori-h7a7060 hover:text-nori-h14131a"
+                            }`}
+                          >
+                            {choice}
+                          </button>
+                        ))}
+                      </div>
+                      <span className="font-mono text-[11px] leading-relaxed text-nori-h2a6b33">
+                        {port}
+                      </span>
                     </div>
-                    <span className="font-mono text-[11px] leading-relaxed text-nori-h2a6b33">
-                      {dualPorts[side]}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
             {noArmFound && !portReady && busy == null && (

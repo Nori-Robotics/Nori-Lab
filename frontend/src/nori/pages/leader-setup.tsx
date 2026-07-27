@@ -597,12 +597,8 @@ const LeaderSetup = ({
                   {liveStatus.label}
                 </StatusPill>
                 {titleExtra && <span onClick={(e) => e.stopPropagation()}>{titleExtra}</span>}
-                {busy && (
-                  <StatusPill tone="neutral">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    {busy}
-                  </StatusPill>
-                )}
+                {/* No busy pill here: appearing in the header pushes the whole
+                    card down mid-interaction. It renders below the port rows. */}
               </div>
             </div>
           )}
@@ -620,12 +616,7 @@ const LeaderSetup = ({
               <span className={`h-2 w-2 rounded-full ${liveStatus.dot}`} />
               {liveStatus.label}
             </StatusPill>
-            {busy && (
-              <StatusPill tone="neutral">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {busy}
-              </StatusPill>
-            )}
+            {/* Busy pill renders below the port rows, not here — see embedded header. */}
           </div>
         </div>
       )}
@@ -725,6 +716,15 @@ const LeaderSetup = ({
                   );
                 })}
               </div>
+            )}
+            {/* Busy indicator lives HERE (below the port rows), not in the card
+                header — a pill appearing at the top shifted the whole card down
+                on every action. */}
+            {busy && (
+              <StatusPill tone="neutral">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {busy}
+              </StatusPill>
             )}
             {noArmFound && !portReady && busy == null && (
               <p className="text-xs leading-relaxed text-nori-h8a5a12">

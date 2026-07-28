@@ -19,7 +19,7 @@ import { PolicyRunner, type PolicyRunPhase } from "@/nori/remote/policyRun";
 // A cloud VLA isn't in the local policy cache; this sentinel ref is only used
 // for display/logging server-side — the actual endpoint comes from
 // NORI_INFER_URL (or NORI_INFER_URL_<KIND> for non-default models).
-type CloudModel = "molmoact2" | "pi05";
+type CloudModel = "molmoact2" | "pi05" | "groot";
 const MODEL_INFO: Record<CloudModel, { label: string; blurb: string }> = {
   molmoact2: {
     label: "MolmoAct2",
@@ -30,6 +30,11 @@ const MODEL_INFO: Record<CloudModel, { label: string; blurb: string }> = {
     label: "pi05",
     blurb:
       "your Nori finetune — a bimanual checkpoint drives BOTH arms natively in one session.",
+  },
+  groot: {
+    label: "GR00T",
+    blurb:
+      "your GR00T N1.7 finetune — bimanual drives both arms in one session, single-arm picks its arm.",
   },
 };
 
@@ -118,8 +123,8 @@ export function CloudDeploySection() {
               disabled={busy}
               onClick={() => {
                 setModel(m);
-                // A bimanual pi05 finetune drives both arms — preselect it.
-                if (m === "pi05") setArm("both");
+                // A bimanual Nori finetune drives both arms — preselect it.
+                if (m !== "molmoact2") setArm("both");
               }}
               className={`rounded-full px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors disabled:opacity-50 ${
                 model === m ? "bg-nori-hb06a1c text-white dark:text-neutral-900" : "bg-white/70 dark:bg-white/10 text-nori-h6f6858 hover:text-nori-h14131a"

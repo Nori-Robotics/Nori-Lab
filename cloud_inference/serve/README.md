@@ -11,8 +11,8 @@ session 1** (live robot runs).
 | MODEL_KIND | payload | status |
 |---|---|---|
 | `molmoact2` | `allenai/MolmoAct2-SO100_101` (zero-shot baseline) | ported unchanged from `space/` (RTC, `/point`, OOM→507) |
-| `pi05` | a **Nori pi05 finetune** (Gate B: `pi05_base` has no stats and cannot serve); smoke: `jcoholich/pi05_droid_converted` | implemented; needs GPU smoke |
-| `groot` | GR00T **N1.7** finetune (license: N1.7 only) | stub — lands with the finetune lane |
+| `pi05` | a **Nori pi05 finetune** (Gate B: `pi05_base` has no stats and cannot serve); smoke: `jcoholich/pi05_droid_converted` | GPU-smoked 2026-07-27 (L4: 450ms compute) |
+| `groot` | GR00T **N1.7** finetune via lerobot==0.6.0 (license: N1.7 only); smoke: `nvidia/SO_ARM_Starter_Gr00tN17` | implemented 2026-07-28 |
 | `fake` | none | tests/CI only |
 
 ## The frozen `/act` contract (adapters extend, never break)

@@ -1,0 +1,21 @@
+# MODEL_KIND=groot — installed on python:3.12-slim (BUILD_BASE arg in the
+# Dockerfile), like pi05.
+#
+# lerobot is the 0.6.0 PyPI release, NOT the repo pin: 0.6.0 is N1.7-only
+# (N1.5 support removed upstream; only N1.7's NVIDIA Open Model License is
+# commercial) and its groot config defaults use_flash_attention=False, so no
+# flash-attn wheel/build is needed. This matches the groot TRAINING lane
+# (orchestrator.GROOT_LEROBOT_VERSION) so a Nori finetune loads with the same
+# code that trained it.
+#
+# torch pinned for the same reason as pi05: the resolver's newest torch can't
+# init CUDA on the endpoint L4s' driver ("No accelerated backend detected" ->
+# silent CPU serving). 2.7.1 = oldest allowed (torch>=2.7), cu126 wheels.
+torch==2.7.1
+torchvision==0.22.1
+lerobot[groot]==0.6.0
+fastapi
+uvicorn[standard]
+pillow
+numpy
+requests

@@ -3,8 +3,7 @@
 #
 # lerobot is the 0.6.0 PyPI release, NOT the repo pin: 0.6.0 is N1.7-only
 # (N1.5 support removed upstream; only N1.7's NVIDIA Open Model License is
-# commercial) and its groot config defaults use_flash_attention=False, so no
-# flash-attn wheel/build is needed. This matches the groot TRAINING lane
+# commercial). This matches the groot TRAINING lane
 # (orchestrator.GROOT_LEROBOT_VERSION) so a Nori finetune loads with the same
 # code that trained it.
 #
@@ -14,6 +13,12 @@
 torch==2.7.1
 torchvision==0.22.1
 lerobot[groot]==0.6.0
+# flash-attn as a PREBUILT wheel matched to torch2.7/cu126/cp312 (no nvcc at
+# build time). NOT optional for latency: eager Qwen3-VL attention measured
+# 13.5s/chunk on L4 (2026-07-28 smoke) — unusable for a control loop. The
+# adapter turns it on via use_flash_attention (NORI_GROOT_FLASH_ATTN, default
+# on; auto-falls back to eager if the import breaks).
+flash_attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.7.4%2Bcu126torch2.7-cp312-cp312-linux_x86_64.whl
 fastapi
 uvicorn[standard]
 pillow

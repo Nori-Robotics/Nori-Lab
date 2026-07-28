@@ -46,6 +46,12 @@ FALLBACK_REPO = os.environ.get("NORI_GROOT_CHECKPOINT", "nvidia/SO_ARM_Starter_G
 # achieved ~15 (raw-bundle finding). Endpoints for other data MUST set this.
 CHUNK_HZ = float(os.environ.get("NORI_CHUNK_HZ", "15"))
 MAX_IMAGES = 6
+# Flash attention for the Qwen3-VL backbone. Default ON: eager attention
+# measured 13.5s/chunk on L4 (2026-07-28) — far past any refill budget. The
+# image ships a prebuilt wheel (requirements-groot.txt); if the import fails
+# (wheel/torch mismatch) we fall back to eager with a loud warning instead of
+# refusing to serve.
+FLASH_ATTN = os.environ.get("NORI_GROOT_FLASH_ATTN", "1") == "1"
 
 
 class GrootAdapter:
@@ -81,8 +87,24 @@ class GrootAdapter:
         if cfg is not None and cfg.type != "groot":
             raise RuntimeError(f"checkpoint is policy type {cfg.type!r}, expected groot")
 
+        use_flash = FLASH_ATTN
+        if use_flash:
+            try:
+                import flash_attn  # noqa: F401
+            except Exception as e:
+                print(f"[groot] WARNING: flash_attn import failed ({e}) — serving "
+                      f"with EAGER attention (measured ~13.5s/chunk on L4; fine "
+                      f"for smoke, unusable for a live control loop)", flush=True)
+                use_flash = False
+        if cfg is not None:
+            cfg.use_flash_attention = use_flash
+
         policy_cls = get_policy_class("groot")
-        policy = policy_cls.from_pretrained(self._source, config=cfg)
+        # For a raw checkpoint (cfg None) from_pretrained builds the default
+        # config itself and applies kwargs onto it (hasattr-guarded upstream).
+        policy = (policy_cls.from_pretrained(self._source, config=cfg)
+                  if cfg is not None else
+                  policy_cls.from_pretrained(self._source, use_flash_attention=use_flash))
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
         policy.to(self._device)
         policy.eval()

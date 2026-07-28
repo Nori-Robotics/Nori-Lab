@@ -1580,6 +1580,18 @@ def nori_recording_episodes(session_id: str, request: Request):
     return _nori_proxy(lambda: client.list_recording_episodes(session_id))
 
 
+class NoriDeleteEpisodesBody(BaseModel):
+    episode_indices: list[int]
+
+
+@app.post("/nori/library/recordings/{session_id}/delete-episodes")
+def nori_delete_recording_episodes(session_id: str, body: NoriDeleteEpisodesBody,
+                                   request: Request):
+    """Delete whole takes from a raw recording (immediate — no rebuild job)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.delete_recording_episodes(session_id, body.episode_indices))
+
+
 class NoriEpisodeNameBody(BaseModel):
     name: str = ""
 

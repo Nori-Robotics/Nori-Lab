@@ -22,6 +22,7 @@ import {
   listCloudEpisodes,
   listRecordingEpisodes,
   deleteEpisodes,
+  deleteRecordingEpisodes,
   episodeClipUrl,
   cloudEpisodeClipUrl,
   recordingClipUrl,
@@ -42,7 +43,8 @@ import {
 
 /** What the modal is reviewing: a local lerobot-cache dataset, a promoted cloud
  * upload (assembled dataset), or a raw robot recording (raw_bundle) served at
- * ORIGINAL quality. Raw is view-only (no curation). */
+ * ORIGINAL quality. All three curate; raw deletes land immediately (each episode
+ * is its own folder) while cloud deletes go through a rebuild job. */
 export type ReviewSource =
   | { kind: "local"; repoId: string }
   | { kind: "cloud"; sessionId: string; title: string }
@@ -236,6 +238,24 @@ export function EpisodeReviewModal({
       await runRebuild(() => deleteDatasetEpisodes(baseUrl, fetchWithHeaders, source.sessionId, ids));
       return;
     }
+    if (source.kind === "raw") {
+      // Raw episodes are independent folders: the delete lands immediately (no
+      // rebuild job to poll), but the remaining indices shift down — so clear
+      // the marks and re-list rather than trusting the current view.
+      setBusy(true);
+      try {
+        await deleteRecordingEpisodes(baseUrl, fetchWithHeaders, source.sessionId, [...marked]);
+        setMarked(new Set());
+        setConfirm(false);
+        onChanged();
+        await load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     if (source.kind !== "local") return;
     setBusy(true);
     try {
@@ -263,9 +283,11 @@ export function EpisodeReviewModal({
     [baseUrl, fetchWithHeaders, source, runRebuild],
   );
 
-  // Raw recordings are view-only (no curation). Local curates directly; an
-  // assembled cloud dataset curates only once it has recording-session provenance.
-  const canCurate = source.kind === "local" || (isCloud && sessions != null && sessions.length > 0);
+  // Local and raw recordings curate directly (raw episodes are independent
+  // folders); an assembled cloud dataset curates only once it has
+  // recording-session provenance (the rebuild needs it).
+  const canCurate =
+    source.kind === "local" || isRaw || (isCloud && sessions != null && sessions.length > 0);
   const visibleEpisodes = (episodes ?? []).filter(
     (ep) => sessionFilter === null || episodeSessions[ep.index] === sessionFilter,
   );

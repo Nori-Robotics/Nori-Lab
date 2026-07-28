@@ -140,6 +140,23 @@ export async function listRecordingEpisodes(
   );
 }
 
+/** Delete whole takes from a raw recording. Immediate (each raw episode is its
+ * own folder — no rebuild job, unlike an assembled dataset), so the caller must
+ * re-list afterwards: the remaining episodes' indices shift down. */
+export async function deleteRecordingEpisodes(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string,
+  episodeIndices: number[],
+): Promise<{ deleted: number; episode_count: number; frame_count: number | null }> {
+  return noriRequest(
+    baseUrl,
+    fetcher,
+    `/nori/library/recordings/${encodeURIComponent(sessionId)}/delete-episodes`,
+    { method: "POST", body: { episode_indices: episodeIndices }, action: "Delete episodes" },
+  );
+}
+
 /** Name/annotate one raw-recording episode ("" clears). Stored beside the
  * bundle on the backend, and carried into any dataset later assembled from it. */
 export async function nameRecordingEpisode(

@@ -520,6 +520,17 @@ class NoriClient:
         proxied."""
         return self._request("GET", f"{API}/library/recordings/{session_id}/episodes")
 
+    def delete_recording_episodes(self, session_id: str, episode_indices: list[int]) -> dict[str, Any]:
+        """POST /library/recordings/{session_id}/delete-episodes — drop whole takes
+        from a raw recording. Unlike an assembled dataset (episodes live inside
+        shared parquet, so curation needs a rebuild job), each raw episode is its
+        own folder: the delete is immediate and the caller must re-list afterwards
+        (remaining indices shift down)."""
+        return self._request(
+            "POST", f"{API}/library/recordings/{session_id}/delete-episodes",
+            json={"episode_indices": episode_indices},
+        )
+
     def name_recording_episode(self, session_id: str, index: int, name: str) -> dict[str, Any]:
         """PATCH /library/recordings/{session_id}/episode/{index}/name — set the
         operator's per-episode annotation on a raw recording ("" clears). Stored

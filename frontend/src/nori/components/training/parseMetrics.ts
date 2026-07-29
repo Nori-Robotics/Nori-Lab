@@ -114,27 +114,30 @@ export function parseMetricLine(
 }
 
 // Fold a batch of new log lines into the running metrics + de-duplicated
-// (by step) loss/lr histories. Returns fresh arrays/objects (never mutates the
-// inputs) so React state updates stay referentially honest.
+// loss/lr histories. Dedupe is GLOBAL by step (latest value wins) and the
+// output is sorted ascending — not just last-point dedupe. Two real-world
+// producers make that necessary: the backend log endpoint slices the full HF
+// log by LINE INDEX per poll, so a re-served window replays lines the client
+// already folded; and loss lines without a same-line tqdm bar fall back to the
+// K-rounded "step:6K" token, which repeats/reorders steps. Either one, fed to
+// a categorical x-axis, duplicated the axis every poll and drew the curve as a
+// sawtooth. Idempotent folding + monotone x kills both. Returns fresh
+// arrays/objects (never mutates the inputs) so React state stays honest.
 export function foldMetrics(
   lines: string[],
   prev: { metrics: TrainingMetrics; loss: MetricPoint[]; lr: MetricPoint[] },
 ): { metrics: TrainingMetrics; loss: MetricPoint[]; lr: MetricPoint[] } {
   const metrics: TrainingMetrics = { ...prev.metrics };
-  const loss = [...prev.loss];
-  const lr = [...prev.lr];
+  const lossBy = new Map<number, number>(prev.loss.map((p) => [p.step, p.value]));
+  const lrBy = new Map<number, number>(prev.lr.map((p) => [p.step, p.value]));
   for (const line of lines) {
     const pt = parseMetricLine(line, metrics);
-    if (pt.loss) {
-      const last = loss[loss.length - 1];
-      if (!last || last.step !== pt.loss.step) loss.push(pt.loss);
-      else loss[loss.length - 1] = pt.loss;
-    }
-    if (pt.lr) {
-      const last = lr[lr.length - 1];
-      if (!last || last.step !== pt.lr.step) lr.push(pt.lr);
-      else lr[lr.length - 1] = pt.lr;
-    }
+    if (pt.loss) lossBy.set(pt.loss.step, pt.loss.value);
+    if (pt.lr) lrBy.set(pt.lr.step, pt.lr.value);
   }
-  return { metrics, loss, lr };
+  const toSorted = (m: Map<number, number>): MetricPoint[] =>
+    [...m.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([step, value]) => ({ step, value }));
+  return { metrics, loss: toSorted(lossBy), lr: toSorted(lrBy) };
 }

@@ -124,8 +124,17 @@ const MetricChart = ({
       ) : (
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+            {/* type="number" is load-bearing: Recharts' default categorical
+                axis gives every data point its own slot, so any duplicated
+                step (re-served log window, rounded step tokens) duplicated the
+                whole axis and drew the curve as a sawtooth. A numeric axis
+                positions points by value — duplicates overlay, spacing is
+                proportional to actual steps. */}
             <XAxis
               dataKey="step"
+              type="number"
+              domain={["dataMin", "dataMax"]}
+              allowDecimals={false}
               tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
               stroke="hsl(var(--border))"
             />

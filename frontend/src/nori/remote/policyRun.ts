@@ -43,6 +43,10 @@ export interface ExecutionParams {
   temporal_ensemble_coeff: number | null;
   /** Open-loop horizon (1..chunk_size) when not ensembling; null → checkpoint default. */
   n_action_steps: number | null;
+  /** Natural-language task for a LOCAL language-conditioned bundle (smolvla).
+   *  Required by /load for those; ignored by local ACT. Cloud rollouts carry
+   *  their instruction in CloudParams instead. */
+  instruction?: string | null;
 }
 
 export type ExecutionMode = "smooth" | "balanced" | "fast";
@@ -196,6 +200,12 @@ export class PolicyRunner {
           ? {
               provider: "cloud",
               instruction: cloud.instruction,
+            }
+          : {
+              instruction: exec?.instruction ?? null,
+            }),
+        ...(cloud
+          ? {
               instruction_left: cloud.instructionLeft || null,
               instruction_right: cloud.instructionRight || null,
               num_steps: cloud.numSteps ?? null,

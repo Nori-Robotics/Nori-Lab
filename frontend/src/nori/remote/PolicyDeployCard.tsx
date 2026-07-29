@@ -40,6 +40,10 @@ function shortRef(ref: string): string {
   return tail.length > 30 ? tail.slice(0, 29) + "…" : tail;
 }
 
+// Local bundles whose policy class is language-conditioned: /load requires an
+// instruction (nori_rollout.py _LANGUAGE_POLICY_TYPES — keep in sync).
+const LANGUAGE_POLICY_CLASSES = new Set(["smolvla"]);
+
 export function PolicyDeployCard() {
   const { baseUrl, fetchWithHeaders } = useApi();
   const { teleop, running, tel } = useTeleopSession();
@@ -49,6 +53,10 @@ export function PolicyDeployCard() {
   const [policies, setPolicies] = useState<LocalPolicy[]>([]);
   // ref -> human-readable title (from the policy catalog; local cache has no name)
   const [titleByRef, setTitleByRef] = useState<Record<string, string>>({});
+  // ref -> policy class (same catalog fetch) — decides which rows need an instruction
+  const [classByRef, setClassByRef] = useState<Record<string, string>>({});
+  // ref -> the operator's instruction for a language-conditioned bundle
+  const [instrByRef, setInstrByRef] = useState<Record<string, string>>({});
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<ExecutionMode>("smooth");
   const [runState, setRunState] = useState<{ ref: string | null; phase: PolicyRunPhase }>({
@@ -73,10 +81,21 @@ export function PolicyDeployCard() {
         setAvailable(true);
       })
       .catch(() => setAvailable(false)); // hosted app / no local lelab spool
-    // Best-effort: the catalog carries the human-readable title for each ref.
+    // Best-effort: the catalog carries the human-readable title + policy class
+    // for each ref (the local cache stores neither).
     listPolicies(baseUrl, fetchWithHeaders)
-      .then((cat) => setTitleByRef(Object.fromEntries(cat.map((c) => [c.ref, c.title]))))
-      .catch(() => setTitleByRef({}));
+      .then((cat) => {
+        setTitleByRef(Object.fromEntries(cat.map((c) => [c.ref, c.title])));
+        setClassByRef(
+          Object.fromEntries(
+            cat.flatMap((c) => (c.policy_class ? [[c.ref, c.policy_class]] : [])),
+          ),
+        );
+      })
+      .catch(() => {
+        setTitleByRef({});
+        setClassByRef({});
+      });
   }, [baseUrl, fetchWithHeaders]);
 
   const nameFor = useCallback(
@@ -129,8 +148,12 @@ export function PolicyDeployCard() {
       }
       const runner = runnerRef.current;
       runner.onPhase = (ph) => setRunState({ ref: p.ref, phase: ph });
+      const instruction = (instrByRef[p.ref] ?? "").trim();
       try {
-        await runner.start(teleop, p.ref, EXECUTION_PRESETS[mode]);
+        await runner.start(teleop, p.ref, {
+          ...EXECUTION_PRESETS[mode],
+          ...(instruction ? { instruction } : {}),
+        });
       } catch (e) {
         toast({
           title: "Couldn't run on robot",
@@ -139,7 +162,7 @@ export function PolicyDeployCard() {
         });
       }
     },
-    [baseUrl, teleop, toast, mode]
+    [baseUrl, teleop, toast, mode, instrByRef]
   );
 
   const stop = useCallback(() => {
@@ -223,6 +246,8 @@ export function PolicyDeployCard() {
             <ul className="space-y-1">
               {runnable.map((p) => {
                 const thisActive = runState.ref === p.ref && busy;
+                const needsInstruction = LANGUAGE_POLICY_CLASSES.has(classByRef[p.ref] ?? "");
+                const instruction = (instrByRef[p.ref] ?? "").trim();
                 return (
                   <li
                     key={p.ref}
@@ -231,6 +256,19 @@ export function PolicyDeployCard() {
                     <span className="min-w-0 flex-1 truncate text-sm font-medium text-nori-h14131a" title={p.ref}>
                       {nameFor(p.ref)}
                     </span>
+                    {needsInstruction && (
+                      <input
+                        type="text"
+                        value={instrByRef[p.ref] ?? ""}
+                        disabled={busy}
+                        onChange={(e) =>
+                          setInstrByRef((m) => ({ ...m, [p.ref]: e.target.value }))
+                        }
+                        placeholder="instruction — e.g. pick up the cup"
+                        title="This policy is language-conditioned: it does what you tell it to."
+                        className="h-7 w-full min-w-0 flex-none rounded border border-nori-h14131a/20 bg-white/70 px-2 text-xs text-nori-h14131a placeholder:text-nori-h6f6858/60 disabled:opacity-50 dark:bg-white/10 sm:w-56 sm:flex-1"
+                      />
+                    )}
                     {thisActive ? (
                       <>
                         <span className="shrink-0 text-xs text-nori-h6f6858">
@@ -252,7 +290,8 @@ export function PolicyDeployCard() {
                         <Button
                           size="sm"
                           className="h-7 shrink-0 px-3 text-xs"
-                          disabled={!running || !teleop || busy}
+                          disabled={!running || !teleop || busy || (needsInstruction && !instruction)}
+                          title={needsInstruction && !instruction ? "Type an instruction first" : undefined}
                           onClick={() => void run(p)}
                         >
                           Run

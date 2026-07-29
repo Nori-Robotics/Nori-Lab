@@ -126,6 +126,11 @@ def stream_status():
         "armed": False, "connected": False, "preamble_received": False}
 _session: dict[str, Any] = {}  # ref, policy, pre, post, device, joints, image_shapes
 
+# Local policy classes that are language-conditioned: /load requires an
+# instruction and every /act tick injects it as the batch's "task" (the fitted
+# preprocessor's tokenizer step reads complementary_data["task"]).
+_LANGUAGE_POLICY_TYPES = frozenset({"smolvla"})
+
 
 def _apply_act_execution(cfg, temporal_ensemble_coeff, n_action_steps) -> dict[str, Any]:
     """INFERENCE-ONLY execution overrides for ACT — how the trained policy is
@@ -140,8 +145,21 @@ def _apply_act_execution(cfg, temporal_ensemble_coeff, n_action_steps) -> dict[s
     - neither                       → leave the checkpoint's saved values as-is.
 
     Returns the effective {temporal_ensemble_coeff, n_action_steps} for the client.
-    No-op for non-ACT policies (they don't expose these knobs today).
+    SmolVLA gets its own branch (open-loop horizon only — it has no temporal
+    ensembler); other non-ACT policies are a no-op.
     """
+    if getattr(cfg, "type", None) == "smolvla":
+        # The checkpoint saves n_action_steps == chunk_size (50): a full 3.3s
+        # of blind open-loop motion at 15 fps. Default to a half-chunk horizon
+        # so re-plans stay frequent without paying the ~0.6s MPS chunk
+        # prediction every tick; the request (or env) can override 1..chunk.
+        if temporal_ensemble_coeff is not None:
+            logger.warning("[ROLLOUT] temporal_ensemble_coeff is ACT-only — ignored for smolvla")
+        chunk = int(getattr(cfg, "chunk_size", 50))
+        if n_action_steps is None:
+            n_action_steps = int(os.environ.get("NORI_SMOLVLA_ACTION_STEPS", "25"))
+        cfg.n_action_steps = max(1, min(int(n_action_steps), chunk))
+        return {"temporal_ensemble_coeff": None, "n_action_steps": cfg.n_action_steps}
     if getattr(cfg, "type", None) != "act":
         return {
             "temporal_ensemble_coeff": getattr(cfg, "temporal_ensemble_coeff", None),
@@ -232,6 +250,7 @@ def _load_bundle(
     temporal_ensemble_coeff: float | None = None,
     n_action_steps: int | None = None,
     fps: int | None = None,
+    instruction: str | None = None,
 ) -> dict[str, Any]:
     import torch
     from lerobot.configs.policies import PreTrainedConfig
@@ -246,6 +265,15 @@ def _load_bundle(
 
     resolved_fps = _resolve_fps(bundle, fps)
     cfg = PreTrainedConfig.from_pretrained(str(bundle))
+    # Language-conditioned local policies (smolvla) need the instruction at
+    # LOAD time — failing here beats a mid-rollout tokenizer error. The same
+    # string is injected as the batch's "task" on every /act tick.
+    task = (instruction or "").strip()
+    if cfg.type in _LANGUAGE_POLICY_TYPES and not task:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"a local {cfg.type} policy is language-conditioned — "
+                    "provide an instruction (natural-language task)"))
     # Apply inference-time execution overrides BEFORE building the policy so the
     # action queue / temporal ensembler are constructed from the chosen values.
     execution = _apply_act_execution(cfg, temporal_ensemble_coeff, n_action_steps)
@@ -362,6 +390,9 @@ def _load_bundle(
         "image_shapes": image_shapes,
         "execution": execution,
         "fps": resolved_fps,
+        # non-empty only for language-conditioned policies — injected as the
+        # batch's "task" each /act tick (tokenized by the fitted preprocessor)
+        "task": task if cfg.type in _LANGUAGE_POLICY_TYPES else None,
     }
 
 
@@ -410,10 +441,13 @@ class LoadBody(BaseModel):
     # fps (nori_meta.json), falling back to DEFAULT_FPS. ACT should execute at
     # the fps it was trained on.
     fps: int | None = None
-    # --- cloud VLA fields (provider="cloud"); ignored by the local ACT path ---
-    #   provider    — "local" (an installed ACT bundle) or "cloud" (a remote VLA
-    #                 endpoint, e.g. MolmoAct2 on a HF Space / AWS g5).
-    #   instruction — natural-language task the VLA is conditioned on (required for cloud).
+    # --- provider + VLA fields ---
+    #   provider    — "local" (an installed bundle: ACT or a local VLA like a
+    #                 smolvla finetune) or "cloud" (a remote VLA endpoint,
+    #                 e.g. MolmoAct2 on a HF Space / AWS g5).
+    #   instruction — natural-language task a VLA is conditioned on. Required
+    #                 for cloud, and for LOCAL language-conditioned bundles
+    #                 (smolvla); ignored by local ACT.
     #   num_steps   — flow-matching integration steps (latency <-> quality).
     #   views       — image feature keys the browser should grab & send, in the
     #                 order the model expects them; omit to use NORI_INFER_VIEWS
@@ -721,6 +755,7 @@ def rollout_load(body: LoadBody):
             temporal_ensemble_coeff=body.temporal_ensemble_coeff,
             n_action_steps=body.n_action_steps,
             fps=body.fps,
+            instruction=body.instruction,
         )
         cap_src = _read_capture_source(Path(config.NORI_POLICY_CACHE) / body.ref)
         use_stream = _resolve_use_stream(body.use_stream, cap_src)
@@ -888,6 +923,10 @@ def rollout_act(body: ActBody):
         }
         for key, chw in _session["image_shapes"].items():
             obs[key] = _decode_image(images_b64[key], chw).to(device)
+        # Language-conditioned policies (smolvla): the fitted preprocessor's
+        # tokenizer step reads the instruction from the batch's "task" key.
+        if _session.get("task"):
+            obs["task"] = _session["task"]
 
         with torch.no_grad():
             processed = _session["pre"](obs)

@@ -274,26 +274,43 @@ describe("estop / stop", () => {
   });
 });
 
-describe("image pruning", () => {
-  it("keeps only the last N frames and stubs older ones", async () => {
-    // 4 looks then done, keepLastImages: 2 → the two oldest images become text placeholders.
-    // Multi-camera robot, so each look names a camera.
+describe("conversation is append-only (prompt-cache stability)", () => {
+  // Anthropic prompt caching is a strict byte-prefix match: if turn N's request is not a
+  // byte-identical extension of turn N-1's, the cached transcript is invalidated from the
+  // first differing byte and the tail re-bills at the cache-WRITE premium. The old
+  // image-pruning path mutated history in place and did exactly that. These tests pin the
+  // fix: earlier messages must never change once appended, images included.
+  it("every request is a byte-identical prefix-extension of the previous one", async () => {
     const look = () => turn([tool("look", { camera: "overhead" })]);
     const { agent, calls } = setup([
       look(), look(), look(), look(),
       turn([tool("done", { summary: "" })]),
-    ], { keepLastImages: 2, confirmFirstMotion: false });
+    ], { confirmFirstMotion: false });
     await agent.run("look a lot");
-    // Inspect the final turn's messages (the fullest conversation). Images live nested inside
-    // tool_result.content, so collect recursively.
+    expect(calls.length).toBeGreaterThan(2);
+    for (let i = 1; i < calls.length; i++) {
+      const prev = calls[i - 1].messages as unknown[];
+      const cur = calls[i].messages as unknown[];
+      expect(cur.length).toBeGreaterThan(prev.length);
+      // Snapshots were taken per-call (setup deep-copies), so any in-place mutation of
+      // shared history shows up as a prefix mismatch here.
+      expect(JSON.stringify(cur.slice(0, prev.length))).toBe(JSON.stringify(prev));
+    }
+  });
+
+  it("all look images survive to the final turn — none stubbed out", async () => {
+    const look = () => turn([tool("look", { camera: "overhead" })]);
+    const { agent, calls } = setup([
+      look(), look(), look(), look(),
+      turn([tool("done", { summary: "" })]),
+    ], { confirmFirstMotion: false });
+    await agent.run("look a lot");
     const finalMsgs = calls.at(-1)!.messages as Array<{ content: AgentBlock[] }>;
     const blocks: AgentBlock[] = [];
     const walk = (bs: AgentBlock[]) => bs.forEach((b) => { blocks.push(b); if (Array.isArray(b.content)) walk(b.content as AgentBlock[]); });
     finalMsgs.forEach((m) => walk(m.content));
-    const images = blocks.filter((b) => b.type === "image");
-    const stubs = blocks.filter((b) => b.type === "text" && b.text === "[earlier frame omitted]");
-    expect(images.length).toBe(2);
-    expect(stubs.length).toBe(2);
+    expect(blocks.filter((b) => b.type === "image").length).toBe(4);
+    expect(blocks.filter((b) => b.type === "text" && b.text === "[earlier frame omitted]").length).toBe(0);
   });
 });
 

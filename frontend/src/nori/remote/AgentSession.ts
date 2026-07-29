@@ -35,7 +35,16 @@ export type AgentBlock = {
 export interface AgentTurn {
   stop_reason: string | null;
   content: AgentBlock[];
-  usage?: { input_tokens: number; output_tokens: number };
+  // cache_* report prompt-cache health (served by the backend proxy): in a healthy
+  // append-only conversation cache_read grows with the transcript and dwarfs
+  // cache_write. The inverse ratio means something is rewriting history — see the
+  // append-only note above AgentSessionOptions.
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens?: number;
+    cache_write_tokens?: number;
+  };
   // The customer's per-day agent token budget after this turn (cost governance, enforced in
   // Nori-Backend). `spent` = today's billable tokens, `warn` = the soft-warning threshold past which
   // the UI shows a "high usage" banner, `allowed`/`remaining` = the hard daily cap, `capped` = past
@@ -93,10 +102,16 @@ const MOTION_TOOLS = new Set(["move_to", "reach", "grip", "base", "lift"]);
 // belt-and-braces runaway guard. Was 80; before that 20 (the daily budget is now the real guard).
 const DEFAULT_MAX_STEPS = Infinity;
 const DEFAULT_WALL_CLOCK_MS = 10 * 60_000;
-// How many of the most recent `look` frames to keep verbatim in the conversation; older image blocks
-// are replaced with a text placeholder so a long run doesn't blow up context/upload/cost (the model
-// still sees it looked, just not the pixels). 2 keeps "the last look + the current view" live.
-const KEEP_LAST_IMAGES = 2;
+// NOTE — the conversation is APPEND-ONLY, on purpose. An earlier version replaced old `look`
+// images with a text placeholder each turn ("prune old images"), mutating history in place.
+// That defeated Anthropic prompt caching, which is a strict byte-prefix match: every mutation
+// invalidated the cached transcript from that point, so each turn re-processed (and re-billed,
+// at the 1.25x cache-WRITE premium) the whole tail instead of reading it back at ~0.1x — the
+// billing table showed cache writes exceeding reads ~1.8x on real runs, the inverse of a
+// healthy append-only loop. Keeping the images is cheaper AND faster: a 640x480 frame is only
+// ~400-550 tokens, ~a tenth of that when served from cache. Never mutate messages[] after a
+// turn is appended; if context growth ever becomes a real problem, prune SERVER-side with
+// Anthropic context editing (clear_tool_uses — cache-aware), not here.
 
 export interface AgentSessionOptions {
   teleop: RemoteTeleop;
@@ -104,7 +119,6 @@ export interface AgentSessionOptions {
   capRate?: number; // half-speed session cap, forwarded to ScriptDriver (default 0.5)
   maxSteps?: number; // optional runaway guard; omitted → no step cap (Infinity), budget/wall-clock bound the run
   wallClockMs?: number; // hard wall-clock cap; loop aborts when reached (default 10 min)
-  keepLastImages?: number; // image-pruning window (default 3)
   // Confirm-before-first-motion (ON by default). Called once, before the run's FIRST motion tool
   // executes; resolve false to abort the run. The operator can pass a resolver that auto-approves to
   // disable the gate per-run once they trust a task. Omit → gate is on and there's no way to approve,
@@ -121,7 +135,6 @@ export class AgentSession {
   private readonly driver: ScriptDriver;
   private readonly maxSteps: number;
   private readonly wallClockMs: number;
-  private readonly keepLastImages: number;
 
   private messages: AgentMessage[] = [];
   private lastTelemetry: TelemetryView | null = null;
@@ -135,7 +148,6 @@ export class AgentSession {
     this.o = opts;
     this.maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS;
     this.wallClockMs = opts.wallClockMs ?? DEFAULT_WALL_CLOCK_MS;
-    this.keepLastImages = opts.keepLastImages ?? KEEP_LAST_IMAGES;
     this.driver = new ScriptDriver({
       teleop: opts.teleop,
       capRate: opts.capRate,
@@ -208,6 +220,15 @@ export class AgentSession {
       if (turn.daily) {
         this.o.onEvent?.({ kind: "budget", ...turn.daily });
       }
+      // Per-turn cache-health line: in a healthy append-only run, reads should grow with
+      // the transcript and dwarf writes. Writes exceeding reads turn after turn means
+      // history is being rewritten (the pruning regression) — surface it, don't guess.
+      if (turn.usage && (turn.usage.cache_read_tokens != null || turn.usage.cache_write_tokens != null)) {
+        this.o.onLog?.(
+          `[agent] tokens: in=${turn.usage.input_tokens} out=${turn.usage.output_tokens}` +
+          ` cache read=${turn.usage.cache_read_tokens ?? 0} write=${turn.usage.cache_write_tokens ?? 0}`,
+        );
+      }
 
       // A non-tool_use stop means the model spoke without acting (end_turn / max_tokens). Nudge it
       // once by leaving it to the next iteration only if it also gave tool calls; otherwise end — an
@@ -243,8 +264,9 @@ export class AgentSession {
         if (this.stopped) return;
       }
 
+      // Append-only: never rewrite earlier messages here (see the prompt-caching note above
+      // AgentSessionOptions) — each turn must extend the previous request byte-for-byte.
       this.messages.push({ role: "user", content: results });
-      this.pruneOldImages();
     }
 
     this.o.onLog?.(`⚠ [agent] step cap (${this.maxSteps}) reached — stopping`);
@@ -344,29 +366,6 @@ export class AgentSession {
   private errorResult(b: AgentBlock, message: string): AgentBlock {
     this.o.onEvent?.({ kind: "tool_result", tool: b.name ?? "", toolUseId: b.id ?? "", ok: false, text: message });
     return { type: "tool_result", tool_use_id: b.id, is_error: true, content: [{ type: "text", text: message }] };
-  }
-
-  // Replace all but the last N image blocks (across the whole conversation) with a text placeholder,
-  // so the model keeps the recent frames it reasons on but old pixels stop riding every upload. A
-  // `look` image lives nested inside a tool_result's `content`, so we descend one level. Collect every
-  // image in document order, then stub all but the last N (the oldest go first).
-  private pruneOldImages(): void {
-    const images: AgentBlock[] = [];
-    for (const m of this.messages) {
-      for (const block of m.content) {
-        if (block.type === "image") images.push(block);
-        else if (Array.isArray(block.content)) {
-          for (const inner of block.content as AgentBlock[]) if (inner.type === "image") images.push(inner);
-        }
-      }
-    }
-    for (let i = 0; i < images.length - this.keepLastImages; i++) {
-      // Mutate in place: drop the image source, leave a breadcrumb the model can read.
-      const block = images[i];
-      delete block.source;
-      block.type = "text";
-      block.text = "[earlier frame omitted]";
-    }
   }
 
   private robotState(): Record<string, number> | undefined {

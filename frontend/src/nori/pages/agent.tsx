@@ -37,7 +37,9 @@ const END_LABEL: Record<FinishReason, string> = {
   done: "✓ goal reached", give_up: "gave up", end_turn: "stopped (no further action)",
   stopped: "stopped", estop: "■ E-STOP", error: "error", max_steps: "step cap reached",
   wall_clock: "time cap reached", not_confirmed: "first motion declined",
-  budget: "daily token budget reached",
+  // Neutral: the 429 can be the daily OR monthly cap — the appended server
+  // reason string says which ("Daily agent token limit reached. It resets…").
+  budget: "token budget reached",
 };
 
 // Today's server-tracked agent token spend (report-only; no hard limit yet — see server.py). `warn`
@@ -106,8 +108,16 @@ const Agent = () => {
     });
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}));
-      const msg = detail?.detail || res.statusText;
-      // 429 = daily token budget used up; a distinct error so the loop ends cleanly (not as a fault).
+      // The backend's error detail is either a plain string (413 etc.) or, on the
+      // budget 429s, an OBJECT {reason, daily} — coercing that into an Error message
+      // rendered as "[object Object]". Extract the human reason.
+      const d = detail?.detail;
+      const msg: string =
+        typeof d === "string" ? d
+        : typeof d?.reason === "string" ? d.reason
+        : res.statusText;
+      // 429 = token budget used up (daily or monthly; the reason string says which);
+      // a distinct error so the loop ends cleanly (not as a fault).
       if (res.status === 429) throw new AgentBudgetError(msg);
       throw new Error(msg);
     }

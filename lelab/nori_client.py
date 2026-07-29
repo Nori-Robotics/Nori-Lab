@@ -948,12 +948,15 @@ class NoriClient:
         system: str | None,
         tools: list[dict[str, Any]] | None,
         new_run: bool,
+        output_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {"model": model, "max_tokens": max_tokens, "messages": messages}
         if system is not None:
             body["system"] = system
         if tools is not None:
             body["tools"] = tools
+        if output_config is not None:
+            body["output_config"] = output_config
         body["new_run"] = new_run
         return body
 
@@ -966,15 +969,20 @@ class NoriClient:
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         new_run: bool = False,
+        output_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """POST /agent/llm/messages — the gated, metered Anthropic proxy. The backend holds
         the key, checks the daily budget (429 if capped), calls Claude, charges the turn, and
         returns {stop_reason, content[], usage, budget}. Longer timeout than the default: a
-        1500-token completion (possibly with an image) routinely exceeds 30s."""
+        completion (possibly with an image) routinely exceeds 30s.
+
+        `output_config` carries Anthropic's `effort`; the agent loop sends it (see
+        NORI_LLM_EFFORT) because the API default is `high` — the slowest, most
+        deliberative setting."""
         return self._request(
             "POST",
             f"{API}/agent/llm/messages",
-            json=self._llm_body(model, max_tokens, messages, system, tools, new_run),
+            json=self._llm_body(model, max_tokens, messages, system, tools, new_run, output_config),
             timeout=httpx.Timeout(120.0, connect=10.0),
         )
 

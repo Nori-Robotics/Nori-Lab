@@ -883,6 +883,14 @@ def nori_llm_agent(body: NoriLlmAgentBody, request: Request):
 
     # Forward to the gated/metered proxy: it gates the budget (429), calls Claude with the
     # server-held key, charges the turn, and returns the raw assistant turn + updated budget.
+    # EFFORT: unset means the API default, `high` — the most deliberative and slowest
+    # setting, which on a robot loop reads as "thinks for ages, then takes one small
+    # step". Lower effort produces fewer, more-consolidated tool calls and less
+    # preamble, which is what a look->act->look loop wants. `medium` is the default
+    # here rather than `low` because choosing an arm and reading a scene camera is
+    # genuine spatial reasoning and `low` risks under-thinking it; set NORI_LLM_EFFORT
+    # to sweep (low|medium|high|xhigh|max), or "" to fall back to the API default.
+    effort = os.environ.get("NORI_LLM_EFFORT", "medium").strip()
     nori = _nori_client(request)
     result = _nori_proxy(
         lambda: nori.llm_messages(
@@ -892,6 +900,7 @@ def nori_llm_agent(body: NoriLlmAgentBody, request: Request):
             tools=NORI_AGENT_TOOLS,
             messages=body.messages,
             new_run=bool(new_run),
+            output_config={"effort": effort} if effort else None,
         )
     )
 

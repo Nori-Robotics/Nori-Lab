@@ -13,7 +13,7 @@ from typing import Optional
 import numpy as np
 from fastapi import HTTPException
 
-from adapters.base import resolve_source
+from adapters.base import declared_joints, resolve_source
 
 REPO_ID = os.environ.get("MOLMOACT_REPO", "allenai/MolmoAct2-SO100_101")
 NORM_TAG = os.environ.get("MOLMOACT_NORM_TAG", "so100_so101_molmoact2")
@@ -59,7 +59,7 @@ class MolmoAct2Adapter:
     def meta(self) -> dict:
         return {"kind": "molmoact2", "chunk_hz": CHUNK_HZ, "horizon": ACTION_HORIZON,
                 "dof": 6, "cameras": ["wrist", "third_person"],
-                "max_images": MAX_IMAGES, "source": self._source,
+                "max_images": MAX_IMAGES, "source": self._source, "joints": declared_joints(),
                 "norm_tag": NORM_TAG, "supports_point": True, "supports_rtc": True}
 
     def act(self, *, images, state, instruction, num_steps, extras):

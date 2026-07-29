@@ -22,15 +22,17 @@ SEMANTICS. The server owns HTTP, auth, image decode, locking, and timing.
         def meta(self) -> dict: ...
             # MUST include: kind, chunk_hz, horizon, dof, cameras (list of the
             # camera roles/keys this policy expects, in /act image order),
-            # max_images, source (resolved weights location).
+            # max_images, source (resolved weights location), joints (see
+            # declared_joints below — REQUIRED for any Nori finetune).
             # The client reads this instead of assuming another model's constants.
 
         def point(self, *, image, query, max_new_tokens) -> dict: ...   # OPTIONAL
 
-Weights resolution helper shared by all adapters lives here."""
+Shared helpers (weights resolution, joint contract) live here."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -44,3 +46,31 @@ def resolve_source(model_path: str, hub_fallback: str) -> str:
     except OSError:
         pass
     return hub_fallback
+
+
+def declared_joints() -> list[str]:
+    """The endpoint's JOINT CONTRACT: the Nori telemetry keys this checkpoint's
+    state/action vectors are ordered by, e.g.
+
+        NORI_JOINT_NAMES="right_arm_elbow_flex.pos,right_arm_gripper.pos,..."
+
+    WHY THIS EXISTS (2026-07-29). A checkpoint cannot report its own joint
+    names — LeRobot's PolicyFeature carries only `type` and `shape`, and the
+    names live in the DATASET, not the policy. Before this, the rollout client
+    mapped every served model's action vector onto MolmoAct2's canonical order
+    (shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper).
+    A Nori finetune emits the ORDER ITS DATASET USED (ours is alphabetical:
+    elbow_flex, gripper, shoulder_lift, shoulder_pan, wrist_flex, wrist_roll),
+    so that mapping silently scrambles the arm.
+
+    Declaring joints ALSO declares the convention: a model that speaks Nori
+    joint names is trained in Nori joint space, so the client applies NO units
+    calibration and NO model-space bounds (both are MolmoAct2 zero-shot
+    conventions that would corrupt a finetune). Empty list = undeclared; the
+    client then keeps per-kind legacy behaviour for molmoact2 and REFUSES to
+    load any other kind rather than guess an order.
+
+    Set this on the endpoint/Space to the SAME order the training dataset's
+    observation.state used (for a scoped policy, the scoped subset's order)."""
+    raw = os.environ.get("NORI_JOINT_NAMES", "")
+    return [j.strip() for j in raw.split(",") if j.strip()]

@@ -505,39 +505,62 @@ def _cloud_load(body: LoadBody) -> dict:
     # chunk_hz: the rate the chunk was AUTHORED at. meta wins; molmoact2 default
     # otherwise. pi05/groot endpoints MUST carry meta (their server always does).
     meta_chunk_hz = float(meta.get("chunk_hz") or 0.0) or cloudmod.MOLMOACT2_CHUNK_HZ
-    # Bounds + calibration are MolmoAct2 CONVENTIONS (SO-100/101 model space +
-    # the nori<->fleet affine). A Nori finetune (pi05/groot) is trained in OUR
-    # joint space — applying the molmoact2 calib would corrupt its actions.
     is_molmoact2 = endpoint_kind == "molmoact2"
-    bounds = cloudmod.MOLMOACT2_BOUNDS if is_molmoact2 else None
     dof = int(meta.get("dof") or 0)
 
-    # Lane shape (joint mapping):
-    #   * molmoact2 / 6-dim finetune — the model's 6-DoF output maps to ONE
-    #     arm's keys (arm_keys order); arm="both" runs TWO independent per-arm
-    #     lanes merged into one command per tick.
-    #   * 12-dim Nori finetune (pi05 trained on the bimanual dataset) — NATIVE
-    #     bimanual: ONE session sees full state and outputs all 12 joints
-    #     (left block then right, the fleet dataset convention). arm must be
-    #     "both"; a single arm is meaningless for a 12-dim checkpoint.
-    native_bimanual = (not is_molmoact2) and dof == 12
-    if native_bimanual and arm != "both":
+    # THE JOINT CONTRACT. A checkpoint cannot report its own joint names
+    # (lerobot's PolicyFeature carries only type+shape), so an endpoint serving
+    # a NORI FINETUNE declares them via NORI_JOINT_NAMES -> meta["joints"], in
+    # the exact order that checkpoint's state/action vectors use. When present
+    # they are AUTHORITATIVE and they also declare the CONVENTION: the model
+    # speaks Nori joint space, so NO units calibration and NO model-space
+    # bounds (both are MolmoAct2 zero-shot conventions that would corrupt a
+    # finetune trained in our space).
+    #
+    # Without them we must not guess: mapping a finetune's output onto
+    # MolmoAct2's canonical order silently scrambles the arm (our datasets are
+    # ordered alphabetically, the model's order is not). So: molmoact2 keeps
+    # its proven zero-shot path, and every other kind is REFUSED.
+    declared = [j for j in (meta.get("joints") or []) if isinstance(j, str)]
+    nori_convention = bool(declared)
+    if not nori_convention and not is_molmoact2:
         raise HTTPException(
             status_code=422,
-            detail=(f"this {endpoint_kind} checkpoint outputs 12 joints (native "
-                    f"bimanual) — it drives both arms in one session; use arm='both'"))
-    if arm == "both" and not is_molmoact2 and not native_bimanual:
-        if dof != 6:
+            detail=(f"endpoint serves {endpoint_kind!r} but declares no joint order "
+                    f"(meta.joints). A Nori finetune emits its DATASET's joint order, "
+                    f"which cannot be inferred — set NORI_JOINT_NAMES on the endpoint "
+                    f"to that checkpoint's observation.state names, in order."))
+    bounds = cloudmod.MOLMOACT2_BOUNDS if (is_molmoact2 and not nori_convention) else None
+
+    # Lane shape (joint mapping):
+    #   * declared joints — ONE session drives exactly those joints, in that
+    #     order (6 = one arm, 12 = native bimanual). The `arm` field is derived
+    #     from the names, not the caller.
+    #   * undeclared (molmoact2 zero-shot only) — the model's 6-DoF output maps
+    #     to ONE arm's keys in arm_keys order; arm="both" runs TWO independent
+    #     per-arm lanes merged into one command per tick.
+    if nori_convention:
+        missing_declared = [j for j in declared if j not in set(body.joints)]
+        if missing_declared:
             raise HTTPException(
                 status_code=422,
-                detail=(f"endpoint serves {endpoint_kind!r} with action dim "
-                        f"{dof or 'unknown'} — arm='both' needs a 12-dim native-"
-                        f"bimanual finetune (one session) or a 6-dim single-arm "
-                        f"model (two per-arm lanes)"))
-    if native_bimanual:
-        lane_arms = ["both"]
-        per_arm_keys: dict[str, list[str]] = {
-            "both": cloudmod.arm_keys("left") + cloudmod.arm_keys("right")}
+                detail=(f"endpoint declares joint(s) {missing_declared} that this "
+                        f"session does not have. Session joints: {sorted(body.joints)}."))
+        if dof and dof != len(declared):
+            raise HTTPException(
+                status_code=422,
+                detail=(f"endpoint declares {len(declared)} joint names but an action "
+                        f"dim of {dof} — the checkpoint and NORI_JOINT_NAMES disagree."))
+        sides = {j.split("_arm_")[0] for j in declared if "_arm_" in j}
+        lane_arm = "both" if len(sides) > 1 else (sides.pop() if sides else arm)
+        if arm not in (lane_arm, "both") and len(sides or {lane_arm}) == 1:
+            raise HTTPException(
+                status_code=422,
+                detail=(f"this checkpoint drives the {lane_arm!r} arm (declared joints); "
+                        f"the request asked for {arm!r}"))
+        arm = lane_arm
+        lane_arms = [lane_arm]
+        per_arm_keys: dict[str, list[str]] = {lane_arm: list(declared)}
     else:
         lane_arms = ["left", "right"] if arm == "both" else [arm]
         per_arm_keys = {}
@@ -556,24 +579,20 @@ def _cloud_load(body: LoadBody) -> dict:
             detail=(f"cloud VLA drives the {arm!r} arm(s) but the session is missing "
                     f"joint(s) {missing}. Session joints: {sorted(body.joints)}."),
         )
-    # Views. Single arm: caller/env choice, else the arm's wrist + overhead;
-    # a Nori-finetune checkpoint may name its camera FEATURE KEYS in meta —
-    # trust those when the caller didn't pick (MolmoAct2 meta lists ROLES, not
-    # keys). Native bimanual: ONE session — meta camera keys win, else both
-    # wrists + overhead. Dual-lane "both": each lane gets ITS OWN wrist + the
-    # shared overhead — one flat views list can't scope per lane, so explicit
-    # views are refused.
+    # Views. A Nori-finetune checkpoint names its camera FEATURE KEYS in meta —
+    # those ARE the contract (it was trained on exactly those views, in that
+    # order), so they win unless the caller names views explicitly. Undeclared
+    # single arm: caller/env choice, else the arm's wrist + overhead. Dual-lane
+    # "both": each lane gets ITS OWN wrist + the shared overhead — one flat
+    # views list can't scope per lane, so explicit views are refused.
     explicit_views = body.views or _env_views()
     meta_cams = [c for c in (meta.get("cameras") or []) if isinstance(c, str)]
     meta_cam_keys = (meta_cams if meta_cams and all(
         c.startswith("observation.images.") for c in meta_cams) else None)
-    if native_bimanual:
-        views = explicit_views or meta_cam_keys or [
-            "observation.images.left_wrist",
-            "observation.images.right_wrist",
-            "observation.images.overhead",
-        ]
-        lane_views = {"both": list(views)}
+    if nori_convention:
+        views = explicit_views or meta_cam_keys or cloudmod.default_cloud_views(
+            arm if arm in ("left", "right") else "left")
+        lane_views = {lane_arms[0]: list(views)}
     elif arm == "both":
         if explicit_views:
             raise HTTPException(
@@ -594,9 +613,9 @@ def _cloud_load(body: LoadBody) -> dict:
 
     # Per-arm instruction: instruction_left/right override the shared one (the
     # arms usually do DIFFERENT things — "hold the bowl" / "pick up the cup").
-    # A native-bimanual model plans BOTH arms from ONE instruction — per-arm
+    # A single-session model plans its joints from ONE instruction — per-arm
     # overrides can't be honoured, so refuse them rather than silently drop one.
-    if native_bimanual and (body.instruction_left or body.instruction_right):
+    if nori_convention and (body.instruction_left or body.instruction_right):
         raise HTTPException(
             status_code=422,
             detail=("this checkpoint plans both arms from one instruction — use "
@@ -616,7 +635,11 @@ def _cloud_load(body: LoadBody) -> dict:
     # lever if refills start missing the queue.
     lanes: list[dict] = []
     for a in lane_arms:
-        calib = cloudmod.load_calibration(a) if is_molmoact2 else None
+        # Units calibration is the MolmoAct2 ZERO-SHOT nori<->SO-101 affine. A
+        # model that declares Nori joints was trained in our space and needs no
+        # conversion — applying it would corrupt every action.
+        calib = (cloudmod.load_calibration(a)
+                 if (is_molmoact2 and not nori_convention) else None)
         roll = cloudmod.CloudRollout(
             endpoint=endpoint,
             token=token,

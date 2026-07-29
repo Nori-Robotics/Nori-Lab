@@ -122,68 +122,123 @@ def test_both_refuses_explicit_views(env):
     assert e.value.status_code == 422 and "per-arm" in e.value.detail
 
 
-def test_both_refuses_undeclared_dof_endpoint(env):
-    # A non-molmoact2 endpoint that declares no action dim: neither native
-    # bimanual (12) nor per-arm lanes (6) is provably right — refuse.
-    env["health"] = {"status": "ready", "meta": {"kind": "pi05", "chunk_hz": 15}}
+def test_refuses_finetune_that_declares_no_joint_order(env):
+    # A checkpoint cannot report its own joint names, and guessing scrambles the
+    # arm (our datasets are ordered alphabetically, MolmoAct2's order is not).
+    # An undeclared non-molmoact2 endpoint must FAIL CLOSED at /load.
+    env["health"] = {"status": "ready", "meta": {"kind": "pi05", "chunk_hz": 15, "dof": 12}}
     with pytest.raises(HTTPException) as e:
         rollout._cloud_load(_body())
-    assert e.value.status_code == 422 and "action dim" in e.value.detail
+    assert e.value.status_code == 422
+    assert "NORI_JOINT_NAMES" in e.value.detail and "joint order" in e.value.detail
 
 
-# ---- pi05 (Nori finetune) lane shapes -------------------------------------
+# ---- Nori finetunes: meta.joints is the authoritative contract -------------
+# Our assembled datasets order joints ALPHABETICALLY within each arm, which is
+# NOT MolmoAct2's canonical order — the exact scramble this contract prevents.
+
+DS_RIGHT = [f"right_arm_{j}.pos" for j in
+            ("elbow_flex", "gripper", "shoulder_lift", "shoulder_pan",
+             "wrist_flex", "wrist_roll")]
+DS_LEFT = [k.replace("right_", "left_") for k in DS_RIGHT]
 
 PI05_META = {"status": "ready",
              "meta": {"kind": "pi05", "chunk_hz": 15, "horizon": 50, "dof": 12,
-                      "state_dim": 12,
+                      "state_dim": 12, "joints": DS_LEFT + DS_RIGHT,
                       "cameras": [L_WRIST, R_WRIST, OVERHEAD]}}
 
 
-def test_pi05_native_bimanual_single_lane(env):
+def test_declared_joints_are_used_verbatim_not_molmoact2_order(env):
     env["health"] = PI05_META
     out = rollout._cloud_load(_body(ref="cloud:pi05", policy_kind="pi05"))
     lanes = rollout._session["lanes"]
     assert len(lanes) == 1 and lanes[0]["arm"] == "both"
-    # one session drives all 12 joints, left block then right
-    assert lanes[0]["arm_keys"] == LEFT_KEYS + RIGHT_KEYS
+    # the checkpoint's own (dataset) order, NOT arm_keys()'s canonical order
+    assert lanes[0]["arm_keys"] == DS_LEFT + DS_RIGHT
+    assert lanes[0]["arm_keys"] != LEFT_KEYS + RIGHT_KEYS
+    assert out["action_joints"] == DS_LEFT + DS_RIGHT
     # camera keys come from the checkpoint's meta, in its order
     assert lanes[0]["views"] == [L_WRIST, R_WRIST, OVERHEAD]
-    # no molmoact2 conventions on a Nori finetune
+    # declaring Nori joints declares the CONVENTION: no zero-shot calib/bounds
     assert env["rollouts"][0].kw["calib"] is None
     assert env["rollouts"][0].kw["bounds"] is None
+    assert env["calib_arms"] == []
     assert env["rollouts"][0].kw["chunk_hz"] == 15
-    assert out["action_joints"] == LEFT_KEYS + RIGHT_KEYS and out["arm"] == "both"
 
 
-def test_pi05_native_refuses_single_arm(env):
-    env["health"] = PI05_META
+def test_single_arm_finetune_drives_its_declared_arm(env):
+    # 6 declared right-arm joints => ONE lane on the right arm. (The old
+    # dual-lane split would have run a right-arm model on the left arm.)
+    env["health"] = {"status": "ready",
+                     "meta": {"kind": "pi05", "chunk_hz": 15, "dof": 6,
+                              "joints": DS_RIGHT, "cameras": [R_WRIST, OVERHEAD]}}
+    out = rollout._cloud_load(_body(arm="right", policy_kind="pi05"))
+    lanes = rollout._session["lanes"]
+    assert len(lanes) == 1 and lanes[0]["arm"] == "right"
+    assert lanes[0]["arm_keys"] == DS_RIGHT
+    assert lanes[0]["views"] == [R_WRIST, OVERHEAD]
+    assert out["arm"] == "right"
+
+
+def test_single_arm_finetune_refuses_the_wrong_arm(env):
+    env["health"] = {"status": "ready",
+                     "meta": {"kind": "pi05", "chunk_hz": 15, "dof": 6,
+                              "joints": DS_RIGHT, "cameras": []}}
     with pytest.raises(HTTPException) as e:
         rollout._cloud_load(_body(arm="left", policy_kind="pi05"))
-    assert e.value.status_code == 422 and "both" in e.value.detail
+    assert e.value.status_code == 422 and "right" in e.value.detail
 
 
-def test_pi05_native_refuses_per_arm_instructions(env):
+def test_declared_joints_must_exist_in_the_session(env):
+    env["health"] = {"status": "ready",
+                     "meta": {"kind": "pi05", "chunk_hz": 15, "dof": 6,
+                              "joints": ["third_arm_gripper.pos"] + DS_RIGHT[1:],
+                              "cameras": []}}
+    with pytest.raises(HTTPException) as e:
+        rollout._cloud_load(_body(policy_kind="pi05"))
+    assert e.value.status_code == 422 and "third_arm_gripper.pos" in e.value.detail
+
+
+def test_declared_joints_must_match_the_action_dim(env):
+    env["health"] = {"status": "ready",
+                     "meta": {"kind": "pi05", "chunk_hz": 15, "dof": 12,
+                              "joints": DS_RIGHT, "cameras": []}}
+    with pytest.raises(HTTPException) as e:
+        rollout._cloud_load(_body(policy_kind="pi05"))
+    assert e.value.status_code == 422 and "disagree" in e.value.detail
+
+
+def test_finetuned_molmoact2_skips_the_zero_shot_conventions(env):
+    # BLOCKER 2: a FINETUNED molmoact2 still reports kind="molmoact2", but it
+    # learned OUR joint space — the units calibration and model-space bounds
+    # would corrupt it. Declaring joints is what distinguishes the two.
+    env["health"] = {"status": "ready",
+                     "meta": {"kind": "molmoact2", "chunk_hz": 15, "dof": 6,
+                              "joints": DS_RIGHT, "cameras": [R_WRIST, OVERHEAD]}}
+    rollout._cloud_load(_body(arm="right", ref="cloud:molmoact2-ft"))
+    r = env["rollouts"][0]
+    assert r.kw["calib"] is None and r.kw["bounds"] is None
+    assert env["calib_arms"] == []
+    assert r.kw["action_keys"] == DS_RIGHT
+
+
+def test_zero_shot_molmoact2_keeps_its_proven_path(env):
+    # No declared joints + kind molmoact2 => unchanged behaviour: canonical
+    # arm_keys order, units calibration ON, model-space bounds ON.
+    rollout._cloud_load(_body(arm="left"))
+    r = env["rollouts"][0]
+    assert r.kw["action_keys"] == LEFT_KEYS
+    assert r.kw["calib"] is not None and env["calib_arms"] == ["left"]
+
+
+def test_finetune_refuses_per_arm_instructions(env):
     env["health"] = PI05_META
     with pytest.raises(HTTPException) as e:
         rollout._cloud_load(_body(policy_kind="pi05", instruction_left="hold the bowl"))
     assert e.value.status_code == 422 and "one instruction" in e.value.detail
 
 
-def test_pi05_single_arm_finetune_dual_lanes(env):
-    # A 6-dim (single-arm) pi05 finetune behaves like molmoact2's dual lanes,
-    # minus the molmoact2 conventions (no bounds, no units calib).
-    env["health"] = {"status": "ready",
-                     "meta": {"kind": "pi05", "chunk_hz": 15, "dof": 6,
-                              "cameras": []}}
-    rollout._cloud_load(_body(policy_kind="pi05"))
-    lanes = rollout._session["lanes"]
-    assert [ln["arm"] for ln in lanes] == ["left", "right"]
-    assert all(r.kw["calib"] is None and r.kw["bounds"] is None
-               for r in env["rollouts"])
-    assert env["calib_arms"] == []   # molmoact2 units calib never consulted
-
-
-def test_pi05_native_act_serves_full_state(env):
+def test_finetune_act_serves_state_in_declared_order(env):
     env["health"] = PI05_META
     rollout._cloud_load(_body(policy_kind="pi05"))
     out = _act()

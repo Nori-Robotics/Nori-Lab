@@ -79,6 +79,7 @@ def test_legacy_no_meta_keeps_molmoact2_semantics(env):
 def test_pi05_meta_drives_chunk_and_disables_molmoact2_conventions(env):
     env["health"] = {"status": "ready", "kind": "pi05",
                      "meta": {"kind": "pi05", "chunk_hz": 15.0, "horizon": 50,
+                              "joints": list(ARM_KEYS),
                               "cameras": ["observation.images.overhead",
                                           "observation.images.front"]}}
     out = rollout._cloud_load(_body())
@@ -95,6 +96,7 @@ def test_pi05_meta_drives_chunk_and_disables_molmoact2_conventions(env):
 def test_explicit_views_beat_meta_cameras(env):
     env["health"] = {"status": "ready",
                      "meta": {"kind": "pi05", "chunk_hz": 15.0,
+                              "joints": list(ARM_KEYS),
                               "cameras": ["observation.images.front"]}}
     rollout._cloud_load(_body(views=["observation.images.left_wrist"]))
     assert list(rollout._session["views"]) == ["observation.images.left_wrist"]
@@ -109,6 +111,7 @@ def test_policy_kind_mismatch_fails_at_load(env):
 
 
 def test_matching_policy_kind_passes(env):
-    env["health"] = {"status": "ready", "meta": {"kind": "pi05", "chunk_hz": 15}}
+    env["health"] = {"status": "ready",
+                     "meta": {"kind": "pi05", "chunk_hz": 15, "joints": list(ARM_KEYS)}}
     out = rollout._cloud_load(_body(policy_kind="pi05"))
     assert out["policy_kind"] == "pi05"

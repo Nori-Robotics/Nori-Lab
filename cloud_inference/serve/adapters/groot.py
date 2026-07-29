@@ -38,7 +38,7 @@ from typing import Optional
 import numpy as np
 from fastapi import HTTPException
 
-from adapters.base import resolve_source
+from adapters.base import declared_joints, resolve_source
 
 # Smoke default; production endpoints point MODEL_PATH/repository at the finetune.
 FALLBACK_REPO = os.environ.get("NORI_GROOT_CHECKPOINT", "nvidia/SO_ARM_Starter_Gr00tN17")
@@ -142,7 +142,7 @@ class GrootAdapter:
         return {"kind": "groot", "chunk_hz": CHUNK_HZ, "horizon": self._horizon,
                 "dof": self._action_dim, "state_dim": self._state_dim,
                 "cameras": list(self._image_keys), "max_images": MAX_IMAGES,
-                "source": self._source, "supports_point": False,
+                "source": self._source, "joints": declared_joints(), "supports_point": False,
                 "supports_rtc": False}
 
     def act(self, *, images, state, instruction, num_steps, extras):

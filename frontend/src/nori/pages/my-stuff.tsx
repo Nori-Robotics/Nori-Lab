@@ -341,6 +341,24 @@ const MyStuff = () => {
     [baseUrl, fetchWithHeaders, load],
   );
 
+  // Recordings are dataset_upload_sessions rows too (kind=raw_bundle), so the
+  // shared dataset lock endpoint covers them — a locked recording refuses
+  // rename, whole-delete, AND per-episode delete server-side.
+  const onToggleRecordingLock = useCallback(
+    async (b: RawBundleEntry) => {
+      setLockBusy(b.session_id);
+      try {
+        await setDatasetLock(baseUrl, fetchWithHeaders, b.session_id, !b.locked);
+        await load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setLockBusy(null);
+      }
+    },
+    [baseUrl, fetchWithHeaders, load],
+  );
+
   const onTogglePolicyLock = useCallback(
     async (jobId: string, locked: boolean) => {
       setLockBusy(jobId);
@@ -674,7 +692,21 @@ const MyStuff = () => {
                         Preview
                       </Button>
                     )}
-                    {deletable && (
+                    {(promoted || failed) && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={lockBusy === b.session_id}
+                        onClick={() => onToggleRecordingLock(b)}
+                      >
+                        {b.locked ? (
+                          <><Unlock className="mr-1 h-3.5 w-3.5" /> Unlock</>
+                        ) : (
+                          <><Lock className="mr-1 h-3.5 w-3.5" /> Lock</>
+                        )}
+                      </Button>
+                    )}
+                    {deletable && !b.locked && (
                       <Button
                         variant="ghost"
                         size="sm"

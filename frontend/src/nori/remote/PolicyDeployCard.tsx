@@ -8,11 +8,22 @@
 // so the card renders nothing on the hosted app (the list fetch is LeLab-only).
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/contexts/ApiContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
-import { listLocalPolicies, listPolicies, type LocalPolicy } from "@/nori/api/client";
+import { deleteLocalPolicy, listLocalPolicies, listPolicies, type LocalPolicy } from "@/nori/api/client";
 import {
   PolicyRunner,
   EXECUTION_PRESETS,
@@ -44,6 +55,9 @@ export function PolicyDeployCard() {
     ref: null,
     phase: { kind: "idle" },
   });
+  // Pending local-cache removal (confirmation dialog, like other deletes).
+  const [removing, setRemoving] = useState<LocalPolicy | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
 
   const runnerRef = useRef<PolicyRunner | null>(null);
   // Keep the latest telemetry in a ref for the runner's safety monitor.
@@ -69,6 +83,27 @@ export function PolicyDeployCard() {
     (ref: string) => titleByRef[ref] || shortRef(ref),
     [titleByRef],
   );
+
+  // Remove an installed policy from this computer's cache. Local-only: the
+  // cloud checkpoint is untouched, so it can be re-installed from My Stuff.
+  const confirmRemove = useCallback(async () => {
+    if (!removing) return;
+    setRemoveBusy(true);
+    try {
+      await deleteLocalPolicy(baseUrl, fetchWithHeaders, removing.ref);
+      toast({ title: "Removed from this computer", description: nameFor(removing.ref) });
+      setRemoving(null);
+      refresh();
+    } catch (e) {
+      toast({
+        title: "Couldn't remove policy",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setRemoveBusy(false);
+    }
+  }, [removing, baseUrl, fetchWithHeaders, nameFor, refresh, toast]);
 
   useEffect(() => {
     refresh();
@@ -213,14 +248,27 @@ export function PolicyDeployCard() {
                         </Button>
                       </>
                     ) : (
-                      <Button
-                        size="sm"
-                        className="h-7 shrink-0 px-3 text-xs"
-                        disabled={!running || !teleop || busy}
-                        onClick={() => void run(p)}
-                      >
-                        Run
-                      </Button>
+                      <>
+                        <Button
+                          size="sm"
+                          className="h-7 shrink-0 px-3 text-xs"
+                          disabled={!running || !teleop || busy}
+                          onClick={() => void run(p)}
+                        >
+                          Run
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Remove ${nameFor(p.ref)} from this computer`}
+                          title="Remove from this computer"
+                          className="h-7 w-7 shrink-0 p-0 text-nori-h6f6858 hover:bg-destructive/10 hover:text-destructive"
+                          disabled={busy}
+                          onClick={() => setRemoving(p)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </>
                     )}
                   </li>
                 );
@@ -241,6 +289,39 @@ export function PolicyDeployCard() {
           <CloudDeploySection />
         </div>
       )}
+
+      <AlertDialog
+        open={!!removing}
+        onOpenChange={(o) => {
+          if (!o && !removeBusy) setRemoving(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Remove “{removing ? nameFor(removing.ref) : ""}” from this computer?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This deletes the downloaded copy from this computer's policy cache. The policy
+              itself stays safe in your Nori cloud — you can re-install it from My Stuff any
+              time.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removeBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={removeBusy}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault(); // keep the dialog open while the request runs
+                void confirmRemove();
+              }}
+            >
+              {removeBusy ? "Removing…" : "Remove"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

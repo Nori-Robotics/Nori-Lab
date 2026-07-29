@@ -615,6 +615,11 @@ export interface RawBundleEntry {
   /** True while this recording is a source of an in-flight assembly job — the UI
    *  shows "Uploading to dataset" and it can't be selected again meanwhile. */
   assembling?: boolean;
+  /** Owner-set: a locked recording can't be renamed or deleted (whole recording
+   *  or individual episodes). Same lock as datasets/policies (migration 026);
+   *  toggled through the shared setDatasetLock endpoint (recordings are upload
+   *  sessions too). */
+  locked?: boolean;
   /** When the recording robot confirmed it deleted its local raw copy after
    *  promotion (W2.11). null while PROMOTED means the full-quality copy is in the
    *  cloud but the robot still holds its on-disk copy — the UI shows "Finishing on

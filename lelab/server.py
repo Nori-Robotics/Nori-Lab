@@ -891,11 +891,20 @@ def nori_llm_agent(body: NoriLlmAgentBody, request: Request):
     # genuine spatial reasoning and `low` risks under-thinking it; set NORI_LLM_EFFORT
     # to sweep (low|medium|high|xhigh|max), or "" to fall back to the API default.
     effort = os.environ.get("NORI_LLM_EFFORT", "medium").strip()
+    # MAX_TOKENS: caps THINKING + response text together on current models (thinking is
+    # on by default on sonnet-5). The old 1500 left the model little room to act after
+    # reasoning — a truncated turn reads as "thought for ages, did one tiny thing".
+    # 8000 is headroom, not a target (typical turns emit a few hundred tokens); the
+    # backend ceiling is 8192. Env-tunable for sweeps.
+    try:
+        agent_max_tokens = int(os.environ.get("NORI_LLM_AGENT_MAX_TOKENS", "8000"))
+    except ValueError:
+        agent_max_tokens = 8000
     nori = _nori_client(request)
     result = _nori_proxy(
         lambda: nori.llm_messages(
             model=model,
-            max_tokens=1500,
+            max_tokens=agent_max_tokens,
             system=system,
             tools=NORI_AGENT_TOOLS,
             messages=body.messages,

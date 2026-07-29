@@ -978,12 +978,16 @@ class NoriClient:
 
         `output_config` carries Anthropic's `effort`; the agent loop sends it (see
         NORI_LLM_EFFORT) because the API default is `high` — the slowest, most
-        deliberative setting."""
+        deliberative setting.
+
+        Timeout sized for the agent's 8K max_tokens headroom: a turn that actually
+        uses it (thinking + a batch of tool calls) can run several minutes
+        non-streaming."""
         return self._request(
             "POST",
             f"{API}/agent/llm/messages",
             json=self._llm_body(model, max_tokens, messages, system, tools, new_run, output_config),
-            timeout=httpx.Timeout(120.0, connect=10.0),
+            timeout=httpx.Timeout(300.0, connect=10.0),
         )
 
     def llm_messages_stream(

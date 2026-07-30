@@ -57,6 +57,20 @@ repos:
     -   id: pyupgrade
         args: [--py312-plus]
 
+  ##### Generated artifacts (drift guards) #####
+  # The hosted (LeLab-free) web build runs the LLM system prompts + tool schemas from a COMMITTED
+  # TS artifact generated from the Python source of truth. Regenerate on every relevant change;
+  # if the committed file is stale the hook rewrites it and fails, making drift loud (same idea as
+  # end-of-file-fixer). Stdlib-only, so `language: system` needs no extra deps.
+  - repo: local
+    hooks:
+      - id: gen-llm-prompts
+        name: hosted LLM prompts up to date (gen_llm_prompts.py)
+        entry: python3 frontend/scripts/gen_llm_prompts.py
+        language: system
+        pass_filenames: false
+        files: '^(lelab/server\.py|frontend/packages/nori-sdk/robot-tools\.json|frontend/src/nori/llm/prompts\.generated\.ts|frontend/scripts/gen_llm_prompts\.py)$'
+
   ##### Markdown Quality #####
   - repo: https://github.com/rbubley/mirrors-prettier
     rev: v3.6.2

@@ -110,6 +110,13 @@ export function isDirectBackend(): boolean {
   return directBackendUrl !== null;
 }
 
+/** The Nori-Backend origin when in direct (hosted) mode, else null. Used by the LLM pages,
+ * which — unlike the /nori/* proxy routes — must reach the backend's `/api/v1/agent/llm/*`
+ * proxy directly (there is no LeLab in a hosted build to assemble + forward for them). */
+export function getDirectBackendUrl(): string | null {
+  return directBackendUrl;
+}
+
 function withDirectAuth(fetcher: Fetcher): Fetcher {
   return async (url, options = {}) => {
     const token = await getAccessToken();

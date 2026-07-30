@@ -23,6 +23,8 @@ import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { ScriptSession } from "@/nori/remote/ScriptSession";
 import { startMockPerception, type MockPerceptionHandle } from "@/nori/remote/mockPerception";
 import { useApi } from "@/contexts/ApiContext";
+import { isDirectBackend } from "@/nori/api/client";
+import { hostedGenerateStream } from "@/nori/llm/hostedLlm";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
 
 const CODE_EXTENSIONS = [javascript({ typescript: true }), EditorView.lineWrapping];
@@ -139,28 +141,35 @@ const Coding = () => {
 
   const append = (line: string) => setOutput((prev) => [...prev.slice(-300), line]);
 
-  // LLM codegen: ask the server-side Claude proxy (/nori/llm/generate) for a routine and drop it
-  // into the editor. The generated code is fully editable — the operator reviews, then Runs. The
-  // API key stays on the server (see docs/llm_codegen_design.md); the browser never sees it.
-  // One streamed request → the finished (fence-stripped) code, live-updating the editor buffer.
+  // LLM codegen: ask the server-side Claude proxy for a routine and drop it into the editor. The
+  // generated code is fully editable — the operator reviews, then Runs. The API key stays on the
+  // server (see docs/llm_codegen_design.md); the browser never sees it. One streamed request →
+  // the finished (fence-stripped) code, live-updating the editor buffer.
+  //
+  // DESKTOP: POST to LeLab's `/nori/llm/generate/stream` (LeLab assembles + forwards). HOSTED
+  // (LeLab-free): assemble in-browser and hit Nori-Backend's proxy directly (see hostedLlm.ts) —
+  // baseUrl points at a dead localhost there, so the LeLab route isn't reachable.
   const runGeneration = async (
     robotState: Record<string, number>, imageB64: string | undefined, retryNote?: string,
   ): Promise<string> => {
-    const res = await fetchWithHeaders(`${baseUrl}/nori/llm/generate/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt, current_code: code, robot_state: robotState, image_b64: imageB64,
-        // Operator text overrides; else the bridge-derived layout (which tile is which camera); else
-        // nothing (the model is told not to assume). So vision knows which feed is which arm by default.
-        camera_layout: imageB64 ? (cameraLayout.trim() || teleop?.cameraLayout() || undefined) : undefined,
-        // Whether nori.perceive() is live RIGHT NOW (a frame in the last 2 s — real detector or
-        // the "provide perception" mock), so the model only writes perceive()-polling loops when
-        // they'll actually see data.
-        perception_active: (teleop?.perceptionAgeMs() ?? Infinity) < 2000,
-        retry_note: retryNote,
-      }),
-    });
+    const req = {
+      prompt, current_code: code, robot_state: robotState, image_b64: imageB64,
+      // Operator text overrides; else the bridge-derived layout (which tile is which camera); else
+      // nothing (the model is told not to assume). So vision knows which feed is which arm by default.
+      camera_layout: imageB64 ? (cameraLayout.trim() || teleop?.cameraLayout() || undefined) : undefined,
+      // Whether nori.perceive() is live RIGHT NOW (a frame in the last 2 s — real detector or
+      // the "provide perception" mock), so the model only writes perceive()-polling loops when
+      // they'll actually see data.
+      perception_active: (teleop?.perceptionAgeMs() ?? Infinity) < 2000,
+      retry_note: retryNote,
+    };
+    const res = isDirectBackend()
+      ? await hostedGenerateStream(req)
+      : await fetchWithHeaders(`${baseUrl}/nori/llm/generate/stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(req),
+        });
     if (!res.ok || !res.body) {
       const detail = await res.json().catch(() => ({}));
       throw new Error(detail?.detail || res.statusText);

@@ -17,6 +17,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Play, Square, OctagonX, Check, X, Bot } from "lucide-react";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { useApi } from "@/contexts/ApiContext";
+import { isDirectBackend } from "@/nori/api/client";
+import { hostedAgentTurn } from "@/nori/llm/hostedLlm";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
 import {
   AgentSession, AgentBudgetError,
@@ -96,11 +98,14 @@ const Agent = () => {
 
   const push = (row: Row) => setRows((prev) => [...prev.slice(-400), row]);
 
-  // One turn of the conversation: POST the browser-held messages to the server proxy, which injects
-  // the system prompt + tools + key and returns the raw Anthropic turn.
+  // One turn of the conversation: inject the system prompt + tools + key and return the raw
+  // Anthropic turn. DESKTOP: POST to LeLab's `/nori/llm/agent` (LeLab assembles + forwards).
+  // HOSTED (LeLab-free): assemble in-browser and hit Nori-Backend's proxy directly (hostedLlm.ts),
+  // since baseUrl points at a dead localhost there. Both raise AgentBudgetError on a 429.
   const postTurn = async (
     messages: AgentMessage[], robotState: Record<string, number> | undefined, cameraLayout: string | undefined,
   ): Promise<AgentTurn> => {
+    if (isDirectBackend()) return hostedAgentTurn(messages, robotState, cameraLayout);
     const res = await fetchWithHeaders(`${baseUrl}/nori/llm/agent`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

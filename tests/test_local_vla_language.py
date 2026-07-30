@@ -127,3 +127,28 @@ def test_no_task_key_for_act_session(session):
 def test_language_policy_types_registry():
     assert "smolvla" in nr._LANGUAGE_POLICY_TYPES
     assert "act" not in nr._LANGUAGE_POLICY_TYPES
+
+
+# ---- 3. slot-view translation (rename_map-trained bundles) ------------------
+
+def test_slot_translation_feeds_policy_slot_keys(session):
+    """Client sends fleet-named frames; the policy batch gets slot names."""
+    spy = SpyPre()
+    fleet = "observation.images.overhead"
+    session.update({
+        "ref": "t", "policy": FakePolicy(), "pre": spy, "post": lambda a: a,
+        "device": "cpu", "joints": ["j1"], "action_joints": ["j1"],
+        "image_shapes": {fleet: (3, 1, 1)}, "use_stream": False, "task": "x",
+        "view_translation": {fleet: "observation.images.camera1"},
+    })
+    nr.rollout_act(nr.ActBody(state={"j1": 0.0}, images={fleet: _JPEG}))
+    assert "observation.images.camera1" in spy.seen
+    assert fleet not in spy.seen
+
+
+def test_slot_map_matches_backend_fleet_convention():
+    assert nr._VLA_SLOT_TO_FLEET_VIEW == {
+        "observation.images.camera1": "observation.images.overhead",
+        "observation.images.camera2": "observation.images.right_wrist",
+        "observation.images.camera3": "observation.images.left_wrist",
+    }

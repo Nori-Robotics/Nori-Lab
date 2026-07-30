@@ -131,6 +131,19 @@ _session: dict[str, Any] = {}  # ref, policy, pre, post, device, joints, image_s
 # preprocessor's tokenizer step reads complementary_data["task"]).
 _LANGUAGE_POLICY_TYPES = frozenset({"smolvla"})
 
+# smolvla checkpoints train through the backend's --rename_map (smolvla_base's
+# visual features are the FIXED slots camera1/2/3), so a finetuned bundle names
+# its cameras by slot. The browser can only grab FLEET-named tiles, so /load
+# advertises fleet names to the client and every /act tick translates back to
+# the slot names the policy + its fitted normalization stats expect.
+# ⚠️ Keep in sync with the orchestrator's smolvla rename map (Nori-Backend
+# compute/orchestrator.py): third-person -> camera1, task arm's wrist -> camera2.
+_VLA_SLOT_TO_FLEET_VIEW = {
+    "observation.images.camera1": "observation.images.overhead",
+    "observation.images.camera2": "observation.images.right_wrist",
+    "observation.images.camera3": "observation.images.left_wrist",
+}
+
 
 def _apply_act_execution(cfg, temporal_ensemble_coeff, n_action_steps) -> dict[str, Any]:
     """INFERENCE-ONLY execution overrides for ACT — how the trained policy is
@@ -320,6 +333,19 @@ def _load_bundle(
             image_shapes[key] = tuple(feat.shape)  # (C, H, W)
         elif key == "observation.state":
             state_dim = feat.shape[0]
+
+    # Slot-named visuals (a bundle finetuned through the backend's rename_map):
+    # advertise FLEET names to the client, remember the fleet->slot map for the
+    # tick loop. Identity (empty map) for fleet-named bundles like ACT.
+    view_translation: dict[str, str] = {}
+    if any(k in _VLA_SLOT_TO_FLEET_VIEW for k in image_shapes):
+        translated: dict[str, tuple] = {}
+        for key, chw in image_shapes.items():
+            fleet = _VLA_SLOT_TO_FLEET_VIEW.get(key, key)
+            translated[fleet] = chw
+            if fleet != key:
+                view_translation[fleet] = key
+        image_shapes = translated
     action_dim = None
     for key, feat in (cfg.output_features or {}).items():
         if key == "action":
@@ -393,6 +419,8 @@ def _load_bundle(
         # non-empty only for language-conditioned policies — injected as the
         # batch's "task" each /act tick (tokenized by the fitted preprocessor)
         "task": task if cfg.type in _LANGUAGE_POLICY_TYPES else None,
+        # fleet view name -> the slot name the policy expects (empty = identity)
+        "view_translation": view_translation,
     }
 
 
@@ -921,8 +949,11 @@ def rollout_act(body: ActBody):
                 [[float(body.state.get(j, 0.0)) for j in joints]], dtype=torch.float32
             ).to(device),
         }
+        # Frames arrive under FLEET names; slot-named bundles (smolvla trained
+        # via rename_map) get each view translated to the policy's slot key.
+        view_map = _session.get("view_translation") or {}
         for key, chw in _session["image_shapes"].items():
-            obs[key] = _decode_image(images_b64[key], chw).to(device)
+            obs[view_map.get(key, key)] = _decode_image(images_b64[key], chw).to(device)
         # Language-conditioned policies (smolvla): the fitted preprocessor's
         # tokenizer step reads the instruction from the batch's "task" key.
         if _session.get("task"):
@@ -946,7 +977,8 @@ def rollout_act(body: ActBody):
             cur = [float(body.state.get(j, 0.0)) for j in action_joints]
             dmax = max((abs(a - c) for a, c in zip(vec, cur)), default=0.0)
             jmax = action_joints[max(range(len(vec)), key=lambda i: abs(vec[i] - cur[i]))] if vec else "-"
-            cams = {k.split(".")[-1]: round(float(obs[k].mean().item()), 3) for k in _session["image_shapes"]}
+            cams = {k.split(".")[-1]: round(float(obs[view_map.get(k, k)].mean().item()), 3)
+                    for k in _session["image_shapes"]}
             logger.info(
                 "[ROLLOUT-DBG] action max_delta=%.3f @%s (~0 => policy commanding NO motion) | cam means=%s (~0 => black feed)",
                 dmax, jmax, cams,

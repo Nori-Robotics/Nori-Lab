@@ -43,6 +43,17 @@ function modelFromSerial(serial: string): string {
   return m ? `Nori ${m[1].toUpperCase()}` : "Nori L2";
 }
 
+/**
+ * Card artwork for the paired robot, keyed off the same serial parse as the model name.
+ * Only L3 has its own render so far; every other model (and the unpaired card) shows the L2.
+ */
+function robotImage(serial: string | null): { src: string; alt: string } {
+  const model = serial ? modelFromSerial(serial) : "Nori L2";
+  return model === "Nori L3"
+    ? { src: "/images/nori-l3.png", alt: "Nori L3 robot" }
+    : { src: "/images/nori-l2.png", alt: "Nori L2 robot" };
+}
+
 // Robot battery pill for the "your robot" card. battery_percent only rides the telemetry stream,
 // which only flows once connected — so the card shows nothing here when idle (its serial line
 // reads normally), and the pill appears next to the serial once a live session reports a reading.
@@ -99,6 +110,7 @@ const Home = () => {
   const { baseUrl, fetchWithHeaders } = useApi();
   const serial = activeRobotSerial ?? customer?.robot_serial_number ?? null;
   const paired = !!customer?.is_paired && !!serial;
+  const robotArt = robotImage(paired ? serial : null);
   const [showSettings, setShowSettings] = useState(false);
 
   // The customer profile only carries the active robot's SERIAL, not its nickname (that
@@ -205,8 +217,8 @@ const Home = () => {
           />
         </div>
         <img
-          src="/images/nori-l2.png"
-          alt="Nori L2 robot"
+          src={robotArt.src}
+          alt={robotArt.alt}
           className="relative z-10 mr-6 -mt-8 h-52 w-auto shrink-0 self-end object-contain object-bottom md:mr-12 md:-mt-14 md:h-60"
         />
       </div>

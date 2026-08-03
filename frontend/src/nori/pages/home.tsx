@@ -43,12 +43,37 @@ function modelFromSerial(serial: string): string {
   return m ? `Nori ${m[1].toUpperCase()}` : "Nori L2";
 }
 
+/** localStorage key for the last model this browser rendered — see robotImage(). */
+const LAST_MODEL_KEY = "nori:lastRobotModel";
+
+function rememberedModel(): string | null {
+  try {
+    return localStorage.getItem(LAST_MODEL_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberModel(model: string) {
+  try {
+    localStorage.setItem(LAST_MODEL_KEY, model);
+  } catch {
+    /* private mode / storage disabled — the card just falls back to the default */
+  }
+}
+
 /**
  * Card artwork for the paired robot, keyed off the same serial parse as the model name.
  * Only L3 has its own render so far; every other model (and the unpaired card) shows the L2.
+ *
+ * The serial is null on the first paint of every reload (the profile round-trip hasn't
+ * landed yet) exactly as it is for an unpaired account, so defaulting straight to the L2
+ * made an L3 owner watch the L2 flash by on each load. Fall back to the last model this
+ * browser saw instead; the serial overrides it the moment the profile arrives, so a wrong
+ * guess (new account, swapped robot) self-corrects within the same load.
  */
 function robotImage(serial: string | null): { src: string; alt: string } {
-  const model = serial ? modelFromSerial(serial) : "Nori L2";
+  const model = serial ? modelFromSerial(serial) : rememberedModel() ?? "Nori L2";
   return model === "Nori L3"
     ? { src: "/images/nori-l3.png", alt: "Nori L3 robot" }
     : { src: "/images/nori-l2.png", alt: "Nori L2 robot" };
@@ -112,6 +137,13 @@ const Home = () => {
   const paired = !!customer?.is_paired && !!serial;
   const robotArt = robotImage(paired ? serial : null);
   const [showSettings, setShowSettings] = useState(false);
+
+  // Remember the model so the next reload paints the right artwork before the profile
+  // fetch resolves. Only written once we actually know the robot — never from the
+  // unpaired/pre-fetch state, which would just re-cache the placeholder.
+  useEffect(() => {
+    if (paired && serial) rememberModel(modelFromSerial(serial));
+  }, [paired, serial]);
 
   // The customer profile only carries the active robot's SERIAL, not its nickname (that
   // lives on the robots list). Fetch it the same way account.tsx does — a per-page read of

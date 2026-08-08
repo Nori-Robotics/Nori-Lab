@@ -940,7 +940,7 @@ const Remote = () => {
                 onChange={(v) => set("kbSpeed", v)}
               />
             </div>
-            <ControlLegend mode={mode} />
+            <ControlLegend mode={mode} jointShorts={teleop.armJointShorts()} />
           </CardContent>
           )}
         </Card>

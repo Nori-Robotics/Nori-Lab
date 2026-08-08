@@ -492,6 +492,66 @@ export const JOINT_KEYS: Record<string, [string, number]> = {
   t: ["wrist_roll", 1], g: ["wrist_roll", -1],
   y: ["gripper", 1], h: ["gripper", -1],
 };
+// ---- L3: descriptor-driven per-motor jog (additive; L2 byte-identical) ----
+// L2 daemons advertise (or predate) the classic 6-DOF vocabulary in
+// JOINT_KEYS; the L3 gateway's ack descriptor advertises its real arm joints
+// ("right_arm_shoulder_pitch.pos", ...). Only when a descriptor names arm
+// joints OUTSIDE the L2 set does per-motor mode derive its keymap from the
+// descriptor. No descriptor, or the L2 vocabulary, keeps the exact legacy
+// map — every deployed L2 behaves identically.
+const L2_JOINT_SHORTS = new Set([
+  "shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper",
+]);
+// Anatomical display/keyboard order for known L3 joints; unknown joints sort last.
+const L3_PREFERRED_ORDER = [
+  "shoulder_pitch", "shoulder_roll", "bicep_yaw", "elbow_pitch",
+  "forearm_yaw", "wrist_pitch", "wrist_roll",
+];
+// Key pairs for dynamically-mapped joints, row order. Deliberately avoids
+// i/k/j/l (base), u/o (lift), m (mode toggle) and space/p/c (commands).
+const DYNAMIC_KEY_PAIRS: [string, string][] = [
+  ["q", "a"], ["w", "s"], ["e", "d"], ["r", "f"],
+  ["t", "g"], ["y", "h"], ["z", "x"], ["b", "n"],
+];
+
+// The descriptor's arm-joint short names for one arm, or null when the robot
+// speaks the L2 vocabulary (=> use the legacy JOINT_KEYS untouched).
+export function l3JointShorts(
+  descriptor: RobotDescriptor | undefined | null, arm: string,
+): string[] | null {
+  const joints = descriptor?.joints;
+  if (!joints) return null;
+  const prefix = `${arm}_arm_`;
+  const shorts: string[] = [];
+  for (const key of joints) {
+    if (!key.startsWith(prefix) || !key.endsWith(".pos")) continue;
+    const short = key.slice(prefix.length, -".pos".length);
+    if (short !== "gripper") shorts.push(short);
+  }
+  if (!shorts.length || shorts.every((s) => L2_JOINT_SHORTS.has(s))) return null;
+  const rank = (s: string) => {
+    const i = L3_PREFERRED_ORDER.indexOf(s);
+    return i < 0 ? L3_PREFERRED_ORDER.length : i;
+  };
+  shorts.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  return shorts;
+}
+
+// Build a per-motor keymap for descriptor-advertised joints. The gripper
+// always keeps the last pair, so it can never fall off the keyboard.
+export function jointKeymapForShorts(
+  shorts: string[],
+): Record<string, [string, number]> {
+  const dofs = [...shorts.slice(0, DYNAMIC_KEY_PAIRS.length - 1), "gripper"];
+  const map: Record<string, [string, number]> = {};
+  dofs.forEach((short, i) => {
+    const [pos, neg] = DYNAMIC_KEY_PAIRS[i];
+    map[pos] = [short, 1];
+    map[neg] = [short, -1];
+  });
+  return map;
+}
+
 export const BASE_KEYS: Record<string, [string, number]> = {
   i: ["linear", 1], k: ["linear", -1], j: ["angular", 1], l: ["angular", -1],
   // WASD alias for the same base DOFs. jogTick gives the ARM keymap first claim on a
@@ -540,7 +600,7 @@ export function baseKeyClusters(): BaseKeyCluster[] {
 
 // Structured control legend for a given mode — derived from the exported maps above so it
 // can never drift from what the keys actually send.
-export function keybindLegend(mode: ControlMode): {
+export function keybindLegend(mode: ControlMode, jointShorts?: string[] | null): {
   arm: KeybindRow[];
   base: KeybindRow[];
   lift: KeybindRow;
@@ -548,7 +608,10 @@ export function keybindLegend(mode: ControlMode): {
 } {
   const [u, o] = Object.entries(ZLIFT_KEYS).sort((a, b) => b[1] - a[1]).map(([k]) => k);
   return {
-    arm: rowsFromAxisMap(mode === "joint" ? JOINT_KEYS : TASK_KEYS),
+    arm: rowsFromAxisMap(
+      mode === "joint"
+        ? (jointShorts ? jointKeymapForShorts(jointShorts) : JOINT_KEYS)
+        : TASK_KEYS),
     base: rowsFromAxisMap(BASE_KEYS),
     lift: { dof: "lift (selected arm)", posKey: u, negKey: o },
     commands: [
@@ -1724,7 +1787,11 @@ export class RemoteTeleop {
         `v${NORI_PROTOCOL_VERSION}. Proceeding (unknown frames are ignored by both sides); ` +
         `expect vocabulary gaps, not unsafe behavior.`);
     }
+    this.robotInfo = info;
+    this.dynamicKeymap = null;   // rebuild the per-motor map from this ack
     const d = info.descriptor;
+    const l3 = l3JointShorts(d, this.o.arm);
+    if (l3) this.log(`descriptor-driven per-motor jog: ${l3.length} arm joints`);
     this.log("robot ack: accepted=" + info.accepted +
       (info.protocolVersion !== undefined ? ` protocol=v${info.protocolVersion}` : "") +
       (info.normMode ? ` norm=${info.normMode}` : "") +
@@ -1886,8 +1953,24 @@ export class RemoteTeleop {
     }
   }
 
+  // The robot's handshake, kept for descriptor-driven behavior (L3 keymaps).
+  private robotInfo: RobotInfo | null = null;
+  private dynamicKeymap: { arm: string; map: Record<string, [string, number]> } | null = null;
+
+  // Descriptor shorts for the CURRENTLY selected arm, or null on L2 robots.
+  // Public so the page can render the matching legend.
+  armJointShorts(): string[] | null {
+    return l3JointShorts(this.robotInfo?.descriptor, this.o.arm);
+  }
+
   private armKeymap() {
-    return this.mode === "joint" ? JOINT_KEYS : TASK_KEYS;
+    if (this.mode !== "joint") return TASK_KEYS;
+    const cached = this.dynamicKeymap;
+    if (cached && cached.arm === this.o.arm) return cached.map;
+    const shorts = this.armJointShorts();
+    const map = shorts ? jointKeymapForShorts(shorts) : JOINT_KEYS;
+    this.dynamicKeymap = { arm: this.o.arm, map };
+    return map;
   }
 
   private setMode(m: ControlMode) {
@@ -1960,9 +2043,11 @@ export class RemoteTeleop {
     const km = this.armKeymap();
     // joint mode: always send all 6 joint fields (0 default) so the daemon picks the
     // per-motor path. cylindrical mode: send only task DOFs -> daemon task/IK path.
+    // Derived from the ACTIVE keymap, so it is the L2 literal for JOINT_KEYS
+    // and the descriptor's joints for an L3 map — never a stale vocabulary.
     const a: Record<string, number> =
       this.mode === "joint"
-        ? { shoulder_pan: 0, shoulder_lift: 0, elbow_flex: 0, wrist_flex: 0, wrist_roll: 0, gripper: 0 }
+        ? Object.fromEntries(Object.values(km).map(([dof]) => [dof, 0]))
         : {};
     const base: Record<string, number> = {};
     let z = 0;

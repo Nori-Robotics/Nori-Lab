@@ -661,8 +661,13 @@ function Key({ children }: { children: React.ReactNode }) {
 // ("shoulder_pan"). Underscores are for the wire, not the operator.
 const dofLabel = (dof: string) => dof.replace(/_/g, " ");
 
-export function ControlLegend({ mode }: { mode: ControlMode }) {
-  const legend = keybindLegend(mode);
+export function ControlLegend({ mode, jointShorts }: {
+  mode: ControlMode;
+  // Descriptor-driven joints (L3): the legend renders the SAME dynamic map
+  // the jog stream uses. Omitted/null (every L2) -> the legacy legend.
+  jointShorts?: string[] | null;
+}) {
+  const legend = keybindLegend(mode, jointShorts);
   return (
     <div className="space-y-3 text-xs">
       <div className="flex items-center gap-2">

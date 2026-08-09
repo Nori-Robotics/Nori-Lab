@@ -134,6 +134,16 @@ export interface TelemetryView {
   // daemon's status.motor_faults (telemetry.json). The raw hex in the string is authoritative;
   // the names are best-effort per the Feetech status byte. Empty on old daemons that don't send it.
   motorFaults: Record<string, string>;
+  // Per-motor servo CASE temperature, whole °C — the daemon's 1 Hz L3-guard sweep
+  // (arms + lifts + wheels), surfaced so an operator can watch a joint warm toward the
+  // 58 °C latch live (telemetry `servo_temps`, 2026-08-09). A motor ABSENT from the map
+  // failed its read that cycle (unknown — never assume cool). Empty {} on old daemons,
+  // the mock, or a robot with the L3 guard disabled.
+  servoTemps: Record<string, number>;
+  // Why the robot is latched ("estop:<reason>" | "overtemp:<motor>" | "overcurrent:<motor>" |
+  // "stall:<motor>"), or null when not latched. Drives persistent operator banners — an
+  // over-temp latch holds for the several MINUTES the servo needs to cool below threshold.
+  latchReason: string | null;
 }
 
 // A single object the on-Pi detector reports (nori-protocol perception.json $items). Fields
@@ -675,7 +685,7 @@ export class RemoteTeleop {
   // frame — keep last values so the readout doesn't flicker to 0.
   private tel: TelemetryView = {
     loopHz: 0, safety: "-", watchdog: "-", tempC: 0, active: false, linkMode: null, currents: {},
-    state: {}, videoNet: null, batteryPercent: null, motorFaults: {},
+    state: {}, videoNet: null, batteryPercent: null, motorFaults: {}, servoTemps: {}, latchReason: null,
   };
   private stopped = false;
   // Latest world-state from the daemon perception process (Phase F). null until a frame arrives
@@ -1662,10 +1672,13 @@ export class RemoteTeleop {
       if (typeof m.loop_hz === "number") this.tel.loopHz = m.loop_hz;
       if (typeof m.pi_temp_c === "number" && m.pi_temp_c > 0) this.tel.tempC = m.pi_temp_c;
       const status = m.status as
-        | { safety?: string; watchdog?: string; motor_faults?: Record<string, string> }
+        | { safety?: string; watchdog?: string; latch_reason?: string | null;
+            motor_faults?: Record<string, string> }
         | undefined;
       if (status) {
         if (status.safety) this.tel.safety = status.safety;
+        // null/absent -> not latched; replace wholesale so a cleared latch drops the banner.
+        this.tel.latchReason = typeof status.latch_reason === "string" ? status.latch_reason : null;
         if (status.watchdog) this.tel.watchdog = status.watchdog;
         // Per-motor hardware faults. The daemon sends the FULL current fault set in each status
         // block (and omits the field entirely when nothing is faulted), so replace wholesale —
@@ -1674,6 +1687,11 @@ export class RemoteTeleop {
         this.tel.motorFaults =
           status.motor_faults && typeof status.motor_faults === "object" ? status.motor_faults : {};
       }
+      // Per-motor servo case temps (1 Hz sweep). Only present on periodic blocks from
+      // new daemons; replace wholesale when present so a recovered read updates cleanly,
+      // and keep the last sweep otherwise (same no-flicker rule as loop_hz/status).
+      if (m.servo_temps && typeof m.servo_temps === "object")
+        this.tel.servoTemps = m.servo_temps as Record<string, number>;
       // Per-motor Present_Current (virtual tactile signal) -> VR haptics + on-screen readout.
       if (m.currents && typeof m.currents === "object") {
         this.tel.currents = m.currents as Record<string, number>;

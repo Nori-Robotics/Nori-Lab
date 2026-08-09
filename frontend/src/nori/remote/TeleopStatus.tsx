@@ -120,6 +120,26 @@ export function ControlOfflineBanner({ status }: { status: DaemonStatus | null }
   );
 }
 
+// Persistent over-temp banner (telemetry status.latch_reason = "overtemp:<motor>"). The latch
+// holds for the several MINUTES the servo needs to cool below the 58°C threshold, and reset is
+// REFUSED until then — without this banner that reads as a robot that ignores reset presses.
+// Driven by latch_reason (not servo_temps) so it exactly tracks the latch lifecycle: appears on
+// trip, survives reconnects, drops the moment a reset actually succeeds.
+export function OvertempBanner({ latchReason }: { latchReason?: string | null }) {
+  if (!latchReason?.startsWith("overtemp")) return null;
+  return (
+    <div className="rounded-md border border-nori-hd24a3d/35 bg-nori-hfde7e4 px-4 py-3 text-nori-ha3271c">
+      <p className="font-mono text-[11px] uppercase tracking-[0.14em]">
+        Servo over temperature limit
+      </p>
+      <p className="mt-1 text-sm">
+        At least one servo is over the temperature limit. Cooling may take several minutes,
+        and motion will not unlatch till then.
+      </p>
+    </div>
+  );
+}
+
 // What the operator is told for each connect failure. Same contract as CONTROL_REMEDIES above:
 // headline = what's wrong in their words, body = what to DO about it.
 //
@@ -246,6 +266,18 @@ export function TelemetryPanel({
       <Stat label="watchdog" value={tel.watchdog} tone={watchdogTone(tel.watchdog)} />
       <Stat label="temp" value={tel.tempC > 0 ? `${tel.tempC.toFixed(0)}°C` : "—"}
         tone={tel.tempC >= 80 ? "bad" : tel.tempC >= 70 ? "warn" : "default"} />
+      {/* Hottest SERVO case temp (telemetry servo_temps, new daemons; "—" on old ones).
+          The joint's torque latches OFF at 58°C — tones track that, not the Pi's SoC bands.
+          Hover names the joint; the ServoTemps rows below list every joint ≥50°C. */}
+      {(() => {
+        const hot = Object.entries(tel.servoTemps ?? {}).sort((a, b) => b[1] - a[1])[0];
+        return (
+          <span title={hot ? `hottest joint: ${shortMotor(hot[0])}` : undefined}>
+            <Stat label="servo" value={hot ? `${hot[1]}°C` : "—"}
+              tone={!hot ? "default" : hot[1] >= 56 ? "bad" : hot[1] >= 50 ? "warn" : "good"} />
+          </span>
+        );
+      })()}
       {/* Pack state-of-charge from the robot bridge (battery_monitor_integration.md §5). null =
           no monitor / reader down / voltage unknown -> "—", never a scary 0%. Low thresholds
           mirror the kiosk gauge (≤15% ≈ where the 6S SoC table nears the 22V floor). */}
@@ -362,6 +394,45 @@ export function GripForce({ currents }: { currents: Record<string, number> }) {
 // indistinguishable from healthy — this panel is exactly what makes a dropped motor visible. The
 // decoded fault string carries the raw 0xNN hex (authoritative; names are best-effort).
 const MOTOR_NO_RESPONSE = "no response"; // sentinel the daemon sends for an unreadable motor
+
+// Servo case temps (telemetry servo_temps, °C, 1 Hz — the daemon's own L3-guard sweep).
+// Silent while everything is comfortably cool; from WARN_C up it lists the warm joints so an
+// operator can watch one climb toward the 58 °C torque-cut latch and back off BEFORE it fires
+// (cooling back under 58 takes minutes — see SAFETY.md 2026-08-07). Amber = warm, red = within
+// 2 °C of the latch. Empty/missing map (old daemon, mock, guard disabled) renders nothing.
+const TEMP_WARN_C = 50;   // start showing a joint
+const TEMP_HOT_C = 56;    // red — latch at 58 is imminent
+export function ServoTemps({ temps }: { temps?: Record<string, number> | null }) {
+  const warm = temps
+    ? Object.entries(temps).filter(([, t]) => t >= TEMP_WARN_C).sort((a, b) => b[1] - a[1])
+    : [];
+  if (warm.length === 0) return null;
+  return (
+    <div className="space-y-1.5">
+      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-nori-h8f2318">
+        Motor temperature (torque cuts at 58°C)
+      </span>
+      {warm.map(([k, t]) => {
+        const cls = t >= TEMP_HOT_C
+          ? "border-nori-hd24a3d/40 bg-nori-hd24a3d/15 text-nori-h8f2318"
+          : "border-nori-hdb9346/40 bg-nori-hfdf1de text-nori-h8a5a12";
+        return (
+          <div
+            key={k}
+            className={cn(
+              "grid grid-cols-[minmax(6rem,auto)_1fr] items-center gap-3 rounded-md border px-3 py-2",
+              cls,
+            )}
+          >
+            <span className="truncate font-mono text-xs">{shortMotor(k)}</span>
+            <span className="text-right font-mono text-xs">{t}°C</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function MotorFaults({ faults }: { faults: Record<string, string> }) {
   // Defensive: an older SDK/daemon (or a pre-telemetry initial state) may not populate this;
   // never let a missing map crash the whole page.

@@ -21,7 +21,7 @@ import { type ArmSide, type CameraViewHandle } from "@nori/sdk";
 import { VrSession } from "@nori/sdk/vr";
 import { VrHandoff } from "@/nori/components/VrHandoff";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
-import { TelemetryPanel, GripForce, MotorFaults, ControlLegend, BaseCommandLegend, CallBar, ConnectionBanner, ControlOfflineBanner, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
+import { TelemetryPanel, GripForce, MotorFaults, ServoTemps, OvertempBanner, ControlLegend, BaseCommandLegend, CallBar, ConnectionBanner, ControlOfflineBanner, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import LeaderSetup from "@/nori/pages/leader-setup";
@@ -567,6 +567,10 @@ const Remote = () => {
               controller is down or refusing sessions (dead arm) — say so, with the remedy,
               instead of letting it read as random dead control. */}
           {running && <ControlOfflineBanner status={daemonStatus} />}
+          {/* Persistent while an over-temp latch holds: cooling takes minutes and reset is
+              refused until the joint is back under threshold — say so, or the refused reset
+              reads as a bug. */}
+          {running && <OvertempBanner latchReason={tel.latchReason} />}
           <div className="relative">
             <video
               ref={videoRef}
@@ -644,6 +648,11 @@ const Remote = () => {
             {/* Per-motor hardware faults — renders nothing unless a motor is actually erroring. */}
             <div className="mt-2">
               <MotorFaults faults={tel.motorFaults} />
+            </div>
+            {/* Servo temps — silent until a joint reaches 50°C, then lists it warming toward
+                the 58°C torque-cut latch (amber) / imminent (red). */}
+            <div className="mt-2">
+              <ServoTemps temps={tel.servoTemps} />
             </div>
           </div>
 

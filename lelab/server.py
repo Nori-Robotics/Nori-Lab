@@ -225,8 +225,14 @@ async def _local_origin_gate(request: Request, call_next):
             content={"detail": "cross-origin request refused — lelab only serves "
                                "its own local UI (see NORI_EXTRA_ORIGINS)"},
         )
+    # Backstop for ORIGIN-STRIPPING edge cases only: a mutation stamped cross-site with no
+    # (or an unlisted) Origin is refused. An ALLOWLISTED origin defers to the primary check
+    # above — the hosted UI (lab.norirobotics.com -> localhost) is legitimately cross-SITE,
+    # so browsers stamp all its requests cross-site; without this exemption every mutation
+    # from the deployed page 403s ("Provision account failed: cross-site request refused").
     if (request.method not in ("GET", "HEAD", "OPTIONS")
-            and request.headers.get("sec-fetch-site") == "cross-site"):
+            and request.headers.get("sec-fetch-site") == "cross-site"
+            and origin not in _ALLOWED_ORIGINS):
         return JSONResponse(status_code=403,
                             content={"detail": "cross-site request refused"})
     return await call_next(request)

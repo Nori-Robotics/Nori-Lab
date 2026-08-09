@@ -62,7 +62,11 @@ def test_hosted_ui_origin_passes(client):
     # the flow the gate's first cut broke: post-disconnect config/status fetches got
     # 403 (gate) / 400 (CORS preflight) and the UI crashed. HTTPS origin only; and
     # the sibling test below pins that lookalike domains stay refused.
-    r = client.post(TARGET, headers={"Origin": "https://lab.norirobotics.com"})
+    # Sec-Fetch-Site MUST be in the test: real browsers stamp hosted->localhost as
+    # cross-site (it IS cross-site), and the backstop's first cut refused every such
+    # mutation even with an allowlisted Origin ("Provision account failed").
+    r = client.post(TARGET, headers={"Origin": "https://lab.norirobotics.com",
+                                     "Sec-Fetch-Site": "cross-site"})
     assert r.status_code == 200
     # CORS layer must grant the read too (the browser enforces from the header).
     assert r.headers.get("access-control-allow-origin") == "https://lab.norirobotics.com"
@@ -87,6 +91,11 @@ def test_cross_site_sec_fetch_backstop(client):
     # Origin absent but the browser stamped cross-site provenance: refuse the
     # mutation anyway.
     r = client.post(TARGET, headers={"Sec-Fetch-Site": "cross-site"})
+    assert r.status_code == 403
+    # An UNLISTED origin + cross-site stays refused too (the exemption is only
+    # for allowlisted origins, where the primary check already vouched).
+    r = client.post(TARGET, headers={"Origin": "https://evil.example",
+                                     "Sec-Fetch-Site": "cross-site"})
     assert r.status_code == 403
     # ...but a cross-site GET without Origin stays readable-by-design here
     # (the Origin check is the primary; this backstop is mutations-only).

@@ -57,6 +57,26 @@ def test_allowed_origins_pass(client):
         assert r.json() == {"unloaded": None}
 
 
+def test_hosted_ui_origin_passes(client):
+    # The deployed first-party page (lab.norirobotics.com) driving a LOCAL backend —
+    # the flow the gate's first cut broke: post-disconnect config/status fetches got
+    # 403 (gate) / 400 (CORS preflight) and the UI crashed. HTTPS origin only; and
+    # the sibling test below pins that lookalike domains stay refused.
+    r = client.post(TARGET, headers={"Origin": "https://lab.norirobotics.com"})
+    assert r.status_code == 200
+    # CORS layer must grant the read too (the browser enforces from the header).
+    assert r.headers.get("access-control-allow-origin") == "https://lab.norirobotics.com"
+
+
+def test_hosted_ui_lookalikes_refused(client):
+    for origin in ("http://lab.norirobotics.com",          # plaintext downgrade
+                   "https://lab.norirobotics.com.evil.io", # suffix trick
+                   "https://evil-lab.norirobotics.com.attacker.example",
+                   "https://labnorirobotics.com"):
+        r = client.post(TARGET, headers={"Origin": origin})
+        assert r.status_code == 403, origin
+
+
 def test_no_origin_passes(client):
     # curl / SDKs / same-origin GETs send no Origin — untouched.
     r = client.post(TARGET)

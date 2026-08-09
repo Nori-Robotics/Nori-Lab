@@ -205,6 +205,11 @@ _ALLOWED_ORIGINS = {
     "http://localhost:8000", "http://127.0.0.1:8000",   # served UI (prod)
     "http://localhost:8080", "http://127.0.0.1:8080",   # lelab --dev (Vite)
     "https://localhost:8000", "https://127.0.0.1:8000", # manual HTTPS runs
+    # The HOSTED first-party UI driving a local backend (the deployed-page flow the
+    # 2026-07-22 gate accidentally broke): lab.norirobotics.com fetches localhost:8000
+    # for config/status the moment a session ends (the live session rides a WebSocket,
+    # which this http middleware never sees — that's why only disconnect broke).
+    "https://lab.norirobotics.com",
 }
 _ALLOWED_ORIGINS |= {
     o.strip() for o in os.environ.get("NORI_EXTRA_ORIGINS", "").split(",") if o.strip()

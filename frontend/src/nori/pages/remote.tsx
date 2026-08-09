@@ -940,7 +940,10 @@ const Remote = () => {
                 onChange={(v) => set("kbSpeed", v)}
               />
             </div>
-            <ControlLegend mode={mode} jointShorts={teleop.armJointShorts()} />
+            {/* teleop is nulled by TeleopSessionContext during disconnect teardown; this render
+                can still fire in that window — optional-chain or the whole page tree crashes
+                ("Cannot read properties of null (reading 'armJointShorts')"). */}
+            <ControlLegend mode={mode} jointShorts={teleop?.armJointShorts() ?? null} />
           </CardContent>
           )}
         </Card>

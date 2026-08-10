@@ -809,6 +809,8 @@ const MyStuff = () => {
               </div>
             </div>
           </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+          {b.robot_type && <Pill tone="sticker-2">{b.robot_type}</Pill>}
           <Pill
             tone={
               assembling
@@ -837,6 +839,7 @@ const MyStuff = () => {
                       ? "Finishing on robot…"
                       : "Uploading to cloud"}
           </Pill>
+          </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
           <span className="flex flex-wrap gap-x-4 gap-y-1">
@@ -1173,6 +1176,7 @@ const MyStuff = () => {
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
+                    {d.robot_type && <Pill tone="sticker-2">{d.robot_type}</Pill>}
                     {d.origin === "community" && <Pill tone="sticker-2">Community</Pill>}
                     {assembling ? (
                       <Pill tone="sticker">Assembling</Pill>

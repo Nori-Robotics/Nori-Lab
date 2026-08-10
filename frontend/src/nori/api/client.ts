@@ -552,6 +552,8 @@ export interface LibraryDataset {
   created_at: string;
   episode_count: number | null;
   frame_count: number | null;
+  /** Record-time robot model ("L2" | "L3"); null for pre-label datasets (L2 era). */
+  robot_type?: string | null;
   /** Owner-set: when true, the dataset can't be renamed or deleted. */
   locked?: boolean;
   /** 'own' (assembled/uploaded here) | 'community' (added from a marketplace listing). */
@@ -623,6 +625,9 @@ export interface RawBundleEntry {
   /** Count of commanded-motion samples (action rows, ~50 Hz Servo output) —
    *  "motion samples" on the card. Absent until the backend surfaces it. */
   action_count?: number | null;
+  /** Record-time robot model ("L2" | "L3", from the recorder's capture stamp);
+   *  null for recordings made before the label existed (the L2 fleet). */
+  robot_type?: string | null;
   created_at: string;
   finalized_at: string | null;
   failure_reason: string | null;

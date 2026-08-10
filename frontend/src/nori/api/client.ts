@@ -616,6 +616,13 @@ export interface RawBundleEntry {
   hf_path_prefix: string | null;
   episode_count: number | null;
   frame_count: number | null;
+  /** Episode length in seconds (action-stream span from the bundle's
+   *  meta.json). Absent until the backend surfaces it — the card just omits
+   *  the duration until then. */
+  duration_s?: number | null;
+  /** Count of commanded-motion samples (action rows, ~50 Hz Servo output) —
+   *  "motion samples" on the card. Absent until the backend surfaces it. */
+  action_count?: number | null;
   created_at: string;
   finalized_at: string | null;
   failure_reason: string | null;

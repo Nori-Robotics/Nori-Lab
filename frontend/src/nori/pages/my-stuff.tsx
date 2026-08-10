@@ -1,8 +1,8 @@
 // NORI: My Stuff — the customer's library. Everything captured, uploaded, and
 // trained, with the dataset→policy lineage the backend joins in GET /library.
-// Datasets column: local recordings ("on this laptop") + promoted uploads
-// (each showing what it trained). Policies column: every trained policy with a
-// chip back to its source dataset; hovering a policy highlights that dataset.
+// One wide column with a Recordings / Datasets / Policies view switch (no
+// side-by-side columns, so each card is full width). Policies keep the chip
+// back to their source dataset; hovering a policy highlights that dataset.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -18,6 +18,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useApi } from "@/contexts/ApiContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { PolicyRunner, EXECUTION_PRESETS, type PolicyRunPhase } from "@/nori/remote/policyRun";
@@ -78,6 +85,22 @@ const STATE_LABEL: Record<LibraryPolicy["state"], string> = {
 
 const fmt = (n: number) => n.toLocaleString();
 const shortDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+const shortDateTime = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+// Episode length -> "M:SS" (or "H:MM:SS" for long takes).
+const formatDuration = (s: number) => {
+  const total = Math.max(0, Math.round(s));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
+  return `${h > 0 ? `${h}:` : ""}${mm}:${String(sec).padStart(2, "0")}`;
+};
 
 const cardCls =
   "rounded-[20px] border border-border bg-card p-4 shadow-soft transition-shadow hover:shadow-pop";
@@ -162,6 +185,112 @@ const EditableName = ({
   );
 };
 
+// ---- recording grouping ----------------------------------------------------
+// The robot ships one raw bundle per EPISODE (episode-as-unit), so a recording
+// session of N episodes arrives as N separate bundles. We regroup them for
+// display ONLY — no id is minted on the robot or backend. Cluster key: shared
+// label (the robot sets label = task) AND time-contiguity — episodes recorded
+// back-to-back are one session; a gap longer than SESSION_GAP_MS starts a new
+// one, so two sessions that reuse a task name on different days never merge.
+const SESSION_GAP_MS = 20 * 60_000; // >20 min between episodes => a new session
+
+type RecordingFlags = {
+  assembling: boolean;
+  promoted: boolean;
+  localCleared: boolean;
+  inCloud: boolean;
+  finishing: boolean;
+  failed: boolean;
+};
+function recordingFlags(b: RawBundleEntry): RecordingFlags {
+  const assembling = b.assembling === true;
+  const promoted = b.status === "PROMOTED";
+  const localCleared = b.local_deleted_at != null;
+  return {
+    assembling,
+    promoted,
+    localCleared,
+    inCloud: promoted && localCleared && !assembling,
+    finishing: promoted && !localCleared && !assembling,
+    failed: b.status === "FAILED" || b.status === "PROMOTION_FAILED",
+  };
+}
+
+type RecordingGroup = {
+  key: string;
+  label: string;
+  newestMs: number;
+  bundles: RawBundleEntry[];
+};
+function groupRecordings(bundles: RawBundleEntry[]): RecordingGroup[] {
+  const ms = (b: RawBundleEntry) => {
+    const t = Date.parse(b.created_at);
+    return Number.isNaN(t) ? 0 : t;
+  };
+  const byLabel = new Map<string, RawBundleEntry[]>();
+  for (const b of bundles) {
+    const arr = byLabel.get(b.label) ?? [];
+    arr.push(b);
+    byLabel.set(b.label, arr);
+  }
+  const groups: RecordingGroup[] = [];
+  for (const [label, arr] of byLabel) {
+    const sorted = [...arr].sort((a, b) => ms(a) - ms(b)); // episode order
+    let cluster: RawBundleEntry[] = [];
+    const flush = () => {
+      if (!cluster.length) return;
+      groups.push({
+        key: `${label}::${ms(cluster[0])}`,
+        label,
+        newestMs: ms(cluster[cluster.length - 1]),
+        bundles: cluster,
+      });
+      cluster = [];
+    };
+    for (const b of sorted) {
+      if (cluster.length && ms(b) - ms(cluster[cluster.length - 1]) > SESSION_GAP_MS) flush();
+      cluster.push(b);
+    }
+    flush();
+  }
+  return groups.sort((a, b) => b.newestMs - a.newestMs); // newest session first
+}
+
+type GroupSummary = { tone: Tone; pill: string; detail: string };
+function summarizeGroup(
+  group: RecordingGroup,
+  robotReporting: boolean,
+): GroupSummary {
+  let inCloud = 0;
+  let uploading = 0;
+  let assembling = 0;
+  let failed = 0;
+  for (const b of group.bundles) {
+    const f = recordingFlags(b);
+    if (f.failed) failed++;
+    else if (f.assembling) assembling++;
+    else if (f.inCloud) inCloud++;
+    else uploading++; // uploading + "finishing on robot" both roll up as uploading
+  }
+  const parts: string[] = [];
+  if (inCloud) parts.push(`${inCloud} in cloud`);
+  if (uploading) parts.push(`${uploading} ${robotReporting ? "uploading" : "waiting"}`);
+  if (assembling) parts.push(`${assembling} assembling`);
+  if (failed) parts.push(`${failed} need attention`);
+  const allInCloud = inCloud === group.bundles.length;
+  return {
+    tone: failed ? "secondary" : allInCloud ? "leaf" : "sticker",
+    pill: failed
+      ? "Needs attention"
+      : allInCloud
+        ? "In cloud"
+        : robotReporting
+          ? "Uploading to cloud"
+          : "On robot · waiting",
+    detail: parts.join(" · "),
+  };
+}
+
 // ---- page ------------------------------------------------------------------
 
 const MyStuff = () => {
@@ -177,11 +306,15 @@ const MyStuff = () => {
   const [error, setError] = useState<string | null>(null);
   const [activeRef, setActiveRef] = useState<string | null>(null); // hovered policy's source
   const [reviewing, setReviewing] = useState<ReviewSource | null>(null); // dataset under review
-  const [view, setView] = useState<"recordings" | "datasets">("recordings"); // left-column picker
+  const [view, setView] = useState<"recordings" | "datasets" | "policies">("recordings"); // column view picker
+  const [policyFilter, setPolicyFilter] = useState<"all" | LibraryPolicy["state"]>("all");
+  const [datasetFilter, setDatasetFilter] = useState<"all" | "own" | "community" | "published">("all");
   const [deletingRecording, setDeletingRecording] = useState<RawBundleEntry | null>(null); // pending delete
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false); // bulk delete of the picked set
   const [deleteRecBusy, setDeleteRecBusy] = useState(false);
   const [deleteRecErr, setDeleteRecErr] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set()); // recordings selected to assemble
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set()); // multi-episode sessions expanded
   const [assembleOpen, setAssembleOpen] = useState(false);
   const [exporting, setExporting] = useState<{ session_id: string; label: string } | null>(null); // dataset being downloaded
   const [deleting, setDeleting] = useState<LibraryDataset | null>(null); // pending delete confirmation
@@ -325,6 +458,34 @@ const MyStuff = () => {
       setDeleteRecBusy(false);
     }
   }, [deletingRecording, baseUrl, fetchWithHeaders, load]);
+
+  const onBulkDeleteRecordings = useCallback(async () => {
+    const targets = (robot?.bundles ?? []).filter((b) => {
+      if (!picked.has(b.session_id)) return false;
+      const f = recordingFlags(b);
+      // Same deletability rule as the per-card Delete: a stable state and not
+      // locked or mid-assembly (deleting an assembly source breaks the job).
+      return !f.assembling && (f.promoted || f.failed) && !b.locked;
+    });
+    setDeleteRecBusy(true);
+    setDeleteRecErr(null);
+    const failed: string[] = [];
+    for (const b of targets) {
+      try {
+        await deleteDataset(baseUrl, fetchWithHeaders, b.session_id, false);
+      } catch {
+        failed.push(b.label);
+      }
+    }
+    setDeleteRecBusy(false);
+    setPicked(new Set());
+    await load();
+    if (failed.length) {
+      setDeleteRecErr(`Couldn't delete ${failed.length}: ${failed.join(", ")}`);
+    } else {
+      setBulkDeleteOpen(false);
+    }
+  }, [robot, picked, baseUrl, fetchWithHeaders, load]);
 
   const onToggleDatasetLock = useCallback(
     async (d: LibraryDataset) => {
@@ -538,13 +699,199 @@ const MyStuff = () => {
 
   const datasets = library?.datasets ?? [];
 
+  // Robot heartbeat proxy: on_robot_pending is null when the robot hasn't
+  // reported recently. In-flight recordings then aren't actually being worked,
+  // so we label them honestly ("waiting on robot") instead of claiming an
+  // upload/finish is in progress. Coarse (heartbeat is global, not per-bundle);
+  // a per-session last_upload_activity_at from the backend would be exact.
+  const robotReporting = robot != null && robot.on_robot_pending != null;
+
+  // How many of the picked recordings are actually deletable (stable state,
+  // unlocked, not mid-assembly) — gates the bulk Delete action.
+  const deletablePickedCount = (robot?.bundles ?? []).filter((b) => {
+    if (!picked.has(b.session_id)) return false;
+    const f = recordingFlags(b);
+    return !f.assembling && (f.promoted || f.failed) && !b.locked;
+  }).length;
+
+  // Filtered views (top-of-column dropdowns). Recordings are unfiltered — too
+  // few states/attributes to be worth it.
+  const filteredPolicies = allPolicies.filter(
+    (p) => policyFilter === "all" || p.state === policyFilter,
+  );
+  const filteredDatasets = datasets.filter((d) => {
+    if (datasetFilter === "all") return true;
+    if (datasetFilter === "community") return d.origin === "community";
+    if (datasetFilter === "own") return d.origin !== "community";
+    if (datasetFilter === "published") return d.published === true;
+    return true;
+  });
+
+  const toggleGroup = (key: string) =>
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  // One recording (raw bundle = one episode) card. Extracted so it renders
+  // identically whether standalone or nested under a session group header.
+  const renderRecordingCard = (b: RawBundleEntry) => {
+    const { assembling, promoted, inCloud, finishing, failed } = recordingFlags(b);
+    // Assembly only needs the CLOUD copy, so a PROMOTED recording is selectable
+    // even during the brief local-delete tail — don't block on cleanup.
+    const selectable = promoted && !assembling;
+    // Deletable once it's in a stable state (in cloud / failed) and not
+    // mid-assembly — deleting a source mid-assembly would break the job.
+    const deletable = !assembling && (promoted || failed);
+    return (
+      <article
+        key={b.session_id}
+        className={`${cardCls}${picked.has(b.session_id) ? " ring-2 ring-nori-h14131a" : ""}`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
+            {selectable && (
+              <input
+                type="checkbox"
+                checked={picked.has(b.session_id)}
+                onChange={() => togglePick(b.session_id)}
+                className="mt-1 h-4 w-4 shrink-0 accent-nori-h14131a"
+                aria-label={`Select ${b.label}`}
+              />
+            )}
+            <div className="min-w-0">
+              {/* Title line: name + "Episode" (singular; N episodes if a bundle
+                  ever holds more) + the upload/record time, all on one line to
+                  keep the card compact. Rename hits the same owner-scoped
+                  upload-label endpoint as datasets (raw bundles are sessions). */}
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <EditableName
+                  value={b.label}
+                  onRename={(next) => onRenameUpload(b.session_id, next)}
+                />
+                <span className="shrink-0 text-xs text-muted-foreground [font-variant-numeric:tabular-nums]">
+                  {b.episode_count != null && b.episode_count !== 1
+                    ? `${fmt(b.episode_count)} episodes`
+                    : "Episode"}
+                  {" · "}
+                  {b.status === "PROMOTED" && b.finalized_at
+                    ? `Uploaded ${shortDateTime(b.finalized_at)}`
+                    : `Recorded ${shortDateTime(b.created_at)}`}
+                </span>
+              </div>
+            </div>
+          </div>
+          <Pill
+            tone={
+              assembling
+                ? "sticker"
+                : inCloud || (finishing && !robotReporting)
+                  ? "leaf"
+                  : failed
+                    ? "secondary"
+                    : "sticker"
+            }
+          >
+            {assembling
+              ? "Uploading to dataset"
+              : inCloud
+                ? "In cloud"
+                : failed
+                  ? "Needs attention"
+                  : !robotReporting
+                    ? // Robot offline -> nothing is actually happening. A promoted
+                      // take is already cloud-safe; an unpromoted one just waits.
+                      finishing
+                      ? "In cloud · clearing pending"
+                      : "On robot · waiting for upload"
+                    : finishing
+                      ? "Finishing on robot…"
+                      : "Uploading to cloud"}
+          </Pill>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
+          <span className="flex flex-wrap gap-x-4 gap-y-1">
+            {b.duration_s != null && <span><b className="font-semibold text-nori-h14131a">{formatDuration(b.duration_s)}</b></span>}
+            {b.frame_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(b.frame_count)}</b> frames</span>}
+            {b.action_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(b.action_count)}</b> motion samples</span>}
+          </span>
+          <div className="flex items-center gap-1.5">
+            {/* Preview the ORIGINAL recorded video (raw_bundle viewer) — the
+                robot's own H.264 at full quality, viewable before assembly. */}
+            {selectable && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setReviewing({ kind: "raw", sessionId: b.session_id, title: b.label })}
+              >
+                Preview
+              </Button>
+            )}
+            {(promoted || failed) && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={lockBusy === b.session_id}
+                onClick={() => onToggleRecordingLock(b)}
+              >
+                {b.locked ? (
+                  <><Unlock className="mr-1 h-3.5 w-3.5" /> Unlock</>
+                ) : (
+                  <><Lock className="mr-1 h-3.5 w-3.5" /> Lock</>
+                )}
+              </Button>
+            )}
+            {deletable && !b.locked && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onClick={() => {
+                  setDeleteRecErr(null);
+                  setDeletingRecording(b);
+                }}
+              >
+                <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+              </Button>
+            )}
+          </div>
+        </div>
+        <p className="mt-3 border-t border-dashed border-border pt-2.5 text-[12px] italic text-muted-foreground">
+          {assembling
+            ? "Being assembled into a dataset — this runs in your cloud and can take a few minutes."
+            : failed
+              ? `Upload problem: ${b.failure_reason ?? "unknown"}`
+              : inCloud
+                ? "Full-quality copy is in your cloud. Select it to assemble a trainable dataset."
+                : !robotReporting
+                  ? finishing
+                    ? "Full-quality copy is safe in your cloud. The copy on your robot will be cleared."
+                    : "Recorded and held on the robot. It uploads automatically once the robot is powered on and idle."
+                  : finishing
+                    ? "Safe in your cloud — the robot is clearing its local copy. Keep Nori powered on until it finishes."
+                    : "Uploading from the robot — this finishes while the robot is idle."}
+        </p>
+        {/* The latest assembly attempt with this recording FAILED — show
+            which episode and why (e.g. a camera gap), so the user knows to
+            re-record rather than retry. Hidden while a new attempt runs;
+            the backend clears it once a later attempt succeeds. */}
+        {b.last_assembly_error && !assembling && (
+          <p className="mt-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
+            Couldn't assemble into a dataset: {b.last_assembly_error}
+          </p>
+        )}
+      </article>
+    );
+  };
+
   return (
     <section className="space-y-6">
       <header className="space-y-1.5">
-        <p className="eyebrow">Your library</p>
         <h1 className="text-3xl md:text-4xl">My Stuff</h1>
         <p className="max-w-[56ch] text-muted-foreground">
-          Everything you've captured, uploaded, and trained — and which policies came from which data.
+          Everything you've captured, uploaded, and trained.
         </p>
       </header>
 
@@ -554,10 +901,10 @@ const MyStuff = () => {
         </div>
       )}
 
-      <div className="grid gap-8 lg:grid-cols-[1.35fr_1fr]">
-        {/* -------- Datasets -------- */}
-        {/* min-w-0: grid items default to min-width:auto, so a wide row (long dataset name / repo
-            id) would otherwise push this column past the viewport and overflow the page. */}
+      {/* One wide column: Recordings / Datasets / Policies are a single view
+          switch (below) rather than side-by-side columns, so each card gets the
+          full width. min-w-0 keeps a long name/repo id from overflowing. */}
+      <div className="min-w-0">
         <div className="min-w-0 space-y-3.5">
           {/* View picker: Recordings ↔ Datasets, one at a time. Robot recordings
               (W2.11) are full-quality episodes captured on the robot and auto-
@@ -567,6 +914,7 @@ const MyStuff = () => {
               {([
                 ["recordings", "Recordings", robot?.bundles?.length ?? 0],
                 ["datasets", "Datasets", datasets.length],
+                ["policies", "Policies", allPolicies.length],
               ] as const).map(([key, label, count]) => (
                 <button
                   key={key}
@@ -608,140 +956,111 @@ const MyStuff = () => {
                     );
                   return null;
                 })()
-              : (
-                <span className="font-mono text-xs text-muted-foreground">{datasets.length} total</span>
+              : view === "datasets" ? (
+                <Select
+                  value={datasetFilter}
+                  onValueChange={(v) => setDatasetFilter(v as typeof datasetFilter)}
+                >
+                  <SelectTrigger
+                    aria-label="Filter datasets"
+                    className="h-8 w-auto gap-1.5 rounded-md border-nori-h14131a/15 bg-white px-2.5 text-xs text-nori-h14131a dark:bg-background"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All datasets</SelectItem>
+                    <SelectItem value="own">Own</SelectItem>
+                    <SelectItem value="community">Community</SelectItem>
+                    <SelectItem value="published">Published</SelectItem>
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Select
+                  value={policyFilter}
+                  onValueChange={(v) => setPolicyFilter(v as typeof policyFilter)}
+                >
+                  <SelectTrigger
+                    aria-label="Filter policies"
+                    className="h-8 w-auto gap-1.5 rounded-md border-nori-h14131a/15 bg-white px-2.5 text-xs text-nori-h14131a dark:bg-background"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All policies</SelectItem>
+                    <SelectItem value="live">Live</SelectItem>
+                    <SelectItem value="training">Training</SelectItem>
+                    <SelectItem value="paused">Paused</SelectItem>
+                    <SelectItem value="failed">Failed</SelectItem>
+                  </SelectContent>
+                </Select>
               )}
           </div>
 
           {view === "recordings" && (
             <>
-          {(robot?.bundles ?? []).map((b) => {
-            const assembling = b.assembling === true;
-            const promoted = b.status === "PROMOTED";
-            // The full-quality copy is in the cloud at PROMOTED, but the robot only
-            // deletes its local copy just after — so "In cloud" (done, space
-            // reclaimed) waits for local_deleted_at; until then it's "Finishing on
-            // robot…". A pre-update robot never reports the delete (local_deleted_at
-            // stays null) — ship the updated shipper or recordings linger here (W2.11).
-            const localCleared = b.local_deleted_at != null;
-            const inCloud = promoted && localCleared && !assembling;
-            const finishing = promoted && !localCleared && !assembling;
-            const failed = b.status === "FAILED" || b.status === "PROMOTION_FAILED";
-            // Assembly only needs the CLOUD copy, so a PROMOTED recording is selectable
-            // even during the brief local-delete tail — don't block on cleanup.
-            const selectable = promoted && !assembling;
-            // Deletable once it's in a stable state (in cloud / failed) and not
-            // mid-assembly — deleting a source mid-assembly would break the job.
-            const deletable = !assembling && (promoted || failed);
+          {groupRecordings(robot?.bundles ?? []).map((group) => {
+            // A single-episode session needs no grouping chrome — render flat.
+            if (group.bundles.length === 1) return renderRecordingCard(group.bundles[0]);
+            const expanded = expandedGroups.has(group.key);
+            const summary = summarizeGroup(group, robotReporting);
+            // Whole-group selection: the assemble flow keys on session_ids, so a
+            // header checkbox toggles every SELECTABLE (promoted, not assembling)
+            // episode in the session at once — no per-episode checking needed.
+            const selectableIds = group.bundles
+              .filter((b) => {
+                const f = recordingFlags(b);
+                return f.promoted && !f.assembling;
+              })
+              .map((b) => b.session_id);
+            const allPicked =
+              selectableIds.length > 0 && selectableIds.every((id) => picked.has(id));
+            const somePicked = selectableIds.some((id) => picked.has(id));
+            const toggleGroupPick = () =>
+              setPicked((prev) => {
+                const next = new Set(prev);
+                if (allPicked) selectableIds.forEach((id) => next.delete(id));
+                else selectableIds.forEach((id) => next.add(id));
+                return next;
+              });
             return (
-              <article
-                key={b.session_id}
-                className={`${cardCls}${picked.has(b.session_id) ? " ring-2 ring-nori-h14131a" : ""}`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-start gap-3">
-                    {selectable && (
-                      <input
-                        type="checkbox"
-                        checked={picked.has(b.session_id)}
-                        onChange={() => togglePick(b.session_id)}
-                        className="mt-1 h-4 w-4 shrink-0 accent-nori-h14131a"
-                        aria-label={`Select ${b.label}`}
-                      />
-                    )}
-                    <div className="min-w-0">
-                      {/* Recordings rename through the same owner-scoped upload-label
-                          endpoint as datasets (raw bundles are upload sessions too). */}
-                      <EditableName
-                        value={b.label}
-                        onRename={(next) => onRenameUpload(b.session_id, next)}
-                      />
-                      <p className="mt-0.5 text-sm text-muted-foreground">
-                        {b.status === "PROMOTED" && b.finalized_at
-                          ? `Uploaded ${shortDate(b.finalized_at)}`
-                          : `Recorded ${shortDate(b.created_at)}`}
-                      </p>
-                    </div>
-                  </div>
-                  <Pill tone={assembling ? "sticker" : inCloud ? "leaf" : failed ? "secondary" : "sticker"}>
-                    {assembling
-                      ? "Uploading to dataset"
-                      : inCloud
-                        ? "In cloud"
-                        : failed
-                          ? "Needs attention"
-                          : finishing
-                            ? "Finishing on robot…"
-                            : "Uploading to cloud"}
-                  </Pill>
+              <div key={group.key} className="rounded-[20px] border border-border bg-card/60 shadow-soft">
+                {/* Session header — the N episodes below share a task + were
+                    recorded back-to-back, so they belong to one dataset. */}
+                <div className="flex w-full items-center gap-2 px-4 py-3">
+                  {selectableIds.length > 0 && (
+                    <input
+                      type="checkbox"
+                      checked={allPicked}
+                      ref={(el) => {
+                        if (el) el.indeterminate = somePicked && !allPicked;
+                      }}
+                      onChange={toggleGroupPick}
+                      className="h-4 w-4 shrink-0 accent-nori-h14131a"
+                      aria-label={`Select all ${group.bundles.length} episodes in ${group.label}`}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group.key)}
+                    aria-expanded={expanded}
+                    className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="text-muted-foreground">{expanded ? "▾" : "▸"}</span>
+                      <span className="truncate text-base font-bold text-nori-h14131a">{group.label}</span>
+                      <span className="shrink-0 text-sm text-muted-foreground">
+                        {group.bundles.length} episodes{summary.detail ? ` · ${summary.detail}` : ""}
+                      </span>
+                    </span>
+                    <Pill tone={summary.tone}>{summary.pill}</Pill>
+                  </button>
                 </div>
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
-                  <span className="flex flex-wrap gap-x-4 gap-y-1">
-                    {b.episode_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(b.episode_count)}</b> episodes</span>}
-                    {b.frame_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(b.frame_count)}</b> frames</span>}
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    {/* Preview the ORIGINAL recorded video (raw_bundle viewer) — the
-                        robot's own H.264 at full quality, viewable before assembly. */}
-                    {selectable && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setReviewing({ kind: "raw", sessionId: b.session_id, title: b.label })}
-                      >
-                        Preview
-                      </Button>
-                    )}
-                    {(promoted || failed) && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={lockBusy === b.session_id}
-                        onClick={() => onToggleRecordingLock(b)}
-                      >
-                        {b.locked ? (
-                          <><Unlock className="mr-1 h-3.5 w-3.5" /> Unlock</>
-                        ) : (
-                          <><Lock className="mr-1 h-3.5 w-3.5" /> Lock</>
-                        )}
-                      </Button>
-                    )}
-                    {deletable && !b.locked && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                        onClick={() => {
-                          setDeleteRecErr(null);
-                          setDeletingRecording(b);
-                        }}
-                      >
-                        <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
-                      </Button>
-                    )}
+                {expanded && (
+                  <div className="space-y-3 px-3 pb-3">
+                    {group.bundles.map((b) => renderRecordingCard(b))}
                   </div>
-                </div>
-                <p className="mt-3 border-t border-dashed border-border pt-2.5 text-[13px] italic text-muted-foreground">
-                  {assembling
-                    ? "Being assembled into a dataset — this runs in your cloud and can take a few minutes."
-                    : failed
-                      ? `Upload problem: ${b.failure_reason ?? "unknown"}`
-                      : inCloud
-                        ? "Full-quality copy is in your cloud. Select it to assemble a trainable dataset."
-                        : finishing
-                          ? "Safe in your cloud — the robot is clearing its local copy. Keep Nori powered on until it finishes."
-                          : "Uploading from the robot — this finishes while the robot is idle."}
-                </p>
-                {/* The latest assembly attempt with this recording FAILED — show
-                    which episode and why (e.g. a camera gap), so the user knows to
-                    re-record rather than retry. Hidden while a new attempt runs;
-                    the backend clears it once a later attempt succeeds. */}
-                {b.last_assembly_error && !assembling && (
-                  <p className="mt-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
-                    Couldn't assemble into a dataset: {b.last_assembly_error}
-                  </p>
                 )}
-              </article>
+              </div>
             );
           })}
 
@@ -754,6 +1073,20 @@ const MyStuff = () => {
                 <Button variant="ghost" size="sm" onClick={() => setPicked(new Set())}>
                   Clear
                 </Button>
+                {deletablePickedCount > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => {
+                      setDeleteRecErr(null);
+                      setBulkDeleteOpen(true);
+                    }}
+                  >
+                    <Trash2 className="mr-1 h-3.5 w-3.5" />
+                    Delete{deletablePickedCount > 1 ? ` ${deletablePickedCount}` : ""}
+                  </Button>
+                )}
                 <Button size="sm" onClick={() => setAssembleOpen(true)}>
                   Assemble into dataset
                 </Button>
@@ -792,7 +1125,7 @@ const MyStuff = () => {
           ))}
 
           {/* uploaded, with lineage */}
-          {datasets.map((d) => {
+          {filteredDatasets.map((d) => {
             const live = d.policies.filter((p) => p.state === "live").length;
             const highlighted = activeRef === d.dataset_ref;
             const assembling = assemblingDatasetIds.has(d.session_id); // append/rebuild in flight
@@ -894,29 +1227,28 @@ const MyStuff = () => {
             );
           })}
 
-          {datasets.length === 0 && newAssembling.length === 0 && (
+          {filteredDatasets.length === 0 && newAssembling.length === 0 && (
             <p className="rounded-[20px] border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-              No trainable datasets yet. Robot recordings become trainable datasets once assembled.
+              {datasetFilter !== "all" && datasets.length > 0
+                ? "No datasets match this filter."
+                : "No trainable datasets yet. Robot recordings become trainable datasets once assembled."}
             </p>
           )}
             </>
           )}
-        </div>
 
-        {/* -------- Policies -------- */}
-        <div className="min-w-0 space-y-3.5">
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-lg font-bold tracking-tight text-nori-h14131a">Policies</h2>
-            <span className="font-mono text-xs text-muted-foreground">{allPolicies.length} total</span>
-          </div>
-
-          {allPolicies.length === 0 && (
+          {/* -------- Policies (third view) -------- */}
+          {view === "policies" && (
+            <>
+          {filteredPolicies.length === 0 && (
             <p className="rounded-[20px] border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-              No policies yet — train one from a dataset.
+              {policyFilter !== "all" && allPolicies.length > 0
+                ? "No policies match this filter."
+                : "No policies yet — train one from a dataset."}
             </p>
           )}
 
-          {allPolicies.map((p) => {
+          {filteredPolicies.map((p) => {
             const inFlight = p.state === "training";
             const openProgress = () => navigate(`/nori/training-history?open=${encodeURIComponent(p.job_id)}`);
             return (
@@ -1046,6 +1378,8 @@ const MyStuff = () => {
             </article>
             );
           })}
+            </>
+          )}
         </div>
       </div>
 
@@ -1164,6 +1498,47 @@ const MyStuff = () => {
               className="bg-red-500 text-white hover:bg-red-600"
             >
               {deleteRecBusy ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={bulkDeleteOpen}
+        onOpenChange={(o) => {
+          if (!o && !deleteRecBusy) {
+            setBulkDeleteOpen(false);
+            setDeleteRecErr(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {deletablePickedCount} recording{deletablePickedCount === 1 ? "" : "s"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes the selected recordings and their original video
+              files from your Nori cloud. This can’t be undone. Any datasets you already
+              assembled from them are kept, and locked recordings are skipped.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleteRecErr && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {deleteRecErr}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteRecBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void onBulkDeleteRecordings();
+              }}
+              disabled={deleteRecBusy}
+              className="bg-red-500 text-white hover:bg-red-600"
+            >
+              {deleteRecBusy ? "Deleting…" : `Delete ${deletablePickedCount}`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

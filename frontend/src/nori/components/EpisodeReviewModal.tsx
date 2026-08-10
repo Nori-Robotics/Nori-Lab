@@ -121,7 +121,17 @@ export function EpisodeReviewModal({
         }
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      // Preview (raw recording) is a nice-to-have and commonly fails simply
+      // because the take isn't fully uploaded yet ("no episodes to view") —
+      // show a calm, non-technical message. Dataset/cloud review keeps the
+      // precise error since those are actionable.
+      setError(
+        source.kind === "raw"
+          ? "Previewing episodes not available at the moment."
+          : e instanceof Error
+            ? e.message
+            : String(e),
+      );
     }
     // source is a stable object per open; deps cover the fields we read.
     // eslint-disable-next-line react-hooks/exhaustive-deps

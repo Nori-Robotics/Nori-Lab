@@ -759,7 +759,12 @@ const MyStuff = () => {
 
   // One recording (raw bundle = one episode) card. Extracted so it renders
   // identically whether standalone or nested under a session group header.
-  const renderRecordingCard = (b: RawBundleEntry) => {
+  // `compact` cards live INSIDE a session group, whose header already carries
+  // the rolled-up status — so they drop the verbose per-episode status sentence
+  // (it would otherwise repeat N times, e.g. "Full-quality copy is in your
+  // cloud…" on every episode). The short status Pill stays, so an episode that's
+  // out of step with the group (still uploading) is still legible at a glance.
+  const renderRecordingCard = (b: RawBundleEntry, compact = false) => {
     const { assembling, promoted, inCloud, finishing, failed, uploadActive } = recordingFlags(b);
     // "Actually happening right now": either the robot's heartbeat says so, or
     // this bundle's own row is fresh/finalizing (the robot creates the row at
@@ -896,6 +901,11 @@ const MyStuff = () => {
             )}
           </div>
         </div>
+        {/* Verbose status line — shown only on standalone cards. Inside a group
+            the header summarizes status, so repeating this per episode just
+            clogs the list. Assembly/upload-error states are the exception: they
+            need the detail even when grouped, so they still render compact. */}
+        {(!compact || assembling || failed) && (
         <p className="mt-3 border-t border-dashed border-border pt-2.5 text-[12px] italic text-muted-foreground">
           {assembling
             ? "Being assembled into a dataset — this runs in your cloud and can take a few minutes."
@@ -911,6 +921,7 @@ const MyStuff = () => {
                     ? "Safe in your cloud — the robot is clearing its local copy. Keep Nori powered on until it finishes."
                     : "Uploading from the robot — this finishes while the robot is idle."}
         </p>
+        )}
         {/* The latest assembly attempt with this recording FAILED — show
             which episode and why (e.g. a camera gap), so the user knows to
             re-record rather than retry. Hidden while a new attempt runs;
@@ -1105,7 +1116,7 @@ const MyStuff = () => {
                 </div>
                 {expanded && (
                   <div className="space-y-3 px-3 pb-3">
-                    {group.bundles.map((b) => renderRecordingCard(b))}
+                    {group.bundles.map((b) => renderRecordingCard(b, true))}
                   </div>
                 )}
               </div>

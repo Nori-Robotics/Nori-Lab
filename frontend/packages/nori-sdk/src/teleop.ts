@@ -2078,9 +2078,10 @@ export class RemoteTeleop {
       // While a leader source drives the arms, arm keys are ignored (leader wins on those
       // joints); base + lift keys still apply so the operator drives the base/rails by hand.
       if (!leader && k in km) { const [d, s] = km[k]; a[d] = s * sp; }
-      // Firmware turns the base opposite our "+angular = left" convention, so negate the
-      // angular sign on the wire (keeps BASE_KEYS/legend reading a,j = left, and now true).
-      else if (k in BASE_KEYS) { const [dof, s] = BASE_KEYS[k]; base[dof] = (dof === "angular" ? -s : s) * sp; }
+      // Firmware drives the base opposite our sign convention on BOTH axes (+linear =
+      // forward, +angular = left), so negate on the wire — keeps BASE_KEYS/legend reading
+      // naturally (i/w = forward, a/j = left) while sending what the firmware actually wants.
+      else if (k in BASE_KEYS) { const [dof, s] = BASE_KEYS[k]; base[dof] = -s * sp; }
       else if (k in ZLIFT_KEYS) z = ZLIFT_KEYS[k] * sp;
     }
     // Leader mode: arms come from leader_action_deg, so the jog carries only base + lift.

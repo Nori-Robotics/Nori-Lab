@@ -201,11 +201,26 @@ type RecordingFlags = {
   inCloud: boolean;
   finishing: boolean;
   failed: boolean;
+  uploadActive: boolean;
 };
+// Per-bundle upload-activity evidence. The row EXISTS because the robot's
+// shipper created it when the upload STARTED (chunk PUTs go straight to S3 and
+// never touch the DB), so a fresh non-terminal row means bytes are moving
+// right now. This must not key on the heartbeat's rec_episodes_pending alone:
+// no current robot release ships that field, which left every in-flight
+// recording labeled "On robot · waiting" mid-upload (live report 2026-08-10).
+// FINALIZING is the server-side promotion step — active regardless of robot.
+// A stale (>15 min) pre-terminal row really is stalled (robot went offline
+// mid-upload; it resumes when idle) — "waiting" stays the honest label there.
+const UPLOAD_FRESH_MS = 15 * 60_000;
 function recordingFlags(b: RawBundleEntry): RecordingFlags {
   const assembling = b.assembling === true;
   const promoted = b.status === "PROMOTED";
   const localCleared = b.local_deleted_at != null;
+  const createdMs = Date.parse(b.created_at);
+  const uploadActive =
+    b.status === "FINALIZING" ||
+    (!Number.isNaN(createdMs) && Date.now() - createdMs < UPLOAD_FRESH_MS);
   return {
     assembling,
     promoted,
@@ -213,6 +228,7 @@ function recordingFlags(b: RawBundleEntry): RecordingFlags {
     inCloud: promoted && localCleared && !assembling,
     finishing: promoted && !localCleared && !assembling,
     failed: b.status === "FAILED" || b.status === "PROMOTION_FAILED",
+    uploadActive,
   };
 }
 
@@ -263,6 +279,7 @@ function summarizeGroup(
 ): GroupSummary {
   let inCloud = 0;
   let uploading = 0;
+  let waiting = 0;
   let assembling = 0;
   let failed = 0;
   for (const b of group.bundles) {
@@ -270,11 +287,16 @@ function summarizeGroup(
     if (f.failed) failed++;
     else if (f.assembling) assembling++;
     else if (f.inCloud) inCloud++;
-    else uploading++; // uploading + "finishing on robot" both roll up as uploading
+    // per-bundle activity beats the coarse heartbeat proxy — a fresh row IS
+    // an in-flight upload even when the heartbeat says nothing (see
+    // recordingFlags.uploadActive); "finishing on robot" rolls up here too.
+    else if (robotReporting || f.uploadActive) uploading++;
+    else waiting++;
   }
   const parts: string[] = [];
   if (inCloud) parts.push(`${inCloud} in cloud`);
-  if (uploading) parts.push(`${uploading} ${robotReporting ? "uploading" : "waiting"}`);
+  if (uploading) parts.push(`${uploading} uploading`);
+  if (waiting) parts.push(`${waiting} waiting`);
   if (assembling) parts.push(`${assembling} assembling`);
   if (failed) parts.push(`${failed} need attention`);
   const allInCloud = inCloud === group.bundles.length;
@@ -284,7 +306,7 @@ function summarizeGroup(
       ? "Needs attention"
       : allInCloud
         ? "In cloud"
-        : robotReporting
+        : uploading
           ? "Uploading to cloud"
           : "On robot · waiting",
     detail: parts.join(" · "),
@@ -738,7 +760,11 @@ const MyStuff = () => {
   // One recording (raw bundle = one episode) card. Extracted so it renders
   // identically whether standalone or nested under a session group header.
   const renderRecordingCard = (b: RawBundleEntry) => {
-    const { assembling, promoted, inCloud, finishing, failed } = recordingFlags(b);
+    const { assembling, promoted, inCloud, finishing, failed, uploadActive } = recordingFlags(b);
+    // "Actually happening right now": either the robot's heartbeat says so, or
+    // this bundle's own row is fresh/finalizing (the robot creates the row at
+    // upload start — see recordingFlags.uploadActive).
+    const activeNow = robotReporting || uploadActive;
     // Assembly only needs the CLOUD copy, so a PROMOTED recording is selectable
     // even during the brief local-delete tail — don't block on cleanup.
     const selectable = promoted && !assembling;
@@ -783,11 +809,13 @@ const MyStuff = () => {
               </div>
             </div>
           </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+          {b.robot_type && <Pill tone="sticker-2">{b.robot_type}</Pill>}
           <Pill
             tone={
               assembling
                 ? "sticker"
-                : inCloud || (finishing && !robotReporting)
+                : inCloud || (finishing && !activeNow)
                   ? "leaf"
                   : failed
                     ? "secondary"
@@ -800,9 +828,10 @@ const MyStuff = () => {
                 ? "In cloud"
                 : failed
                   ? "Needs attention"
-                  : !robotReporting
-                    ? // Robot offline -> nothing is actually happening. A promoted
-                      // take is already cloud-safe; an unpromoted one just waits.
+                  : !activeNow
+                    ? // Nothing is demonstrably happening (no heartbeat signal AND
+                      // the row is stale). A promoted take is already cloud-safe;
+                      // an unpromoted one waits until the robot idles/reconnects.
                       finishing
                       ? "In cloud · clearing pending"
                       : "On robot · waiting for upload"
@@ -810,6 +839,7 @@ const MyStuff = () => {
                       ? "Finishing on robot…"
                       : "Uploading to cloud"}
           </Pill>
+          </div>
         </div>
         {/* Capture provenance — what this take was filmed on/with. Each tag is
             shown only when the backend has surfaced it from meta.json.capture. */}
@@ -874,7 +904,7 @@ const MyStuff = () => {
               ? `Upload problem: ${b.failure_reason ?? "unknown"}`
               : inCloud
                 ? "Full-quality copy is in your cloud. Select it to assemble a trainable dataset."
-                : !robotReporting
+                : !activeNow
                   ? finishing
                     ? "Full-quality copy is safe in your cloud. The copy on your robot will be cleared."
                     : "Recorded and held on the robot. It uploads automatically once the robot is powered on and idle."
@@ -1155,6 +1185,7 @@ const MyStuff = () => {
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
+                    {d.robot_type && <Pill tone="sticker-2">{d.robot_type}</Pill>}
                     {d.origin === "community" && <Pill tone="sticker-2">Community</Pill>}
                     {assembling ? (
                       <Pill tone="sticker">Assembling</Pill>

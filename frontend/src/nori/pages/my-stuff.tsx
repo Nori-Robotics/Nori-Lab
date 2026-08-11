@@ -810,7 +810,6 @@ const MyStuff = () => {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-          {b.robot_type && <Pill tone="sticker-2">{b.robot_type}</Pill>}
           <Pill
             tone={
               assembling
@@ -1038,10 +1037,20 @@ const MyStuff = () => {
           {view === "recordings" && (
             <>
           {groupRecordings(robot?.bundles ?? []).map((group) => {
-            // A single-episode session needs no grouping chrome — render flat.
-            if (group.bundles.length === 1) return renderRecordingCard(group.bundles[0]);
+            // Render flat ONLY for a truly single-episode take. A single bundle
+            // that itself holds many episodes (an older one-bundle-per-session
+            // recording) still gets the expandable group header, so past
+            // recordings match new multi-episode sessions.
+            if (group.bundles.length === 1 && (group.bundles[0].episode_count ?? 1) <= 1)
+              return renderRecordingCard(group.bundles[0]);
             const expanded = expandedGroups.has(group.key);
             const summary = summarizeGroup(group, robotReporting);
+            // Total episodes: sum per-bundle counts, so it's right whether the
+            // session is N single-episode bundles or one N-episode bundle.
+            const episodeTotal = group.bundles.reduce(
+              (n, b) => n + (b.episode_count ?? 1),
+              0,
+            );
             // Whole-group selection: the assemble flow keys on session_ids, so a
             // header checkbox toggles every SELECTABLE (promoted, not assembling)
             // episode in the session at once — no per-episode checking needed.
@@ -1075,7 +1084,7 @@ const MyStuff = () => {
                       }}
                       onChange={toggleGroupPick}
                       className="h-4 w-4 shrink-0 accent-nori-h14131a"
-                      aria-label={`Select all ${group.bundles.length} episodes in ${group.label}`}
+                      aria-label={`Select all ${episodeTotal} episodes in ${group.label}`}
                     />
                   )}
                   <button
@@ -1088,7 +1097,7 @@ const MyStuff = () => {
                       <span className="text-muted-foreground">{expanded ? "▾" : "▸"}</span>
                       <span className="truncate text-base font-bold text-nori-h14131a">{group.label}</span>
                       <span className="shrink-0 text-sm text-muted-foreground">
-                        {group.bundles.length} episodes{summary.detail ? ` · ${summary.detail}` : ""}
+                        {episodeTotal} episodes{summary.detail ? ` · ${summary.detail}` : ""}
                       </span>
                     </span>
                     <Pill tone={summary.tone}>{summary.pill}</Pill>

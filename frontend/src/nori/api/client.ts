@@ -623,6 +623,13 @@ export interface RawBundleEntry {
   /** Count of commanded-motion samples (action rows, ~50 Hz Servo output) —
    *  "motion samples" on the card. Absent until the backend surfaces it. */
   action_count?: number | null;
+  /** Capture provenance from the bundle's meta.json (absent until the backend
+   *  surfaces it): camera_format "mjpeg"|"yuyv", auto_exposure "auto"|"manual",
+   *  robot_type "L2"|"L3". Rendered as labels so the ML side can tell what a
+   *  take was filmed with. */
+  camera_format?: string | null;
+  auto_exposure?: string | null;
+  robot_type?: string | null;
   created_at: string;
   finalized_at: string | null;
   failure_reason: string | null;

@@ -811,6 +811,15 @@ const MyStuff = () => {
                       : "Uploading to cloud"}
           </Pill>
         </div>
+        {/* Capture provenance — what this take was filmed on/with. Each tag is
+            shown only when the backend has surfaced it from meta.json.capture. */}
+        {(b.robot_type || b.camera_format || b.auto_exposure) && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {b.robot_type && <Pill tone="accent">{b.robot_type}</Pill>}
+            {b.camera_format && <Pill tone="secondary">{b.camera_format}</Pill>}
+            {b.auto_exposure && <Pill tone="secondary">{b.auto_exposure} exp</Pill>}
+          </div>
+        )}
         <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
           <span className="flex flex-wrap gap-x-4 gap-y-1">
             {b.duration_s != null && <span><b className="font-semibold text-nori-h14131a">{formatDuration(b.duration_s)}</b></span>}

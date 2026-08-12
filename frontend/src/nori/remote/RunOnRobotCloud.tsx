@@ -27,7 +27,7 @@ const LIVE = new Set(["PENDING", "ACTIVE"]);
 
 export function RunOnRobotCloud() {
   const { baseUrl, fetchWithHeaders } = useApi();
-  const { running, settings } = useTeleopSession();
+  const { settings } = useTeleopSession();
   const { toast } = useToast();
   const [session, setSession] = useState<InferenceSession | null>(null);
   const [busy, setBusy] = useState(false);
@@ -98,8 +98,10 @@ export function RunOnRobotCloud() {
     }
   }, [baseUrl, fetchWithHeaders, session, toast]);
 
-  // Only meaningful once connected to a robot (the room/serial is known).
-  if (!running || !robotSerial) return null;
+  // Shows whenever a robot serial is known (paired robot). Deliberately does
+  // NOT require an active WebRTC session — a robot-direct cloud rollout runs
+  // without the laptop in the loop, so you can start one without connecting.
+  if (!robotSerial) return null;
 
   return (
     <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-4 text-nori-h14131a shadow-sm">

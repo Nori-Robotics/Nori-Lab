@@ -28,6 +28,7 @@ import LeaderSetup from "@/nori/pages/leader-setup";
 import { playAudioFile, type ClipHandle } from "@/nori/remote/audioClip";
 import { DatasetCaptureCard } from "@/nori/remote/DatasetCaptureCard";
 import { PolicyDeployCard } from "@/nori/remote/PolicyDeployCard";
+import { RunOnRobotCloud } from "@/nori/remote/RunOnRobotCloud";
 import { isM6VideoEnabled } from "@/nori/remote/flags";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 
@@ -619,8 +620,14 @@ const Remote = () => {
           <DatasetCaptureCard />
 
           {/* Deploy a trained policy on the robot — runs on this computer, streams
-              only motor instructions to the arm. Sits under the record card. */}
+              only motor instructions to the arm. Sits under the record card.
+              (Desktop-only: hidden on the hosted app, which has no local lelab.) */}
           <PolicyDeployCard />
+
+          {/* Run a cloud policy ROBOT-DIRECT (no laptop in the loop) — the backend
+              spawns the Modal serve container and the robot's own agent connects.
+              This is the deploy card the HOSTED app can show. */}
+          <RunOnRobotCloud />
 
           {/* Single combined telemetry card: link/loop chips, then rail height, then grip force. */}
           <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-4 text-nori-h14131a shadow-sm">

@@ -1230,3 +1230,69 @@ export function getBillingSummary(baseUrl: string, fetcher: Fetcher): Promise<Bi
     action: "Load billing summary",
   });
 }
+
+// -- robot-direct cloud inference (P2 shadow slice) ----------------------------
+// Start a rollout that runs ROBOT-DIRECT on Modal (no laptop in the loop): the
+// backend spawns the serve container and the robot's own agent fetches the
+// grant and connects. Unlike CloudDeploySection (laptop-hosted cloud loop),
+// nothing runs on this browser — it only triggers + watches the session.
+export interface InferenceSession {
+  session_id: string;
+  status: "PENDING" | "ACTIVE" | "COMPLETED" | "FAILED" | "STOPPED" | "EXPIRED";
+  robot_serial: string;
+  policy_kind: string;
+  instruction?: string | null;
+  created_at?: string | null;
+  ended_at?: string | null;
+  failure_reason?: string | null;
+}
+
+export interface StartInferenceRequest {
+  robot_serial: string;
+  policy_kind?: string;
+  instruction?: string;
+  views?: string[];
+  arm?: "left" | "right" | "both" | null;
+  job_id?: string | null;
+}
+
+/** POST /nori/inference/sessions — start a robot-direct cloud rollout. */
+export function startInferenceSession(
+  baseUrl: string,
+  fetcher: Fetcher,
+  body: StartInferenceRequest
+): Promise<InferenceSession> {
+  return noriRequest<InferenceSession>(baseUrl, fetcher, "/nori/inference/sessions", {
+    method: "POST",
+    body,
+    action: "Start cloud rollout",
+  });
+}
+
+/** GET /nori/inference/sessions/{id} — poll session status. */
+export function getInferenceSession(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string
+): Promise<InferenceSession> {
+  return noriRequest<InferenceSession>(
+    baseUrl,
+    fetcher,
+    `/nori/inference/sessions/${sessionId}`,
+    { action: "Load cloud rollout status" }
+  );
+}
+
+/** POST /nori/inference/sessions/{id}/stop — stop a running rollout. */
+export function stopInferenceSession(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string
+): Promise<InferenceSession> {
+  return noriRequest<InferenceSession>(
+    baseUrl,
+    fetcher,
+    `/nori/inference/sessions/${sessionId}/stop`,
+    { method: "POST", action: "Stop cloud rollout" }
+  );
+}

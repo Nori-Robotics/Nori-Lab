@@ -53,8 +53,11 @@ AUTH_TOKEN = os.environ.get("NORI_INFER_TOKEN")  # transition-era shared secret
 #   header  X-Nori-Token: <ES256 JWT>   (Bearer also accepted)
 #   claims  {customer_id, policy_ref, dom:"nori-infer-grant-v1", iat, exp}
 #   env     NORI_GRANT_PUBLIC_KEY  — PEM public half of the backend signing key
-#           NORI_SERVE_POLICY_REF  — THIS endpoint's policy id; a grant for any
-#                                    other policy_ref is rejected here
+#           NORI_SERVE_POLICY_REF  — THIS endpoint's policy id = the jobs.id (row
+#                                    UUID) of the promoted checkpoint it serves;
+#                                    the backend mint puts the same jobs.id in the
+#                                    policy_ref claim, so a grant for any other
+#                                    policy is rejected here
 #           NORI_INFER_REQUIRE_GRANT=1 — drop the static-token fallback once the
 #                                    mint endpoint is live (transition off-ramp)
 GRANT_PUBLIC_KEY = os.environ.get("NORI_GRANT_PUBLIC_KEY")

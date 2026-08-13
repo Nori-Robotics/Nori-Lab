@@ -97,10 +97,12 @@ def test_cross_site_sec_fetch_backstop(client):
     r = client.post(TARGET, headers={"Origin": "https://evil.example",
                                      "Sec-Fetch-Site": "cross-site"})
     assert r.status_code == 403
-    # ...but a cross-site GET without Origin stays readable-by-design here
-    # (the Origin check is the primary; this backstop is mutations-only).
+    # A cross-site GET without Origin is ALSO refused (pentest V7): browsers omit
+    # Origin on <img>/<script> subresource GETs, and some GET endpoints have
+    # hardware side effects (leader-bus identify opens the serial bus), so an
+    # <img src=".../identify"> drive-by is a cross-site Origin-less GET — caught here.
     r = client.get("/nori/rollout/status", headers={"Sec-Fetch-Site": "cross-site"})
-    assert r.status_code == 200
+    assert r.status_code == 403
 
 
 def test_same_origin_sec_fetch_passes(client):

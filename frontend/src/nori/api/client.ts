@@ -1005,12 +1005,28 @@ export interface TurnCredentials {
   username: string;
   credential: string;
   ttl: number;
+  // Pentest V1: present only when robot_serial + dtls_fp were supplied AND the caller owns the
+  // robot. `grant` is the ES256 robot-session grant bound to that DTLS fingerprint; `grant_exp`
+  // is its unix expiry (short — the client re-mints within the session). Absent on anonymous /
+  // legacy fetches, so the caller must treat them as optional.
+  grant?: string;
+  grant_exp?: number;
 }
 
 /** GET /nori/turn/credentials — mint short-lived coturn creds for this session.
- * Direct-backend mode maps to /api/v1/turn/credentials. Requires auth. */
-export function getTurnCredentials(baseUrl: string, fetcher: Fetcher): Promise<TurnCredentials> {
-  return noriRequest<TurnCredentials>(baseUrl, fetcher, "/nori/turn/credentials", {
+ * Direct-backend mode maps to /api/v1/turn/credentials. Requires auth.
+ * When `bind` is supplied (robot serial + this peer's DTLS fingerprint), the response also
+ * carries a robot-session grant bound to that fingerprint (pentest V1). */
+export function getTurnCredentials(
+  baseUrl: string,
+  fetcher: Fetcher,
+  bind?: { robotSerial: string; dtlsFp: string },
+): Promise<TurnCredentials> {
+  const qs = bind
+    ? "?" +
+      new URLSearchParams({ robot_serial: bind.robotSerial, dtls_fp: bind.dtlsFp }).toString()
+    : "";
+  return noriRequest<TurnCredentials>(baseUrl, fetcher, `/nori/turn/credentials${qs}`, {
     action: "Fetch TURN credentials",
   });
 }

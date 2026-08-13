@@ -429,6 +429,12 @@ export interface RemoteTeleopOptions {
   turnUrls: string[];
   turnUser: string;
   turnCred: string;
+  // Pentest V1 (robot-session grant). `cert` is a PRE-GENERATED DTLS certificate: the caller
+  // reads its sha-256 fingerprint, mints `sessionGrant` bound to that fingerprint, and passes
+  // both here so the live peer uses the same cert the grant is bound to. Both optional — an
+  // anonymous LAN session (no grant) omits them and the peer auto-generates a cert as before.
+  cert?: RTCCertificate;
+  sessionGrant?: string;
   forceRelay: boolean;
   arm: ArmSide;
   // Initial keyboard control mode. Defaults to "cylindrical". The page passes its current
@@ -1495,7 +1501,18 @@ export class RemoteTeleop {
     const turn = this.o.turnUrls.length
       ? { urls: this.o.turnUrls, username: this.o.turnUser, credential: this.o.turnCred }
       : undefined;
-    this.o.signaling.sendReady(turn ? { turn } : {});
+    // Pentest V1: carry the DTLS-fingerprint-bound session grant so the robot can authorize
+    // motion independently of Supabase RLS. Inert until the gateway's require_session_grant
+    // flag flips; a warm-mode gateway ignores an unknown sibling.
+    // NOTE (open, coordinate with the gateway half): the gateway DEDUPES `ready`
+    // (_start_session returns if a session already exists), so re-sending `ready` won't
+    // deliver a REFRESHED grant for the in-session re-verify (V8). The initial-handshake
+    // grant below is correct; the ~90s refresh transport (re-sent ready vs a datachannel
+    // control frame) is pending the gateway's re-verify mechanism — not built here yet.
+    this.o.signaling.sendReady({
+      ...(turn ? { turn } : {}),
+      ...(this.o.sessionGrant ? { grant: this.o.sessionGrant } : {}),
+    });
   }
 
   private freshPeer(): RTCPeerConnection {
@@ -1505,6 +1522,10 @@ export class RemoteTeleop {
     const pc = new RTCPeerConnection({
       iceServers: this.iceServers(),
       iceTransportPolicy: this.o.forceRelay ? "relay" : "all",
+      // Pentest V1: pin the DTLS identity to the pre-generated cert the session grant is bound
+      // to (getFingerprints() of this cert == the grant's dtls_fp). Omitted => auto-generated
+      // cert (anonymous/legacy path). Must be set at construction; a cert can't be swapped in.
+      ...(this.o.cert ? { certificates: [this.o.cert] } : {}),
     });
     this.pc = pc;
     this.latencyProbe?.stop();

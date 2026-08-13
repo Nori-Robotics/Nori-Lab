@@ -20,8 +20,16 @@
 #   * the preamble must parse, be the right kind, and carry the serial of the
 #     robot this session is paired with — anything else is dropped loudly;
 #   * blob sizes are capped so garbage can't balloon memory.
-# Residual risk: a LAN host that knows the window, fakes the paired serial, and
-# races the real robot. Accepted for v1; real sink auth tracks with NoriTelop.
+# Residual risk (pentest V10, 2026-08-13 — now closable): a LAN host that knows
+# the window, fakes the paired (non-secret) serial, and races the real robot could
+# feed the policy fabricated vision -> attacker-influenced motion. The fix is a
+# per-session SINK TOKEN: `stream_open` mints a random token, hands it to the robot
+# over the AUTHENTICATED WebRTC datachannel (which only the paired robot receives),
+# and the robot echoes it in the preamble. An attacker never on that channel can't
+# produce it. Laptop half is here; the robot streamer (NoriTelop rpi5/media/
+# policy_streamer.py) must echo preamble["token"] for it to bite. Transition-safe:
+# a token-less preamble (un-updated robot) is accepted on serial-only with a loud
+# warning UNTIL NORI_STREAM_REQUIRE_TOKEN=1 flips it fail-closed.
 #
 # Staleness is judged from CAPTURE time, not arrival. Frame timestamps are
 # Pi-monotonic; we anchor them by recording our own monotonic clock when the
@@ -39,6 +47,7 @@ import base64
 import json
 import logging
 import os
+import secrets
 import socket
 import struct
 import threading
@@ -96,8 +105,13 @@ class StreamListener:
 
     def __init__(self, expected_serial: str, host: str = "", port: int = 0,
                  arm_window_s: float = ARM_WINDOW_S,
-                 stale_after_s: float | None = None):
+                 stale_after_s: float | None = None, expected_token: str = ""):
         self.expected_serial = str(expected_serial)
+        # Per-session sink token (pentest V10). Empty = legacy serial-only mode.
+        self.expected_token = str(expected_token)
+        # Fail-closed once the robot streamer echoes the token; default tolerant
+        # so a not-yet-updated robot (token-less preamble) still connects.
+        self.require_token = os.environ.get("NORI_STREAM_REQUIRE_TOKEN", "0").strip() == "1"
         self.host = host or "0.0.0.0"
         self.port = int(port)
         self.arm_window_s = float(arm_window_s)
@@ -303,13 +317,32 @@ class StreamListener:
             return False
         serial = str(meta.get("serial", ""))
         if serial != self.expected_serial:
-            # The serial gate: without sink auth this is what stops an
-            # arbitrary LAN host from feeding the policy fabricated vision.
+            # The serial gate: a first, weak filter (the serial is NOT secret).
             with self._lock:
                 self.error = (f"serial mismatch: stream says {serial!r}, session "
                               f"is paired with {self.expected_serial!r} — dropped")
             logger.warning("[STREAM-RX] %s", self.error)
             return False
+
+        # Sink token (pentest V10): the real auth. The token reached the robot over
+        # the authenticated WebRTC datachannel, so only the paired robot can echo it;
+        # a LAN attacker who knows the serial but not the token is dropped here.
+        if self.expected_token:
+            tok = str(meta.get("token", ""))
+            if not tok:
+                if self.require_token:
+                    with self._lock:
+                        self.error = "no sink token in preamble (NORI_STREAM_REQUIRE_TOKEN=1) — dropped"
+                    logger.warning("[STREAM-RX] %s", self.error)
+                    return False
+                logger.warning("[STREAM-RX] preamble carries no sink token — accepting on "
+                               "serial ONLY (transition; update the robot streamer to echo "
+                               "preamble['token'], then set NORI_STREAM_REQUIRE_TOKEN=1)")
+            elif not secrets.compare_digest(tok, self.expected_token):
+                with self._lock:
+                    self.error = "sink token mismatch — dropped (forged stream?)"
+                logger.warning("[STREAM-RX] %s", self.error)
+                return False
         # Anchor Pi-monotonic frame timestamps to OUR monotonic clock. The
         # preamble just crossed the LAN (~ms), so local-now ≈ pi mono_epoch.
         offset = time.monotonic() - float(meta.get("mono_epoch", 0.0))

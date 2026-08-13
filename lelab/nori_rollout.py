@@ -34,6 +34,7 @@ import base64
 import json
 import logging
 import os
+import secrets
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -91,21 +92,27 @@ class StreamOpenBody(BaseModel):
 
 @router.post("/stream/open")
 def stream_open(body: StreamOpenBody):
-    """Arm the policy-stream receiver. Returns the {host, port} the browser
-    hands the robot as `target` in {type:"policy_stream", action:"start"}.
-    Re-opening replaces any previous listener (a retry is open->start again)."""
+    """Arm the policy-stream receiver. Returns {host, port, token}: the browser
+    hands host:port to the robot as `target` and the `token` as a sibling of the
+    {type:"policy_stream", action:"start"} frame (over the authenticated WebRTC
+    datachannel). The robot echoes the token in its stream preamble; the receiver
+    rejects any stream whose token doesn't match — real sink auth (pentest V10),
+    since the token never leaves the authenticated channel. Re-opening replaces
+    any previous listener (a retry is open->start again)."""
     global _stream
     serial = body.expected_serial.strip()
     if not serial:
         raise HTTPException(status_code=422, detail="expected_serial is required")
+    token = secrets.token_urlsafe(24)
     with _lock:
         if _stream is not None:
             _stream.close()
         lst = streamrx.StreamListener(
-            serial, port=body.port or int(os.environ.get("NORI_STREAM_PORT", "0")))
-        lst.open()  # binds all interfaces; we advertise the routable address
+            serial, port=body.port or int(os.environ.get("NORI_STREAM_PORT", "0")),
+            expected_token=token)
+        lst.open()  # binds all interfaces; the token — not the bind — is the auth
         _stream = lst
-    return {"host": _detect_host(), "port": lst.port}
+    return {"host": _detect_host(), "port": lst.port, "token": token}
 
 
 @router.post("/stream/close")

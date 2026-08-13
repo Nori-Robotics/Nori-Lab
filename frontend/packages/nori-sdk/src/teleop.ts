@@ -899,11 +899,14 @@ export class RemoteTeleop {
   // shorter wait reports "timeout" while the stream then actually starts.
   policyStream(
     action: "start" | "stop" | "status",
-    opts?: { dest?: "laptop" | "cloud"; target?: string; timeoutMs?: number },
+    opts?: { dest?: "laptop" | "cloud"; target?: string; token?: string; timeoutMs?: number },
   ): Promise<PolicyStreamStatus> {
     const frame: Record<string, unknown> = { type: "policy_stream", action };
     if (opts?.dest) frame.dest = opts.dest;
     if (opts?.target) frame.target = opts.target;
+    // Pentest V10 sink auth: the robot must echo this token in its stream preamble.
+    // Travels over the authenticated datachannel, so an off-channel attacker never sees it.
+    if (opts?.token) frame.token = opts.token;
     return new Promise<PolicyStreamStatus>((resolve) => {
       const timer = setTimeout(() => {
         const i = this.psWaiters.indexOf(entry);

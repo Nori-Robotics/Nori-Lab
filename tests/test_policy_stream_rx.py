@@ -212,3 +212,52 @@ def test_disconnect_flips_connected_and_frames_age_out(rx):
     assert wait_for(lambda: not rx.status()["connected"])
     # last frame may still be fresh for a moment, but the status is honest
     assert rx.status()["preamble_received"]
+
+
+# ---- Pentest V10: sink-token auth --------------------------------------------
+def _tokened_rx(tmp_path, monkeypatch, token="s3cr3t-sink-token", require=False):
+    monkeypatch.setenv("NORI_STREAM_CALIB_PATH", str(tmp_path / "calib.json"))
+    if require:
+        monkeypatch.setenv("NORI_STREAM_REQUIRE_TOKEN", "1")
+    lst = StreamListener(SERIAL, host="127.0.0.1", expected_token=token)
+    lst.open()
+    return lst
+
+
+def test_v10_token_match_accepted(tmp_path, monkeypatch):
+    rx = _tokened_rx(tmp_path, monkeypatch)
+    s = FakeStreamer("127.0.0.1", rx.port)
+    s.send_preamble(token="s3cr3t-sink-token")
+    s.send_frame("overhead")
+    assert wait_for(lambda: rx.status()["preamble_received"])
+    s.close(); rx.close()
+
+
+def test_v10_token_mismatch_dropped(tmp_path, monkeypatch):
+    rx = _tokened_rx(tmp_path, monkeypatch)
+    s = FakeStreamer("127.0.0.1", rx.port)
+    s.send_preamble(token="WRONG-TOKEN")   # forged: right serial, wrong token
+    s.send_frame("overhead")
+    # never accepts the connection — the forged stream is dropped
+    assert not wait_for(lambda: rx.status()["preamble_received"], timeout=1.0)
+    s.close(); rx.close()
+
+
+def test_v10_token_absent_transition_tolerated(tmp_path, monkeypatch):
+    # An un-updated robot sends no token; default (require off) accepts on serial.
+    rx = _tokened_rx(tmp_path, monkeypatch, require=False)
+    s = FakeStreamer("127.0.0.1", rx.port)
+    s.send_preamble()   # no token field
+    s.send_frame("overhead")
+    assert wait_for(lambda: rx.status()["preamble_received"])
+    s.close(); rx.close()
+
+
+def test_v10_token_absent_required_dropped(tmp_path, monkeypatch):
+    # With NORI_STREAM_REQUIRE_TOKEN=1 a token-less preamble is fail-closed.
+    rx = _tokened_rx(tmp_path, monkeypatch, require=True)
+    s = FakeStreamer("127.0.0.1", rx.port)
+    s.send_preamble()   # no token field
+    s.send_frame("overhead")
+    assert not wait_for(lambda: rx.status()["preamble_received"], timeout=1.0)
+    s.close(); rx.close()

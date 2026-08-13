@@ -60,7 +60,17 @@ AUTH_TOKEN = os.environ.get("NORI_INFER_TOKEN")  # transition-era shared secret
 #                                    policy is rejected here
 #           NORI_INFER_REQUIRE_GRANT=1 — drop the static-token fallback once the
 #                                    mint endpoint is live (transition off-ramp)
-GRANT_PUBLIC_KEY = os.environ.get("NORI_GRANT_PUBLIC_KEY")
+# The fleet grant-verification public key. Baked as the default (a PUBLIC key is
+# not a secret — same value session 2 baked into nori_ws session_grant.py, one
+# keypair serves V1-robot + V4-inference, domain-separated by the `dom` claim);
+# NORI_GRANT_PUBLIC_KEY overrides it for rotation without a code change.
+DEFAULT_GRANT_PUBLIC_KEY = (
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE8qMb2C283jbDvlUth3IqAUcSmwK2\n"
+    "CZy4p/re774MgGn7kReJlA0VdvWQspehVyTMFwWJ+LrDyQtIliobDn5W6g==\n"
+    "-----END PUBLIC KEY-----\n"
+)
+GRANT_PUBLIC_KEY = os.environ.get("NORI_GRANT_PUBLIC_KEY") or DEFAULT_GRANT_PUBLIC_KEY
 SERVE_POLICY_REF = os.environ.get("NORI_SERVE_POLICY_REF")
 REQUIRE_GRANT = os.environ.get("NORI_INFER_REQUIRE_GRANT", "0").strip() == "1"
 GRANT_DOMAIN = "nori-infer-grant-v1"

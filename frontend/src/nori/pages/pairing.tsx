@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useNori } from "@/nori/NoriContext";
+import { isRobotModelBlocked } from "@/nori/robotModels";
 import {
   listRobots,
   pairRobot,
@@ -77,6 +78,16 @@ const Pairing = () => {
     const next = serial.trim();
     const code = pairCode.trim();
     const name = nickname.trim();
+    // Client-side model gate (robotModels.ts): this build only offers L2. Block a known
+    // disallowed model (L3) before the API call. UX-only — not enforced server-side.
+    if (isRobotModelBlocked(next)) {
+      setError(
+        "This app supports Nori L2 robots only — that serial is a different model " +
+          "and can't be paired here."
+      );
+      setSubmitting(false);
+      return;
+    }
     try {
       const updated = await pairRobot(
         baseUrl,

@@ -36,6 +36,7 @@ import os
 import secrets
 import threading
 import time
+from collections import deque
 from typing import Any, Optional
 
 import numpy as np
@@ -80,6 +81,15 @@ GRANT_DOMAIN = "nori-infer-grant-v1"
 # arbitrary num_steps and let one authed caller request unbounded compute.
 # Generous upper bound; each adapter still clamps to its own chunk semantics.
 MAX_NUM_STEPS = int(os.environ.get("NORI_INFER_MAX_NUM_STEPS", "100"))
+# Pentest V11 (serving side): abuse/DoS caps on /act. A leaked or weakly-scoped
+# token could otherwise pour unbounded GPU spend, or a single huge/decompression-
+# bomb image could OOM the box. Defaults are generous vs a real rollout (~15 Hz,
+# 640x480 JPEGs ~70-270 KB base64) so nothing legitimate is clipped.
+MAX_IMAGE_B64 = int(os.environ.get("NORI_INFER_MAX_IMAGE_B64", str(3 * 1024 * 1024)))   # per-image
+MAX_IMAGE_PIXELS = int(os.environ.get("NORI_INFER_MAX_IMAGE_PIXELS", str(4096 * 4096)))  # decompress-bomb
+MAX_STATE_LEN = int(os.environ.get("NORI_INFER_MAX_STATE_LEN", "512"))                    # DOF vector
+RATE_MAX = int(os.environ.get("NORI_INFER_RATE_MAX", "60"))          # requests per window, per caller
+RATE_WINDOW_S = float(os.environ.get("NORI_INFER_RATE_WINDOW_S", "2.0"))  # -> 30 req/s sustained (2x a 15Hz loop)
 # Inference Endpoints mount the endpoint's model repo here (no boot download);
 # adapters fall back to their Hub default when absent (Space / bare GPU box).
 MODEL_PATH = os.environ.get("MODEL_PATH", "/repository")
@@ -156,33 +166,64 @@ def _verify_grant(tok: str) -> Optional[dict]:
     return claims
 
 
-def _require_auth(x_nori_token: Optional[str], authorization: Optional[str]) -> None:
-    """Authorize an /act call. Prefers a scoped ES256 grant (V4); falls back to the
-    static shared token during the transition (until NORI_INFER_REQUIRE_GRANT=1).
-    Checked before any model work; constant-time on the static path."""
+def _require_auth(x_nori_token: Optional[str], authorization: Optional[str]) -> str:
+    """Authorize an /act call and RETURN the caller identity (for per-caller rate
+    limiting): "cust:<id>" from a scoped grant, or "static" for the shared token.
+    Prefers a scoped ES256 grant (V4); falls back to the static shared token during
+    the transition (until NORI_INFER_REQUIRE_GRANT=1). Checked before any model
+    work; constant-time on the static path."""
     bearer = (authorization[7:].strip()
               if authorization and authorization.lower().startswith("bearer ") else None)
     presented = x_nori_token or bearer
 
     # 1) Preferred: a valid scoped grant.
-    if presented and _verify_grant(presented) is not None:
-        return
+    if presented:
+        claims = _verify_grant(presented)
+        if claims is not None:
+            return f"cust:{claims.get('customer_id', '?')}"
 
     # 2) Transition fallback: the static shared secret, unless grants are required.
     if not REQUIRE_GRANT and AUTH_TOKEN:
         if x_nori_token and secrets.compare_digest(x_nori_token, AUTH_TOKEN):
-            return
+            return "static"
         if authorization and secrets.compare_digest(authorization, f"Bearer {AUTH_TOKEN}"):
-            return
+            return "static"
 
     raise HTTPException(status_code=401, detail="bad or missing auth token")
+
+
+_rate_lock = threading.Lock()
+_rate_hits: dict[str, deque] = {}
+
+
+def _rate_check(caller: str) -> None:
+    """Per-caller sliding-window rate limit (pentest V11): bounds GPU-spend abuse
+    from one identity. 429 when a caller exceeds RATE_MAX requests in RATE_WINDOW_S.
+    The window is sized well above a real rollout's rate, so legitimate control
+    loops never trip it. Keyed on the caller id from _require_auth (per-customer
+    under grants; all static-token callers share one bucket during transition)."""
+    now = time.monotonic()
+    with _rate_lock:
+        dq = _rate_hits.setdefault(caller, deque())
+        cutoff = now - RATE_WINDOW_S
+        while dq and dq[0] < cutoff:
+            dq.popleft()
+        if len(dq) >= RATE_MAX:
+            raise HTTPException(status_code=429, detail="inference rate limit exceeded")
+        dq.append(now)
 
 
 def _decode(b64: str) -> np.ndarray:
     if b64.lstrip().startswith("data:") and "," in b64[:64]:
         b64 = b64.split(",", 1)[1]
-    img = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
-    return np.asarray(img)
+    img = Image.open(io.BytesIO(base64.b64decode(b64)))
+    # Pentest V11: reject a decompression bomb (small payload, huge canvas) before
+    # allocating the pixel buffer — PIL exposes size without decoding the raster.
+    w, h = img.size
+    if w * h > MAX_IMAGE_PIXELS:
+        raise HTTPException(status_code=413,
+                            detail=f"image {w}x{h} exceeds the {MAX_IMAGE_PIXELS}px cap")
+    return np.asarray(img.convert("RGB"))
 
 
 def _status() -> dict:
@@ -240,7 +281,8 @@ class ActResponse(BaseModel):
 @app.post("/act", response_model=ActResponse)
 def act(req: ActRequest, authorization: Optional[str] = Header(None),
         x_nori_token: Optional[str] = Header(None)) -> ActResponse:
-    _require_auth(x_nori_token, authorization)
+    caller = _require_auth(x_nori_token, authorization)
+    _rate_check(caller)                          # V11: per-caller GPU-spend ceiling
     if _adapter is None:
         detail = f"model load failed: {_load_error}" if _load_error else "model not loaded yet"
         raise HTTPException(status_code=503, detail=detail)
@@ -248,6 +290,13 @@ def act(req: ActRequest, authorization: Optional[str] = Header(None),
     max_images = int(limits.get("max_images", 6))
     if not 1 <= len(req.images) <= max_images:
         raise HTTPException(status_code=422, detail=f"need 1..{max_images} camera images")
+    # V11 input caps: reject oversized payloads BEFORE base64-decoding/PIL-opening.
+    if len(req.state) > MAX_STATE_LEN:
+        raise HTTPException(status_code=422, detail=f"state length {len(req.state)} exceeds {MAX_STATE_LEN}")
+    for b in req.images:
+        if len(b) > MAX_IMAGE_B64:
+            raise HTTPException(status_code=413,
+                                detail=f"an image ({len(b)} b64 chars) exceeds the {MAX_IMAGE_B64} cap")
     images = [_decode(b) for b in req.images]
     state = np.asarray(req.state, dtype=np.float32)
     num_steps = max(1, min(int(req.num_steps), MAX_NUM_STEPS))

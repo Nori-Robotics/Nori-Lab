@@ -269,7 +269,10 @@ def _load_bundle(
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 
-    bundle = Path(config.NORI_POLICY_CACHE) / ref
+    # Sanitize the ref before joining: a raw `../` escapes the cache dir and
+    # loads an arbitrary on-disk checkpoint. config.nori_policy_dir applies the
+    # same filesystem-safe mapping the install/delete paths already use.
+    bundle = Path(config.nori_policy_dir(ref))
     if not (bundle / "model.safetensors").is_file():
         raise HTTPException(
             status_code=404,

@@ -225,12 +225,20 @@ async def _local_origin_gate(request: Request, call_next):
             content={"detail": "cross-origin request refused — lelab only serves "
                                "its own local UI (see NORI_EXTRA_ORIGINS)"},
         )
-    # Backstop for ORIGIN-STRIPPING edge cases only: a mutation stamped cross-site with no
+    # Backstop for ORIGIN-STRIPPING edge cases: a request stamped cross-site with no
     # (or an unlisted) Origin is refused. An ALLOWLISTED origin defers to the primary check
     # above — the hosted UI (lab.norirobotics.com -> localhost) is legitimately cross-SITE,
     # so browsers stamp all its requests cross-site; without this exemption every mutation
     # from the deployed page 403s ("Provision account failed: cross-site request refused").
-    if (request.method not in ("GET", "HEAD", "OPTIONS")
+    #
+    # GET is included (not just mutations): browsers omit Origin on <img>/<script>/<link>
+    # subresource GETs, and several GET endpoints have HARDWARE side effects (leader-bus
+    # identify/live/targets open the serial bus). `<img src=".../identify?cycles=200">` from
+    # a drive-by page is a cross-site GET with no Origin — this catches it. Legit same-origin
+    # GETs are `sec-fetch-site: same-origin`; a real cross-origin fetch() carries an Origin
+    # (caught above); browsers without Sec-Fetch-Site simply fall through as before. OPTIONS
+    # (preflight) stays exempt.
+    if (request.method != "OPTIONS"
             and request.headers.get("sec-fetch-site") == "cross-site"
             and origin not in _ALLOWED_ORIGINS):
         return JSONResponse(status_code=403,
@@ -1828,6 +1836,17 @@ def websocket_test():
 @app.websocket("/ws/joint-data")
 async def websocket_endpoint(websocket: WebSocket):
     logger.info("🔗 New WebSocket connection attempt")
+    # Origin check: the http middleware (_local_origin_gate) is BaseHTTPMiddleware
+    # and never runs for WebSocket scopes, so without this any website could
+    # `new WebSocket('ws://localhost:8000/ws/joint-data')` and stream live joint
+    # telemetry (WS is exempt from same-origin policy). Browsers always attach
+    # Origin to a WS handshake; a non-browser client (SDK/curl) sends none and is
+    # allowed, matching the http gate's posture for local tools.
+    ws_origin = websocket.headers.get("origin")
+    if ws_origin is not None and ws_origin not in _ALLOWED_ORIGINS:
+        logger.warning("Refusing WebSocket from cross-origin: %s", ws_origin)
+        await websocket.close(code=1008)  # policy violation
+        return
     try:
         await manager.connect(websocket)
         logger.info("✅ WebSocket connection established")

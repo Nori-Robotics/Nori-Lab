@@ -45,6 +45,12 @@ from pydantic import BaseModel
 
 MODEL_KIND = os.environ.get("MODEL_KIND", "molmoact2")
 AUTH_TOKEN = os.environ.get("NORI_INFER_TOKEN")  # REQUIRED
+# Server-level abuse cap on the action horizon, restoring the guard the
+# single-model server had (MAX_NUM_STEPS=50) that was lost in the multi-policy
+# refactor — only the molmoact2 adapter re-clamps, so pi05/groot would honor an
+# arbitrary num_steps and let one authed caller request unbounded compute.
+# Generous upper bound; each adapter still clamps to its own chunk semantics.
+MAX_NUM_STEPS = int(os.environ.get("NORI_INFER_MAX_NUM_STEPS", "100"))
 # Inference Endpoints mount the endpoint's model repo here (no boot download);
 # adapters fall back to their Hub default when absent (Space / bare GPU box).
 MODEL_PATH = os.environ.get("MODEL_PATH", "/repository")
@@ -176,12 +182,13 @@ def act(req: ActRequest, authorization: Optional[str] = Header(None),
         raise HTTPException(status_code=422, detail=f"need 1..{max_images} camera images")
     images = [_decode(b) for b in req.images]
     state = np.asarray(req.state, dtype=np.float32)
+    num_steps = max(1, min(int(req.num_steps), MAX_NUM_STEPS))
     t0 = time.perf_counter()
     with _lock:
         try:
             actions, extra = _adapter.act(
                 images=images, state=state, instruction=req.instruction,
-                num_steps=req.num_steps,
+                num_steps=num_steps,
                 extras={"enable_cuda_graph": req.enable_cuda_graph,
                         "enable_grad": req.enable_grad, "rtc": req.rtc},
             )

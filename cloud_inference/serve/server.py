@@ -44,7 +44,23 @@ from PIL import Image
 from pydantic import BaseModel
 
 MODEL_KIND = os.environ.get("MODEL_KIND", "molmoact2")
-AUTH_TOKEN = os.environ.get("NORI_INFER_TOKEN")  # REQUIRED
+AUTH_TOKEN = os.environ.get("NORI_INFER_TOKEN")  # transition-era shared secret
+
+# V4 scoped-inference grants (pentest 2026-08-12). The backend mints a short-lived
+# ES256 JWT bound to {customer_id, policy_ref}; the serving box holds ONLY the
+# PUBLIC key, so it verifies but can never mint (airgap-consistent — a popped
+# endpoint forges nothing). Contract agreed with the backend grant module:
+#   header  X-Nori-Token: <ES256 JWT>   (Bearer also accepted)
+#   claims  {customer_id, policy_ref, dom:"nori-infer-grant-v1", iat, exp}
+#   env     NORI_GRANT_PUBLIC_KEY  — PEM public half of the backend signing key
+#           NORI_SERVE_POLICY_REF  — THIS endpoint's policy id; a grant for any
+#                                    other policy_ref is rejected here
+#           NORI_INFER_REQUIRE_GRANT=1 — drop the static-token fallback once the
+#                                    mint endpoint is live (transition off-ramp)
+GRANT_PUBLIC_KEY = os.environ.get("NORI_GRANT_PUBLIC_KEY")
+SERVE_POLICY_REF = os.environ.get("NORI_SERVE_POLICY_REF")
+REQUIRE_GRANT = os.environ.get("NORI_INFER_REQUIRE_GRANT", "0").strip() == "1"
+GRANT_DOMAIN = "nori-infer-grant-v1"
 # Server-level abuse cap on the action horizon, restoring the guard the
 # single-model server had (MAX_NUM_STEPS=50) that was lost in the multi-policy
 # refactor — only the molmoact2 adapter re-clamps, so pi05/groot would honor an
@@ -94,19 +110,58 @@ def _load() -> None:
 
 @app.on_event("startup")
 def _startup() -> None:
-    if not AUTH_TOKEN:
-        raise RuntimeError("NORI_INFER_TOKEN must be set")
+    # An endpoint must be able to authenticate SOMEHOW: a static token (transition)
+    # or a grant public key (V4). Grant-only endpoints (REQUIRE_GRANT) need no
+    # static secret; fail closed if neither is configured.
+    if not AUTH_TOKEN and not GRANT_PUBLIC_KEY:
+        raise RuntimeError("configure NORI_INFER_TOKEN or NORI_GRANT_PUBLIC_KEY")
+    if GRANT_PUBLIC_KEY and not SERVE_POLICY_REF:
+        print("[serve] WARNING: NORI_GRANT_PUBLIC_KEY set without NORI_SERVE_POLICY_REF "
+              "— grants are verified for signature/expiry but NOT bound to this "
+              "policy (any customer's valid grant is accepted). Set the ref.", flush=True)
     threading.Thread(target=_load, name=f"{MODEL_KIND}-load", daemon=True).start()
 
 
+def _verify_grant(tok: str) -> Optional[dict]:
+    """Verify an ES256 inference grant. Returns the claims on success, None on any
+    failure (bad sig / wrong domain / policy mismatch / expired). Standalone — no
+    backend import; the endpoint holds only the public key (verify, never mint)."""
+    if not GRANT_PUBLIC_KEY:
+        return None
+    try:
+        import jwt as pyjwt
+        claims = pyjwt.decode(tok, GRANT_PUBLIC_KEY, algorithms=["ES256"])
+    except Exception:
+        return None  # signature invalid, expired (pyjwt enforces exp), or malformed
+    if claims.get("dom") != GRANT_DOMAIN:
+        return None
+    # Policy binding: the SERVER supplies its own ref — a grant minted for another
+    # policy must not run here. Enforced only when the ref is configured (see the
+    # startup warning); a signed+expiring grant is still better than a static token.
+    if SERVE_POLICY_REF and claims.get("policy_ref") != SERVE_POLICY_REF:
+        return None
+    return claims
+
+
 def _require_auth(x_nori_token: Optional[str], authorization: Optional[str]) -> None:
-    """X-Nori-Token primary (a protected endpoint's edge consumes Authorization;
-    custom headers pass through); Bearer kept for the transition client. Each
-    compare constant-time; checked before any model work."""
-    if x_nori_token and secrets.compare_digest(x_nori_token, AUTH_TOKEN):
+    """Authorize an /act call. Prefers a scoped ES256 grant (V4); falls back to the
+    static shared token during the transition (until NORI_INFER_REQUIRE_GRANT=1).
+    Checked before any model work; constant-time on the static path."""
+    bearer = (authorization[7:].strip()
+              if authorization and authorization.lower().startswith("bearer ") else None)
+    presented = x_nori_token or bearer
+
+    # 1) Preferred: a valid scoped grant.
+    if presented and _verify_grant(presented) is not None:
         return
-    if authorization and secrets.compare_digest(authorization, f"Bearer {AUTH_TOKEN}"):
-        return
+
+    # 2) Transition fallback: the static shared secret, unless grants are required.
+    if not REQUIRE_GRANT and AUTH_TOKEN:
+        if x_nori_token and secrets.compare_digest(x_nori_token, AUTH_TOKEN):
+            return
+        if authorization and secrets.compare_digest(authorization, f"Bearer {AUTH_TOKEN}"):
+            return
+
     raise HTTPException(status_code=401, detail="bad or missing auth token")
 
 

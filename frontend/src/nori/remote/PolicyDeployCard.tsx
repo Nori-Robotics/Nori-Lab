@@ -32,6 +32,7 @@ import {
   type PolicyRunPhase,
 } from "@/nori/remote/policyRun";
 import { CloudDeploySection } from "@/nori/remote/CloudDeploySection";
+import { isCloudServeEnabled } from "@/nori/remote/flags";
 
 // A policy ref looks like "NoriRobotics/customer-xxxx:job-uuid" or a slug — show
 // a readable tail for the compact row.
@@ -324,8 +325,9 @@ export function PolicyDeployCard() {
           )}
 
           {/* Cloud VLA (MolmoAct2) — remote inference, own runner. Separate
-              component so a restyle of this card doesn't collide with it. */}
-          <CloudDeploySection />
+              component so a restyle of this card doesn't collide with it.
+              Gated dark (isCloudServeEnabled) while the serving lanes are rebuilt. */}
+          {isCloudServeEnabled() && <CloudDeploySection />}
         </div>
       )}
 

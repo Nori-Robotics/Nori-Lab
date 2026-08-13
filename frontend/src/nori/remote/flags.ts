@@ -52,3 +52,17 @@ export function isPrivateRoomEnabled(): boolean {
     return true;
   }
 }
+
+// Cloud-serve UI (cloud inference cards): the robot-direct "Run on robot (cloud)"
+// card and the desktop "Cloud VLA" (laptop -> endpoint /act) section. Shipped DARK
+// while the serving lanes are being rebuilt (the generic groot/pi05 lerobot serve
+// path). DEFAULT OFF so users don't see a not-ready cloud-inference feature — flip
+// it (or make it a build-time default) once the serve path ships. Dev/testing:
+//   localStorage.setItem("nori_cloud_serve", "1"); location.reload();
+export function isCloudServeEnabled(): boolean {
+  try {
+    return localStorage.getItem("nori_cloud_serve") === "1";
+  } catch {
+    return false;
+  }
+}

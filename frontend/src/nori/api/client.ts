@@ -760,6 +760,88 @@ export function getExportJob(baseUrl: string, fetcher: Fetcher, exportJobId: str
   );
 }
 
+// ---- Bring-your-own-policy upload (Step 2) --------------------------------
+/** start -> PUT the bundle tarball to put_url -> finalize -> poll getPolicyUpload
+ *  until PROMOTED (result_job_id = the new deployable/downloadable policy) or FAILED. */
+export interface PolicyUploadMeta {
+  views?: string[];        // camera roles the policy expects (left_wrist/right_wrist/overhead)
+  arm?: string | null;     // "left" | "right" | "both"
+  fps?: number | null;
+  instruction?: string | null;  // language policies (smolvla) need this
+  title?: string | null;
+}
+export interface PolicyUploadStart {
+  upload_id: string;
+  put_url: string;
+  expires_in: number;
+}
+export interface PolicyUploadSession {
+  id: string;
+  status: "PENDING_UPLOAD" | "FINALIZING" | "PROMOTED" | "FAILED";
+  result_job_id: string | null;
+  failure_reason: string | null;
+}
+
+/** POST /nori/marketplace/policies/upload/start — open a BYO-policy upload session and
+ *  get a presigned PUT for the bundle tarball. */
+export function startPolicyUpload(
+  baseUrl: string,
+  fetcher: Fetcher,
+  meta: PolicyUploadMeta
+): Promise<PolicyUploadStart> {
+  return noriRequest<PolicyUploadStart>(
+    baseUrl,
+    fetcher,
+    "/nori/marketplace/policies/upload/start",
+    { method: "POST", body: meta, action: "Start policy upload" }
+  );
+}
+
+/** PUT the bundle tarball STRAIGHT to S3 (never through the backend). Requires a bucket
+ *  CORS rule allowing PUT + the SSE header from the app origin (see the backend
+ *  storage/verify_aws_setup.py checklist) — not a noriRequest, a direct S3 fetch. */
+export async function putPolicyBundle(putUrl: string, file: Blob): Promise<void> {
+  const res = await fetch(putUrl, {
+    method: "PUT",
+    headers: { "x-amz-server-side-encryption": "AES256" },
+    body: file,
+  });
+  if (!res.ok) {
+    throw new Error(
+      `Upload to storage failed (HTTP ${res.status}). On the hosted site the storage ` +
+        `bucket needs a CORS rule permitting browser uploads.`
+    );
+  }
+}
+
+/** POST /nori/marketplace/policies/upload/{id}/finalize — verify the bytes + enqueue gating. */
+export function finalizePolicyUpload(
+  baseUrl: string,
+  fetcher: Fetcher,
+  uploadId: string
+): Promise<{ upload_id: string; status: string }> {
+  return noriRequest<{ upload_id: string; status: string }>(
+    baseUrl,
+    fetcher,
+    `/nori/marketplace/policies/upload/${encodeURIComponent(uploadId)}/finalize`,
+    { method: "POST", action: "Finalize policy upload" }
+  );
+}
+
+/** GET /nori/marketplace/policies/upload/{id} — poll upload/gating/promotion. */
+export function getPolicyUpload(
+  baseUrl: string,
+  fetcher: Fetcher,
+  uploadId: string
+): Promise<PolicyUploadSession> {
+  return noriRequest<PolicyUploadSession>(
+    baseUrl,
+    fetcher,
+    `/nori/marketplace/policies/upload/${encodeURIComponent(uploadId)}`,
+    { action: "Check policy upload status" }
+  );
+}
+
 /** One recording session that contributed episodes to an assembled dataset —
  *  the unit you can filter by or bulk-delete. */
 export interface DatasetProvenanceSession {

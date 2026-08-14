@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Download, Loader2, Lock, Trash2, Unlock } from "lucide-react";
+import { Download, Loader2, Lock, Trash2, Unlock, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -51,6 +51,7 @@ import {
 import { EpisodeReviewModal, type ReviewSource } from "@/nori/components/EpisodeReviewModal";
 import { AssembleModal } from "@/nori/components/AssembleModal";
 import { ExportModal } from "@/nori/components/ExportModal";
+import { UploadPolicyModal } from "@/nori/components/UploadPolicyModal";
 
 // ---- small presentational bits -------------------------------------------
 
@@ -347,6 +348,7 @@ const MyStuff = () => {
   const [deletePolicyBusy, setDeletePolicyBusy] = useState(false);
   const [deletePolicyErr, setDeletePolicyErr] = useState<string | null>(null);
   const [lockBusy, setLockBusy] = useState<string | null>(null); // id being locked/unlocked
+  const [showUploadPolicy, setShowUploadPolicy] = useState(false); // BYO-policy upload modal
 
   const load = useCallback(async () => {
     setError(null);
@@ -1300,6 +1302,17 @@ const MyStuff = () => {
           {/* -------- Policies (third view) -------- */}
           {view === "policies" && (
             <>
+          <div className="flex justify-end">
+            <Button size="sm" variant="outline" className="gap-2" onClick={() => setShowUploadPolicy(true)}>
+              <UploadCloud className="h-4 w-4" /> Upload policy
+            </Button>
+          </div>
+          {showUploadPolicy && (
+            <UploadPolicyModal
+              onClose={() => setShowUploadPolicy(false)}
+              onUploaded={() => { setShowUploadPolicy(false); void load(); }}
+            />
+          )}
           {filteredPolicies.length === 0 && (
             <p className="rounded-[20px] border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
               {policyFilter !== "all" && allPolicies.length > 0

@@ -155,6 +155,28 @@ export async function noriRequest<T = unknown>(
   return apiRequest<T>(baseUrl, withNoriAuth(fetcher), path, options);
 }
 
+/**
+ * Browser-native upload variant of noriRequest. The /datasets/upload routes are
+ * LeLab-only for the DESKTOP repo_id flow (the proxy reads a local dataset), but the
+ * browser-native MANIFEST flow reaches the backend directly (hosted). So this variant
+ * skips the lelab-only gate for those paths: in direct-backend mode it hits the backend
+ * directly; on the desktop proxy it forwards as usual. Kept separate so the existing
+ * desktop uploadDataset() stays gated + unbroken.
+ */
+export async function noriUploadRequest<T = unknown>(
+  baseUrl: string,
+  fetcher: Fetcher,
+  path: string,
+  options: ApiRequestOptions = {}
+): Promise<T> {
+  await routingSettled;
+  if (directBackendUrl) {
+    const apiPath = path.replace(/^\/nori/, "/api/v1");
+    return apiRequest<T>(directBackendUrl, withDirectAuth(fetcher), apiPath, options);
+  }
+  return apiRequest<T>(baseUrl, withNoriAuth(fetcher), path, options);
+}
+
 /** Public config bootstrap — does not require auth. */
 export function getNoriConfig(baseUrl: string, fetcher: Fetcher): Promise<NoriPublicConfig> {
   return apiRequest<NoriPublicConfig>(baseUrl, fetcher, "/nori/config", {
@@ -839,6 +861,82 @@ export function getPolicyUpload(
     fetcher,
     `/nori/marketplace/policies/upload/${encodeURIComponent(uploadId)}`,
     { action: "Check policy upload status" }
+  );
+}
+
+// ---- Browser-native dataset / recording upload (Step 3) -------------------
+/** One manifest entry: the file's path RELATIVE to the dataset/bundle root + its size. */
+export interface DatasetUploadEntry {
+  path: string;
+  size: number;
+}
+export interface DatasetUploadStart {
+  session_id: string;
+  uploads: { path: string; put_url: string }[];
+  expires_at: string;
+}
+export interface UploadSessionRow {
+  id: string;
+  status: string;  // PENDING_UPLOAD | FINALIZING | PROMOTED | FAILED | ...
+  failure_reason?: string | null;
+  hf_path_prefix?: string | null;
+}
+
+/** POST /nori/datasets/upload/start — open a browser-native upload session for a
+ *  LeRobot dataset ('lerobot') or a raw recording ('raw_bundle'); returns a presigned
+ *  PUT per file. Provenance is stamped 'uploaded' (customer JWT) → not publishable. */
+export function startDatasetUpload(
+  baseUrl: string,
+  fetcher: Fetcher,
+  args: {
+    manifest: DatasetUploadEntry[];
+    kind: "lerobot" | "raw_bundle";
+    label?: string | null;
+    commit_message?: string | null;
+  }
+): Promise<DatasetUploadStart> {
+  return noriUploadRequest<DatasetUploadStart>(
+    baseUrl,
+    fetcher,
+    "/nori/datasets/upload/start",
+    {
+      method: "POST",
+      body: {
+        manifest: args.manifest,
+        kind: args.kind,
+        label: args.label ?? null,
+        commit_message: args.commit_message ?? null,
+      },
+      action: "Start upload",
+    }
+  );
+}
+
+/** POST /nori/datasets/upload/{id}/finalize — verify the uploaded files + promote. */
+export function finalizeDatasetUpload(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string
+): Promise<UploadSessionRow> {
+  return noriUploadRequest<UploadSessionRow>(
+    baseUrl,
+    fetcher,
+    `/nori/datasets/upload/${encodeURIComponent(sessionId)}/finalize`,
+    { method: "POST", action: "Finalize upload" }
+  );
+}
+
+/** GET /nori/datasets/upload/{id} — poll an upload session to terminal. */
+export function getUploadSession(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string
+): Promise<UploadSessionRow> {
+  return noriUploadRequest<UploadSessionRow>(
+    baseUrl,
+    fetcher,
+    `/nori/datasets/upload/${encodeURIComponent(sessionId)}`,
+    { action: "Check upload status" }
   );
 }
 

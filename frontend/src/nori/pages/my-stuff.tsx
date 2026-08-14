@@ -52,6 +52,7 @@ import { EpisodeReviewModal, type ReviewSource } from "@/nori/components/Episode
 import { AssembleModal } from "@/nori/components/AssembleModal";
 import { ExportModal } from "@/nori/components/ExportModal";
 import { UploadPolicyModal } from "@/nori/components/UploadPolicyModal";
+import { UploadDatasetModal } from "@/nori/components/UploadDatasetModal";
 
 // ---- small presentational bits -------------------------------------------
 
@@ -349,6 +350,7 @@ const MyStuff = () => {
   const [deletePolicyErr, setDeletePolicyErr] = useState<string | null>(null);
   const [lockBusy, setLockBusy] = useState<string | null>(null); // id being locked/unlocked
   const [showUploadPolicy, setShowUploadPolicy] = useState(false); // BYO-policy upload modal
+  const [showUploadDataset, setShowUploadDataset] = useState(false); // browser dataset/recording upload modal
 
   const load = useCallback(async () => {
     setError(null);
@@ -1166,6 +1168,17 @@ const MyStuff = () => {
 
           {view === "datasets" && (
             <>
+          <div className="flex justify-end">
+            <Button size="sm" variant="outline" className="gap-2" onClick={() => setShowUploadDataset(true)}>
+              <UploadCloud className="h-4 w-4" /> Upload
+            </Button>
+          </div>
+          {showUploadDataset && (
+            <UploadDatasetModal
+              onClose={() => setShowUploadDataset(false)}
+              onUploaded={() => { setShowUploadDataset(false); void load(); }}
+            />
+          )}
           {/* new datasets still assembling from scratch (no row yet) — placeholders */}
           {newAssembling.map((a) => (
             <article key={a.id} className={`${cardCls} opacity-90`}>

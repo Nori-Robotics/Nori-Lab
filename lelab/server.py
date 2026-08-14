@@ -234,12 +234,20 @@ async def _local_origin_gate(request: Request, call_next):
     # GET is included (not just mutations): browsers omit Origin on <img>/<script>/<link>
     # subresource GETs, and several GET endpoints have HARDWARE side effects (leader-bus
     # identify/live/targets open the serial bus). `<img src=".../identify?cycles=200">` from
-    # a drive-by page is a cross-site GET with no Origin — this catches it. Legit same-origin
-    # GETs are `sec-fetch-site: same-origin`; a real cross-origin fetch() carries an Origin
-    # (caught above); browsers without Sec-Fetch-Site simply fall through as before. OPTIONS
-    # (preflight) stays exempt.
+    # a drive-by page is a GET with no Origin — this catches it.
+    #
+    # We refuse BOTH cross-site AND same-site (pentest 2026-08-14): the local UI is the
+    # ONLY legitimate no-Origin caller and it is `same-origin`. `same-site` means a
+    # DIFFERENT origin on the same registrable domain — in practice a page served on
+    # another localhost PORT (a second local server, a malicious local app, or XSS in any
+    # localhost service), the exact local->local bypass PNA can't stop. Its `<img>` GET is
+    # stamped `same-site` (not cross-site) and the SameSite=Strict lelab_token cookie
+    # (host-scoped, port-agnostic) rides along, so without this the auth layer is defeated
+    # too. Legit same-origin GETs are `same-origin`; the hosted UI and Vite dev carry an
+    # allowlisted Origin (exempted below); curl/SDKs send no Sec-Fetch-Site and fall
+    # through; user-typed nav is `none`. OPTIONS (preflight) stays exempt.
     if (request.method != "OPTIONS"
-            and request.headers.get("sec-fetch-site") == "cross-site"
+            and request.headers.get("sec-fetch-site") in ("cross-site", "same-site")
             and origin not in _ALLOWED_ORIGINS):
         return JSONResponse(status_code=403,
                             content={"detail": "cross-site request refused"})
@@ -1089,6 +1097,10 @@ def nori_leader_set_id(body: NoriLeaderSetIdBody):
 
 @app.get("/nori/leader/identify")
 def nori_leader_identify(port: str | None = None, all_ids: bool = False, cycles: int = 1):
+    # Bound the serial-bus loop: identify holds the bus for `cycles` pings, so an
+    # unclamped value is a bus-lock DoS (defense-in-depth behind the origin gate).
+    cycles = max(1, min(cycles, 100))
+
     def run():
         close_shared_live_reader()
         return identify_leader_motors(port=port, all_ids=all_ids, cycles=cycles)

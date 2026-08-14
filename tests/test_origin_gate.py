@@ -49,6 +49,33 @@ def test_other_localhost_port_refused(client):
     assert r.status_code == 403
 
 
+def test_same_site_no_origin_refused(client):
+    # Pentest 2026-08-14: a page on ANOTHER localhost PORT is `same-site` (not
+    # cross-site), and its <img>/subresource GET omits Origin. This is the
+    # local->local bypass — the SameSite=Strict lelab_token cookie would ride
+    # along on a same-site request, so the gate must refuse it just like cross-site.
+    r = client.get("/nori/rollout/status", headers={"Sec-Fetch-Site": "same-site"})
+    assert r.status_code == 403
+    r = client.post(TARGET, headers={"Sec-Fetch-Site": "same-site"})
+    assert r.status_code == 403
+
+
+def test_same_site_with_allowlisted_origin_passes(client):
+    # Vite dev (localhost:8080 -> localhost:8000) is same-site but carries an
+    # ALLOWLISTED Origin -> primary check vouches, backstop exempts it. Must pass.
+    r = client.post(TARGET, headers={"Origin": "http://localhost:8080",
+                                     "Sec-Fetch-Site": "same-site"})
+    assert r.status_code == 200
+    assert r.json() == {"unloaded": None}
+
+
+def test_same_origin_no_origin_passes(client):
+    # The served local UI calling itself is `same-origin` and omits Origin on GETs
+    # — the one legitimate no-Origin browser caller. Must still pass.
+    r = client.get("/nori/rollout/status", headers={"Sec-Fetch-Site": "same-origin"})
+    assert r.status_code == 200
+
+
 def test_allowed_origins_pass(client):
     for origin in ("http://localhost:8000", "http://127.0.0.1:8000",
                    "http://localhost:8080"):

@@ -1347,6 +1347,74 @@ def nori_delete_dataset_episodes(dataset_session_id: str, body: NoriDeleteEpisod
     return _nori_proxy(lambda: client.delete_dataset_episodes(dataset_session_id, body.episode_indices))
 
 
+# NORI: BYO policy upload (Step 2) + browser-native dataset/recording upload (Step 3).
+# Thin proxies for the start/finalize/poll steps only — the bytes go browser->S3 DIRECT
+# via the presigned PUT (needs the bucket CORS rule for the app origin), never through
+# LeLab. Provenance is stamped by the backend (customer JWT -> 'uploaded', not publishable).
+class NoriPolicyUploadMeta(BaseModel):
+    views: list[str] = []
+    arm: str | None = None
+    fps: int | None = None
+    instruction: str | None = None
+    title: str | None = None
+
+
+@app.post("/nori/marketplace/policies/upload/start")
+def nori_start_policy_upload(body: NoriPolicyUploadMeta, request: Request):
+    """Open a BYO-policy upload session; returns a presigned PUT for the bundle tarball."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.start_policy_upload(body.model_dump()))
+
+
+@app.post("/nori/marketplace/policies/upload/{upload_id}/finalize")
+def nori_finalize_policy_upload(upload_id: str, request: Request):
+    """Verify the uploaded bytes + enqueue gating/promotion."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.finalize_policy_upload(upload_id))
+
+
+@app.get("/nori/marketplace/policies/upload/{upload_id}")
+def nori_get_policy_upload(upload_id: str, request: Request):
+    """Poll a BYO-policy upload session (status, result_job_id, failure_reason)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.get_policy_upload(upload_id))
+
+
+class NoriDatasetUploadEntry(BaseModel):
+    path: str
+    size: int
+
+
+class NoriDatasetUploadStartBody(BaseModel):
+    manifest: list[NoriDatasetUploadEntry]
+    kind: Literal["lerobot", "raw_bundle"] = "lerobot"
+    label: str | None = None
+    commit_message: str | None = None
+
+
+@app.post("/nori/datasets/upload/start")
+def nori_start_dataset_upload(body: NoriDatasetUploadStartBody, request: Request):
+    """Open a browser-native dataset/recording upload session (per-file presigned PUTs)."""
+    client = _nori_client(request)
+    manifest = [e.model_dump() for e in body.manifest]
+    return _nori_proxy(lambda: client.start_dataset_upload(
+        manifest, body.commit_message, body.label, body.kind))
+
+
+@app.post("/nori/datasets/upload/{session_id}/finalize")
+def nori_finalize_dataset_upload(session_id: str, request: Request):
+    """Verify the uploaded files + promote (async on the durable-queue worker)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.finalize_dataset_upload(session_id))
+
+
+@app.get("/nori/datasets/upload/{session_id}")
+def nori_get_dataset_upload(session_id: str, request: Request):
+    """Poll a browser-native upload session to terminal."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.get_dataset_upload(session_id))
+
+
 @app.delete("/nori/library/policies/{job_id}")
 def nori_delete_policy(job_id: str, request: Request, also_unpublish: bool = False):
     """Permanently delete one of the caller's policies (checkpoint + record).

@@ -409,6 +409,12 @@ export interface RecordState {
   episodesKept?: number; // episodes kept in the open session so far
   episode?: string;      // "<session>/<episode-NNNN>" while recording
   freeGb?: number;       // spool disk headroom on the robot
+  // Stereo-view enforcement is active for the open session: the robot is
+  // recording the front + overhead cameras at one matched frame rate (the
+  // session was started with record(..., { stereo: true }) and the robot
+  // acknowledged it). Absent on robots that predate the stereo vocabulary,
+  // so the UI can distinguish "enforcing" from "silently ignored".
+  stereo?: boolean;
   error?: string;
 }
 
@@ -997,13 +1003,23 @@ export class RemoteTeleop {
       | "session_end" | "session_discard"
       | "start" | "stop" | "discard" | "discard_last" | "status",
     task?: string,
+    opts?: {
+      // Ask the robot to enforce stereo capture for this session: the front and
+      // overhead cameras record at one matched frame rate so their frames pair
+      // into a stereo view. Session-scoped — set it on session_start (and on
+      // episode_start, which carries it for the same dropped-session_start
+      // recovery as `task`). The robot echoes `stereo: true` in record_status
+      // while enforcing; older robots ignore the field entirely.
+      stereo?: boolean;
+    },
   ) {
     const msg: Record<string, unknown> = { type: "record", action };
     // Task rides episode_start too: if session_start dropped on the unreliable
     // control channel, the robot auto-opens a session on episode_start and needs
     // the task from here so it isn't lost.
-    if ((action === "start" || action === "session_start" || action === "episode_start") && task) {
-      msg.task = task;
+    if (action === "start" || action === "session_start" || action === "episode_start") {
+      if (task) msg.task = task;
+      if (opts?.stereo) msg.stereo = true;
     }
     this.dcSend(msg);
   }
@@ -1927,6 +1943,7 @@ export class RemoteTeleop {
     if (typeof m.episodes_kept === "number") s.episodesKept = m.episodes_kept;
     if (typeof m.episode === "string" && m.episode) s.episode = m.episode;
     if (typeof m.free_gb === "number") s.freeGb = m.free_gb;
+    if (m.stereo === true) s.stereo = true;
     if (typeof m.error === "string" && m.error) s.error = m.error;
     this.recStat = s;
     this.log(s.error ? `recorder: ${s.error}`

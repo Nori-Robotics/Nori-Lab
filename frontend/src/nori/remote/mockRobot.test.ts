@@ -308,4 +308,38 @@ describe("MockDaemonSim record (W2.11 one-bundle-per-session emulation)", () => 
     expect(rec(sim, "stop")).toMatchObject({ ok: true, recording: false, session_open: false });
     expect(rec(sim, "stop")).toMatchObject({ ok: false });   // nothing open
   });
+
+  it("stereo: session_start {stereo:true} is echoed in every status until close", () => {
+    const sim = new MockDaemonSim();
+    const start = sim.handleFrame(
+      { type: "record", action: "session_start", task: "fold", stereo: true }, 0)[0];
+    expect(start).toMatchObject({ ok: true, session_open: true, stereo: true });
+    // Echoed on episode replies too — the UI reads it from any status.
+    expect(rec(sim, "episode_start")).toMatchObject({ ok: true, stereo: true });
+    expect(rec(sim, "episode_stop")).toMatchObject({ ok: true, stereo: true });
+    // session_end still reports the closing session's stereo state...
+    expect(rec(sim, "session_end")).toMatchObject({ ok: true, stereo: true });
+    // ...and a NEW session without the flag reports none (state was cleared).
+    const plain = rec(sim, "session_start", "fold2");
+    expect(plain.ok).toBe(true);
+    expect(plain.stereo).toBeUndefined();
+  });
+
+  it("stereo: episode_start carries the flag when it auto-opens a session", () => {
+    const sim = new MockDaemonSim();
+    // Dropped session_start: the flag rides episode_start, same as task.
+    const out = sim.handleFrame(
+      { type: "record", action: "episode_start", task: "fold", stereo: true }, 0)[0];
+    expect(out).toMatchObject({ ok: true, session_open: true, stereo: true });
+  });
+
+  it("stereo: session parameters are fixed at open — a mid-session flag is ignored", () => {
+    const sim = new MockDaemonSim();
+    rec(sim, "session_start", "fold");   // no stereo
+    const out = sim.handleFrame(
+      { type: "record", action: "episode_start", stereo: true }, 0)[0];
+    expect(out.ok).toBe(true);
+    expect(out.stereo).toBeUndefined();
+  });
+
 });

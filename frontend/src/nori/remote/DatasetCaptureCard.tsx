@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { useApi } from "@/contexts/ApiContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { EphemeralEpisodeRecorder } from "@/nori/remote/episodePreview";
@@ -26,6 +27,8 @@ import {
   applyPendingNames,
   pendingNameCount,
 } from "@/nori/remote/pendingEpisodeNames";
+
+const STEREO_PREF_KEY = "nori.datasetCapture.stereo";
 
 type Phase =
   | { kind: "idle" }                              // no session
@@ -40,6 +43,24 @@ export function DatasetCaptureCard() {
 
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [task, setTask] = useState("");
+  // "Enforce stereo view": session-scoped robot-side setting — the robot
+  // records the front + overhead cameras at one matched frame rate so their
+  // frames pair into a stereo view. Chosen BEFORE a session starts (recording
+  // parameters are fixed at session_start) and persisted as an operator
+  // preference. The robot echoes `stereo` in record_status while enforcing,
+  // which is what the status line reports — so a robot that predates the
+  // stereo vocabulary shows nothing rather than a false promise.
+  const [stereo, setStereo] = useState<boolean>(
+    () => localStorage.getItem(STEREO_PREF_KEY) === "1",
+  );
+  const setStereoPref = useCallback((on: boolean) => {
+    setStereo(on);
+    try {
+      localStorage.setItem(STEREO_PREF_KEY, on ? "1" : "0");
+    } catch {
+      // Storage unavailable (private mode) — the toggle still works this visit.
+    }
+  }, []);
   const [busy, setBusy] = useState(false);        // start/stop round-trip in flight
   const [reviewBusy, setReviewBusy] = useState(false);
   const [previewNote, setPreviewNote] = useState<string>("");   // why a preview was empty
@@ -91,9 +112,9 @@ export function DatasetCaptureCard() {
     sessionStartRef.current = new Date().toISOString();
     // Opens ONE robot session dir; every episode below goes into it and the whole
     // session ships as one bundle (W2.11 one-bundle-per-session).
-    teleop.record("session_start", task.trim() || "teleop session");
+    teleop.record("session_start", task.trim() || "teleop session", { stereo });
     setPhase({ kind: "session" });
-  }, [teleop, task]);
+  }, [teleop, task, stereo]);
 
   const finishSession = useCallback(() => {
     // Close the robot session — it uploads (as one bundle) when the robot idles.
@@ -146,7 +167,7 @@ export function DatasetCaptureCard() {
       previewRef.current.start(stream);
       // Task on episode_start too — recovers a dropped session_start (the robot
       // auto-opens a session and keeps the task).
-      teleop.record("episode_start", task.trim() || "teleop session");
+      teleop.record("episode_start", task.trim() || "teleop session", { stereo });
       setPhase({ kind: "recording" });
     } catch (e) {
       previewRef.current.cancel();
@@ -154,7 +175,7 @@ export function DatasetCaptureCard() {
     } finally {
       setBusy(false);
     }
-  }, [teleop, busy, task]);
+  }, [teleop, busy, task, stereo]);
 
   const stopEpisode = useCallback(async () => {
     if (!teleop || busy) return;
@@ -206,6 +227,8 @@ export function DatasetCaptureCard() {
     if (recordState === null) return "no reply yet";
     if (recordState.recording) {
       return `recording ${recordState.episode ?? ""}${
+        recordState.stereo ? " · stereo enforced" : ""
+      }${
         recordState.freeGb !== undefined ? ` · ${recordState.freeGb} GB free` : ""
       }`;
     }
@@ -265,6 +288,23 @@ export function DatasetCaptureCard() {
                   Start session
                 </Button>
               </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Switch
+                  id="stereo-capture-toggle"
+                  checked={stereo}
+                  onCheckedChange={setStereoPref}
+                />
+                <label
+                  htmlFor="stereo-capture-toggle"
+                  className="cursor-pointer text-sm text-nori-h14131a"
+                >
+                  Enforce stereo view
+                </label>
+                <span className="text-xs text-nori-h6f6858">
+                  records the front + overhead cameras at one matched frame rate so
+                  their frames pair into a stereo view
+                </span>
+              </div>
               {!connected && <p className="text-sm text-nori-h6f6858">connect to the robot first</p>}
             </>
           )}
@@ -276,6 +316,11 @@ export function DatasetCaptureCard() {
                 <p className="text-sm text-nori-h14131a">
                   Session: <span className="font-semibold">{task.trim() || "teleop session"}</span>
                   <span className="ml-2 text-nori-h6f6858">· {episodeCount} kept</span>
+                  {stereo && (
+                    <span className="ml-2 rounded-full border border-nori-h14131a/20 px-2 py-0.5 text-[11px] text-nori-h6f6858 align-middle">
+                      stereo
+                    </span>
+                  )}
                 </p>
                 <Button size="sm" variant="ghost" onClick={finishSession}>
                   Finish session

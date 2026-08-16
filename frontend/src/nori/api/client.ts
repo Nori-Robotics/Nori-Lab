@@ -584,6 +584,10 @@ export interface LibraryDataset {
   source_listing_id?: string | null;
   /** True when the caller has a live/pending community listing for this item. */
   published?: boolean;
+  /** Assemble-time processing options (REQUESTED, not produced — the processing
+   * tools aren't wired yet). Shown as badges; the maps drive the viewer's picker. */
+  derived_maps?: string[];
+  video_processing?: string[];
   policies: LibraryPolicy[];
 }
 
@@ -702,12 +706,27 @@ export interface AssemblyJob {
   created_at: string;
 }
 
+/** Maps derivable from recordings + video-processing passes, offered at assemble
+ *  time. PREP: the backend persists these onto the job; the processing tools that
+ *  consume them don't exist yet, so selecting them is a no-op today. */
+export const DERIVE_MAPS = ["depth", "normals", "albedo", "roughness", "metallic"] as const;
+export const VIDEO_PROCESSING = ["color_jitter", "full_relight"] as const;
+export type DeriveMap = (typeof DERIVE_MAPS)[number];
+export type VideoProcessing = (typeof VIDEO_PROCESSING)[number];
+
 /** POST /nori/datasets/assemble — turn robot recordings into a trainable dataset
  *  (a NEW one, or APPEND onto an existing dataset). Returns the job to poll. */
 export function assembleDataset(
   baseUrl: string,
   fetcher: Fetcher,
-  args: { sources: string[]; mode: "new" | "append"; targetDatasetSessionId?: string | null; name?: string | null }
+  args: {
+    sources: string[];
+    mode: "new" | "append";
+    targetDatasetSessionId?: string | null;
+    name?: string | null;
+    deriveMaps?: string[];
+    videoProcessing?: string[];
+  }
 ): Promise<{ assembly_job_id: string; status: string }> {
   return noriRequest(baseUrl, fetcher, "/nori/datasets/assemble", {
     method: "POST",
@@ -716,8 +735,30 @@ export function assembleDataset(
       mode: args.mode,
       target_dataset_session_id: args.targetDatasetSessionId ?? null,
       name: args.name ?? null,
+      derive_maps: args.deriveMaps ?? [],
+      video_processing: args.videoProcessing ?? [],
     },
     action: "Assemble dataset",
+  });
+}
+
+/** POST /nori/datasets/assemble/estimate — estimated assembly seconds for the
+ *  selected recordings + options. Today this is base assembly time (options add
+ *  nothing until the processing tools land). Callers should fail SOFT: the
+ *  endpoint may be absent on an older backend. */
+export function estimateAssembly(
+  baseUrl: string,
+  fetcher: Fetcher,
+  args: { sources: string[]; deriveMaps?: string[]; videoProcessing?: string[] }
+): Promise<{ estimated_seconds: number; frame_count: number; episode_count: number }> {
+  return noriRequest(baseUrl, fetcher, "/nori/datasets/assemble/estimate", {
+    method: "POST",
+    body: {
+      sources: args.sources,
+      derive_maps: args.deriveMaps ?? [],
+      video_processing: args.videoProcessing ?? [],
+    },
+    action: "Estimate assembly time",
   });
 }
 

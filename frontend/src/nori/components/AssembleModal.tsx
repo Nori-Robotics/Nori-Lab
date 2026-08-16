@@ -7,7 +7,13 @@ import { createPortal } from "react-dom";
 import { Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useApi } from "@/contexts/ApiContext";
-import { assembleDataset, getAssemblyJob } from "@/nori/api/client";
+import {
+  assembleDataset,
+  estimateAssembly,
+  getAssemblyJob,
+  DERIVE_MAPS,
+  VIDEO_PROCESSING,
+} from "@/nori/api/client";
 
 interface DatasetOption {
   session_id: string;
@@ -19,14 +25,43 @@ const radioCls = (active: boolean) =>
     active ? "border-nori-h14131a bg-nori-h14131a/[0.03]" : "border-border hover:border-nori-h14131a/40"
   }`;
 
+// Selected = tinted fill + the always-readable foreground color (text-nori-h14131a
+// flips with the theme, so it stays legible in both light and dark — unlike a
+// hardcoded text-white on the theme-flipping brand background).
+const chipCls = (active: boolean) =>
+  `rounded-full border px-3 py-1 text-xs transition ${
+    active
+      ? "border-nori-h14131a bg-nori-h14131a/10 font-medium text-nori-h14131a"
+      : "border-border text-muted-foreground hover:border-nori-h14131a/40 hover:text-nori-h14131a"
+  }`;
+
+const prettyOption = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, " ");
+
+const fmtEta = (s: number) =>
+  s < 90 ? `~${Math.max(1, Math.round(s))} sec` : `~${Math.round(s / 60)} min`;
+
+// Client mirror of the backend assembly-time model (routes/datasets.py
+// ASSEMBLY_SETUP_SECONDS / ASSEMBLY_SECONDS_PER_KFRAME) — a provisional fallback
+// shown from the selected recordings' frame count until the backend estimate
+// endpoint is deployed. The backend value wins whenever it's available (it will
+// also carry per-map / per-processing time the client can't know about).
+const ASSEMBLY_SETUP_SECONDS = 45;
+const ASSEMBLY_SECONDS_PER_KFRAME = 8;
+const clientAssemblyEstimate = (frames: number) =>
+  Math.round(ASSEMBLY_SETUP_SECONDS + (frames / 1000) * ASSEMBLY_SECONDS_PER_KFRAME);
+
 export function AssembleModal({
   sources,
   datasets,
+  sourceFrameCount,
   onClose,
   onDone,
 }: {
   sources: string[];
   datasets: DatasetOption[];
+  /** Total frames across the selected recordings — powers the fallback estimate
+   * shown before the backend estimate endpoint is deployed. */
+  sourceFrameCount?: number;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -37,10 +72,53 @@ export function AssembleModal({
   const [phase, setPhase] = useState<"form" | "running" | "error" | "done">("form");
   const [error, setError] = useState<string | null>(null);
   const [doneNote, setDoneNote] = useState<string | null>(null); // e.g. skipped episodes
+  // Derive-maps + video-processing (PREP: persisted onto the job; the tools that
+  // consume them don't exist yet, so these change nothing about today's output).
+  const [deriveMaps, setDeriveMaps] = useState<Set<string>>(new Set());
+  const [videoProcessing, setVideoProcessing] = useState<Set<string>>(new Set());
+  const [estimateSec, setEstimateSec] = useState<number | null>(null);
+  const [estimating, setEstimating] = useState(false);
   const cancelled = useRef(false);
   useEffect(() => () => {
     cancelled.current = true;
   }, []);
+
+  const toggle = (setter: typeof setDeriveMaps, v: string) =>
+    setter((prev) => {
+      const next = new Set(prev);
+      if (next.has(v)) next.delete(v);
+      else next.add(v);
+      return next;
+    });
+
+  // Live assembly-time estimate. Today this is base assembly time (options add
+  // nothing until the processing tools land); fail SOFT so an older backend
+  // without the estimate endpoint just hides the number instead of erroring.
+  useEffect(() => {
+    if (!sources.length) {
+      setEstimateSec(null);
+      return;
+    }
+    let stale = false;
+    setEstimating(true);
+    estimateAssembly(baseUrl, fetchWithHeaders, {
+      sources,
+      deriveMaps: [...deriveMaps],
+      videoProcessing: [...videoProcessing],
+    })
+      .then((r) => {
+        if (!stale) setEstimateSec(r.estimated_seconds);
+      })
+      .catch(() => {
+        if (!stale) setEstimateSec(null);
+      })
+      .finally(() => {
+        if (!stale) setEstimating(false);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [sources, deriveMaps, videoProcessing, baseUrl, fetchWithHeaders]);
 
   const submit = useCallback(async () => {
     setError(null);
@@ -55,6 +133,8 @@ export function AssembleModal({
         mode,
         targetDatasetSessionId: mode === "append" ? targetId : null,
         name: mode === "new" ? name.trim() || null : null,
+        deriveMaps: [...deriveMaps],
+        videoProcessing: [...videoProcessing],
       });
       // Poll to terminal. The heavy work runs in an ephemeral cloud job, so this
       // can take a few minutes; keep polling until DONE/FAILED.
@@ -84,7 +164,7 @@ export function AssembleModal({
       setError(e instanceof Error ? e.message : String(e));
       setPhase("error");
     }
-  }, [mode, targetId, name, sources, baseUrl, fetchWithHeaders, onClose, onDone]);
+  }, [mode, targetId, name, sources, deriveMaps, videoProcessing, baseUrl, fetchWithHeaders, onClose, onDone]);
 
   const running = phase === "running";
 
@@ -190,11 +270,63 @@ export function AssembleModal({
               </select>
             )}
 
+            {/* Derive maps + process videos (PREP — persisted onto the job; a no-op
+                until the processing tools exist). */}
+            <div className="mt-4 space-y-3">
+              <div>
+                <p className="text-xs font-medium text-nori-h14131a">Derive maps</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {DERIVE_MAPS.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => toggle(setDeriveMaps, m)}
+                      className={chipCls(deriveMaps.has(m))}
+                    >
+                      {prettyOption(m)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-nori-h14131a">Process videos</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {VIDEO_PROCESSING.map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => toggle(setVideoProcessing, p)}
+                      className={chipCls(videoProcessing.has(p))}
+                    >
+                      {prettyOption(p)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
             {error && (
               <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
             )}
 
-            <div className="mt-6 flex justify-end gap-2">
+            {/* Estimated assembly time — base assembly today; the options add time
+                only once the processing tools land. Hidden if the backend can't
+                estimate (older deploy without the endpoint). */}
+            <div className="mt-4 flex items-center justify-between border-t border-border pt-3 text-sm">
+              <span className="text-muted-foreground">Estimated time</span>
+              <span className="font-medium text-nori-h14131a [font-variant-numeric:tabular-nums]">
+                {(() => {
+                  // Backend estimate wins; otherwise the client fallback from frame
+                  // count; otherwise the spinner (or — if we have neither).
+                  const shown =
+                    estimateSec ??
+                    (sourceFrameCount != null ? clientAssemblyEstimate(sourceFrameCount) : null);
+                  return shown != null ? fmtEta(shown) : estimating ? "…" : "—";
+                })()}
+              </span>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
               <Button variant="ghost" onClick={onClose}>
                 Cancel
               </Button>

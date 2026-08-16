@@ -26,6 +26,9 @@ const base = (u: string) => u.replace(/\/$/, "");
 
 export interface EpisodeListing {
   cameras: string[];
+  /** Derived-map channels for a map picker (["rgb", ...derived]); absent/empty
+   * when none were requested. Only cloud-dataset listings carry this. */
+  maps?: string[];
   episodes: DatasetEpisode[];
 }
 
@@ -97,11 +100,15 @@ export function cloudEpisodeClipUrl(
   index: number,
   token: string,
   camera?: string,
+  map?: string,
 ): string {
   const cam = camera ? `&camera=${encodeURIComponent(camera)}` : "";
+  // A non-"rgb" map serves a derived channel — 404s until the processing tools
+  // produce it (the caller shows a placeholder on error).
+  const mp = map && map !== "rgb" ? `&map=${encodeURIComponent(map)}` : "";
   return (
     `${base(backendBase)}/api/v1/library/datasets/${encodeURIComponent(sessionId)}` +
-    `/episode/${index}/clip.mp4?t=${encodeURIComponent(token)}${cam}`
+    `/episode/${index}/clip.mp4?t=${encodeURIComponent(token)}${cam}${mp}`
   );
 }
 
@@ -112,11 +119,13 @@ export function cloudEpisodeThumbUrl(
   index: number,
   token: string,
   camera?: string,
+  map?: string,
 ): string {
   const cam = camera ? `&camera=${encodeURIComponent(camera)}` : "";
+  const mp = map && map !== "rgb" ? `&map=${encodeURIComponent(map)}` : "";
   return (
     `${base(backendBase)}/api/v1/library/datasets/${encodeURIComponent(sessionId)}` +
-    `/episode/${index}/thumb.jpg?t=${encodeURIComponent(token)}${cam}`
+    `/episode/${index}/thumb.jpg?t=${encodeURIComponent(token)}${cam}${mp}`
   );
 }
 

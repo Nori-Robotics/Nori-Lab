@@ -522,8 +522,11 @@ export class PolicyRunner {
         body: JSON.stringify({ expected_serial: serial }),
       });
       if (!r.ok) throw new Error(`stream/open HTTP ${r.status}`);
-      const { host, port } = (await r.json()) as { host: string; port: number };
-      const st = await teleop.policyStream("start", { dest: "laptop", target: `${host}:${port}` });
+      const { host, port, token } = (await r.json()) as { host: string; port: number; token?: string };
+      // Pentest V10: carry the sink token to the robot over the authenticated
+      // datachannel (a sibling of the start frame). The robot echoes it in its
+      // stream preamble; our receiver rejects any stream whose token doesn't match.
+      const st = await teleop.policyStream("start", { dest: "laptop", target: `${host}:${port}`, token });
       if (!st.ok) throw new Error(st.error ?? "robot refused the policy stream");
       // The robot connected somewhere — confirm OUR listener got the preamble
       // (serial-checked) rather than trusting the robot's ok alone.

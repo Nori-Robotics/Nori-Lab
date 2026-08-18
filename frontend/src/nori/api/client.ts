@@ -155,6 +155,28 @@ export async function noriRequest<T = unknown>(
   return apiRequest<T>(baseUrl, withNoriAuth(fetcher), path, options);
 }
 
+/**
+ * Browser-native upload variant of noriRequest. The /datasets/upload routes are
+ * LeLab-only for the DESKTOP repo_id flow (the proxy reads a local dataset), but the
+ * browser-native MANIFEST flow reaches the backend directly (hosted). So this variant
+ * skips the lelab-only gate for those paths: in direct-backend mode it hits the backend
+ * directly; on the desktop proxy it forwards as usual. Kept separate so the existing
+ * desktop uploadDataset() stays gated + unbroken.
+ */
+export async function noriUploadRequest<T = unknown>(
+  baseUrl: string,
+  fetcher: Fetcher,
+  path: string,
+  options: ApiRequestOptions = {}
+): Promise<T> {
+  await routingSettled;
+  if (directBackendUrl) {
+    const apiPath = path.replace(/^\/nori/, "/api/v1");
+    return apiRequest<T>(directBackendUrl, withDirectAuth(fetcher), apiPath, options);
+  }
+  return apiRequest<T>(baseUrl, withNoriAuth(fetcher), path, options);
+}
+
 /** Public config bootstrap — does not require auth. */
 export function getNoriConfig(baseUrl: string, fetcher: Fetcher): Promise<NoriPublicConfig> {
   return apiRequest<NoriPublicConfig>(baseUrl, fetcher, "/nori/config", {
@@ -562,6 +584,10 @@ export interface LibraryDataset {
   source_listing_id?: string | null;
   /** True when the caller has a live/pending community listing for this item. */
   published?: boolean;
+  /** Assemble-time processing options (REQUESTED, not produced — the processing
+   * tools aren't wired yet). Shown as badges; the maps drive the viewer's picker. */
+  derived_maps?: string[];
+  video_processing?: string[];
   policies: LibraryPolicy[];
 }
 
@@ -680,12 +706,27 @@ export interface AssemblyJob {
   created_at: string;
 }
 
+/** Maps derivable from recordings + video-processing passes, offered at assemble
+ *  time. PREP: the backend persists these onto the job; the processing tools that
+ *  consume them don't exist yet, so selecting them is a no-op today. */
+export const DERIVE_MAPS = ["depth", "normals", "albedo", "roughness", "metallic"] as const;
+export const VIDEO_PROCESSING = ["color_jitter", "full_relight"] as const;
+export type DeriveMap = (typeof DERIVE_MAPS)[number];
+export type VideoProcessing = (typeof VIDEO_PROCESSING)[number];
+
 /** POST /nori/datasets/assemble — turn robot recordings into a trainable dataset
  *  (a NEW one, or APPEND onto an existing dataset). Returns the job to poll. */
 export function assembleDataset(
   baseUrl: string,
   fetcher: Fetcher,
-  args: { sources: string[]; mode: "new" | "append"; targetDatasetSessionId?: string | null; name?: string | null }
+  args: {
+    sources: string[];
+    mode: "new" | "append";
+    targetDatasetSessionId?: string | null;
+    name?: string | null;
+    deriveMaps?: string[];
+    videoProcessing?: string[];
+  }
 ): Promise<{ assembly_job_id: string; status: string }> {
   return noriRequest(baseUrl, fetcher, "/nori/datasets/assemble", {
     method: "POST",
@@ -694,8 +735,30 @@ export function assembleDataset(
       mode: args.mode,
       target_dataset_session_id: args.targetDatasetSessionId ?? null,
       name: args.name ?? null,
+      derive_maps: args.deriveMaps ?? [],
+      video_processing: args.videoProcessing ?? [],
     },
     action: "Assemble dataset",
+  });
+}
+
+/** POST /nori/datasets/assemble/estimate — estimated assembly seconds for the
+ *  selected recordings + options. Today this is base assembly time (options add
+ *  nothing until the processing tools land). Callers should fail SOFT: the
+ *  endpoint may be absent on an older backend. */
+export function estimateAssembly(
+  baseUrl: string,
+  fetcher: Fetcher,
+  args: { sources: string[]; deriveMaps?: string[]; videoProcessing?: string[] }
+): Promise<{ estimated_seconds: number; frame_count: number; episode_count: number }> {
+  return noriRequest(baseUrl, fetcher, "/nori/datasets/assemble/estimate", {
+    method: "POST",
+    body: {
+      sources: args.sources,
+      derive_maps: args.deriveMaps ?? [],
+      video_processing: args.videoProcessing ?? [],
+    },
+    action: "Estimate assembly time",
   });
 }
 
@@ -757,6 +820,164 @@ export function getExportJob(baseUrl: string, fetcher: Fetcher, exportJobId: str
     fetcher,
     `/nori/datasets/export/${encodeURIComponent(exportJobId)}`,
     { action: "Check download status" }
+  );
+}
+
+// ---- Bring-your-own-policy upload (Step 2) --------------------------------
+/** start -> PUT the bundle tarball to put_url -> finalize -> poll getPolicyUpload
+ *  until PROMOTED (result_job_id = the new deployable/downloadable policy) or FAILED. */
+export interface PolicyUploadMeta {
+  views?: string[];        // camera roles the policy expects (left_wrist/right_wrist/overhead)
+  arm?: string | null;     // "left" | "right" | "both"
+  fps?: number | null;
+  instruction?: string | null;  // language policies (smolvla) need this
+  title?: string | null;
+}
+export interface PolicyUploadStart {
+  upload_id: string;
+  put_url: string;
+  expires_in: number;
+}
+export interface PolicyUploadSession {
+  id: string;
+  status: "PENDING_UPLOAD" | "FINALIZING" | "PROMOTED" | "FAILED";
+  result_job_id: string | null;
+  failure_reason: string | null;
+}
+
+/** POST /nori/marketplace/policies/upload/start — open a BYO-policy upload session and
+ *  get a presigned PUT for the bundle tarball. */
+export function startPolicyUpload(
+  baseUrl: string,
+  fetcher: Fetcher,
+  meta: PolicyUploadMeta
+): Promise<PolicyUploadStart> {
+  return noriRequest<PolicyUploadStart>(
+    baseUrl,
+    fetcher,
+    "/nori/marketplace/policies/upload/start",
+    { method: "POST", body: meta, action: "Start policy upload" }
+  );
+}
+
+/** PUT the bundle tarball STRAIGHT to S3 (never through the backend). Requires a bucket
+ *  CORS rule allowing PUT + the SSE header from the app origin (see the backend
+ *  storage/verify_aws_setup.py checklist) — not a noriRequest, a direct S3 fetch. */
+export async function putPolicyBundle(putUrl: string, file: Blob): Promise<void> {
+  const res = await fetch(putUrl, {
+    method: "PUT",
+    headers: { "x-amz-server-side-encryption": "AES256" },
+    body: file,
+  });
+  if (!res.ok) {
+    throw new Error(
+      `Upload to storage failed (HTTP ${res.status}). On the hosted site the storage ` +
+        `bucket needs a CORS rule permitting browser uploads.`
+    );
+  }
+}
+
+/** POST /nori/marketplace/policies/upload/{id}/finalize — verify the bytes + enqueue gating. */
+export function finalizePolicyUpload(
+  baseUrl: string,
+  fetcher: Fetcher,
+  uploadId: string
+): Promise<{ upload_id: string; status: string }> {
+  return noriRequest<{ upload_id: string; status: string }>(
+    baseUrl,
+    fetcher,
+    `/nori/marketplace/policies/upload/${encodeURIComponent(uploadId)}/finalize`,
+    { method: "POST", action: "Finalize policy upload" }
+  );
+}
+
+/** GET /nori/marketplace/policies/upload/{id} — poll upload/gating/promotion. */
+export function getPolicyUpload(
+  baseUrl: string,
+  fetcher: Fetcher,
+  uploadId: string
+): Promise<PolicyUploadSession> {
+  return noriRequest<PolicyUploadSession>(
+    baseUrl,
+    fetcher,
+    `/nori/marketplace/policies/upload/${encodeURIComponent(uploadId)}`,
+    { action: "Check policy upload status" }
+  );
+}
+
+// ---- Browser-native dataset / recording upload (Step 3) -------------------
+/** One manifest entry: the file's path RELATIVE to the dataset/bundle root + its size. */
+export interface DatasetUploadEntry {
+  path: string;
+  size: number;
+}
+export interface DatasetUploadStart {
+  session_id: string;
+  uploads: { path: string; put_url: string }[];
+  expires_at: string;
+}
+export interface UploadSessionRow {
+  id: string;
+  status: string;  // PENDING_UPLOAD | FINALIZING | PROMOTED | FAILED | ...
+  failure_reason?: string | null;
+  hf_path_prefix?: string | null;
+}
+
+/** POST /nori/datasets/upload/start — open a browser-native upload session for a
+ *  LeRobot dataset ('lerobot') or a raw recording ('raw_bundle'); returns a presigned
+ *  PUT per file. Provenance is stamped 'uploaded' (customer JWT) → not publishable. */
+export function startDatasetUpload(
+  baseUrl: string,
+  fetcher: Fetcher,
+  args: {
+    manifest: DatasetUploadEntry[];
+    kind: "lerobot" | "raw_bundle";
+    label?: string | null;
+    commit_message?: string | null;
+  }
+): Promise<DatasetUploadStart> {
+  return noriUploadRequest<DatasetUploadStart>(
+    baseUrl,
+    fetcher,
+    "/nori/datasets/upload/start",
+    {
+      method: "POST",
+      body: {
+        manifest: args.manifest,
+        kind: args.kind,
+        label: args.label ?? null,
+        commit_message: args.commit_message ?? null,
+      },
+      action: "Start upload",
+    }
+  );
+}
+
+/** POST /nori/datasets/upload/{id}/finalize — verify the uploaded files + promote. */
+export function finalizeDatasetUpload(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string
+): Promise<UploadSessionRow> {
+  return noriUploadRequest<UploadSessionRow>(
+    baseUrl,
+    fetcher,
+    `/nori/datasets/upload/${encodeURIComponent(sessionId)}/finalize`,
+    { method: "POST", action: "Finalize upload" }
+  );
+}
+
+/** GET /nori/datasets/upload/{id} — poll an upload session to terminal. */
+export function getUploadSession(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string
+): Promise<UploadSessionRow> {
+  return noriUploadRequest<UploadSessionRow>(
+    baseUrl,
+    fetcher,
+    `/nori/datasets/upload/${encodeURIComponent(sessionId)}`,
+    { action: "Check upload status" }
   );
 }
 
@@ -1005,12 +1226,28 @@ export interface TurnCredentials {
   username: string;
   credential: string;
   ttl: number;
+  // Pentest V1: present only when robot_serial + dtls_fp were supplied AND the caller owns the
+  // robot. `grant` is the ES256 robot-session grant bound to that DTLS fingerprint; `grant_exp`
+  // is its unix expiry (short — the client re-mints within the session). Absent on anonymous /
+  // legacy fetches, so the caller must treat them as optional.
+  grant?: string;
+  grant_exp?: number;
 }
 
 /** GET /nori/turn/credentials — mint short-lived coturn creds for this session.
- * Direct-backend mode maps to /api/v1/turn/credentials. Requires auth. */
-export function getTurnCredentials(baseUrl: string, fetcher: Fetcher): Promise<TurnCredentials> {
-  return noriRequest<TurnCredentials>(baseUrl, fetcher, "/nori/turn/credentials", {
+ * Direct-backend mode maps to /api/v1/turn/credentials. Requires auth.
+ * When `bind` is supplied (robot serial + this peer's DTLS fingerprint), the response also
+ * carries a robot-session grant bound to that fingerprint (pentest V1). */
+export function getTurnCredentials(
+  baseUrl: string,
+  fetcher: Fetcher,
+  bind?: { robotSerial: string; dtlsFp: string },
+): Promise<TurnCredentials> {
+  const qs = bind
+    ? "?" +
+      new URLSearchParams({ robot_serial: bind.robotSerial, dtls_fp: bind.dtlsFp }).toString()
+    : "";
+  return noriRequest<TurnCredentials>(baseUrl, fetcher, `/nori/turn/credentials${qs}`, {
     action: "Fetch TURN credentials",
   });
 }
@@ -1229,4 +1466,70 @@ export function getBillingSummary(baseUrl: string, fetcher: Fetcher): Promise<Bi
   return noriRequest<BillingSummary>(baseUrl, fetcher, "/nori/billing/summary", {
     action: "Load billing summary",
   });
+}
+
+// -- robot-direct cloud inference (P2 shadow slice) ----------------------------
+// Start a rollout that runs ROBOT-DIRECT on Modal (no laptop in the loop): the
+// backend spawns the serve container and the robot's own agent fetches the
+// grant and connects. Unlike CloudDeploySection (laptop-hosted cloud loop),
+// nothing runs on this browser — it only triggers + watches the session.
+export interface InferenceSession {
+  session_id: string;
+  status: "PENDING" | "ACTIVE" | "COMPLETED" | "FAILED" | "STOPPED" | "EXPIRED";
+  robot_serial: string;
+  policy_kind: string;
+  instruction?: string | null;
+  created_at?: string | null;
+  ended_at?: string | null;
+  failure_reason?: string | null;
+}
+
+export interface StartInferenceRequest {
+  robot_serial: string;
+  policy_kind?: string;
+  instruction?: string;
+  views?: string[];
+  arm?: "left" | "right" | "both" | null;
+  job_id?: string | null;
+}
+
+/** POST /nori/inference/sessions — start a robot-direct cloud rollout. */
+export function startInferenceSession(
+  baseUrl: string,
+  fetcher: Fetcher,
+  body: StartInferenceRequest
+): Promise<InferenceSession> {
+  return noriRequest<InferenceSession>(baseUrl, fetcher, "/nori/inference/sessions", {
+    method: "POST",
+    body,
+    action: "Start cloud rollout",
+  });
+}
+
+/** GET /nori/inference/sessions/{id} — poll session status. */
+export function getInferenceSession(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string
+): Promise<InferenceSession> {
+  return noriRequest<InferenceSession>(
+    baseUrl,
+    fetcher,
+    `/nori/inference/sessions/${sessionId}`,
+    { action: "Load cloud rollout status" }
+  );
+}
+
+/** POST /nori/inference/sessions/{id}/stop — stop a running rollout. */
+export function stopInferenceSession(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sessionId: string
+): Promise<InferenceSession> {
+  return noriRequest<InferenceSession>(
+    baseUrl,
+    fetcher,
+    `/nori/inference/sessions/${sessionId}/stop`,
+    { method: "POST", action: "Stop cloud rollout" }
+  );
 }

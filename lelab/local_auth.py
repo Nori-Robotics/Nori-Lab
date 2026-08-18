@@ -80,10 +80,19 @@ PUBLIC_PATHS = frozenset({"/nori/config"})
 
 
 def auth_mode() -> str:
-    """Current mode: "warn" (default), "enforce", or "off". Read per-request so
-    tests (and a stuck user) can change it without restarting the server."""
-    mode = os.environ.get("LELAB_AUTH", "warn").strip().lower()
-    return mode if mode in ("warn", "enforce", "off") else "warn"
+    """Current mode: "enforce" (default), "warn", or "off". Read per-request so
+    tests (and a stuck user) can change it without restarting the server.
+
+    Default flipped warn->enforce (pentest V3, 2026-08-13): the token/Host layer
+    now BLOCKS instead of only logging, so a foreign local process can no longer
+    drive the robot unauthenticated. Safe because (a) the public LeLab HF Space
+    is frontend-only (npm preview — no lelab backend, so this never runs there),
+    and (b) the local launcher delivers the token via the ?token= launch URL, so
+    the legitimate browser flow carries it on every /nori/* call (fetchWithHeaders)
+    and WebSocket (tokenizeWsUrl). Set LELAB_AUTH=warn to revert to log-only, or
+    =off to disable entirely (e.g. a trusted single-user box)."""
+    mode = os.environ.get("LELAB_AUTH", "enforce").strip().lower()
+    return mode if mode in ("warn", "enforce", "off") else "enforce"
 
 
 def get_or_create_local_token() -> str:

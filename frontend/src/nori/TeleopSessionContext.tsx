@@ -267,19 +267,44 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     // hosted /nori/drive quick-start) correctly skips the fetch and stays on STUN. The
     // isTurnMintEnabled() flag remains as a manual override for dev/testing. ANY failure
     // falls back to the configured creds, so this can never make connect worse than before.
+    const room = settings.room.trim() || serial || "nori-dev";
+    // Pentest V1: pre-generate the DTLS cert so its fingerprint can bind the robot-session
+    // grant to THIS peer. Must exist before the TURN/grant fetch (the fingerprint is a mint
+    // input) and be reused to construct the RTCPeerConnection. Anonymous LAN sessions skip
+    // this (no grant); any failure degrades to the un-bound path — never worse than before.
+    let sessionCert: RTCCertificate | undefined;
+    let sessionGrant: string | undefined;
     const signedIn = !!(await getAccessToken());
     if (isTurnMintEnabled() || signedIn) {
+      let bind: { robotSerial: string; dtlsFp: string } | undefined;
+      if (signedIn && room) {
+        try {
+          sessionCert = await RTCPeerConnection.generateCertificate({
+            name: "ECDSA", namedCurve: "P-256",
+          } as unknown as AlgorithmIdentifier);
+          const sha = sessionCert.getFingerprints().find((f) => f.algorithm === "sha-256");
+          if (sha?.value) {
+            bind = { robotSerial: room, dtlsFp: `sha-256:${sha.value.replace(/:/g, "").toLowerCase()}` };
+          }
+        } catch (e) {
+          appendLog("V1 grant: cert pre-gen unavailable, session stays un-bound — " + (e instanceof Error ? e.message : String(e)));
+          sessionCert = undefined;
+        }
+      }
       try {
-        const c = await getTurnCredentials(baseUrl, fetchWithHeaders);
+        const c = await getTurnCredentials(baseUrl, fetchWithHeaders, bind);
         turnUrls = c.urls;
         turnUser = c.username;
         turnCred = c.credential;
-        appendLog(`TURN: using minted credentials (ttl ${c.ttl}s)`);
+        sessionGrant = c.grant;
+        appendLog(`TURN: using minted credentials (ttl ${c.ttl}s)` + (c.grant ? " + robot-session grant" : ""));
       } catch (e) {
         appendLog("TURN: mint failed, using configured creds — " + (e instanceof Error ? e.message : String(e)));
       }
     }
-    const room = settings.room.trim() || serial || "nori-dev";
+    // Only pin the cert when it actually carries a grant — an un-bound cert gains nothing and
+    // would needlessly diverge from the legacy auto-gen path.
+    if (!sessionGrant) sessionCert = undefined;
     // getSupabase() throws when the app never got its config. That throw used to happen OUTSIDE
     // the try below (it's an argument to the constructor), so `connecting` was never cleared and
     // the button sat on "Connecting…" forever with no error.
@@ -300,6 +325,8 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
       turnUrls,
       turnUser,
       turnCred,
+      cert: sessionCert,
+      sessionGrant,
       forceRelay: settings.forceRelay,
       arm: settings.arm,
       // Honor the CURRENT UI selection: a fresh RemoteTeleop defaults to cylindrical, which

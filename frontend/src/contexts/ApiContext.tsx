@@ -14,9 +14,43 @@ const ApiContext = createContext<ApiContextType | undefined>(undefined);
 const STORAGE_KEY = "lelab.apiBaseUrl";
 const DEFAULT_LOCALHOST = "http://localhost:8000";
 
+// Hosts the API base is allowed to point at. `fetchWithHeaders` attaches the
+// Supabase JWT (and, for the local base, the lelab capability token) to every
+// request to this base — so an attacker-chosen base is credential exfiltration.
+// A single crafted link (`?api=https://attacker`) or a poisoned localStorage
+// value must not be honored. Loopback covers the hosted-page→local-backend
+// flow; the two prod hosts cover direct-backend mode. LAN-IP access, if ever
+// needed, is a deliberate opt-in, not the default.
+const ALLOWED_API_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "[::1]",
+  "::1",
+  "lab.norirobotics.com",
+  "nori-backend-production.up.railway.app",
+]);
+
+/** True when `raw` parses and its host is allowlisted (any port, http/https). */
+const isAllowedApiUrl = (raw: string): boolean => {
+  try {
+    const u = new URL(raw);
+    return (
+      (u.protocol === "http:" || u.protocol === "https:") &&
+      ALLOWED_API_HOSTS.has(u.hostname)
+    );
+  } catch {
+    return false;
+  }
+};
+
 /** Overwrite the persisted API base URL (used by the bootstrap self-heal when
- *  the stored value points at a dead server — see NoriContext). */
+ *  the stored value points at a dead server — see NoriContext). Rejects any
+ *  non-allowlisted host so the self-heal can't be steered to an attacker. */
 export const persistApiBaseUrl = (url: string): void => {
+  if (!isAllowedApiUrl(url)) {
+    console.warn("Refusing to persist non-allowlisted API base:", url);
+    return;
+  }
   try {
     window.localStorage.setItem(STORAGE_KEY, url.replace(/\/$/, ""));
   } catch {
@@ -31,17 +65,19 @@ const resolveInitialBaseUrl = (): string => {
 
   const fromQuery = new URLSearchParams(window.location.search).get("api");
   if (fromQuery) {
-    try {
-      new URL(fromQuery);
+    if (isAllowedApiUrl(fromQuery)) {
       const clean = fromQuery.replace(/\/$/, "");
       window.localStorage.setItem(STORAGE_KEY, clean);
       return clean;
-    } catch {
-      console.warn("Invalid `api` query param, ignoring:", fromQuery);
     }
+    console.warn("Ignoring non-allowlisted `api` query param:", fromQuery);
   }
 
-  return window.localStorage.getItem(STORAGE_KEY) || DEFAULT_LOCALHOST;
+  // Defense in depth: a value poisoned into storage before this check existed
+  // (or by another tab) is discarded rather than trusted.
+  const stored = window.localStorage.getItem(STORAGE_KEY);
+  if (stored && isAllowedApiUrl(stored)) return stored;
+  return DEFAULT_LOCALHOST;
 };
 
 export const ApiProvider: React.FC<{ children: ReactNode }> = ({

@@ -655,11 +655,15 @@ class NoriClient:
         manifest: list[dict[str, Any]],
         commit_message: str | None = None,
         label: str | None = None,
+        kind: str | None = None,
     ) -> dict[str, Any]:
         """POST /datasets/upload/start — manifest [{path, size}, ...].
 
         `label` is the human-readable dataset name shown in the training
         picker (backend migration 021; older backends ignore the field).
+        `kind` is 'lerobot' (assembled dataset) or 'raw_bundle' (raw recording);
+        omitted → backend defaults to 'lerobot'. The browser-native upload flow
+        (Step 3) sets it; the desktop server-side flow leaves it unset.
 
         Returns {session_id, uploads: [{path, put_url}], expires_at}.
         """
@@ -668,6 +672,8 @@ class NoriClient:
             body["commit_message"] = commit_message
         if label is not None:
             body["label"] = label[:120]
+        if kind is not None:
+            body["kind"] = kind
         return self._request("POST", f"{API}/datasets/upload/start", json=body)
 
     def finalize_dataset_upload(
@@ -689,6 +695,37 @@ class NoriClient:
     def cancel_dataset_upload(self, session_id: str) -> dict[str, Any]:
         """POST /datasets/upload/{session_id}/cancel."""
         return self._request("POST", f"{API}/datasets/upload/{session_id}/cancel")
+
+    # -- BYO policy upload: presigned-S3 flow (Step 2) -----------------------------
+    # Browser does start -> PUT the bundle tarball to put_url -> finalize -> poll.
+    # The gated bundle is promoted to a provenance='uploaded' (never publishable)
+    # jobs row by the backend 'policy_uploads' worker. LeLab only proxies the
+    # start/finalize/poll steps; the bytes go browser->S3 direct via the presigned PUT.
+
+    def start_policy_upload(self, meta: dict[str, Any]) -> dict[str, Any]:
+        """POST /marketplace/policies/upload/start — open a BYO-policy upload session.
+
+        `meta` carries the deploy metadata for nori_meta.json (views/arm/fps/
+        instruction/title); policy_class is auto-detected from the weights.
+        Returns {upload_id, put_url, expires_in}.
+        """
+        return self._request(
+            "POST", f"{API}/marketplace/policies/upload/start", json=meta
+        )
+
+    def finalize_policy_upload(self, upload_id: str) -> dict[str, Any]:
+        """POST /marketplace/policies/upload/{id}/finalize — verify the uploaded
+        bytes + enqueue gating/promotion. Returns {upload_id, status}."""
+        return self._request(
+            "POST", f"{API}/marketplace/policies/upload/{upload_id}/finalize"
+        )
+
+    def get_policy_upload(self, upload_id: str) -> dict[str, Any]:
+        """GET /marketplace/policies/upload/{id} — poll upload/gating/promotion
+        (status, result_job_id, failure_reason)."""
+        return self._request(
+            "GET", f"{API}/marketplace/policies/upload/{upload_id}"
+        )
 
     def _put_file(self, put_url: str, file_path: str) -> None:
         """PUT one file to its presigned S3 URL. S3 rejects the upload without the

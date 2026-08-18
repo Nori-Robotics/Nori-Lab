@@ -134,6 +134,13 @@ jobs:
 
 ## 3. macOS — Developer ID signing + notarization
 
+> **Canonical flow is local, not CI.** The implemented, working release path is the local
+> script `./desktop/rebuild_all.sh`, documented step by step in [`NOTARIZE.md`](NOTARIZE.md).
+> It signs every nested Mach-O via `sign_backend.sh`, builds only the `.app` with Tauri, then
+> creates the DMG and runs `notarytool` + `stapler` **itself** (keyed off `NOTARY_PROFILE`).
+> It does **not** rely on Tauri auto-notarizing. The GitHub-Actions matrix in §2 is
+> aspirational and has not been run — for a real release today, follow `NOTARIZE.md`.
+
 **Why:** an unsigned/un-notarized `.dmg` triggers *"'Nori Lab' can't be opened because
 Apple cannot check it for malicious software"* — most operators will not know to
 right-click→Open around it. Notarization removes that.
@@ -154,14 +161,20 @@ right-click→Open around it. Notarization removes that.
 | `APPLE_ID` / `APPLE_PASSWORD` | Apple ID + the app-specific password (notarization) |
 | `APPLE_TEAM_ID` | 10-char team id |
 
-Tauri signs the `.app`, staples, and notarizes automatically when these are present.
+In this *CI* path `tauri build` can sign and notarize when these are present — but that path
+is unverified (see the banner above). The **implemented** path notarizes explicitly in
+`rebuild_all.sh` via `notarytool submit --wait` + `stapler staple`, keyed off `NOTARY_PROFILE`
+(keychain-stored credentials — `xcrun notarytool store-credentials`), not the
+`APPLE_ID`/`APPLE_PASSWORD` env vars.
 **Verify on a clean Mac (or `spctl -a -vvv Nori\ Lab.app`)** that Gatekeeper accepts it —
 CI "green" is not proof the notarization ticket stapled.
 
 **Gotcha — the frozen backend is a second Mach-O.** The bundle ships an embedded
 `resources/backend/lelab-backend` binary (+ its `.dylib`s from torch). Hardened-runtime
-notarization must sign those too. Confirm the notary log lists no unsigned nested binaries;
-if it complains, sign the backend folder before `tauri build` or enable Tauri's deep-sign.
+notarization must sign those too. This is already handled: **`desktop/sign_backend.sh`** signs
+every nested Mach-O (strip → sign, hardened runtime + timestamp + entitlements) and verifies no
+stragglers, and `rebuild_all.sh` runs it before the Tauri build. Confirm the notary log lists no
+unsigned nested binaries.
 
 ---
 

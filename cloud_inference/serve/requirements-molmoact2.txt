@@ -17,3 +17,7 @@ einops
 av
 scipy
 requests
+
+# V4 scoped-inference grant verification (ES256 JWT); serving holds only the
+# public key. cryptography is PyJWT's ES256 backend.
+PyJWT[crypto]==2.10.1

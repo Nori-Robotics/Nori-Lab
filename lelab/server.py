@@ -225,13 +225,29 @@ async def _local_origin_gate(request: Request, call_next):
             content={"detail": "cross-origin request refused — lelab only serves "
                                "its own local UI (see NORI_EXTRA_ORIGINS)"},
         )
-    # Backstop for ORIGIN-STRIPPING edge cases only: a mutation stamped cross-site with no
+    # Backstop for ORIGIN-STRIPPING edge cases: a request stamped cross-site with no
     # (or an unlisted) Origin is refused. An ALLOWLISTED origin defers to the primary check
     # above — the hosted UI (lab.norirobotics.com -> localhost) is legitimately cross-SITE,
     # so browsers stamp all its requests cross-site; without this exemption every mutation
     # from the deployed page 403s ("Provision account failed: cross-site request refused").
-    if (request.method not in ("GET", "HEAD", "OPTIONS")
-            and request.headers.get("sec-fetch-site") == "cross-site"
+    #
+    # GET is included (not just mutations): browsers omit Origin on <img>/<script>/<link>
+    # subresource GETs, and several GET endpoints have HARDWARE side effects (leader-bus
+    # identify/live/targets open the serial bus). `<img src=".../identify?cycles=200">` from
+    # a drive-by page is a GET with no Origin — this catches it.
+    #
+    # We refuse BOTH cross-site AND same-site (pentest 2026-08-14): the local UI is the
+    # ONLY legitimate no-Origin caller and it is `same-origin`. `same-site` means a
+    # DIFFERENT origin on the same registrable domain — in practice a page served on
+    # another localhost PORT (a second local server, a malicious local app, or XSS in any
+    # localhost service), the exact local->local bypass PNA can't stop. Its `<img>` GET is
+    # stamped `same-site` (not cross-site) and the SameSite=Strict lelab_token cookie
+    # (host-scoped, port-agnostic) rides along, so without this the auth layer is defeated
+    # too. Legit same-origin GETs are `same-origin`; the hosted UI and Vite dev carry an
+    # allowlisted Origin (exempted below); curl/SDKs send no Sec-Fetch-Site and fall
+    # through; user-typed nav is `none`. OPTIONS (preflight) stays exempt.
+    if (request.method != "OPTIONS"
+            and request.headers.get("sec-fetch-site") in ("cross-site", "same-site")
             and origin not in _ALLOWED_ORIGINS):
         return JSONResponse(status_code=403,
                             content={"detail": "cross-site request refused"})
@@ -1081,6 +1097,10 @@ def nori_leader_set_id(body: NoriLeaderSetIdBody):
 
 @app.get("/nori/leader/identify")
 def nori_leader_identify(port: str | None = None, all_ids: bool = False, cycles: int = 1):
+    # Bound the serial-bus loop: identify holds the bus for `cycles` pings, so an
+    # unclamped value is a bus-lock DoS (defense-in-depth behind the origin gate).
+    cycles = max(1, min(cycles, 100))
+
     def run():
         close_shared_live_reader()
         return identify_leader_motors(port=port, all_ids=all_ids, cycles=cycles)
@@ -1325,6 +1345,74 @@ def nori_delete_dataset_episodes(dataset_session_id: str, body: NoriDeleteEpisod
     """Delete individual episodes by index (enqueues a reindex-safe rebuild)."""
     client = _nori_client(request)
     return _nori_proxy(lambda: client.delete_dataset_episodes(dataset_session_id, body.episode_indices))
+
+
+# NORI: BYO policy upload (Step 2) + browser-native dataset/recording upload (Step 3).
+# Thin proxies for the start/finalize/poll steps only — the bytes go browser->S3 DIRECT
+# via the presigned PUT (needs the bucket CORS rule for the app origin), never through
+# LeLab. Provenance is stamped by the backend (customer JWT -> 'uploaded', not publishable).
+class NoriPolicyUploadMeta(BaseModel):
+    views: list[str] = []
+    arm: str | None = None
+    fps: int | None = None
+    instruction: str | None = None
+    title: str | None = None
+
+
+@app.post("/nori/marketplace/policies/upload/start")
+def nori_start_policy_upload(body: NoriPolicyUploadMeta, request: Request):
+    """Open a BYO-policy upload session; returns a presigned PUT for the bundle tarball."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.start_policy_upload(body.model_dump()))
+
+
+@app.post("/nori/marketplace/policies/upload/{upload_id}/finalize")
+def nori_finalize_policy_upload(upload_id: str, request: Request):
+    """Verify the uploaded bytes + enqueue gating/promotion."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.finalize_policy_upload(upload_id))
+
+
+@app.get("/nori/marketplace/policies/upload/{upload_id}")
+def nori_get_policy_upload(upload_id: str, request: Request):
+    """Poll a BYO-policy upload session (status, result_job_id, failure_reason)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.get_policy_upload(upload_id))
+
+
+class NoriDatasetUploadEntry(BaseModel):
+    path: str
+    size: int
+
+
+class NoriDatasetUploadStartBody(BaseModel):
+    manifest: list[NoriDatasetUploadEntry]
+    kind: Literal["lerobot", "raw_bundle"] = "lerobot"
+    label: str | None = None
+    commit_message: str | None = None
+
+
+@app.post("/nori/datasets/upload/start")
+def nori_start_dataset_upload(body: NoriDatasetUploadStartBody, request: Request):
+    """Open a browser-native dataset/recording upload session (per-file presigned PUTs)."""
+    client = _nori_client(request)
+    manifest = [e.model_dump() for e in body.manifest]
+    return _nori_proxy(lambda: client.start_dataset_upload(
+        manifest, body.commit_message, body.label, body.kind))
+
+
+@app.post("/nori/datasets/upload/{session_id}/finalize")
+def nori_finalize_dataset_upload(session_id: str, request: Request):
+    """Verify the uploaded files + promote (async on the durable-queue worker)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.finalize_dataset_upload(session_id))
+
+
+@app.get("/nori/datasets/upload/{session_id}")
+def nori_get_dataset_upload(session_id: str, request: Request):
+    """Poll a browser-native upload session to terminal."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.get_dataset_upload(session_id))
 
 
 @app.delete("/nori/library/policies/{job_id}")
@@ -1828,6 +1916,17 @@ def websocket_test():
 @app.websocket("/ws/joint-data")
 async def websocket_endpoint(websocket: WebSocket):
     logger.info("🔗 New WebSocket connection attempt")
+    # Origin check: the http middleware (_local_origin_gate) is BaseHTTPMiddleware
+    # and never runs for WebSocket scopes, so without this any website could
+    # `new WebSocket('ws://localhost:8000/ws/joint-data')` and stream live joint
+    # telemetry (WS is exempt from same-origin policy). Browsers always attach
+    # Origin to a WS handshake; a non-browser client (SDK/curl) sends none and is
+    # allowed, matching the http gate's posture for local tools.
+    ws_origin = websocket.headers.get("origin")
+    if ws_origin is not None and ws_origin not in _ALLOWED_ORIGINS:
+        logger.warning("Refusing WebSocket from cross-origin: %s", ws_origin)
+        await websocket.close(code=1008)  # policy violation
+        return
     try:
         await manager.connect(websocket)
         logger.info("✅ WebSocket connection established")

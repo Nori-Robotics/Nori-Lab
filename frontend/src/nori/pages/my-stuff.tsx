@@ -317,7 +317,12 @@ function summarizeGroup(
         ? "In cloud"
         : uploading
           ? "Uploading to cloud"
-          : "On robot · waiting",
+          : assembling
+            ? // episodes are assembling into a dataset — match the per-episode
+              // card ("Uploading to dataset"); without this the group fell
+              // through to "On robot · waiting" (contradicting the cards).
+              "Uploading to dataset"
+            : "On robot · waiting",
     detail: parts.join(" · "),
   };
 }

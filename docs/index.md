@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Nori
   text: Docs & troubleshooting
-  tagline: Set up a robot, drive it from anywhere, and build on top of it with the @nori/sdk.
+  tagline: Set up a Nori L2, drive it from anywhere, and build on top of it with the @nori/sdk. Nori A3 documentation is coming soon.
   image:
     src: /nori-logo.png
     alt: Nori
@@ -41,6 +41,15 @@ features:
 - **You're writing software against a robot.** → [SDK quick start](/sdk/quickstart). Read
   [the safety contract](/sdk/safety) before you ship anything that moves an arm.
 - **Something is broken right now.** → [Something's broken](/guide/broken).
+
+## Which robot is this for?
+
+**The Nori L2.** Every page on this site — setup, calibration, cabling, troubleshooting — was
+written against L2 hardware and verified on it.
+
+**Nori A3 documentation is coming soon.** Until it lands, don't assume L2 steps transfer:
+where the machines differ, an L2 page followed on an A3 gives confident, wrong instructions.
+→ [Nori A3](/guide/a3)
 
 ## Status
 

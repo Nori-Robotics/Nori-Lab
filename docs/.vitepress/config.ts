@@ -9,8 +9,11 @@ import { defineConfig } from "vitepress";
 
 export default defineConfig({
   title: "Nori Docs",
+  // Model scope is stated in the meta description on purpose. This is the line search engines
+  // and LLM crawlers quote when they summarise the site, and without it they happily present
+  // L2 setup steps as "Nori documentation" for whichever robot the reader actually owns.
   description:
-    "Documentation and troubleshooting for Nori robots, the Nori desktop app, and the @nori/sdk teleoperation SDK.",
+    "Documentation and troubleshooting for the Nori L2 robot, the Nori desktop app, and the @nori/sdk teleoperation SDK. Nori A3 documentation is coming soon.",
   lang: "en-US",
   cleanUrls: true,
 
@@ -47,10 +50,15 @@ export default defineConfig({
             { text: "Install the desktop app", link: "/guide/install" },
             { text: "Your first session", link: "/guide/first-session" },
             { text: "Something's broken", link: "/guide/broken" },
+            // Sits in the first group, not buried under hardware: an A3 owner needs to know
+            // these pages aren't theirs before they start following any of them.
+            { text: "Nori A3 (coming soon)", link: "/guide/a3" },
           ],
         },
         {
-          text: "Hardware setup",
+          // Group labels carry the model because these are the pages most likely to be
+          // followed step-by-step on the wrong machine.
+          text: "Hardware setup (Nori L2)",
           items: [
             { text: "Leader arms (Nori L2)", link: "/guide/leader-arms" },
             { text: "Cameras", link: "/guide/cameras" },

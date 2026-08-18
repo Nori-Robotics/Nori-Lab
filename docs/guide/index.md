@@ -1,5 +1,10 @@
 # What is Nori?
 
+::: info This guide documents the Nori L2
+Setup, calibration and troubleshooting on these pages were written against **Nori L2** hardware.
+Documentation for the **Nori A3** is coming soon — see [Nori A3](/guide/a3).
+:::
+
 A Nori robot is a dual mobile manipulator you can drive from a browser, a VR headset, and/or your own code. Three pieces make that work:
 
 | Piece | What it is | Where it runs |

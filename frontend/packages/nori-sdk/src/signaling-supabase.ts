@@ -53,7 +53,7 @@ export class SupabaseSignaling implements SignalingTransport {
   private async openChannel(): Promise<void> {
     const h = this.handlers;
     if (!h) return;
-    if (this.channel) { try { await this.channel.unsubscribe(); } catch { /* noop */ } }
+    if (this.channel) { try { await this.supabase.removeChannel(this.channel); } catch { /* noop */ } }
     const channel = this.supabase.channel(this.room, {
       config: { private: this.usePrivate, broadcast: { self: false } },
     });
@@ -105,7 +105,13 @@ export class SupabaseSignaling implements SignalingTransport {
 
   async close(): Promise<void> {
     if (this.channel) {
-      try { await this.channel.unsubscribe(); } catch { /* noop */ }
+      // Use removeChannel, NOT bare channel.unsubscribe(): unsubscribe() tears down the
+      // subscription but LEAVES the channel in the shared client's registry (getChannels()),
+      // keyed by topic (= room). The Supabase client is a singleton reused across every
+      // connect/disconnect, so on reconnect supabase.channel(room) collides with this dead
+      // sibling and never reaches SUBSCRIBED — which is why a hard reload (fresh client, empty
+      // registry) was the only way to reconnect. removeChannel unsubscribes AND drops it.
+      try { await this.supabase.removeChannel(this.channel); } catch { /* noop */ }
       this.channel = null;
     }
   }

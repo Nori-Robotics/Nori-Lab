@@ -9,6 +9,7 @@ type SubCb = (status: string, err?: unknown) => void;
 class FakeChannel {
   subCb: SubCb | null = null;
   unsubscribed = false;
+  removed = false;
   constructor(public topic: string, public opts: { config?: { private?: boolean } }) {}
   on() { return this; }
   subscribe(cb: SubCb) { this.subCb = cb; return this; }
@@ -18,11 +19,20 @@ class FakeChannel {
 }
 
 class FakeSupabase {
-  channels: FakeChannel[] = [];
+  channels: FakeChannel[] = [];   // append-only creation log (all channels ever made)
+  removed: FakeChannel[] = [];    // channels dropped via removeChannel()
   channel(topic: string, opts: { config?: { private?: boolean } }) {
     const c = new FakeChannel(topic, opts);
     this.channels.push(c);
     return c as unknown as ReturnType<typeof this.channel>;
+  }
+  // Mirrors supabase-js removeChannel: unsubscribe AND drop from the client registry.
+  async removeChannel(ch: unknown) {
+    const c = ch as FakeChannel;
+    await c.unsubscribe();
+    c.removed = true;
+    this.removed.push(c);
+    return "ok";
   }
 }
 
@@ -84,5 +94,39 @@ describe("SupabaseSignaling private rooms (1e)", () => {
     await tick();
     await sig.connect(h);                    // reconnect -> still private
     expect(sb.channels[1].isPrivate).toBe(true);
+  });
+
+  // Reconnect fix: close() must removeChannel (unsubscribe + drop from the shared client's
+  // registry), not bare unsubscribe. A stale channel left in the registry collides with the
+  // next connect on the same room topic, which never SUBSCRIBEs — the bug that forced a hard
+  // page reload to reconnect after every disconnect.
+  it("close() removes the channel from the client registry, not just unsubscribe", async () => {
+    const sb = new FakeSupabase();
+    const h = handlers();
+    const sig = new SupabaseSignaling(sb as never, "NORI-A3-0000", undefined, { private: true });
+    await sig.connect(h);
+    sb.channels[0].emit("SUBSCRIBED");
+    await sig.close();
+    expect(sb.channels[0].removed).toBe(true);
+    expect(sb.removed).toContain(sb.channels[0]);
+  });
+
+  it("reconnect after close() opens a FRESH channel (no hard reload needed)", async () => {
+    const sb = new FakeSupabase();
+    const h = handlers();
+    const sig = new SupabaseSignaling(sb as never, "NORI-A3-0000", undefined, { private: true });
+    await sig.connect(h);
+    sb.channels[0].emit("SUBSCRIBED");
+    expect(h.onOpen).toHaveBeenCalledTimes(1);
+
+    await sig.close();                       // the disconnect
+    await sig.connect(h);                    // reconnect on the SAME room topic
+
+    // A genuinely new channel was created and the old one was removed on close — so the
+    // reconnect's subscribe isn't shadowed by a dead sibling.
+    expect(sb.channels).toHaveLength(2);
+    expect(sb.removed).toContain(sb.channels[0]);
+    sb.channels[1].emit("SUBSCRIBED");
+    expect(h.onOpen).toHaveBeenCalledTimes(2); // the reconnect actually opens
   });
 });

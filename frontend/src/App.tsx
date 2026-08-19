@@ -50,8 +50,13 @@ function App() {
           <ApiProvider>
             <HfAuthProvider>
               <UrdfProvider>
-                <DragAndDropProvider>
-                  <BrowserRouter>
+                {/* NORI: DragAndDropProvider is NOT global. It listens on `document`,
+                    so mounting it app-wide made dragging any file over any page —
+                    the Nori home page included — raise a full-screen "Drop Urdf
+                    Files Here" overlay. It is now scoped to the one route that
+                    renders the viewer. To reuse it elsewhere, wrap that route the
+                    same way rather than hoisting it back up here. */}
+                <BrowserRouter>
                     <TeleopStopNotice />
                       <UpdateNotice />
                       <ThemeToggle />
@@ -59,7 +64,16 @@ function App() {
                         {/* NORI: start on the Nori app; the upstream LeLab landing lives at /lelab. */}
                         <Route path="/" element={<Navigate to="/nori" replace />} />
                         <Route path="/lelab" element={<Landing />} />
-                        <Route path="/teleoperation" element={<Teleoperation />} />
+                        {/* The only route that renders UrdfViewer (via VisualizerPanel),
+                            and therefore the only one where drag-and-drop applies. */}
+                        <Route
+                          path="/teleoperation"
+                          element={
+                            <DragAndDropProvider>
+                              <Teleoperation />
+                            </DragAndDropProvider>
+                          }
+                        />
                         <Route path="/recording" element={<Recording />} />
                         <Route path="/upload" element={<Upload />} />
                         <Route path="/training" element={<Training />} />
@@ -124,8 +138,7 @@ function App() {
                         <Route path="*" element={<NotFound />} />
                       </Routes>
                     <Toaster />
-                  </BrowserRouter>
-                </DragAndDropProvider>
+                </BrowserRouter>
               </UrdfProvider>
             </HfAuthProvider>
           </ApiProvider>

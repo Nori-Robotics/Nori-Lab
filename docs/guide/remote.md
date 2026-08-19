@@ -121,8 +121,8 @@ network or a TURN relay path.
 ### The picture is low-res and choppy
 
 That's expected, not a fault — it's the robot's power budget, and the reasons are on the
-[Cameras](/guide/cameras#video-quality) page.
+[Cameras](/guide/video#video-quality) page.
 
 ### A camera disappears mid-session
 
-That's usually **power**, not video. See [Brownouts and throttling](/guide/power#brownouts).
+That's usually **power**, not video. See [Brownouts and throttling](/guide/l2#brownouts).

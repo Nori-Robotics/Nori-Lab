@@ -36,7 +36,7 @@ The settings dashboard also exposes useful controls:
 - Wifi setup and picking nicknames (as covered above)
 - Full LAN access for developers
 - Default allow mic on / auto-accept calls from operator
-- Arm recalibration, which is needed only if you swapped out a motor and need to resweep joints. Read more [here](/guide/leader-arms).
+- Arm recalibration, which is needed only if you swapped out a motor and need to resweep joints. Read more [here](/guide/l2#leader-arms).
 
 
 ## If it doesn't connect

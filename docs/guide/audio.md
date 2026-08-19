@@ -58,4 +58,4 @@ restart.
 **Configure the speaker by name**, never by number: set `NORI_SPEAKER` to a dmix alias (`nori_out`)
 or `hw:CARD=<name>`.
 
-More: [Power and brownouts](/guide/power#brownouts).
+More: [Power and brownouts](/guide/l2#brownouts).

@@ -1,7 +1,6 @@
 # Install
 
-Not on public npm (v0 ships to a named team). Install from the release tarball we send you — or
-from the GitHub release URL if you have repo access:
+Not on public npm. Install from the release tarball we send you, or from the GitHub release URL:
 
 ```bash
 npm i ./nori-sdk-<version>.tgz

@@ -3,13 +3,10 @@
 The Nori desktop app bundles everything needed to talk to robot hardware — no Python, no
 terminal, no `pip`. Download it, drag it in, open it.
 
-::: warning Status
-The desktop app is **not yet published**. The Tauri shell and the frozen backend both build, but
-no signed installer has shipped on any OS. Until it does, run from source (below). Track this in
-`desktop/HANDOFF.md`.
+::: warning Installers are not available yet
+There is no signed installer for macOS, Windows, or Linux yet. Until there is,
+[run from source](#run-from-source).
 :::
-
-## Download
 
 <!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
@@ -38,7 +35,7 @@ Worth knowing, because most "the app won't open" reports are one of these steps 
 So the app is a local web app in a native window. If port `8000` is already in use by something
 else, that's a problem — see [When it goes wrong](#when-it-goes-wrong) below.
 
-## Run from source (until installers ship)
+## Run from source {#run-from-source}
 
 Requires Python ≥ 3.12 and Node.
 
@@ -110,4 +107,4 @@ If you still find an orphan on `:8000`, that's a bug worth
 
 ### The app can't see my hardware
 
-That's not a desktop-app problem — go to [Leader arms](/guide/leader-arms#troubleshooting).
+That's not a desktop-app problem — go to [Leader arms](/guide/l2#leader-arm-troubleshooting).

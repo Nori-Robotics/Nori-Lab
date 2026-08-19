@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Nori
   text: Docs & troubleshooting
-  tagline: Set up a Nori L2, drive it from anywhere, and build on top of it with the @nori/sdk. Nori A3 documentation is coming soon.
+  tagline: Set up a robot, drive it from anywhere, and build on top of it with the @nori/sdk. Nori A3 hardware docs are coming soon.
   image:
     src: /nori-logo.png
     alt: Nori
@@ -29,7 +29,7 @@ features:
     link: /sdk/
     linkText: Read the SDK docs
   - title: Something's broken
-    details: Connection stuck at "connecting", no video, an arm the app can't see, a robot that browns out. Symptom-first, then straight to the fix on the topic's own page.
+    details: Connection stuck at "connecting", no video, an arm the app can't see, a robot that browns out. Find your symptom, go straight to the fix.
     link: /guide/broken
     linkText: Fix it
 ---
@@ -42,18 +42,4 @@ features:
   [the safety contract](/sdk/safety) before you ship anything that moves an arm.
 - **Something is broken right now.** → [Something's broken](/guide/broken).
 
-## Which robot is this for?
-
-**The Nori L2.** Every page on this site — setup, calibration, cabling, troubleshooting — was
-written against L2 hardware and verified on it.
-
-**Nori A3 documentation is coming soon.** Until it lands, don't assume L2 steps transfer:
-where the machines differ, an L2 page followed on an A3 gives confident, wrong instructions.
-→ [Nori A3](/guide/a3)
-
-## Status
-
-Nori is `v0` and ships to a small set of collaborating teams. Pages carry a **Status** note
-where the software is ahead of the hardware, or where a surface is implemented but not yet
-verified on a real robot — those notes are load-bearing, not boilerplate. If a page contradicts
-what your robot actually does, that's a bug in the docs: [tell us](/guide/getting-help).
+If a page contradicts what your robot actually does, [tell us](/guide/getting-help).

@@ -1,8 +1,8 @@
 # What is Nori?
 
-::: info This guide documents the Nori L2
-Setup, calibration and troubleshooting on these pages were written against **Nori L2** hardware.
-Documentation for the **Nori A3** is coming soon — see [Nori A3](/guide/a3).
+::: info Hardware setup on this site covers the Nori L2
+[Nori A3](/guide/a3) hardware documentation is coming soon. Everything else here — the app,
+video, teleoperation, safety, and the SDK — applies to either robot.
 :::
 
 A Nori robot is a dual mobile manipulator you can drive from a browser, a VR headset, and/or your own code. Three pieces make that work:
@@ -13,13 +13,14 @@ A Nori robot is a dual mobile manipulator you can drive from a browser, a VR hea
 | **The Nori app** | Setup, pairing, calibration, teleoperation, recording, training, marketplace. | Your laptop — as the [desktop app](/guide/install). |
 | **`@nori/sdk`** | A TypeScript client. Connect over WebRTC, get video + telemetry, send jog commands. | Your code, in a browser. → [SDK docs](/sdk/) |
 
-The load-bearing design decision, stated once: **all safety mechanisms live on-board the robot, and
-no client may disable it.** The app and the SDK are both just clients. That's what makes the SDK to mess around with. See [the safety contract](/sdk/safety).
+One design decision shapes everything else: **all safety mechanisms live on-board the robot, and
+no client can disable them.** The app and the SDK are both just clients — which is what makes the
+SDK safe to experiment with. See [the safety contract](/sdk/safety).
 
 ## Pick your path
 
 **I want to drive my Nori asap:** 
-[ Install the desktop app](/guide/install) → [set up leader arms](/guide/leader-arms) →
+[ Install the desktop app](/guide/install) → [set up leader arms](/guide/l2#leader-arms) →
 [first session](/guide/first-session).
 
 **I want to build software for my robot:** 
@@ -29,10 +30,9 @@ no client may disable it.** The app and the SDK are both just clients. That's wh
 [ VR](/guide/vr). The VR page is hosted — no install needed, but the robot must already be paired.
 
 **Something is broken right now:** 
-[ Something's broken](/guide/broken) — find your symptom, jump to the fix. Every page in this guide
-ends with the problems specific to it, so setup and fixes live together.
+[ Something's broken](/guide/broken) — find your symptom, jump to the fix.
 
-## What's in the box:
+## What's in the box
 
 Early batches of the Nori L2 will come with:
 - Nori robot

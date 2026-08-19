@@ -66,9 +66,8 @@ number, so a numbered device is unrecoverable after any reset.
 
 ## Reference implementation
 
-The fork ships a reference implementation of all of the above — fetch, decode, gain-cap, and
-lifecycle — in `frontend/src/nori/remote/audioClip.ts` (`playAudioUrl` / `playAudioFile`, default
-gain `0.7`).
+The Nori app ships a reference implementation of all of the above — fetch, decode, gain-cap, and
+lifecycle — as `playAudioUrl` / `playAudioFile`, with a default gain of `0.7`.
 
 ## Two-way call
 

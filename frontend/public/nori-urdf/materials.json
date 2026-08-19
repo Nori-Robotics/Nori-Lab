@@ -1,0 +1,38 @@
+{
+  "materials": {
+    "arm_mat": {
+      "base_color": "#121212FF",
+      "roughness": 0.733,
+      "metallic": 0.0
+    },
+    "body_mat": {
+      "base_color": "#1A1A1AFF",
+      "roughness": 0.45,
+      "metallic": 0.0
+    },
+    "lift_mat": {
+      "base_color": "#8A8A8FFF",
+      "roughness": 0.35,
+      "metallic": 1.0
+    }
+  },
+  "assign": {
+    "default": "arm_mat",
+    "base_link": "body_mat",
+    "base_footprint": "body_mat",
+    "torso_shell_link": "body_mat",
+    "neck_link": "body_mat",
+    "head_link": "body_mat",
+    "lift_bottom_link": "lift_mat",
+    "lift_middle_link": "lift_mat",
+    "lift_top_link": "lift_mat",
+    "caster_link": "body_mat",
+    "left_caster_wheel_link": "body_mat",
+    "right_caster_wheel_link": "body_mat",
+    "left_wheel_link": "body_mat",
+    "right_wheel_link": "body_mat",
+    "lidar_link": "body_mat",
+    "lidar_scan_link": "body_mat",
+    "imu_link": "body_mat"
+  }
+}

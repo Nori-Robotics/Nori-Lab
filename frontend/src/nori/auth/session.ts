@@ -60,6 +60,25 @@ export async function signOut(): Promise<void> {
   await getSupabase().auth.signOut();
 }
 
+/** Send a password-reset email. Supabase does NOT reveal whether the address has an
+ * account (returns success regardless), so the caller must show a non-enumerating
+ * message. The link lands on `redirectTo` (must be an allowlisted URL in the
+ * Supabase project's Auth → URL Configuration) with a recovery token the SDK turns
+ * into a short-lived recovery session. */
+export async function sendPasswordReset(email: string): Promise<void> {
+  const redirectTo = `${window.location.origin}/nori/reset-password`;
+  const { error } = await getSupabase().auth.resetPasswordForEmail(email, { redirectTo });
+  if (error) throw error;
+}
+
+/** Set a new password for the CURRENT session (a signed-in user, or a recovery
+ * session established by a reset link). Requires an active session — callers on
+ * the signed-in path should re-authenticate with the current password first. */
+export async function updatePassword(newPassword: string): Promise<void> {
+  const { error } = await getSupabase().auth.updateUser({ password: newPassword });
+  if (error) throw error;
+}
+
 /** Subscribe to auth-state changes. Returns an unsubscribe function. */
 export function onAuthStateChange(cb: (session: Session | null) => void): () => void {
   const { data } = getSupabase().auth.onAuthStateChange((_event, session) => cb(session));

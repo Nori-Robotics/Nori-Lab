@@ -7,7 +7,7 @@
 // once a valid JWT exists.
 
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -105,6 +105,16 @@ const SignIn = () => {
                   />
                   {isSignup && (
                     <p className="text-xs text-muted-foreground">At least 6 characters.</p>
+                  )}
+                  {!isSignup && (
+                    <div className="text-right">
+                      <Link
+                        to="/nori/forgot-password"
+                        className="text-xs font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                      >
+                        Forgot password?
+                      </Link>
+                    </div>
                   )}
                 </div>
                 {notice && <p className="text-sm text-muted-foreground">{notice}</p>}

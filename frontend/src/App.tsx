@@ -22,6 +22,8 @@ import { NoriProvider } from "@/nori/NoriContext";
 import { TeleopSessionProvider } from "@/nori/TeleopSessionContext";
 import NoriLayout from "@/nori/components/NoriLayout";
 import SignIn from "@/nori/pages/sign-in";
+import ForgotPassword from "@/nori/pages/forgot-password";
+import ResetPassword from "@/nori/pages/reset-password";
 import Account from "@/nori/pages/account";
 import NoriHome from "@/nori/pages/home";
 import MyStuff from "@/nori/pages/my-stuff";
@@ -84,6 +86,9 @@ function App() {
 
                         {/* NORI: Nori app routes, isolated under a NoriProvider + layout. */}
                         <Route path="/nori/sign-in" element={<NoriProvider><SignIn /></NoriProvider>} />
+                        {/* Standalone (no auth gate): password reset request + recovery landing. */}
+                        <Route path="/nori/forgot-password" element={<NoriProvider><ForgotPassword /></NoriProvider>} />
+                        <Route path="/nori/reset-password" element={<NoriProvider><ResetPassword /></NoriProvider>} />
                         {/* Standalone headset entry — providers but NO NoriLayout nav, and no
                             auth gate (VR needs only public config + room + token). This is the
                             LeLab-free hosted VR surface; see DEPLOY_FRONTEND.md. */}

@@ -2,6 +2,11 @@
 
 Find your symptom, then follow the link to the fix.
 
+::: info Some fixes link to the L2 page
+Anything about power, cabling or leader arms is written for the **Nori L2**. On an
+[A3](/guide/a3), use it as background only and [get in touch](/guide/getting-help).
+:::
+
 | Symptom | Likely cause | Go to |
 |---|---|---|
 | Session stuck at `connecting`, never reaches `connected` | Strict network — needs a TURN relay | [Remote](/guide/remote#connection-trouble) |

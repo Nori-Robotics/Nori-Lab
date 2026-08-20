@@ -4,9 +4,9 @@ Robot-local teleoperation SDK for the **Nori daemon**. Connect to a robot over W
 video + telemetry, and drive it — from the browser, in ~20 lines.
 
 ```
-┌ your app ┐        ┌ @nori/sdk ┐   WebRTC    ┌ Pi bridge ┐  NDJSON  ┌ nori daemon ┐
+┌ your app ┐        ┌ @nori/sdk ┐   WebRTC    ┌robot bridge┐  NDJSON  ┌ nori daemon ┐
 │ video el │  ◄───► │RemoteTeleop│ ◄────────► │webrtc_robot│ ◄─────► │ 50Hz control │
-│ keyboard │        └───────────┘  data chan  └───────────┘  :7777   │ safety stack │
+│ keyboard │        └───────────┘  data chan  └────────────┘ :7777   │ safety stack │
 └──────────┘         signaling ▲                                     └──────────────┘
                      (Supabase or BYO)
 ```
@@ -19,6 +19,10 @@ invariant is what makes a client SDK safe to hand out.
 Targets **nori-protocol v1** (`NORI_PROTOCOL_VERSION`); a daemon on a different major rejects the
 connection. Read [the safety contract](/sdk/safety) before you ship.
 :::
+
+The SDK is not model-specific: the same client drives a **Nori L2** or a **Nori A3**. If you have
+an A3, see [Nori A3](/guide/a3) — including a published robot description you can load into a
+simulator today.
 
 ## Where to start
 
@@ -37,7 +41,7 @@ stays silent until a person there accepts. Audio clips sent via `sendClipAudio` 
 [Audio](/sdk/audio).
 
 Where an SDK surface exists but the robot-side half isn't live yet, the page says so in a
-callout. Those callouts are accurate — read them before building on the feature.
+callout. Read those before building on the feature.
 
 ## License and lineage
 

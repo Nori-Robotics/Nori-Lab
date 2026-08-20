@@ -9,7 +9,7 @@ A Nori robot is a dual mobile manipulator you can drive from a browser, a VR hea
 
 | Piece | What it is | Where it runs |
 |---|---|---|
-| **The daemon** | The control loop and the entire safety stack: clamping, software E-STOP, stall handling, motor torque lifecycle. | On the robot (a Raspberry Pi 5). |
+| **The daemon** | The control loop and the entire safety stack: clamping, software E-STOP, stall handling, motor torque lifecycle. | On the robot. |
 | **The Nori app** | Setup, pairing, calibration, teleoperation, recording, training, marketplace. | Your laptop — as the [desktop app](/guide/install). |
 | **`@nori/sdk`** | A TypeScript client. Connect over WebRTC, get video + telemetry, send jog commands. | Your code, in a browser. → [SDK docs](/sdk/) |
 
@@ -21,7 +21,8 @@ SDK safe to experiment with. See [the safety contract](/sdk/safety).
 
 **I want to drive my Nori asap:** 
 [ Install the desktop app](/guide/install) → [set up leader arms](/guide/l2#leader-arms) →
-[first session](/guide/first-session).
+[first session](/guide/first-session). The leader-arm step is L2-only; on an A3, see
+[Nori A3](/guide/a3).
 
 **I want to build software for my robot:** 
 [ SDK quick start](/sdk/quickstart). You don't need the desktop app for this.
@@ -32,7 +33,7 @@ SDK safe to experiment with. See [the safety contract](/sdk/safety).
 **Something is broken right now:** 
 [ Something's broken](/guide/broken) — find your symptom, jump to the fix.
 
-## What's in the box
+## What's in the box (Nori L2)
 
 Early batches of the Nori L2 will come with:
 - Nori robot
@@ -40,3 +41,4 @@ Early batches of the Nori L2 will come with:
 - Clamps for the leader arm.
 - A charger for Nori.
 
+A3 box contents land with the [A3 hardware pages](/guide/a3).

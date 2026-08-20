@@ -60,10 +60,7 @@ to another account. Re-pairing a robot you already own is idempotent (no code ne
 
 ## Entry points
 
-| Import | Contains | Extra dep |
-|---|---|---|
-| `@nori/sdk` | `RemoteTeleop`, telemetry/jog/keybind types, `SignalingTransport` contract, `NORI_PROTOCOL_VERSION` | none |
-| `@nori/sdk/vr` | `VrJogMapper`, `VrSession`, `DEFAULT_BINDINGS`, VR types | `three` |
-| `@nori/sdk/supabase` | `SupabaseSignaling` (reference transport) | `@supabase/supabase-js` |
+Three imports: the core, `@nori/sdk/vr`, and `@nori/sdk/supabase` — see
+[Entry points](/sdk/reference) for what each contains.
 
 Next: [Quick start](/sdk/quickstart).

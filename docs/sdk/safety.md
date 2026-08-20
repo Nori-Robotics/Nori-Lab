@@ -41,9 +41,9 @@ Reason strings follow `"<cause>:<detail>"`:
 | `null` | Nothing latched and nothing stalled. |
 
 ::: warning `latch_reason` can be set while `safety` is `ok`
-A stall reports itself through `latch_reason` but deliberately does **not** raise `safety`. Branch
-on `safety` for "is the robot stopped", and read `latch_reason` for "why" — don't treat a non-null
-`latch_reason` as a stop.
+A stall reports itself through `latch_reason` — and as an `action_status` with
+`reason: "stall:<joint>"` — but deliberately does **not** raise `safety`. Branch on `safety` for
+"is the robot stopped", and read `latch_reason` for "why"; a non-null `latch_reason` is not a stop.
 :::
 
 **Do not switch exhaustively on these.** The `<cause>` set is open and grows; show the string.
@@ -76,17 +76,6 @@ thermal load) → `"stop"` (quiet past `t_stop_ms`; motion blocked until frames 
 
 The thresholds are per-link (LAN vs WAN) and arrive in the handshake. **You can read them, not set
 them.**
-
-## Stalls are deliberately NOT a safety state
-
-When a joint is pushed against something, the robot cuts torque **on that joint only** and keeps
-everything else running. It self-clears when you jog the stalled joint *away* from the
-obstruction.
-
-You'll see it as an `action_status` with `reason: "stall:<joint>"` — not as a global stop.
-
-Note the contrast with the over-temp and over-current guards above: those **do** latch the whole
-robot and need an explicit `reset_latch`. A stall does not.
 
 ## The three commands
 

@@ -12,6 +12,7 @@ import React, {
 } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { persistApiBaseUrl, useApi } from "@/contexts/ApiContext";
+import { isHostedOrigin } from "@/lib/hostedOrigin";
 import {
   getNoriConfig,
   enableDirectBackend,
@@ -97,6 +98,23 @@ export const NoriProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     (async () => {
       try {
+        // Cloud data goes STRAIGHT to Nori-Backend on a hosted origin, decided
+        // here — before the probe below — because the probe answers the wrong
+        // question. It asks "is a LeLab reachable?", and on the hosted site the
+        // answer is yes whenever the visitor happens to be running LeLab on
+        // their own laptop. That routed their library and account reads through
+        // that laptop, which a hosted origin cannot authenticate to (the local
+        // API's cookie is SameSite=Strict and its CORS runs with
+        // allow_credentials=False), so every one came back 401 "Missing or
+        // invalid local API token". Those routes are pure JWT pass-through
+        // proxies, so the laptop hop was never doing anything anyway.
+        //
+        // The probe still runs, purely to set `leLabAvailable` — a hosted page
+        // with a local LeLab keeps its local-hardware surfaces.
+        const bakedForHosted = isHostedOrigin() ? getBuildTimeConfig() : null;
+        if (bakedForHosted?.noriBackendUrl)
+          enableDirectBackend(bakedForHosted.noriBackendUrl);
+
         // Default path: config comes from the LeLab server (`/nori/config`). For a
         // LeLab-free hosted deploy (the standalone VR page), LeLab is unreachable — fall
         // back to build-time public config baked into the bundle. A reachable-but-

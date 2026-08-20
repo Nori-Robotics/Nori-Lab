@@ -55,7 +55,7 @@ import {
   recordingClipUrl,
   recordingThumbUrl,
 } from "@/nori/remote/episodeReview";
-import { type Fetcher } from "@/lib/apiClient";
+import { friendlyErrorMessage, type Fetcher } from "@/lib/apiClient";
 import { AssembleModal } from "@/nori/components/AssembleModal";
 import { ExportModal } from "@/nori/components/ExportModal";
 import { UploadPolicyModal } from "@/nori/components/UploadPolicyModal";
@@ -577,7 +577,7 @@ const MyStuff = () => {
       const lib = await getLibrary(baseUrl, fetchWithHeaders);
       setLibrary(lib);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(friendlyErrorMessage(e));
     }
     // robot recordings are best-effort — a backend without the raw-bundle
     // endpoint (or no robots yet) just shows an empty section, never an error.
@@ -739,7 +739,7 @@ const MyStuff = () => {
         await setDatasetLock(baseUrl, fetchWithHeaders, d.session_id, !d.locked);
         await load();
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(friendlyErrorMessage(e));
       } finally {
         setLockBusy(null);
       }
@@ -757,7 +757,7 @@ const MyStuff = () => {
         await setDatasetLock(baseUrl, fetchWithHeaders, b.session_id, !b.locked);
         await load();
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(friendlyErrorMessage(e));
       } finally {
         setLockBusy(null);
       }
@@ -772,7 +772,7 @@ const MyStuff = () => {
         await setPolicyLock(baseUrl, fetchWithHeaders, jobId, !locked);
         await load();
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(friendlyErrorMessage(e));
       } finally {
         setLockBusy(null);
       }
@@ -854,7 +854,7 @@ const MyStuff = () => {
       await downloadPolicy(baseUrl, fetchWithHeaders, ref);
       refreshLocalRefs();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(friendlyErrorMessage(e));
     } finally {
       setInstallingRef(null);
     }
@@ -868,7 +868,7 @@ const MyStuff = () => {
     try {
       await runner.start(teleop, ref, EXECUTION_PRESETS.balanced);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(friendlyErrorMessage(e));
     }
   }, [baseUrl, teleop]);
   const stopRun = useCallback(() => { void runnerRef.current?.stop(); }, []);

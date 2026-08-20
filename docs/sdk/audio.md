@@ -51,10 +51,9 @@ The robot clamps downlink playback to `NORI_SPEAKER_GAIN` (default **0.7**) with
 element before the sink, so no track you send can overdrive the speaker. You don't have to trust
 the client — the guarantee lives on the robot.
 
-This exists for a concrete reason: a near-full-scale clip drives the speaker amp and the
-hardware-AEC reference far harder than call speech. On a full-speed USB DSP speakerphone
-(MV-SILICON P10S) that **browned the device out into a mid-stream USB re-enumeration**
-(`alsasink … device has been disconnected` spam). Quiet call voice never triggered it.
+The cap exists because a near-full-scale clip drives the speaker amp and the hardware-AEC
+reference far harder than call speech does — hard enough, on some USB speakerphones, to brown the
+device out mid-clip and force a USB re-enumeration. Call voice never gets near that level.
 
 You *may* still attenuate client-side (defense in depth). For loud playback, also prefer a powered
 USB hub and a robust speaker.

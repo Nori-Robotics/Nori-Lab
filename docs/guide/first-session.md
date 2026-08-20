@@ -1,5 +1,10 @@
 # Your first session
 
+::: info Written for the Nori L2
+The app steps apply to any Nori. Physical details — switch and button locations, the serial
+number's position — are L2. See [Nori A3](/guide/a3) if that's what you have.
+:::
+
 ## Setting up and Driving
 1. Power on the robot with the switch on the back. Expect the screen to light up and a chime to play. Booting up will take around 30s, at the end of which your Nori's eyes will show up.
 2. First step is always to connect to Wifi: find it by tapping on Nori's face, navigating to Settings, Wifi, then wait as local networks are discovered. Select your one and enter the password.

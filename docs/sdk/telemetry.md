@@ -78,8 +78,8 @@ battery monitor fitted, the monitor's reader is down, the pack voltage is out of
 robot is running an older bridge that doesn't send the field at all.
 
 ::: tip Render `null` as "—", never as 0%
-A robot without a monitor is not a robot at 0%. Every consumer that has gotten this wrong has
-shown an alarming empty battery on a perfectly charged robot.
+A robot without a monitor is not a robot at 0% — rendering `null` as zero shows an empty battery
+on a fully charged robot.
 :::
 
 Only percentage is reported today. Voltage, current, and time-remaining are not on the wire.

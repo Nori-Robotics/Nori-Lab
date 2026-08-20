@@ -14,6 +14,51 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Turn a thrown request error into something a customer should read.
+ *
+ * The raw text is written for whoever is debugging the request — it names
+ * headers, tokens and launch flags. That is the right thing in a log and the
+ * wrong thing in a red box on a customer's screen, so the surfacing layer maps
+ * it here. Anything genuinely actionable by the reader keeps its own wording;
+ * everything else becomes one calm sentence.
+ *
+ * The original is logged to the console here rather than left to each call
+ * site: this deliberately discards detail, and support still needs it.
+ */
+export function friendlyErrorMessage(err: unknown): string {
+  console.error("[nori] request failed:", err);
+  const OUTAGE =
+    "Sorry, our servers are experiencing interruptions. Please check back later.";
+
+  // fetch() rejects with a TypeError when it never got a response at all:
+  // offline, DNS failure, or the server not listening.
+  if (err instanceof TypeError) return OUTAGE;
+
+  if (err instanceof ApiError) {
+    // The server is up but broken, or a proxy in front of it is.
+    if (err.status >= 500) return OUTAGE;
+
+    // Local-API auth. The customer cannot act on "token" wording, but they CAN
+    // act on "reopen the app", which is the actual fix.
+    if (
+      (err.status === 401 || err.status === 403) &&
+      /local API token/i.test(err.detail ?? "")
+    ) {
+      return "Nori Lab can't reach the Nori app on your computer. Open (or restart) the desktop app, then try again.";
+    }
+
+    // Remaining 4xx are usually specific and actionable ("already paired",
+    // "over your robot limit"), so the server's own wording is kept.
+    if (err.detail) return err.detail;
+    return OUTAGE;
+  }
+
+  // Errors we raise ourselves are already written for a reader.
+  if (err instanceof Error && err.message) return err.message;
+  return OUTAGE;
+}
+
 export interface ApiRequestOptions {
   method?: string;
   body?: unknown;

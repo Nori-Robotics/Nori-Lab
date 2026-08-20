@@ -18,10 +18,9 @@ A *minor* difference is advisory: the handshake sets `versionMismatch`, the SDK 
 Mixed daemon versions exist across the fleet, and unknown frame types are ignored by both sides —
 so a mismatch means vocabulary gaps, never unsafe behavior. See [the handshake](/sdk/handshake).
 
-## Surface that exists but isn't documented here yet
+## Documented in the source, not here
 
-These ship in the package today. They work; they just don't have a prose page, so the source is
-the reference until they do. Listed so you don't conclude they're missing:
+These ship in the package today. The TypeScript definitions are the reference for them:
 
 | Call | What it is |
 |---|---|
@@ -33,16 +32,6 @@ the reference until they do. Listed so you don't conclude they're missing:
 | `setKeyboardSpeed(s)` | Scale keyboard jog rates. |
 | `currentMa()`, `CURRENT_MA_PER_LSB`, `CURRENT_FULL_LSB` | Motor-current unit conversion — see [Telemetry](/sdk/telemetry#currents). |
 | `@nori/sdk` rail + robot-ops exports | Rail-height reading helpers, and the generated robot command vocabulary the LLM/agent surfaces are built from. |
-
-<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
-::: info 🚧 To write
-A full API reference — every option on `RemoteTeleop`, every telemetry field, every exported type,
-including everything in the table above.
-
-Best generated from the TypeScript source (`frontend/packages/nori-sdk/src/`) rather than written
-by hand, so it can't drift. TypeDoc into a `/sdk/api/` subtree is the obvious path.
-:::
--->
 
 ## Source of truth
 

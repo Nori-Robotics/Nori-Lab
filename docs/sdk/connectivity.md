@@ -25,8 +25,8 @@ This is the one case that needs a **TURN relay** (`turnUrls` / `turnUser` / `tur
 
 ## TURN credentials are minted per session
 
-You no longer ask us for relay credentials. The Nori backend runs a coturn relay on a shared
-secret and **mints short-lived credentials at session start** for a signed-in operator:
+The Nori backend runs a coturn relay on a shared secret and **mints short-lived credentials at
+session start** for a signed-in operator:
 
 ```
 GET /api/v1/turn/credentials     (Authorization: Bearer <your Supabase JWT>)
@@ -41,10 +41,8 @@ The endpoint requires a provisioned-customer JWT and **401s anonymously**, so an
 (an open dev room on the LAN) simply stays on STUN — which is what it wants anyway.
 
 ::: warning A hand-typed static TURN credential will be rejected
-The relay is on `use-auth-secret`, so credentials are time-bound and derived — a fixed
-username/password pair we sent you in the past no longer authenticates. Fetch, don't hardcode.
-This is why the app's TURN fields were removed from the connection panel: the only thing they
-could do was make a working session fail.
+The relay is on `use-auth-secret`, so credentials are time-bound and derived. A fixed
+username/password pair will not authenticate — fetch them per session, don't hardcode.
 :::
 
 Passing the values explicitly:
@@ -72,8 +70,7 @@ server only ever observes IPs and traffic volume.
 On the robot's LAN and want frames as data rather than a video element? Multi-camera robots also
 publish raw per-camera **MJPEG frames over ZeroMQ** — no WebRTC involved.
 
-See the nori-protocol `CLIENTS.md` § "Camera frames over the LAN" for the port scheme and a
-~15-line Python client.
+[Ask us](/guide/getting-help) for the port scheme and a short reference client.
 
 ## Debugging a connection
 

@@ -17,7 +17,7 @@ You don't want to type a URL into a headset. Open the VR page with the robot cod
 query string:
 
 ```
-https://<vr-domain>/nori/vr?room=<robot-serial>
+https://lab.norirobotics.com/nori/vr?room=<robot-serial>
 ```
 
 The `?room=` is a convenience only — it pre-fills the **Robot code** field so nobody has to type a
@@ -32,7 +32,6 @@ URL shortener mangles no longer breaks anything but the pre-fill.
 
 <!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write
-- The actual VR domain, once it's assigned.
 - The on-device checklist: getting the link onto the Quest, browser requirements, what "Enter VR"
   looks like when it's ready.
 - The controller binding map (`DEFAULT_BINDINGS`), as a diagram.

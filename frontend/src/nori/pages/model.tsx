@@ -392,7 +392,15 @@ const ModelPage = () => {
       )}
     <main className="relative mx-auto max-w-[1600px] space-y-6 p-8">
       <header className="nori-rise space-y-2">
-        <h1 className="text-4xl font-bold">Nori A3 Model</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-4xl font-bold">Nori A3 Model</h1>
+          {/* Same sticker language as the agent page's chip. States what exists
+              (the model, poseable now) and what is coming (simulation), without
+              promising an engine or a date. */}
+          <span className="inline-flex -rotate-2 items-center rounded-full bg-sticker px-3 py-1 font-mono text-xs font-semibold uppercase tracking-[0.14em] text-ink shadow-soft">
+            in-browser sim coming soon
+          </span>
+        </div>
         <p className="max-w-3xl text-base text-muted-foreground">
           The robot description we publish for simulation. Drag to orbit, scroll
           to zoom, and drag a joint to pose it. Nothing here needs an account or

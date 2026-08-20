@@ -6,8 +6,10 @@
 // never signed in and does not own an A3. That is the point: it is the link we
 // hand a developer who is evaluating the robot.
 import { Link } from "react-router-dom";
-import { ArrowRight } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowRight, Gamepad2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+
+import { CAMERA_VIEWS, type CameraView, type SimState } from "@/nori/sim/simRuntime";
 
 import RobotUrdfViewer, {
   type HoveredJoint,
@@ -33,6 +35,13 @@ const jointRange = (type: string, lower?: number, upper?: number): string => {
   return `${d(lower)}° to ${d(upper)}°`;
 };
 
+/** One keycap in the driving legend. */
+const Key = ({ children }: { children: ReactNode }) => (
+  <kbd className="mx-px rounded border border-ink/20 bg-background px-1.5 py-0.5 font-mono text-[11px] font-semibold text-ink shadow-[0_1px_0_rgba(0,0,0,0.12)]">
+    {children}
+  </kbd>
+);
+
 /** Ease in-out, the only easing the choreography needs. */
 const ease = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
 
@@ -56,6 +65,14 @@ const ModelPage = () => {
   const [joints, setJoints] = useState<HoveredJoint[]>([]);
   const [collisions, setCollisions] = useState<CollisionPair[]>([]);
   const [checkCollisions, setCheckCollisions] = useState(false);
+  // Sim mode. Also reachable as ?sim=1, which is the link worth sending someone
+  // — it lands them driving rather than on a page with a button to press.
+  const [simOn, setSimOn] = useState(
+    typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).has("sim")
+  );
+  const [simView, setSimView] = useState<CameraView | null>("front");
+  const [simState, setSimState] = useState<SimState | null>(null);
   const [demoTitle, setDemoTitle] = useState(false);
   const demoMode =
     typeof window !== "undefined" &&
@@ -395,17 +412,35 @@ const ModelPage = () => {
       <header className="nori-rise space-y-2">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-4xl font-bold">Nori A3 Model</h1>
-          {/* Same sticker language as the agent page's chip. States what exists
-              (the model, poseable now) and what is coming (simulation), without
-              promising an engine or a date. */}
+          {/* Same sticker language as the agent page's chip. */}
           <span className="inline-flex -rotate-2 items-center rounded-full bg-sticker px-3 py-1 font-mono text-xs font-semibold uppercase tracking-[0.14em] text-ink shadow-soft">
-            in-browser sim coming soon
+            more sim tools coming soon
           </span>
+          <Button
+            type="button"
+            size="sm"
+            variant={simOn ? "default" : "outline"}
+            className="gap-2"
+            onClick={() => setSimOn((on) => !on)}
+          >
+            <Gamepad2 className="h-4 w-4" />
+            {simOn ? "Exit sim" : "Drive it"}
+          </Button>
         </div>
         <p className="max-w-3xl text-base text-muted-foreground">
-          The robot description we publish for simulation. Drag to orbit, scroll
-          to zoom, and drag a joint to pose it. Nothing here needs an account or
-          a robot.
+          {simOn ? (
+            <>
+              Simple browser-based use case of the Nori description: drive the
+              robot in a real-scale procedural apartment, and watch the robot's
+              cam feeds. Kinematic, not physical, collision boxes simplified.
+            </>
+          ) : (
+            <>
+              The robot description we publish for simulation. Drag to orbit,
+              scroll to zoom, and drag a joint to pose it. Nothing here needs an
+              account or a robot.
+            </>
+          )}
         </p>
       </header>
 
@@ -418,11 +453,87 @@ const ModelPage = () => {
           onCollisions={setCollisions}
           onViewerReady={onReady}
           collisionCheck={checkCollisions}
+          sim={simOn}
+          simCameraView={simView}
+          onSimState={setSimState}
+          onSimCameraViewChange={setSimView}
         />
 
         <div
           className={`flex ${PANEL_HEIGHT} nori-rise min-h-0 flex-col gap-3 rounded-md border bg-muted/30 p-4 [animation-delay:240ms]`}
         >
+          {simOn && (
+            <div className="rounded-md border bg-background/60 px-2.5 py-2">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-sm font-medium">Driving</span>
+                <span
+                  className={`font-mono text-xs ${
+                    simState?.contact ? "text-destructive" : "text-muted-foreground"
+                  }`}
+                >
+                  {simState?.contact ? "collision detected" : simState?.room ?? "—"}
+                </span>
+              </div>
+
+              <dl className="mt-2 grid grid-cols-3 gap-1.5 text-center">
+                {(
+                  [
+                    ["speed", `${(simState?.speed ?? 0).toFixed(2)} m/s`],
+                    ["turn", `${(simState?.turn ?? 0).toFixed(2)} rad/s`],
+                    ["lift", `${Math.round((simState?.lift ?? 0) * 1000)} mm`],
+                  ] as const
+                ).map(([label, reading]) => (
+                  <div key={label} className="rounded bg-muted/60 py-1">
+                    <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                      {label}
+                    </dt>
+                    <dd className="font-mono text-sm tabular-nums">{reading}</dd>
+                  </div>
+                ))}
+              </dl>
+
+              <p className="mt-2.5 text-xs leading-6 text-muted-foreground">
+                <Key>W</Key>
+                <Key>A</Key>
+                <Key>S</Key>
+                <Key>D</Key> drive · <Key>Q</Key>
+                <Key>E</Key> lift · <Key>R</Key> reset
+              </p>
+              {/* Not a second keymap: these are the SDK's own BASE_KEYS and
+                  ZLIFT_KEYS, the ones a paired robot answers to. */}
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                The same drive bindings the real robot uses. Its lift keys{" "}
+                <Key>U</Key>
+                <Key>O</Key> work here too.
+              </p>
+
+              <div className="mt-2.5">
+                <p className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Robot camera
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {[
+                    ...CAMERA_VIEWS.map((v) => ({ id: v.id as CameraView | null, label: v.label })),
+                    { id: null, label: "Off" },
+                  ].map((v) => (
+                    <button
+                      key={v.label}
+                      type="button"
+                      onClick={() => setSimView(v.id)}
+                      className={`rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                        simView === v.id
+                          ? "border-nori-h8ab135 bg-nori-h8ab135/20 text-nori-h4d6a1e"
+                          : "border-ink/15 text-muted-foreground hover:bg-muted"
+                      }`}
+                    >
+                      {v.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Kinematic self-collision — opt-in. Geometry and joint limits only,
               both measured, so it says nothing that depends on the model's
               estimated mass or inertia. */}

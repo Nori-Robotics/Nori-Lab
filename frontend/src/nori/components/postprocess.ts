@@ -57,6 +57,15 @@ export type Post = {
   setSize: (w: number, h: number) => void;
   /** Call when the camera or pose changes: restarts TAA accumulation. */
   invalidate: () => void;
+  /**
+   * Turn the bloom chain off without tearing the composer down.
+   *
+   * Bloom costs a WHOLE extra render of the scene every frame — the full-scene
+   * black-out pass — plus its blur chain. That is a fair price for glowing eyes
+   * on a robot filling the frame, and a poor one when the robot is three metres
+   * away in a room and the eyes are a few pixels across.
+   */
+  setBloomEnabled: (enabled: boolean) => void;
   dispose: () => void;
 };
 
@@ -199,6 +208,7 @@ export function attachPostProcessing(
   // --- the interception ---
   const originalRender = renderer.render.bind(renderer);
   let inside = false;
+  let bloomEnabled = flags.bloom;
   const patched = (s: THREE.Scene, c: THREE.Camera) => {
     // Intercept ONLY the element's main scene render. Other code renders
     // through this same renderer for its own purposes — PMREMGenerator bakes
@@ -211,7 +221,7 @@ export function attachPostProcessing(
     if (inside || s !== scene || c !== camera) return originalRender(s, c);
     inside = true;
     try {
-      if (flags.bloom) {
+      if (bloomEnabled) {
         // Bloom render = the FULL scene, with everything that must not glow
         // swapped to flat black — not a layer-restricted render.
         //
@@ -281,6 +291,12 @@ export function attachPostProcessing(
     },
     invalidate: () => {
       taa.accumulate = false;
+    },
+    setBloomEnabled: (enabled) => {
+      bloomEnabled = flags.bloom && enabled;
+      // The combine pass has to go with it: left enabled it would keep adding
+      // whatever stale image is sitting in the bloom target.
+      combine.enabled = bloomEnabled;
     },
     dispose: () => {
       (renderer as unknown as { render: unknown }).render = originalRender;

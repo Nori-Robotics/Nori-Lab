@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   BLOCKED_ROBOT_MODELS,
   hasUrdfModel,
+  usesStylisedSchematic,
   isRobotModelBlocked,
   serialModelCode,
 } from "@/nori/robotModels";
@@ -58,5 +59,26 @@ describe("hasUrdfModel", () => {
     expect(hasUrdfModel("")).toBe(false);
     expect(hasUrdfModel(null)).toBe(false);
     expect(hasUrdfModel(undefined)).toBe(false);
+  });
+});
+
+describe("usesStylisedSchematic", () => {
+  it("keeps the old stylised model for an L2", () => {
+    expect(usesStylisedSchematic("NORI-L2-0042")).toBe(true);
+    expect(usesStylisedSchematic("  nori-l2-1 ")).toBe(true);
+  });
+
+  it("gives the A3 description to everything else, including the A-series", () => {
+    expect(usesStylisedSchematic("NORI-A3-0000")).toBe(false);
+    expect(usesStylisedSchematic("NORI-L3-0007")).toBe(false);
+  });
+
+  it("defaults an unknown or absent serial to the current robot, not the old one", () => {
+    // The remote page renders this before the room is known; the A3 is the
+    // right thing to show while waiting, not the previous generation.
+    expect(usesStylisedSchematic("nori-dev")).toBe(false);
+    expect(usesStylisedSchematic("")).toBe(false);
+    expect(usesStylisedSchematic(null)).toBe(false);
+    expect(usesStylisedSchematic(undefined)).toBe(false);
   });
 });

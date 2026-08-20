@@ -20,6 +20,14 @@ import {
   type Collider,
   type CollisionPair,
 } from "@/nori/components/selfCollision";
+import {
+  CAMERA_VIEWS,
+  PIP,
+  startSim,
+  type CameraView,
+  type SimHandle,
+  type SimState,
+} from "@/nori/sim/simRuntime";
 import { ThemeProviderContext } from "@/contexts/ThemeContext";
 import { cn } from "@/lib/utils";
 
@@ -313,6 +321,31 @@ interface RobotUrdfViewerProps {
    * model itself rather than nothing at all.
    */
   onPoseChange?: (pose: Record<string, number>) => void;
+  /**
+   * Drive the robot around a parametric apartment with the keyboard.
+   *
+   * Kinematic, not physical — see nori/sim/driveModel. Toggling this in and out
+   * is fully reversible and does NOT reload the model, which is the reason the
+   * sim is a function applied to this viewer rather than a second viewer.
+   */
+  sim?: boolean;
+  /** Which of the robot's own cameras to inset while driving. Null hides it. */
+  simCameraView?: CameraView | null;
+  /** Live driving state while `sim` is on, at about 10 Hz, and only on change. */
+  onSimState?: (state: SimState) => void;
+  /** Fires when the inset itself is clicked to step to the next camera. */
+  onSimCameraViewChange?: (view: CameraView) => void;
+  /**
+   * Whether this is a viewer or a picture.
+   *
+   * `false` gives a display-only render: no joint hover, no joint dragging, no
+   * post-processing chain, and no redraw unless the view actually changes. That
+   * is what a small schematic panel wants — and on the remote page it shares a
+   * GPU with a live video call, where sixty composited frames a second of a
+   * model nobody is touching is pure waste. The camera can still be orbited,
+   * which the panel it replaces there could do too.
+   */
+  interactive?: boolean;
 }
 
 /** One-finger behaviour on touch screens. */
@@ -326,6 +359,11 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   onCollisions,
   onViewerReady,
   collisionCheck = false,
+  sim = false,
+  simCameraView = "front",
+  onSimState,
+  onSimCameraViewChange,
+  interactive = true,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<URDFViewerElement | null>(null);
@@ -337,6 +375,12 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       window.matchMedia("(prefers-color-scheme: dark)").matches);
 
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  // "ready" means the geometry is in the scene; `prepared` means the one-frame
+  // -later pass that restyles the materials and frames the camera has ALSO run.
+  // The sim needs the second, not the first: it saves the camera to restore on
+  // exit and sets up its own framing, and starting it a frame early meant
+  // styleAndFrame overwrote both immediately afterwards.
+  const [prepared, setPrepared] = useState(false);
 
   // On touch screens one-finger drag can only mean ONE thing at a time: with
   // OrbitControls' default it orbits the camera, which makes posing joints
@@ -368,6 +412,17 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   const postRef = useRef<Post | null>(null);
   const readyCb = useRef(onViewerReady);
   readyCb.current = onViewerReady;
+  // Handed to the sim so its shadow can travel with the robot and its floor can
+  // replace the grid. Captured at mount rather than looked up by traversal.
+  const keyLightRef = useRef<THREE.DirectionalLight | null>(null);
+  const gridRef = useRef<THREE.Object3D | null>(null);
+  const simRef = useRef<SimHandle | null>(null);
+  const simStateCb = useRef(onSimState);
+  simStateCb.current = onSimState;
+  // Read once when the sim starts. Held in a ref so changing the inset camera
+  // does not restart the sim (which would put the robot back at the door).
+  const simViewRef = useRef(simCameraView);
+  simViewRef.current = simCameraView;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -376,6 +431,19 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     const viewer = createUrdfViewer(container, isDark);
     viewerRef.current = viewer;
     setupMeshLoader(viewer, rewriteMeshUrl);
+
+    if (!interactive) {
+      // The element wires pointer handlers for joint picking the moment it is
+      // connected. dispose() only unbinds them, and is safe to call again when
+      // the element tears itself down.
+      (viewer as unknown as { dragControls?: { dispose: () => void } })
+        .dragControls?.dispose();
+      // Draw when something changes, and not otherwise. See `interactive`.
+      viewer.removeAttribute("auto-redraw");
+      (viewer.controls as unknown as {
+        addEventListener?: (t: string, f: () => void) => void;
+      }).addEventListener?.("change", () => viewer.redraw());
+    }
 
     // createUrdfViewer paints an inline background; clear it so the Tailwind
     // `bg-nori-hf6f4eb` class below wins and the canvas tracks the theme token
@@ -441,6 +509,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     const fill = new THREE.DirectionalLight(0xfff1e0, L.fill);
     fill.position.set(-3.0, 1.5, 3.5);
     viewer.scene.add(key, fill);
+    keyLightRef.current = key;
 
     // Floor grid, matching the one on the remote page's model.
     //
@@ -559,7 +628,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       typeof window !== "undefined" &&
       new URLSearchParams(window.location.search).has("nopost");
 
-    if (renderer && !noPost) {
+    if (renderer && !noPost && interactive) {
       const rect = container.getBoundingClientRect();
       postRef.current = attachPostProcessing(
         renderer,
@@ -579,6 +648,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     // highlighting and dragging entirely. A no-op raycast keeps it decorative.
     grid.raycast = () => {};
     viewer.scene.add(grid);
+    gridRef.current = grid;
 
     const onProcessed = () => {
       setStatus("ready");
@@ -620,6 +690,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
         } catch {
           /* element may already be torn down */
         }
+        setPrepared(true);
       });
     };
     const onError = () => setStatus("error");
@@ -870,12 +941,81 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     );
   }, [collisionCheck, onCollisions]);
 
+  // Sim mode. Gated on `status` because startSim needs the loaded robot: its
+  // wheel geometry, its camera frames and its lift limits all come off the
+  // model rather than out of a constants file.
+  useEffect(() => {
+    if (!sim || !prepared) return;
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const handle = startSim({
+      viewer,
+      keyLight: keyLightRef.current,
+      grid: gridRef.current,
+      invalidate: () => postRef.current?.invalidate(),
+      setBloomEnabled: (on) => postRef.current?.setBloomEnabled(on),
+      onState: (state) => simStateCb.current?.(state),
+      initialCameraView: simViewRef.current ?? null,
+    });
+    simRef.current = handle;
+    return () => {
+      handle?.dispose();
+      simRef.current = null;
+    };
+  }, [sim, prepared]);
+
+  useEffect(() => {
+    simRef.current?.setCameraView(simCameraView ?? null);
+  }, [simCameraView]);
+
+  const insetIndex = CAMERA_VIEWS.findIndex((v) => v.id === simCameraView);
+  const insetLabel = insetIndex >= 0 ? CAMERA_VIEWS[insetIndex].label : null;
+  const nextInset = CAMERA_VIEWS[(insetIndex + 1) % CAMERA_VIEWS.length];
+
   return (
     <div className={cn("relative", className)}>
       <div
         ref={containerRef}
         className="h-full w-full overflow-hidden rounded-md border bg-nori-hfffdf7"
       />
+
+      {/* The bezel around the robot's-eye inset. Drawn in HTML rather than
+          WebGL because a border is a border; the rect comes from the same PIP
+          constants the scissored render uses, so the two cannot drift.
+
+          box-sizing is content-box on purpose: the WebGL rect is the CONTENT
+          area, and the bezel has to sit entirely outside it (see PIP.bezelPx).
+          With Tailwind's default border-box the border would eat into the image
+          instead of framing it. */}
+      {sim && status === "ready" && simCameraView && (
+        <button
+          type="button"
+          onClick={() => onSimCameraViewChange?.(nextInset.id)}
+          title={`Robot camera: ${insetLabel}. Click for ${nextInset.label}.`}
+          className="group absolute cursor-pointer border-solid border-background shadow-soft transition-shadow hover:shadow-pop"
+          style={{
+            boxSizing: "content-box",
+            top: PIP.marginPx - PIP.bezelPx,
+            right: PIP.marginPx - PIP.bezelPx,
+            width: `${PIP.widthFraction * 100}%`,
+            aspectRatio: String(PIP.aspect),
+            borderWidth: PIP.bezelPx,
+            borderRadius: PIP.radiusPx,
+          }}
+        >
+          {/* The image itself is WebGL underneath this element, so the button
+              has no content of its own — only the label and the hover hint. */}
+          <span className="pointer-events-none absolute bottom-1 left-1.5 rounded bg-background/85 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+            {insetLabel}
+          </span>
+          {/* Always visible, not hover-only: on a still image there is nothing
+              to suggest the inset is clickable at all, and a hint you have to
+              discover by hovering is a hint nobody finds. */}
+          <span className="pointer-events-none absolute bottom-1 right-1.5 rounded bg-background/85 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground transition-colors group-hover:bg-background group-hover:text-ink">
+            {nextInset.label} →
+          </span>
+        </button>
+      )}
 
       {isCoarse && status === "ready" && (
         <div className="absolute bottom-3 left-3 z-10 flex overflow-hidden rounded-full border bg-background/90 text-sm font-medium shadow-sm backdrop-blur">

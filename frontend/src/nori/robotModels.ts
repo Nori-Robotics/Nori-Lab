@@ -28,6 +28,25 @@ export function hasUrdfModel(serial: string | null | undefined): boolean {
   return code !== null && code.startsWith("A");
 }
 
+/**
+ * True when this serial should get the OLD stylised model rather than the A3
+ * description, on the remote page's 3D schematic.
+ *
+ * Deliberately the inverse shape of hasUrdfModel above. That one asks "does
+ * this model ship a URDF", and answers no for anything it does not recognise —
+ * right for the pairing page, which is showing you a picture of the robot you
+ * just paired. This one asks "is this specifically an L2", because the current
+ * robot is the A3 and an unrecognised or not-yet-known serial should show the
+ * current robot, not the previous generation.
+ *
+ * Note this means an L3 gets the A3 render. L3 is on BLOCKED_ROBOT_MODELS so it
+ * cannot be paired from this build at all; if that ever changes, it wants its
+ * own case here.
+ */
+export function usesStylisedSchematic(serial: string | null | undefined): boolean {
+  return !!serial && serialModelCode(serial) === "L2";
+}
+
 /** True when this serial's model is blocked in this app build. Unknown / non-fleet
  * serials are NEVER blocked — the gate only stops KNOWN disallowed models (e.g. L3),
  * so it can't accidentally reject a legacy or dev serial it doesn't recognize. */

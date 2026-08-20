@@ -23,6 +23,8 @@ import { VrHandoff } from "@/nori/components/VrHandoff";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
 import { TelemetryPanel, GripForce, MotorFaults, ServoTemps, OvertempBanner, ControlLegend, BaseCommandLegend, CallBar, ConnectionBanner, ControlOfflineBanner, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
+import RobotUrdfViewer from "@/nori/components/RobotUrdfViewer";
+import { usesStylisedSchematic } from "@/nori/robotModels";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import LeaderSetup from "@/nori/pages/leader-setup";
 import { playAudioFile, type ClipHandle } from "@/nori/remote/audioClip";
@@ -966,6 +968,17 @@ const Remote = () => {
         </Card>
         )}
 
+        {/* 3D schematic. The A3's published description by default; the older
+            stylised model only for a robot that is explicitly an L2.
+
+            The session's room IS the active robot's serial (see the effect in
+            TeleopSessionContext that keeps them in step), so no extra lookup is
+            needed to tell which is connected.
+
+            The URDF render is display-only and NOT yet driven by telemetry — it
+            stands in its default pose. Wiring `tel.state` into it is the next
+            step; the joint names in the description are the same ones the
+            telemetry stream carries. */}
         <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-4 text-nori-h14131a shadow-sm">
           <div className="flex items-baseline justify-between gap-3">
             <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// 3d schematic</p>
@@ -974,7 +987,14 @@ const Remote = () => {
             )}
           </div>
           <div className="mt-3">
-            <Robot3D state={tel.state} activeArm={settings.arm} />
+            {usesStylisedSchematic(settings.room) ? (
+              <Robot3D state={tel.state} activeArm={settings.arm} />
+            ) : (
+              <RobotUrdfViewer
+                className="h-64 w-full"
+                interactive={false}
+              />
+            )}
           </div>
         </div>
 

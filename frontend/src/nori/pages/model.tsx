@@ -6,6 +6,7 @@
 // never signed in and does not own an A3. That is the point: it is the link we
 // hand a developer who is evaluating the robot.
 import { Link } from "react-router-dom";
+import { ArrowRight } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import RobotUrdfViewer, {
@@ -526,8 +527,8 @@ const ModelPage = () => {
             <strong className="text-foreground">
               The lift limit is an operating ceiling.
             </strong>{" "}
-            700 mm commanded of a 720 mm stroke — that reserve is what the real
-            controllers respect.
+            700 mm commanded of a 720 mm stroke — this padding is safe and what
+            real controllers expect.
           </li>
           <li>
             Torso, neck and head <strong className="text-foreground">shapes</strong>{" "}
@@ -551,11 +552,15 @@ const ModelPage = () => {
         </p>
       </section>
 
-      <p className="text-base">
-        <Link className="underline" to="/nori">
+      <div className="flex justify-center pt-1">
+        <Link
+          className="inline-flex items-center gap-2 rounded-full border border-ink/20 bg-background px-4 py-2 text-[13px] font-semibold text-ink transition-[transform,box-shadow] duration-200 ease-bounce hover:-translate-y-0.5 hover:shadow-soft"
+          to="/nori"
+        >
           Nori app
+          <ArrowRight className="h-4 w-4" />
         </Link>
-      </p>
+      </div>
     </main>
     </div>
   );

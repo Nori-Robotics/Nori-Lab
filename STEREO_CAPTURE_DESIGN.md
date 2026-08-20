@@ -1,9 +1,24 @@
 # Stereo capture: front + overhead as a stereo pair
 
-Status: **frontend BUILT** (this branch); robot + backend **DESIGNED ONLY —
-nothing below the wire is implemented yet**. The wire contract is pinned by
+Status: **frontend BUILT** (this branch); **robot side BUILT 2026-08-19**
+(nori_ws: gateway flag/echo/tags + recorder tag-gated front, matched stored
+rate, extrinsics stamp, privacy marker, pair-liveness gate — privacy option
+(a) approved by Michael). Backend: nothing to build (meta.json rides the
+bundle). The wire contract is pinned by
 `frontend/packages/nori-sdk/src/mock/sim.ts` and
-`frontend/src/nori/remote/mockRobot.test.ts` (the mock is the spec).
+`frontend/src/nori/remote/mockRobot.test.ts` (the mock is the spec); the
+robot tests are `nori_gateway/test/test_protocol_record.py` (stereo cases)
+and `nori_dataset/test/test_stereo.py`.
+
+Temporal alignment (researched 2026-08-19): NO capture-time sync mechanism
+needed. The cameras free-run (no trigger input); both streams carry per-frame
+same-host-clock stamps in `cam_<role>.idx.ndjson`, and equal stored fps makes
+nearest-timestamp pairing 1:1 with worst-case offset = half a frame period
+(16.7 ms @30fps ≈ 8 mm of scene motion at 0.5 m/s — fine for reconstruction/
+training; rolling shutter is the same order anyway). Pairing happens offline
+at assembly (tolerance 1/(2·enforced_fps); record per-pair offset as QC).
+Future tightening only if QC demands: stamp frames with the GStreamer buffer
+PTS instead of publish time (nori-uvc-mjpeg-node:375).
 
 ## Goal
 

@@ -7,7 +7,7 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AuthShell } from "@/nori/components/AuthShell";
 import { useNori } from "@/nori/NoriContext";
 import { sendPasswordReset } from "@/nori/auth/session";
 
@@ -35,61 +35,55 @@ const ForgotPassword = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Reset your password</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <p className="text-sm text-muted-foreground">Connecting to Nori…</p>
-          ) : !ready ? (
-            <p className="text-sm text-destructive">{error ?? "Nori auth not configured."}</p>
-          ) : sent ? (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                If an account exists for <span className="font-medium text-foreground">{email}</span>,
-                we&apos;ve sent a password-reset link. Check your inbox (and spam).
-              </p>
-              <Link
-                to="/nori/sign-in"
-                className="inline-block text-sm font-medium text-foreground underline underline-offset-4"
-              >
-                Back to sign in
-              </Link>
+    <AuthShell
+      eyebrow="no trouble"
+      title="Reset your password"
+      subtitle="Happens to everyone. We'll email you a link to set a new one."
+      footer={
+        <Link
+          to="/nori/sign-in"
+          className="font-medium text-foreground underline underline-offset-4"
+        >
+          Back to sign in
+        </Link>
+      }
+    >
+      {loading ? (
+        <p className="text-sm text-muted-foreground">Connecting to Nori…</p>
+      ) : !ready ? (
+        <p className="text-sm text-destructive">{error ?? "Nori auth not configured."}</p>
+      ) : sent ? (
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            If an account exists for <span className="font-medium text-foreground">{email}</span>,
+            we&apos;ve sent a password-reset link. Check your inbox (and spam).
+          </p>
+        </div>
+      ) : (
+        <>
+          <p className="mb-4 text-sm text-muted-foreground">
+            Enter your account email and we&apos;ll send you a link to set a new password.
+          </p>
+          <form onSubmit={onSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="fp-email">Email</Label>
+              <Input
+                id="fp-email"
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
             </div>
-          ) : (
-            <>
-              <p className="mb-4 text-sm text-muted-foreground">
-                Enter your account email and we&apos;ll send you a link to set a new password.
-              </p>
-              <form onSubmit={onSubmit} className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="fp-email">Email</Label>
-                  <Input
-                    id="fp-email"
-                    type="email"
-                    autoComplete="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                  />
-                </div>
-                {formError && <p className="text-sm text-destructive">{formError}</p>}
-                <Button type="submit" className="w-full" disabled={submitting}>
-                  {submitting ? "Sending…" : "Send reset link"}
-                </Button>
-              </form>
-              <p className="mt-4 text-center text-sm text-muted-foreground">
-                <Link to="/nori/sign-in" className="font-medium text-foreground underline underline-offset-4">
-                  Back to sign in
-                </Link>
-              </p>
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+            {formError && <p className="text-sm text-destructive">{formError}</p>}
+            <Button type="submit" className="w-full" disabled={submitting}>
+              {submitting ? "Sending…" : "Send reset link"}
+            </Button>
+          </form>
+        </>
+      )}
+    </AuthShell>
   );
 };
 

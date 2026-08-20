@@ -8,7 +8,7 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AuthShell } from "@/nori/components/AuthShell";
 import { useNori } from "@/nori/NoriContext";
 import { getSession, onAuthStateChange, signOut, updatePassword } from "@/nori/auth/session";
 
@@ -71,74 +71,71 @@ const ResetPassword = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Set a new password</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loading || !checked ? (
-            <p className="text-sm text-muted-foreground">Connecting to Nori…</p>
-          ) : !ready ? (
-            <p className="text-sm text-destructive">{error ?? "Nori auth not configured."}</p>
-          ) : done ? (
-            <div className="space-y-4">
-              <p className="text-sm font-medium text-nori-h8ab135">Password updated.</p>
-              <p className="text-sm text-muted-foreground">Sign in with your new password.</p>
-              <Link
-                to="/nori/sign-in"
-                className="inline-block text-sm font-medium text-foreground underline underline-offset-4"
-              >
-                Go to sign in
-              </Link>
-            </div>
-          ) : !canReset ? (
-            <div className="space-y-4">
-              <p className="text-sm text-destructive">
-                This reset link is invalid or has expired.
-              </p>
-              <Link
-                to="/nori/forgot-password"
-                className="inline-block text-sm font-medium text-foreground underline underline-offset-4"
-              >
-                Request a new link
-              </Link>
-            </div>
-          ) : (
-            <form onSubmit={submit} className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="rp-new">New password</Label>
-                <Input
-                  id="rp-new"
-                  type="password"
-                  autoComplete="new-password"
-                  minLength={MIN_LEN}
-                  value={next}
-                  onChange={(e) => setNext(e.target.value)}
-                  required
-                />
-                <p className="text-xs text-muted-foreground">At least {MIN_LEN} characters.</p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="rp-confirm">Confirm new password</Label>
-                <Input
-                  id="rp-confirm"
-                  type="password"
-                  autoComplete="new-password"
-                  value={confirm}
-                  onChange={(e) => setConfirm(e.target.value)}
-                  required
-                />
-              </div>
-              {formError && <p className="text-sm text-destructive">{formError}</p>}
-              <Button type="submit" className="w-full" disabled={busy}>
-                {busy ? "Updating…" : "Update password"}
-              </Button>
-            </form>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+    <AuthShell
+      eyebrow="almost there"
+      title="Set a new password"
+      subtitle="Pick something you'll remember — you'll be back in a moment."
+    >
+      {loading || !checked ? (
+        <p className="text-sm text-muted-foreground">Connecting to Nori…</p>
+      ) : !ready ? (
+        <p className="text-sm text-destructive">{error ?? "Nori auth not configured."}</p>
+      ) : done ? (
+        <div className="space-y-4">
+          <p className="text-sm font-medium text-nori-h8ab135">Password updated.</p>
+          <p className="text-sm text-muted-foreground">Sign in with your new password.</p>
+          <Link
+            to="/nori/sign-in"
+            className="inline-block text-sm font-medium text-foreground underline underline-offset-4"
+          >
+            Go to sign in
+          </Link>
+        </div>
+      ) : !canReset ? (
+        <div className="space-y-4">
+          <p className="text-sm text-destructive">
+            This reset link is invalid or has expired.
+          </p>
+          <Link
+            to="/nori/forgot-password"
+            className="inline-block text-sm font-medium text-foreground underline underline-offset-4"
+          >
+            Request a new link
+          </Link>
+        </div>
+      ) : (
+        <form onSubmit={submit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="rp-new">New password</Label>
+            <Input
+              id="rp-new"
+              type="password"
+              autoComplete="new-password"
+              minLength={MIN_LEN}
+              value={next}
+              onChange={(e) => setNext(e.target.value)}
+              required
+            />
+            <p className="text-xs text-muted-foreground">At least {MIN_LEN} characters.</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="rp-confirm">Confirm new password</Label>
+            <Input
+              id="rp-confirm"
+              type="password"
+              autoComplete="new-password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              required
+            />
+          </div>
+          {formError && <p className="text-sm text-destructive">{formError}</p>}
+          <Button type="submit" className="w-full" disabled={busy}>
+            {busy ? "Updating…" : "Update password"}
+          </Button>
+        </form>
+      )}
+    </AuthShell>
   );
 };
 

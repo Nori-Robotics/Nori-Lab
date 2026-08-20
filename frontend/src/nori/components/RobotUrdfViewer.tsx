@@ -315,6 +315,9 @@ interface RobotUrdfViewerProps {
   onPoseChange?: (pose: Record<string, number>) => void;
 }
 
+/** One-finger behaviour on touch screens. */
+type TouchMode = "pose" | "camera";
+
 const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   className,
   onHoverJoint,
@@ -334,6 +337,17 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       window.matchMedia("(prefers-color-scheme: dark)").matches);
 
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+
+  // On touch screens one-finger drag can only mean ONE thing at a time: with
+  // OrbitControls' default it orbits the camera, which makes posing joints
+  // impossible (there is no hover to disambiguate, unlike a mouse). So touch
+  // devices get an explicit mode: "pose" frees the single finger for joint
+  // dragging, "camera" gives it back to orbit. Two-finger pinch/pan keeps
+  // working in BOTH modes — only the one-finger binding changes.
+  const isCoarse =
+    typeof window !== "undefined" &&
+    window.matchMedia("(pointer: coarse)").matches;
+  const [touchMode, setTouchMode] = useState<TouchMode>("pose");
 
   // Held in a ref so the mount effect can call the latest callback without
   // listing it as a dependency — depending on it would rebuild the viewer (and
@@ -770,6 +784,17 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   // Flipping the toggle re-evaluates the current pose rather than waiting for
   // the next drag, so switching it on tells you about the pose you are looking
   // at now.
+  // Applied via OrbitControls' touch map rather than `.enabled`: the element's
+  // own drag handler toggles `.enabled` around every joint drag, so a mode
+  // implemented through `.enabled` gets silently reverted after the first drag.
+  // touches.ONE is ours alone. -1 is "no action" (falls through the switch).
+  useEffect(() => {
+    const v = viewerRef.current;
+    if (!v || !isCoarse) return;
+    const touches = (v.controls as unknown as { touches?: { ONE: number } }).touches;
+    if (touches) touches.ONE = touchMode === "camera" ? THREE.TOUCH.ROTATE : -1;
+  }, [touchMode, isCoarse, status]);
+
   useEffect(() => {
     const v = viewerRef.current;
     if (!v?.robot || !onCollisions) return;
@@ -786,6 +811,30 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
         ref={containerRef}
         className="h-full w-full overflow-hidden rounded-md border bg-nori-hfffdf7"
       />
+
+      {isCoarse && status === "ready" && (
+        <div className="absolute bottom-3 left-3 z-10 flex overflow-hidden rounded-full border bg-background/90 text-sm font-medium shadow-sm backdrop-blur">
+          {(
+            [
+              ["pose", "Pose joints"],
+              ["camera", "Move camera"],
+            ] as const
+          ).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setTouchMode(mode)}
+              className={`px-3 py-1.5 ${
+                touchMode === mode
+                  ? "bg-nori-h8ab135/25 text-nori-h4d6a1e"
+                  : "text-muted-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {status === "loading" && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">

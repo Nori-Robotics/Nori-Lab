@@ -1,4 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+// NORI: Vercel Web Analytics. The `/react` entry, NOT `/next` — this is a Vite
+// SPA, and the next entry assumes Next's router. The react entry tracks SPA
+// route changes itself via the History API. No-ops outside Vercel (local dev
+// and the desktop/Tauri build send nothing).
+import { Analytics } from "@vercel/analytics/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { ThemeToggle } from "@/nori/components/ThemeToggle";
@@ -150,6 +155,7 @@ function App() {
                         <Route path="*" element={<NotFound />} />
                       </Routes>
                     <Toaster />
+                    <Analytics />
                 </BrowserRouter>
               </UrdfProvider>
             </HfAuthProvider>

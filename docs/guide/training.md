@@ -28,11 +28,8 @@ Record demonstrations by teleoperating the robot, then train a policy on them an
 
 ## Why training is cloud and inference is local
 
-Worth stating, because it explains two things people ask about:
-
 **Inference is local** — which is why the desktop download is ~770 MB rather than ~200 MB. A
-robot's motor-command loop must not depend on your Wi-Fi holding up. That size is a deliberate
-trade, not an oversight.
+robot's motor-command loop must not depend on your Wi-Fi holding up.
 
 **Training is cloud** — it needs GPUs you don't have, and it's not latency-sensitive. Nothing
 about training touches the robot.

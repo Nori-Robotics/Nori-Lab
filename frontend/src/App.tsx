@@ -22,6 +22,9 @@ import { NoriProvider } from "@/nori/NoriContext";
 import { TeleopSessionProvider } from "@/nori/TeleopSessionContext";
 import NoriLayout from "@/nori/components/NoriLayout";
 import SignIn from "@/nori/pages/sign-in";
+import ForgotPassword from "@/nori/pages/forgot-password";
+import ResetPassword from "@/nori/pages/reset-password";
+import AuthCallback from "@/nori/pages/auth-callback";
 import Account from "@/nori/pages/account";
 import NoriHome from "@/nori/pages/home";
 import MyStuff from "@/nori/pages/my-stuff";
@@ -32,6 +35,7 @@ import TrainingHistory from "@/nori/pages/training-history";
 import Remote from "@/nori/pages/remote";
 import VrLanding from "@/nori/pages/vr";
 import DrivePage from "@/nori/pages/drive";
+import ModelPage from "@/nori/pages/model";
 import LeaderSetup from "@/nori/pages/leader-setup";
 import NoriCoding from "@/nori/pages/coding";
 import NoriAgent from "@/nori/pages/agent";
@@ -50,8 +54,13 @@ function App() {
           <ApiProvider>
             <HfAuthProvider>
               <UrdfProvider>
-                <DragAndDropProvider>
-                  <BrowserRouter>
+                {/* NORI: DragAndDropProvider is NOT global. It listens on `document`,
+                    so mounting it app-wide made dragging any file over any page —
+                    the Nori home page included — raise a full-screen "Drop Urdf
+                    Files Here" overlay. It is now scoped to the one route that
+                    renders the viewer. To reuse it elsewhere, wrap that route the
+                    same way rather than hoisting it back up here. */}
+                <BrowserRouter>
                     <TeleopStopNotice />
                       <UpdateNotice />
                       <ThemeToggle />
@@ -59,7 +68,16 @@ function App() {
                         {/* NORI: start on the Nori app; the upstream LeLab landing lives at /lelab. */}
                         <Route path="/" element={<Navigate to="/nori" replace />} />
                         <Route path="/lelab" element={<Landing />} />
-                        <Route path="/teleoperation" element={<Teleoperation />} />
+                        {/* The only route that renders UrdfViewer (via VisualizerPanel),
+                            and therefore the only one where drag-and-drop applies. */}
+                        <Route
+                          path="/teleoperation"
+                          element={
+                            <DragAndDropProvider>
+                              <Teleoperation />
+                            </DragAndDropProvider>
+                          }
+                        />
                         <Route path="/recording" element={<Recording />} />
                         <Route path="/upload" element={<Upload />} />
                         <Route path="/training" element={<Training />} />
@@ -70,6 +88,10 @@ function App() {
 
                         {/* NORI: Nori app routes, isolated under a NoriProvider + layout. */}
                         <Route path="/nori/sign-in" element={<NoriProvider><SignIn /></NoriProvider>} />
+                        {/* Standalone (no auth gate): password reset request + recovery landing + email-confirm landing. */}
+                        <Route path="/nori/forgot-password" element={<NoriProvider><ForgotPassword /></NoriProvider>} />
+                        <Route path="/nori/reset-password" element={<NoriProvider><ResetPassword /></NoriProvider>} />
+                        <Route path="/nori/auth/callback" element={<NoriProvider><AuthCallback /></NoriProvider>} />
                         {/* Standalone headset entry — providers but NO NoriLayout nav, and no
                             auth gate (VR needs only public config + room + token). This is the
                             LeLab-free hosted VR surface; see DEPLOY_FRONTEND.md. */}
@@ -96,6 +118,10 @@ function App() {
                             </NoriProvider>
                           }
                         />
+                        {/* Public model viewer: no NoriLayout nav, no auth gate,
+                            and no robot needed — the model is a static asset. The
+                            link we hand a developer evaluating the A3. */}
+                        <Route path="/nori/model" element={<ModelPage />} />
                         <Route
                           path="/nori"
                           element={
@@ -124,8 +150,7 @@ function App() {
                         <Route path="*" element={<NotFound />} />
                       </Routes>
                     <Toaster />
-                  </BrowserRouter>
-                </DragAndDropProvider>
+                </BrowserRouter>
               </UrdfProvider>
             </HfAuthProvider>
           </ApiProvider>

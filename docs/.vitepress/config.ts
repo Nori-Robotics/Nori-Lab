@@ -9,8 +9,11 @@ import { defineConfig } from "vitepress";
 
 export default defineConfig({
   title: "Nori Docs",
+  // Model scope is stated in the meta description on purpose. This is the line search engines
+  // and LLM crawlers quote when they summarise the site, and without it they happily present
+  // L2 hardware steps as "Nori documentation" for whichever robot the reader actually owns.
   description:
-    "Documentation and troubleshooting for Nori robots, the Nori desktop app, and the @nori/sdk teleoperation SDK.",
+    "Documentation and troubleshooting for Nori robots, the Nori desktop app, and the @nori/sdk teleoperation SDK. Hardware setup pages currently cover the Nori L2; Nori A3 hardware docs are coming soon.",
   lang: "en-US",
   cleanUrls: true,
 
@@ -47,24 +50,27 @@ export default defineConfig({
             { text: "Install the desktop app", link: "/guide/install" },
             { text: "Your first session", link: "/guide/first-session" },
             { text: "Something's broken", link: "/guide/broken" },
-          ],
-        },
-        {
-          text: "Hardware setup",
-          items: [
-            { text: "Leader arms (Nori L2)", link: "/guide/leader-arms" },
-            { text: "Cameras", link: "/guide/cameras" },
-            { text: "Power and cabling", link: "/guide/power" },
+            // Sits in the first group, not buried under hardware: an A3 owner needs to know
+            // these pages aren't theirs before they start following any of them.
+            { text: "Nori A3 (coming soon)", link: "/guide/a3" },
           ],
         },
         {
           text: "Using the app",
           items: [
             { text: "Remote teleoperation", link: "/guide/remote" },
+            { text: "Video", link: "/guide/video" },
             { text: "VR", link: "/guide/vr" },
             { text: "Audio and calls", link: "/guide/audio" },
             { text: "Recording and training", link: "/guide/training" },
           ],
+        },
+        {
+          // Legacy hardware, collapsed to a single page and moved out of the main flow to make
+          // room for A3 pages. Kept whole rather than trimmed: the handful of L2 customers still
+          // depend on it, and the old URLs redirect here (see vercel.json).
+          text: "Nori L2",
+          items: [{ text: "L2 hardware setup", link: "/guide/l2" }],
         },
         {
           text: "Reference",

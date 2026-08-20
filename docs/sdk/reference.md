@@ -46,7 +46,7 @@ by hand, so it can't drift. TypeDoc into a `/sdk/api/` subtree is the obvious pa
 
 ## Source of truth
 
-These pages are maintained in `docs/sdk/` in the NoriLeLab repo. The SDK package's own `README.md`
-covers the same ground for developers reading the tarball offline.
+The SDK package ships a `README.md` covering the same ground, for reading offline.
 
-If the two ever disagree, **the code wins** — tell us and we'll fix the page.
+If these pages and the code ever disagree, **the code wins** — [tell us](/guide/getting-help) and
+we'll fix the page.

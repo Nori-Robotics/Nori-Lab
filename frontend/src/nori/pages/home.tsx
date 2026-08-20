@@ -37,9 +37,11 @@ const SOCIALS: { label: string; href: string; Icon: (p: SVGProps<SVGSVGElement>)
   { label: "X", href: "https://x.com/norirobotics", Icon: XIcon },
 ];
 
-/** "NORI-L2-0042" -> "Nori L2". Unknown serial formats fall back to the flagship model name. */
+/** "NORI-L2-0042" -> "Nori L2", "NORI-A3-0000" -> "Nori A3". Matches any
+ *  <letter><digits> model code; unknown serial formats fall back to the
+ *  flagship model name. */
 function modelFromSerial(serial: string): string {
-  const m = /^NORI-(L\d+)/i.exec(serial.trim());
+  const m = /^NORI-([A-Z]\d+)/i.exec(serial.trim());
   return m ? `Nori ${m[1].toUpperCase()}` : "Nori L2";
 }
 
@@ -64,7 +66,7 @@ function rememberModel(model: string) {
 
 /**
  * Card artwork for the paired robot, keyed off the same serial parse as the model name.
- * Only L3 has its own render so far; every other model (and the unpaired card) shows the L2.
+ * L3 and A3 have their own render; every other model (and the unpaired card) shows the L2.
  *
  * The serial is null on the first paint of every reload (the profile round-trip hasn't
  * landed yet) exactly as it is for an unpaired account, so defaulting straight to the L2
@@ -74,9 +76,11 @@ function rememberModel(model: string) {
  */
 function robotImage(serial: string | null): { src: string; alt: string } {
   const model = serial ? modelFromSerial(serial) : rememberedModel() ?? "Nori L2";
-  return model === "Nori L3"
-    ? { src: "/images/nori-l3.png", alt: "Nori L3 robot" }
-    : { src: "/images/nori-l2.png", alt: "Nori L2 robot" };
+  if (model === "Nori A3")
+    return { src: "/images/nori-a3.png", alt: "Nori A3 robot" };
+  if (model === "Nori L3")
+    return { src: "/images/nori-l3.png", alt: "Nori L3 robot" };
+  return { src: "/images/nori-l2.png", alt: "Nori L2 robot" };
 }
 
 // Robot battery pill for the "your robot" card. battery_percent only rides the telemetry stream,

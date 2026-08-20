@@ -29,10 +29,9 @@ And check the **age**: a dead detector leaves its last frame sitting in the cach
 
 Frames ride the control channel (`type: "perception"`, nori-protocol `perception.json`).
 
-::: warning Verification status (v0)
-The SDK's parse/cache/`perceive()`/`injectPerception()` surface is implemented and unit-tested, but
-the **on-Pi detector that emits `perception` frames does not exist yet** — `perceive()` returns
-`null` on real hardware today.
+::: warning Not available on hardware yet
+The SDK surface is implemented, but the robot-side detector that emits `perception` frames does
+not exist yet — **`perceive()` returns `null` on a real robot today.**
 
 `injectPerception()` feeds synthetic frames through the same path for development, so you can
 build and test against the real API shape now.

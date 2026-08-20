@@ -35,10 +35,8 @@ never hangs.
 
 `nori.moveTo(...)` in the executor uses all of this internally and returns the daemon's verdict.
 
-::: warning Verification status (v0)
-SDK + executor are implemented and unit-tested. The daemon that emits `action_status` is built and
-selftest-covered, but **must be deployed to the robot**, and the tolerances tuned on hardware.
-
-Until then, `moveTo` transparently falls back to its client-side heuristic — so it works, but the
-verdict is inferred rather than reported.
+::: warning Not yet reported by the robot
+Robot-side `action_status` is not live on hardware yet. Until it is, `moveTo` falls back to its
+client-side heuristic — it works, but the completion verdict is inferred rather than reported by
+the robot.
 :::

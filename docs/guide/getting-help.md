@@ -27,7 +27,7 @@ also tell us whether the session log showed `TURN: using minted credentials` or
 `TURN: mint failed`. See [connection troubleshooting](/guide/remote#connection-trouble).
 
 **Whether it correlates with load.** A peripheral that drops under load and is fine when idle is a
-[power problem](/guide/power#brownouts), not a software one.
+[power problem](/guide/l2#brownouts), not a software one.
 
 **Logs**, if you can get them.
 
@@ -44,7 +44,7 @@ robot-side daemon logs.
 Don't spend your afternoon on these — they're expected:
 
 - **Low-res, ~15 fps video.** It's the robot's power budget, not a bug.
-  [Why](/guide/cameras#video-quality).
+  [Why](/guide/video#video-quality).
 - **`perceive()` returns `null` on real hardware.** The on-Pi detector doesn't exist yet.
   [Perception](/sdk/perception).
 - **A stall stops one joint, not the robot.** By design. [Safety states](/guide/safety-states).

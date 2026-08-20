@@ -73,6 +73,15 @@ export function EpisodeReviewModal({
   const [episodes, setEpisodes] = useState<DatasetEpisode[] | null>(null);
   const [cameras, setCameras] = useState<string[]>([]);
   const [camera, setCamera] = useState<string | null>(null);
+  // Derived-map channel to view (orthogonal to camera). "rgb" = the base video;
+  // a derived map (depth/…) 404s until the processing tools produce it, so the
+  // tile shows a "not yet generated" placeholder in that case.
+  const [maps, setMaps] = useState<string[]>([]);
+  const [mapChannel, setMapChannel] = useState<string>("rgb");
+  // Non-rgb maps that 404'd (not produced yet) → show a placeholder for them.
+  // A map that loads is never added, so this auto-lights-up when the tools land.
+  const [failedMaps, setFailedMaps] = useState<Set<string>>(new Set());
+  const mapMissing = mapChannel !== "rgb" && failedMaps.has(mapChannel);
   const [clipToken, setClipToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [marked, setMarked] = useState<Set<number>>(new Set());
@@ -109,6 +118,7 @@ export function EpisodeReviewModal({
       setEpisodes(listing.episodes);
       setCameras(listing.cameras);
       setCamera((c) => c ?? listing.cameras[0] ?? null);
+      setMaps(listing.maps ?? []);
       if ("token" in listing) setClipToken(listing.token);
       if (isCloud && source.kind === "cloud") {
         try {
@@ -185,7 +195,7 @@ export function EpisodeReviewModal({
     }
     if (source.kind === "cloud") {
       if (!clipToken || !backendBase) return undefined;
-      return cloudEpisodeClipUrl(backendBase, source.sessionId, index, clipToken, camera ?? undefined);
+      return cloudEpisodeClipUrl(backendBase, source.sessionId, index, clipToken, camera ?? undefined, mapChannel);
     }
     return episodeClipUrl(baseUrl, source.repoId, index, camera ?? undefined);
   };
@@ -197,7 +207,7 @@ export function EpisodeReviewModal({
     }
     if (source.kind === "cloud") {
       if (!clipToken || !backendBase) return undefined;
-      return cloudEpisodeThumbUrl(backendBase, source.sessionId, index, clipToken, camera ?? undefined);
+      return cloudEpisodeThumbUrl(backendBase, source.sessionId, index, clipToken, camera ?? undefined, mapChannel);
     }
     return episodeThumbUrl(baseUrl, source.repoId, index, camera ?? undefined);
   };
@@ -205,7 +215,8 @@ export function EpisodeReviewModal({
   const toggleMark = (i: number) =>
     setMarked((s) => {
       const n = new Set(s);
-      n.has(i) ? n.delete(i) : n.add(i);
+      if (n.has(i)) n.delete(i);
+      else n.add(i);
       return n;
     });
 
@@ -333,6 +344,25 @@ export function EpisodeReviewModal({
               ))}
             </div>
           )}
+          {/* Map channel picker — a SEPARATE control from the camera picker (which
+              view vs. which derived channel). Bordered + non-mono to read distinctly. */}
+          {maps.length > 1 && (
+            <div className="flex items-center gap-1 rounded-full border border-border p-1">
+              {maps.map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMapChannel(m)}
+                  className={`rounded-full px-3 py-1 text-[11px] transition-colors ${
+                    mapChannel === m
+                      ? "bg-nori-h14131a/10 font-medium text-nori-h14131a"
+                      : "text-muted-foreground hover:text-nori-h14131a"
+                  }`}
+                >
+                  {m === "rgb" ? "RGB" : m.charAt(0).toUpperCase() + m.slice(1)}
+                </button>
+              ))}
+            </div>
+          )}
           <button aria-label="Close" className="rounded-lg p-1.5 hover:bg-secondary" onClick={onClose}>
             <X className="h-5 w-5" />
           </button>
@@ -453,15 +483,25 @@ export function EpisodeReviewModal({
                     }`}
                   >
                     <div className="relative aspect-video bg-secondary">
-                      {playing.has(ep.index) ? (
-                        // eslint-disable-next-line jsx-a11y/media-has-caption
+                      {mapMissing ? (
+                        // Selected derived map isn't produced yet (the processing
+                        // tools aren't wired) — placeholder until it is.
+                        <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 px-2 text-center text-muted-foreground">
+                          <span className="text-[11px] font-medium capitalize">{mapChannel}</span>
+                          <span className="text-[10px] leading-tight">not generated yet</span>
+                        </div>
+                      ) : playing.has(ep.index) ? (
                         <video
-                          key={`${ep.index}-${camera}`}
+                          key={`${ep.index}-${camera}-${mapChannel}`}
                           className="h-full w-full object-cover"
                           src={clipSrc(ep.index)}
                           controls
                           autoPlay
                           muted
+                          onError={() => {
+                            if (mapChannel !== "rgb")
+                              setFailedMaps((s) => new Set(s).add(mapChannel));
+                          }}
                         />
                       ) : (
                         <button
@@ -471,12 +511,14 @@ export function EpisodeReviewModal({
                         >
                           {thumbSrc(ep.index) && (
                             <img
-                              key={`${ep.index}-${camera}`}
+                              key={`${ep.index}-${camera}-${mapChannel}`}
                               src={thumbSrc(ep.index)}
                               alt=""
                               loading="lazy"
                               className="absolute inset-0 h-full w-full object-cover"
                               onError={(e) => {
+                                if (mapChannel !== "rgb")
+                                  setFailedMaps((s) => new Set(s).add(mapChannel));
                                 (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
                               }}
                             />

@@ -10,6 +10,7 @@ import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
 import { signOut } from "@/nori/auth/session";
 import ConsentsSection from "@/nori/components/ConsentsSection";
+import ChangePasswordSection from "@/nori/components/ChangePasswordSection";
 import HelpTip from "@/nori/components/HelpTip";
 import {
   getBillingSummary,
@@ -151,6 +152,8 @@ const Account = () => {
         />
         <Row label="Dataset repo" value={customer.hf_dataset_repo} />
       </Panel>
+
+      {customer.email && <ChangePasswordSection email={customer.email} />}
 
       {billing ? (
         <Panel

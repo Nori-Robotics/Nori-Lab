@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Download, Loader2, Lock, Trash2, Unlock, UploadCloud } from "lucide-react";
+import { Download, Loader2, Lock, Play, Trash2, Unlock, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -49,6 +49,13 @@ import {
   type RobotRecordings,
 } from "@/nori/api/client";
 import { EpisodeReviewModal, type ReviewSource } from "@/nori/components/EpisodeReviewModal";
+import { useNori } from "@/nori/NoriContext";
+import {
+  listRecordingEpisodes,
+  recordingClipUrl,
+  recordingThumbUrl,
+} from "@/nori/remote/episodeReview";
+import { type Fetcher } from "@/lib/apiClient";
 import { AssembleModal } from "@/nori/components/AssembleModal";
 import { ExportModal } from "@/nori/components/ExportModal";
 import { UploadPolicyModal } from "@/nori/components/UploadPolicyModal";
@@ -310,15 +317,210 @@ function summarizeGroup(
         ? "In cloud"
         : uploading
           ? "Uploading to cloud"
-          : "On robot · waiting",
+          : assembling
+            ? // episodes are assembling into a dataset — match the per-episode
+              // card ("Uploading to dataset"); without this the group fell
+              // through to "On robot · waiting" (contradicting the cards).
+              "Uploading to dataset"
+            : "On robot · waiting",
     detail: parts.join(" · "),
   };
 }
+
+// ---- recording preview ------------------------------------------------------
+// Each L3 recording bundle is ONE episode (episode-as-unit upload), so a
+// recording card shows that single take inline: first-frame thumbnail → plays
+// the raw clip in place on click. Lazy: the signed clip token is fetched only
+// once the tile scrolls near the viewport (rootMargin), and only for a PROMOTED
+// (in-cloud) take — a still-uploading one has no cloud clip yet. Cameras: prefer
+// the third-person view (overhead/front) for a legible preview, else the first.
+const RecordingPreview = ({
+  sessionId,
+  promoted,
+  baseUrl,
+  fetchWithHeaders,
+  backendBase,
+  camera,
+  groupKey,
+  reportCameras,
+  fill = false,
+}: {
+  sessionId: string;
+  promoted: boolean;
+  baseUrl: string;
+  fetchWithHeaders: Fetcher;
+  backendBase: string;
+  /** The camera the whole SESSION is showing (chosen on the group's one picker);
+   * null until the group's default is known — falls back to this take's own. */
+  camera: string | null;
+  /** The display-group this take belongs to — used to report cameras upward. */
+  groupKey: string;
+  reportCameras: (groupKey: string, cams: string[]) => void;
+  /** true = fill the parent's height (horizontal card); false = 16:9 banner. */
+  fill?: boolean;
+}) => {
+  const [state, setState] = useState<"idle" | "loading" | "ready" | "empty" | "error">("idle");
+  const [token, setToken] = useState<string | null>(null);
+  const [epIndex, setEpIndex] = useState<number | null>(null);
+  const [defaultCam, setDefaultCam] = useState<string | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const started = useRef(false);
+
+  useEffect(() => {
+    if (!promoted || started.current) return;
+    const el = wrapRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") {
+      // no observer (or no node) — fall back to an immediate fetch.
+      if (!started.current) void begin();
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          io.disconnect();
+          void begin();
+        }
+      },
+      { rootMargin: "300px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+
+    async function begin() {
+      if (started.current) return;
+      started.current = true;
+      setState("loading");
+      try {
+        const listing = await listRecordingEpisodes(baseUrl, fetchWithHeaders, sessionId);
+        const ep = listing.episodes[0];
+        if (!ep) {
+          setState("empty");
+          return;
+        }
+        setToken(listing.token);
+        setEpIndex(ep.index);
+        // Own fallback default (third-person view) if the group hasn't picked yet.
+        setDefaultCam(
+          listing.cameras.find((c) => /overhead|front|top|base/i.test(c)) ??
+            listing.cameras[0] ??
+            null,
+        );
+        // Report this take's cameras so the SESSION can render one shared picker.
+        reportCameras(groupKey, listing.cameras);
+        setState("ready");
+      } catch {
+        setState("error");
+      }
+    }
+  }, [promoted, sessionId, baseUrl, fetchWithHeaders, backendBase, groupKey, reportCameras]);
+
+  // The group's selected camera wins; until it's known, this take's own default.
+  const activeCam = camera ?? defaultCam;
+  const canUrl = state === "ready" && !!token && epIndex != null && !!backendBase;
+  const thumb =
+    canUrl && token && epIndex != null
+      ? recordingThumbUrl(backendBase, sessionId, epIndex, token, activeCam ?? undefined)
+      : null;
+  const clip =
+    canUrl && token && epIndex != null
+      ? recordingClipUrl(backendBase, sessionId, epIndex, token, activeCam ?? undefined)
+      : null;
+
+  return (
+    <div
+      ref={wrapRef}
+      className={`relative w-full overflow-hidden bg-secondary ${fill ? "h-full min-h-[9rem]" : "aspect-video"}`}
+    >
+      {!promoted ? (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-1 px-2 text-center text-muted-foreground">
+          <UploadCloud className="h-6 w-6 opacity-50" />
+          <span className="text-[11px] leading-tight">Preview ready once uploaded</span>
+        </div>
+      ) : state === "ready" && playing && clip ? (
+        <video
+          key={activeCam ?? "cam"}
+          className="h-full w-full object-cover"
+          src={clip}
+          controls
+          autoPlay
+          muted
+          playsInline
+        />
+      ) : state === "ready" ? (
+        <button
+          type="button"
+          className="group/preview flex h-full w-full items-center justify-center text-nori-h14131a/70 hover:text-nori-h14131a"
+          onClick={() => setPlaying(true)}
+          aria-label="Play recording"
+        >
+          {thumb && (
+            <img
+              key={activeCam ?? "cam"}
+              src={thumb}
+              alt=""
+              loading="lazy"
+              className="absolute inset-0 h-full w-full object-cover"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+              }}
+            />
+          )}
+          <span className="relative flex h-10 w-10 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur-sm transition-transform group-hover/preview:scale-110">
+            <Play className="h-4 w-4 translate-x-[1px]" />
+          </span>
+        </button>
+      ) : state === "error" || state === "empty" ? (
+        <div className="flex h-full w-full items-center justify-center text-[11px] text-muted-foreground">
+          Preview unavailable
+        </div>
+      ) : (
+        <div className="flex h-full w-full items-center justify-center">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      )}
+    </div>
+  );
+};
+
+// One segmented camera picker for a whole recording SESSION (group). Mirrors the
+// dataset review switcher; the chosen view drives every episode tile in the group.
+const SessionCameraPicker = ({
+  cameras,
+  selected,
+  onSelect,
+}: {
+  cameras: string[];
+  selected: string | null;
+  onSelect: (c: string) => void;
+}) => {
+  if (cameras.length <= 1) return null;
+  return (
+    <div className="flex items-center gap-1 rounded-full bg-secondary p-0.5">
+      {cameras.map((c) => (
+        <button
+          key={c}
+          type="button"
+          onClick={() => onSelect(c)}
+          className={`rounded-full px-2.5 py-0.5 text-[11px] transition-colors ${
+            selected === c
+              ? "bg-card text-nori-h14131a shadow-soft"
+              : "text-muted-foreground hover:text-nori-h14131a"
+          }`}
+        >
+          {c.replace(/_/g, " ")}
+        </button>
+      ))}
+    </div>
+  );
+};
 
 // ---- page ------------------------------------------------------------------
 
 const MyStuff = () => {
   const { baseUrl, fetchWithHeaders } = useApi();
+  const { config } = useNori();
+  const recBackendBase = config?.noriBackendUrl ?? "";
   const navigate = useNavigate();
 
   const [library, setLibrary] = useState<Library | null>(null);
@@ -339,6 +541,23 @@ const MyStuff = () => {
   const [deleteRecErr, setDeleteRecErr] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set()); // recordings selected to assemble
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set()); // multi-episode sessions expanded
+  // Per-SESSION camera view: one picker per display group drives every episode
+  // tile in it (like the dataset review switcher). Cameras are discovered from
+  // the first tile that loads and reported up by group key.
+  const [groupCameras, setGroupCameras] = useState<Record<string, string[]>>({}); // key -> available cams
+  const [groupCamera, setGroupCamera] = useState<Record<string, string>>({}); // key -> selected cam
+  const reportGroupCameras = useCallback((key: string, cams: string[]) => {
+    if (!cams.length) return;
+    setGroupCameras((prev) => (prev[key] ? prev : { ...prev, [key]: cams }));
+    setGroupCamera((prev) =>
+      prev[key]
+        ? prev
+        : {
+            ...prev,
+            [key]: cams.find((c) => /overhead|front|top|base/i.test(c)) ?? cams[0],
+          },
+    );
+  }, []);
   const [assembleOpen, setAssembleOpen] = useState(false);
   const [exporting, setExporting] = useState<{ session_id: string; label: string } | null>(null); // dataset being downloaded
   const [deleting, setDeleting] = useState<LibraryDataset | null>(null); // pending delete confirmation
@@ -768,7 +987,11 @@ const MyStuff = () => {
   // (it would otherwise repeat N times, e.g. "Full-quality copy is in your
   // cloud…" on every episode). The short status Pill stays, so an episode that's
   // out of step with the group (still uploading) is still legible at a glance.
-  const renderRecordingCard = (b: RawBundleEntry, compact = false) => {
+  // A single recorded EPISODE, media-forward (thumbnail → inline clip). This is
+  // deliberately shaped unlike the text-only dataset cards: the take's own video
+  // leads the card. `compact` = a tile inside an expanded session grid; otherwise
+  // a wide horizontal row for a standalone single take.
+  const renderRecordingCard = (b: RawBundleEntry, compact = false, groupKey = b.session_id) => {
     const { assembling, promoted, inCloud, finishing, failed, uploadActive } = recordingFlags(b);
     // "Actually happening right now": either the robot's heartbeat says so, or
     // this bundle's own row is fresh/finalizing (the robot creates the row at
@@ -780,161 +1003,202 @@ const MyStuff = () => {
     // Deletable once it's in a stable state (in cloud / failed) and not
     // mid-assembly — deleting a source mid-assembly would break the job.
     const deletable = !assembling && (promoted || failed);
+    const isPicked = picked.has(b.session_id);
+    // The session-wide camera this take shows (chosen on the group's one picker).
+    const sessionCamera = groupCamera[groupKey] ?? null;
+
+    const statusPill = (
+      <Pill
+        tone={
+          assembling
+            ? "sticker"
+            : inCloud || (finishing && !activeNow)
+              ? "leaf"
+              : failed
+                ? "secondary"
+                : "sticker"
+        }
+      >
+        {assembling
+          ? "Uploading to dataset"
+          : inCloud
+            ? "In cloud"
+            : failed
+              ? "Needs attention"
+              : !activeNow
+                ? finishing
+                  ? "In cloud · clearing pending"
+                  : "On robot · waiting for upload"
+                : finishing
+                  ? "Finishing on robot…"
+                  : "Uploading to cloud"}
+      </Pill>
+    );
+
+    // A checkbox floated over the media (select this ONE episode). Whole-session
+    // select stays on the group header — both feed the same `picked` set.
+    const selectOverlay = selectable && (
+      <label className="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-md bg-black/45 backdrop-blur-sm">
+        <input
+          type="checkbox"
+          checked={isPicked}
+          onChange={() => togglePick(b.session_id)}
+          className="h-4 w-4 accent-nori-h14131a"
+          aria-label={`Select ${b.label}`}
+        />
+      </label>
+    );
+
+    const meta = (
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[13px] text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
+        {b.duration_s != null && (
+          <span><b className="font-semibold text-nori-h14131a">{formatDuration(b.duration_s)}</b></span>
+        )}
+        {b.frame_count != null && (
+          <span><b className="font-semibold text-nori-h14131a">{fmt(b.frame_count)}</b> fr</span>
+        )}
+        {b.action_count != null && (
+          <span><b className="font-semibold text-nori-h14131a">{fmt(b.action_count)}</b> motion</span>
+        )}
+      </div>
+    );
+
+    const capturePills = (b.robot_type || b.camera_format || b.auto_exposure) && (
+      <div className="flex flex-wrap items-center gap-1.5">
+        {b.robot_type && <Pill tone="accent">{b.robot_type}</Pill>}
+        {b.camera_format && <Pill tone="secondary">{b.camera_format}</Pill>}
+        {b.auto_exposure && <Pill tone="secondary">{b.auto_exposure} exp</Pill>}
+      </div>
+    );
+
+    const actions = (promoted || failed) && (
+      <div className="flex items-center gap-1">
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={lockBusy === b.session_id}
+          onClick={() => onToggleRecordingLock(b)}
+        >
+          {b.locked ? (
+            <><Unlock className="mr-1 h-3.5 w-3.5" /> Unlock</>
+          ) : (
+            <><Lock className="mr-1 h-3.5 w-3.5" /> Lock</>
+          )}
+        </Button>
+        {deletable && !b.locked && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+            onClick={() => {
+              setDeleteRecErr(null);
+              setDeletingRecording(b);
+            }}
+          >
+            <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+          </Button>
+        )}
+      </div>
+    );
+
+    // The verbose upload-journey line: only for the actionable states (a plain
+    // "in cloud"/"waiting" is already conveyed by the pill). Assembly-error is
+    // always surfaced.
+    const detailLine = (assembling || failed) && (
+      <p className="text-[12px] italic text-muted-foreground">
+        {assembling
+          ? "Being assembled into a dataset — runs in your cloud, a few minutes."
+          : `Upload problem: ${b.failure_reason ?? "unknown"}`}
+      </p>
+    );
+    const assemblyErr = b.last_assembly_error && !assembling && (
+      <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
+        Couldn't assemble into a dataset: {b.last_assembly_error}
+      </p>
+    );
+
+    const ring = isPicked ? " ring-2 ring-nori-h14131a" : "";
+
+    if (compact) {
+      // Tile for the in-session grid: media banner on top, meta below.
+      return (
+        <article
+          key={b.session_id}
+          className={`group overflow-hidden rounded-2xl border border-border bg-card shadow-soft transition-shadow hover:shadow-pop${ring}`}
+        >
+          <div className="relative">
+            <RecordingPreview
+              sessionId={b.session_id}
+              promoted={promoted}
+              baseUrl={baseUrl}
+              fetchWithHeaders={fetchWithHeaders}
+              backendBase={recBackendBase}
+              camera={sessionCamera}
+              groupKey={groupKey}
+              reportCameras={reportGroupCameras}
+            />
+            {selectOverlay}
+            <span className="absolute right-2 top-2">{statusPill}</span>
+          </div>
+          <div className="space-y-1.5 p-3">
+            <EditableName value={b.label} onRename={(next) => onRenameUpload(b.session_id, next)} />
+            {meta}
+            {capturePills}
+            {actions && <div className="flex justify-end">{actions}</div>}
+            {detailLine}
+            {assemblyErr}
+          </div>
+        </article>
+      );
+    }
+
+    // Standalone single take: wide horizontal row — media fills the left column.
     return (
       <article
         key={b.session_id}
-        className={`${cardCls}${picked.has(b.session_id) ? " ring-2 ring-nori-h14131a" : ""}`}
+        className={`group flex overflow-hidden rounded-2xl border border-border bg-card shadow-soft transition-shadow hover:shadow-pop${ring}`}
       >
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-3">
-            {selectable && (
-              <input
-                type="checkbox"
-                checked={picked.has(b.session_id)}
-                onChange={() => togglePick(b.session_id)}
-                className="mt-1 h-4 w-4 shrink-0 accent-nori-h14131a"
-                aria-label={`Select ${b.label}`}
-              />
-            )}
+        <div className="relative w-40 shrink-0 sm:w-56">
+          <RecordingPreview
+            sessionId={b.session_id}
+            promoted={promoted}
+            baseUrl={baseUrl}
+            fetchWithHeaders={fetchWithHeaders}
+            backendBase={recBackendBase}
+            camera={sessionCamera}
+            groupKey={groupKey}
+            reportCameras={reportGroupCameras}
+            fill
+          />
+          {selectOverlay}
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col gap-2 p-4">
+          <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              {/* Title line: name + "Episode" (singular; N episodes if a bundle
-                  ever holds more) + the upload/record time, all on one line to
-                  keep the card compact. Rename hits the same owner-scoped
-                  upload-label endpoint as datasets (raw bundles are sessions). */}
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                <EditableName
-                  value={b.label}
-                  onRename={(next) => onRenameUpload(b.session_id, next)}
-                />
-                <span className="shrink-0 text-xs text-muted-foreground [font-variant-numeric:tabular-nums]">
-                  {b.episode_count != null && b.episode_count !== 1
-                    ? `${fmt(b.episode_count)} episodes`
-                    : "Episode"}
-                  {" · "}
-                  {b.status === "PROMOTED" && b.finalized_at
-                    ? `Uploaded ${shortDateTime(b.finalized_at)}`
-                    : `Recorded ${shortDateTime(b.created_at)}`}
-                </span>
-              </div>
+              <EditableName value={b.label} onRename={(next) => onRenameUpload(b.session_id, next)} />
+              <p className="text-xs text-muted-foreground [font-variant-numeric:tabular-nums]">
+                {b.episode_count != null && b.episode_count !== 1 ? `${fmt(b.episode_count)} episodes · ` : "Episode · "}
+                {b.status === "PROMOTED" && b.finalized_at
+                  ? `Uploaded ${shortDateTime(b.finalized_at)}`
+                  : `Recorded ${shortDateTime(b.created_at)}`}
+              </p>
             </div>
+            {statusPill}
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-          <Pill
-            tone={
-              assembling
-                ? "sticker"
-                : inCloud || (finishing && !activeNow)
-                  ? "leaf"
-                  : failed
-                    ? "secondary"
-                    : "sticker"
-            }
-          >
-            {assembling
-              ? "Uploading to dataset"
-              : inCloud
-                ? "In cloud"
-                : failed
-                  ? "Needs attention"
-                  : !activeNow
-                    ? // Nothing is demonstrably happening (no heartbeat signal AND
-                      // the row is stale). A promoted take is already cloud-safe;
-                      // an unpromoted one waits until the robot idles/reconnects.
-                      finishing
-                      ? "In cloud · clearing pending"
-                      : "On robot · waiting for upload"
-                    : finishing
-                      ? "Finishing on robot…"
-                      : "Uploading to cloud"}
-          </Pill>
-          </div>
+          {/* Single take = a session of one: its camera picker lives on the card. */}
+          {(groupCameras[groupKey]?.length ?? 0) > 1 && (
+            <SessionCameraPicker
+              cameras={groupCameras[groupKey] ?? []}
+              selected={sessionCamera}
+              onSelect={(c) => setGroupCamera((prev) => ({ ...prev, [groupKey]: c }))}
+            />
+          )}
+          {meta}
+          {capturePills}
+          {actions && <div className="flex justify-end">{actions}</div>}
+          {detailLine}
+          {assemblyErr}
         </div>
-        {/* Capture provenance — what this take was filmed on/with. Each tag is
-            shown only when the backend has surfaced it from meta.json.capture. */}
-        {(b.robot_type || b.camera_format || b.auto_exposure) && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            {b.robot_type && <Pill tone="accent">{b.robot_type}</Pill>}
-            {b.camera_format && <Pill tone="secondary">{b.camera_format}</Pill>}
-            {b.auto_exposure && <Pill tone="secondary">{b.auto_exposure} exp</Pill>}
-          </div>
-        )}
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm text-nori-h14131a/80 [font-variant-numeric:tabular-nums]">
-          <span className="flex flex-wrap gap-x-4 gap-y-1">
-            {b.duration_s != null && <span><b className="font-semibold text-nori-h14131a">{formatDuration(b.duration_s)}</b></span>}
-            {b.frame_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(b.frame_count)}</b> frames</span>}
-            {b.action_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(b.action_count)}</b> motion samples</span>}
-          </span>
-          <div className="flex items-center gap-1.5">
-            {/* Preview the ORIGINAL recorded video (raw_bundle viewer) — the
-                robot's own H.264 at full quality, viewable before assembly. */}
-            {selectable && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setReviewing({ kind: "raw", sessionId: b.session_id, title: b.label })}
-              >
-                Preview
-              </Button>
-            )}
-            {(promoted || failed) && (
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={lockBusy === b.session_id}
-                onClick={() => onToggleRecordingLock(b)}
-              >
-                {b.locked ? (
-                  <><Unlock className="mr-1 h-3.5 w-3.5" /> Unlock</>
-                ) : (
-                  <><Lock className="mr-1 h-3.5 w-3.5" /> Lock</>
-                )}
-              </Button>
-            )}
-            {deletable && !b.locked && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                onClick={() => {
-                  setDeleteRecErr(null);
-                  setDeletingRecording(b);
-                }}
-              >
-                <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
-              </Button>
-            )}
-          </div>
-        </div>
-        {/* Verbose status line — shown only on standalone cards. Inside a group
-            the header summarizes status, so repeating this per episode just
-            clogs the list. Assembly/upload-error states are the exception: they
-            need the detail even when grouped, so they still render compact. */}
-        {(!compact || assembling || failed) && (
-        <p className="mt-3 border-t border-dashed border-border pt-2.5 text-[12px] italic text-muted-foreground">
-          {assembling
-            ? "Being assembled into a dataset — this runs in your cloud and can take a few minutes."
-            : failed
-              ? `Upload problem: ${b.failure_reason ?? "unknown"}`
-              : inCloud
-                ? "Full-quality copy is in your cloud. Select it to assemble a trainable dataset."
-                : !activeNow
-                  ? finishing
-                    ? "Full-quality copy is safe in your cloud. The copy on your robot will be cleared."
-                    : "Recorded and held on the robot. It uploads automatically once the robot is powered on and idle."
-                  : finishing
-                    ? "Safe in your cloud — the robot is clearing its local copy. Keep Nori powered on until it finishes."
-                    : "Uploading from the robot — this finishes while the robot is idle."}
-        </p>
-        )}
-        {/* The latest assembly attempt with this recording FAILED — show
-            which episode and why (e.g. a camera gap), so the user knows to
-            re-record rather than retry. Hidden while a new attempt runs;
-            the backend clears it once a later attempt succeeds. */}
-        {b.last_assembly_error && !assembling && (
-          <p className="mt-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
-            Couldn't assemble into a dataset: {b.last_assembly_error}
-          </p>
-        )}
       </article>
     );
   };
@@ -1057,7 +1321,7 @@ const MyStuff = () => {
             // recording) still gets the expandable group header, so past
             // recordings match new multi-episode sessions.
             if (group.bundles.length === 1 && (group.bundles[0].episode_count ?? 1) <= 1)
-              return renderRecordingCard(group.bundles[0]);
+              return renderRecordingCard(group.bundles[0], false, group.key);
             const expanded = expandedGroups.has(group.key);
             const summary = summarizeGroup(group, robotReporting);
             // Total episodes: sum per-bundle counts, so it's right whether the
@@ -1119,9 +1383,25 @@ const MyStuff = () => {
                   </button>
                 </div>
                 {expanded && (
-                  <div className="space-y-3 px-3 pb-3">
-                    {group.bundles.map((b) => renderRecordingCard(b, true))}
-                  </div>
+                  <>
+                    {/* One camera picker for the whole session — drives every
+                        episode tile below (like the dataset review switcher). */}
+                    {(groupCameras[group.key]?.length ?? 0) > 1 && (
+                      <div className="flex items-center gap-2 px-4 pb-2">
+                        <span className="text-xs text-muted-foreground">View</span>
+                        <SessionCameraPicker
+                          cameras={groupCameras[group.key] ?? []}
+                          selected={groupCamera[group.key] ?? null}
+                          onSelect={(c) =>
+                            setGroupCamera((prev) => ({ ...prev, [group.key]: c }))
+                          }
+                        />
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 gap-3 px-3 pb-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {group.bundles.map((b) => renderRecordingCard(b, true, group.key))}
+                    </div>
+                  </>
                 )}
               </div>
             );
@@ -1237,6 +1517,18 @@ const MyStuff = () => {
                   {d.episode_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(d.episode_count)}</b> episodes</span>}
                   {d.frame_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(d.frame_count)}</b> frames</span>}
                 </div>
+                {/* Assemble-time processing (REQUESTED — the tools aren't wired yet):
+                    video processing + derived maps this dataset was assembled with. */}
+                {((d.video_processing?.length ?? 0) > 0 || (d.derived_maps?.length ?? 0) > 0) && (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {(d.video_processing ?? []).map((v) => (
+                      <Pill key={`vp-${v}`} tone="secondary">{v.replace(/_/g, " ")}</Pill>
+                    ))}
+                    {(d.derived_maps ?? []).map((m) => (
+                      <Pill key={`map-${m}`} tone="accent">{m}</Pill>
+                    ))}
+                  </div>
+                )}
                 <div className="mt-3 border-t border-dashed border-border pt-2.5 text-[13px] text-nori-h14131a/70">
                   {d.policies.length === 0 ? (
                     <span className="italic text-muted-foreground">No policies trained yet.</span>
@@ -1481,6 +1773,9 @@ const MyStuff = () => {
         <AssembleModal
           sources={[...picked]}
           datasets={datasetOptions}
+          sourceFrameCount={(robot?.bundles ?? [])
+            .filter((b) => picked.has(b.session_id))
+            .reduce((n, b) => n + (b.frame_count ?? 0), 0)}
           onClose={() => {
             setAssembleOpen(false);
             void load(); // pick up the "uploading to dataset" badge if backgrounded

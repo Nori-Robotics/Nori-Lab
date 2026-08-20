@@ -158,3 +158,62 @@
     margin-right: 0;
   }
 }
+
+/* Model-scope banner, rendered on every page via the layout-top slot (see theme/index.ts).
+ *
+ * `--vp-layout-top-height` is not decoration — VitePress reads it to offset its own fixed nav
+ * and sticky sidebar. It MUST equal the banner's real rendered height or the nav overlaps the
+ * banner. The banner is therefore given a fixed height rather than letting content size it,
+ * and the two values are set together at each breakpoint.
+ *
+ * The two-line allowance below 640px is deliberate: the sentence wraps to two lines somewhere
+ * around 380px, and a banner that clips its own second line is worse than one with slack.
+ *
+ * Colour uses the brand-soft fill with brand-1 text — the same pairing as the BETA pill, which
+ * was already contrast-checked in both modes (5.83:1 light, 9.90:1 dark). Deliberately NOT the
+ * signature #89b135 as text: that fails AA on paper at body size.
+ */
+:root {
+  --vp-layout-top-height: 60px;
+}
+
+@media (min-width: 640px) {
+  :root {
+    --vp-layout-top-height: 40px;
+  }
+}
+
+.nori-model-banner {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: var(--vp-z-index-layout-top);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: var(--vp-layout-top-height);
+  padding: 0 16px;
+  border-bottom: 1px solid var(--vp-c-divider);
+  background-color: var(--vp-c-brand-soft);
+  color: var(--vp-c-brand-1);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.nori-model-banner-text {
+  display: block;
+  max-width: 100%;
+}
+
+.nori-model-banner a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.nori-model-banner a:hover {
+  color: var(--vp-c-brand-2);
+}

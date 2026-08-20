@@ -48,16 +48,55 @@ export interface SignUpResult {
 }
 
 /** Register a new user via Supabase Auth. Whether a session is returned immediately
- * depends on the project's email-confirmation setting; the caller handles both. */
+ * depends on the project's email-confirmation setting; the caller handles both.
+ * When confirmation is ON, Supabase returns no session and sends an email whose
+ * link lands on `emailRedirectTo` (must be allowlisted in Auth → URL Config). */
 export async function signUp(email: string, password: string): Promise<SignUpResult> {
-  const { data, error } = await getSupabase().auth.signUp({ email, password });
+  const emailRedirectTo = `${window.location.origin}/nori/auth/callback`;
+  const { data, error } = await getSupabase().auth.signUp({
+    email,
+    password,
+    options: { emailRedirectTo },
+  });
   if (error) throw error;
   return { session: data.session, needsEmailConfirmation: !data.session };
+}
+
+/** Re-send the signup confirmation email (strict email verification). Supabase
+ * does not reveal whether the address is registered/unconfirmed, so callers must
+ * show a non-enumerating message. Lands on the same callback route. */
+export async function resendConfirmation(email: string): Promise<void> {
+  const emailRedirectTo = `${window.location.origin}/nori/auth/callback`;
+  const { error } = await getSupabase().auth.resend({
+    type: "signup",
+    email,
+    options: { emailRedirectTo },
+  });
+  if (error) throw error;
 }
 
 export async function signOut(): Promise<void> {
   if (!isSupabaseReady()) return;
   await getSupabase().auth.signOut();
+}
+
+/** Send a password-reset email. Supabase does NOT reveal whether the address has an
+ * account (returns success regardless), so the caller must show a non-enumerating
+ * message. The link lands on `redirectTo` (must be an allowlisted URL in the
+ * Supabase project's Auth → URL Configuration) with a recovery token the SDK turns
+ * into a short-lived recovery session. */
+export async function sendPasswordReset(email: string): Promise<void> {
+  const redirectTo = `${window.location.origin}/nori/reset-password`;
+  const { error } = await getSupabase().auth.resetPasswordForEmail(email, { redirectTo });
+  if (error) throw error;
+}
+
+/** Set a new password for the CURRENT session (a signed-in user, or a recovery
+ * session established by a reset link). Requires an active session — callers on
+ * the signed-in path should re-authenticate with the current password first. */
+export async function updatePassword(newPassword: string): Promise<void> {
+  const { error } = await getSupabase().auth.updateUser({ password: newPassword });
+  if (error) throw error;
 }
 
 /** Subscribe to auth-state changes. Returns an unsubscribe function. */

@@ -29,8 +29,6 @@ connection. Read [the safety contract](/sdk/safety) before you ship.
 
 ## Status
 
-`v0`, for a small set of collaborating devs — not a public release.
-
 The core teleop + VR surface is stable. The two-way **call** API (`joinCall` / `leaveCall` / mic /
 camera on `RemoteTeleop`) is present but **experimental** and may change.
 
@@ -38,11 +36,11 @@ Note the robot-side consent gate: `joinCall()` rings an accept prompt at the rob
 stays silent until a person there accepts. Audio clips sent via `sendClipAudio` are exempt — see
 [Audio](/sdk/audio).
 
-Several pages carry a **Verification status** note where the SDK surface exists but the robot-side
-half isn't deployed or verified yet. Those are real: trust them over the surrounding prose.
+Where an SDK surface exists but the robot-side half isn't live yet, the page says so in a
+callout. Those callouts are accurate — read them before building on the feature.
 
 ## License and lineage
 
 Apache-2.0. Developed within Nori's fork of
 [huggingface/leLab](https://github.com/huggingface/lelab) (Apache-2.0); the SDK package files are
-Nori-original additions, marked with `// NORI:` header comments.
+Nori-original additions.

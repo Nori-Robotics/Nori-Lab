@@ -67,7 +67,7 @@ On `null` with a role set, report the valid roles (`cameraLayoutInfo()?.tiles`) 
 Single-camera robots send no layout, so any `role` returns `null` there — use the bare calls.
 :::
 
-The role→rect mapping is exported as `cameraTileRect(layout, role, w, h)` (pure, unit-tested) if
+The role→rect mapping is exported as `cameraTileRect(layout, role, w, h)` (a pure function) if
 you need the same math elsewhere.
 
 ## The raw stream, no DOM required
@@ -111,8 +111,7 @@ Read this before filing a video issue:
   This is deliberate: one encode on the robot.
 - **The ceiling is robot power, not the protocol.** The Pi 5 has no hardware H.264 encoder, so
   encode pixels×fps directly hits the robot's power budget. Resolution and fps are tuned to
-  measured hardware limits and will improve when the robot's supply hardware does. A
-  live-switchable resolution API is designed and lands when that headroom exists.
+  measured hardware limits. There is no way to change resolution live today.
 - **Bitrate adapts to your link automatically.** The SDK measures loss/RTT/delivered-fps once a
   second and streams a bitrate target to the robot's encoder (sessions start ~600 kbps and ramp
   to the robot's ceiling on a clean link; on a congested one — hotspots especially — the picture
@@ -123,11 +122,10 @@ Read this before filing a video issue:
   halves the encode resolution (`videoNet.frameHeight` drops, e.g. 480 → 240) so keyframes fit
   the pipe — it steps back up automatically as the link recovers.
 
-::: warning Verification status (v0)
-`setVideoEl`/`setAudioEl`, `pauseVideo`/`resumeVideo`, `captureFrame`/`snapshot`, and the
-`videoStream` / `cameraView` additions are implemented and typecheck/build-clean, but **pending
-on-robot verification** — encoder power drop, clean keyframe resume, frame grab, and tile-crop
-against a real composite.
+::: warning Not yet verified on hardware
+`setVideoEl`/`setAudioEl`, `pauseVideo`/`resumeVideo`, `captureFrame`/`snapshot`, and
+`videoStream`/`cameraView` are implemented but have not been verified against a real robot —
+expect rough edges around pause/resume and tile cropping.
 
-The inbound video feed itself is hardware-verified and stable.
+The inbound video feed itself is stable.
 :::

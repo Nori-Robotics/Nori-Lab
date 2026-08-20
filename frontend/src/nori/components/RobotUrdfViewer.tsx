@@ -190,6 +190,13 @@ function styleAndFrame(
         ...finish,
         transparent: src?.transparent ?? false,
         opacity: src?.opacity ?? 1,
+        // Double-sided on purpose. The visual meshes are decimated OPEN shells
+        // exported from CAD, and some exports carry whole patches wound inward
+        // (elbow_pitch and forearm_yaw are measurably winding-inconsistent).
+        // With default front-side culling an inward patch renders as a hole in
+        // the part — invisible in mesh editors, which preview double-sided.
+        // Backface cost on a ~150k-tri scene is negligible.
+        side: THREE.DoubleSide,
       });
       // The eyes are the one thing on this robot that should look lit rather
       // than lit-upon. Emissive drives them past the bloom threshold (0.92) so
@@ -265,8 +272,10 @@ export type ViewerApi = {
   setJoint: (name: string, value: number) => void;
   /** Green-highlight the link a joint drives, as hover does. Null clears. */
   highlightJoint: (name: string | null) => void;
-  /** Place the camera on a sphere around the robot's centre. Radians, metres. */
-  orbit: (azimuth: number, elevation: number, distance: number) => void;
+  /** Place the camera on a sphere around the robot's centre. Radians, metres.
+   *  targetYOffset raises the LOOK point without moving the orbit centre — the
+   *  lift raises the robot ~0.5 m and a fixed target crops the head off. */
+  orbit: (azimuth: number, elevation: number, distance: number, targetYOffset?: number) => void;
   frame: () => void;
 };
 
@@ -361,6 +370,12 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     // same green a selected arm turns on the remote page, so hovering here reads
     // as the same interaction.
     viewer.setAttribute("highlight-color", HIGHLIGHT);
+    // The element's hover highlight SWAPS mesh materials for its own — which is
+    // front-side by default. Every base material here is DoubleSide (the meshes
+    // are open shells), so a single-sided highlight reintroduces the culling
+    // holes exactly while a link is highlighted. Same for the demo highlight.
+    const hl = (viewer as unknown as { highlightMaterial?: THREE.Material }).highlightMaterial;
+    if (hl) hl.side = THREE.DoubleSide;
 
     // LIGHTING — deliberately rebuilt from nothing.
     //
@@ -468,12 +483,18 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
           prev?.dispose();
           hdrTexture.dispose();
           viewer.redraw();
+          // Recorder gate: the demo capture must not start until the FINAL
+          // environment is lit, or the video shows the fallback-to-HDRI tint
+          // swap mid-take. Also set on error below so a failed fetch degrades
+          // instead of deadlocking the recorder.
+          (window as unknown as { __noriEnvReady?: boolean }).__noriEnvReady = true;
         },
         undefined,
         (err) => {
           // Loud on purpose: the fallback means the page still looks fine, so
           // nothing else would tell you the HDRI never loaded.
           console.error("[RobotUrdfViewer] environment map failed to load", err);
+          (window as unknown as { __noriEnvReady?: boolean }).__noriEnvReady = true;
         }
       );
       // Reflections and fill, dialled well back — enough to give metal something
@@ -639,6 +660,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       emissive: 0xa1d873,
       emissiveIntensity: 0.25,
       roughness: 0.6,
+      side: THREE.DoubleSide, // matches the base materials — see note above
     });
     const highlighted = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
     const clearHighlight = () => {
@@ -673,8 +695,9 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
           v.redraw();
           postRef.current?.invalidate();
         },
-        orbit: (azimuth, elevation, distance) => {
-          const t = v.controls.target;
+        orbit: (azimuth, elevation, distance, targetYOffset = 0) => {
+          const t = v.controls.target.clone();
+          t.y += targetYOffset;
           v.camera.position.set(
             t.x + distance * Math.cos(elevation) * Math.cos(azimuth),
             t.y + distance * Math.sin(elevation),

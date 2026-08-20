@@ -334,3 +334,14 @@
   --accent: 42 42% 18%;
   --accent-foreground: 50 43% 97%;
 }
+
+/* Entrance for the model page's panels and the demo title card. Fill-mode
+   backwards keeps staggered elements invisible until their delay elapses —
+   without it they flash in place first and then replay the animation. */
+@keyframes nori-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.nori-rise {
+  animation: nori-rise 0.55s cubic-bezier(0.22, 0.8, 0.3, 1) backwards;
+}

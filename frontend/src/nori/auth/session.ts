@@ -48,11 +48,31 @@ export interface SignUpResult {
 }
 
 /** Register a new user via Supabase Auth. Whether a session is returned immediately
- * depends on the project's email-confirmation setting; the caller handles both. */
+ * depends on the project's email-confirmation setting; the caller handles both.
+ * When confirmation is ON, Supabase returns no session and sends an email whose
+ * link lands on `emailRedirectTo` (must be allowlisted in Auth → URL Config). */
 export async function signUp(email: string, password: string): Promise<SignUpResult> {
-  const { data, error } = await getSupabase().auth.signUp({ email, password });
+  const emailRedirectTo = `${window.location.origin}/nori/auth/callback`;
+  const { data, error } = await getSupabase().auth.signUp({
+    email,
+    password,
+    options: { emailRedirectTo },
+  });
   if (error) throw error;
   return { session: data.session, needsEmailConfirmation: !data.session };
+}
+
+/** Re-send the signup confirmation email (strict email verification). Supabase
+ * does not reveal whether the address is registered/unconfirmed, so callers must
+ * show a non-enumerating message. Lands on the same callback route. */
+export async function resendConfirmation(email: string): Promise<void> {
+  const emailRedirectTo = `${window.location.origin}/nori/auth/callback`;
+  const { error } = await getSupabase().auth.resend({
+    type: "signup",
+    email,
+    options: { emailRedirectTo },
+  });
+  if (error) throw error;
 }
 
 export async function signOut(): Promise<void> {

@@ -7,6 +7,19 @@ import {
   setupMeshLoader,
   URDFViewerElement,
 } from "@/lib/urdfViewerHelpers";
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import {
+  attachPostProcessing,
+  BLOOM_LAYER,
+  type Post,
+} from "@/nori/components/postprocess";
+import {
+  collectColliders,
+  findCollisions,
+  type Collider,
+  type CollisionPair,
+} from "@/nori/components/selfCollision";
 import { ThemeProviderContext } from "@/contexts/ThemeContext";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +44,34 @@ if (typeof window !== "undefined" && !customElements.get("urdf-viewer")) {
  */
 
 const URDF_PATH = "/nori-urdf/nori.urdf";
+
+/**
+ * Live lighting overrides from the URL, e.g.
+ *   ?exposure=2.4&env=1.6&key=0.8
+ *
+ * Tuning a lighting chain by editing source, rebuilding and reloading is slow
+ * enough that it turns into guesswork — especially when the composited and
+ * uncomposited paths differ and you are trying to find the factor between them.
+ * These make it one reload per value. They are read once at mount; absent
+ * params keep the defaults below.
+ */
+function lightingOverrides() {
+  const q =
+    typeof window === "undefined"
+      ? new URLSearchParams()
+      : new URLSearchParams(window.location.search);
+  const num = (k: string, fallback: number) => {
+    const v = parseFloat(q.get(k) ?? "");
+    return Number.isFinite(v) ? v : fallback;
+  };
+  return {
+    exposure: num("exposure", 0.8),
+    env: num("env", 0.2),
+    key: num("key", 0.55),
+    fill: num("fill", 0.12),
+    eye: num("eye", 0.1),
+  };
+}
 
 const HIGHLIGHT = "#a1d873"; // ARM_ACTIVE — the green a selected arm turns on the remote page
 
@@ -122,6 +163,7 @@ function styleAndFrame(
   viewer: URDFViewerElement,
   finishFor: (link: string, material: string) => Finish
 ) {
+  const eyeIntensity = lightingOverrides().eye;
   const robot = viewer.robot;
   if (!robot) return;
 
@@ -133,6 +175,8 @@ function styleAndFrame(
   robot.traverse((obj: THREE.Object3D) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     // Walk up to the owning link: materials.yaml binds finishes by LINK name,
     // whereas the URDF binds colour by material name.
     let owner: THREE.Object3D | null = obj;
@@ -147,6 +191,18 @@ function styleAndFrame(
         transparent: src?.transparent ?? false,
         opacity: src?.opacity ?? 1,
       });
+      // The eyes are the one thing on this robot that should look lit rather
+      // than lit-upon. Emissive drives them past the bloom threshold (0.92) so
+      // they glow, while nothing else on the model — not even the white shell —
+      // gets near it.
+      if (src?.name === "nori_eye") {
+        std.emissive = new THREE.Color(0xdfefff);
+        std.emissiveIntensity = eyeIntensity;
+        std.toneMapped = true;
+        // Opt this mesh into the bloom pass. Nothing else on the robot is on
+        // this layer, so nothing else can glow however bright it renders.
+        mesh.layers.enable(BLOOM_LAYER);
+      }
       std.name = src?.name ?? "";
       return std;
     });
@@ -166,8 +222,18 @@ function styleAndFrame(
   // robot doesn't bow outward at the edges of a small card.
   const camera = viewer.camera;
   camera.fov = 16;
-  camera.near = 0.01;
-  camera.far = 100;
+  // Tight near/far, because SSAO reads the depth buffer.
+  //
+  // The default 0.01/100 is a 10,000:1 ratio, and depth precision is distributed
+  // logarithmically — almost all of it lands in the first few centimetres, so at
+  // robot distance neighbouring surfaces become indistinguishable. SSAO then
+  // reads that noise as occlusion and darkens everything uniformly, which is
+  // what made the composited image far darker than the raw one.
+  //
+  // A 1.3 m robot viewed from a few metres needs nothing like that range; 200:1
+  // gives the depth buffer somewhere useful to spend its bits.
+  camera.near = 0.05;
+  camera.far = 20;
 
   // Distance that just contains the robot's largest dimension at this fov, plus
   // headroom so it isn't wedged against the edges.
@@ -188,6 +254,22 @@ function styleAndFrame(
   viewer.redraw();
 }
 
+/**
+ * Programmatic handle to the viewer, for choreographed sequences (the ?demo=1
+ * release animation). Everything here goes through the same paths as user
+ * interaction — setJoint fires the element's own angle-change event, so the
+ * pose readout, mimic joints and collision check all react exactly as if a
+ * person dragged the joint.
+ */
+export type ViewerApi = {
+  setJoint: (name: string, value: number) => void;
+  /** Green-highlight the link a joint drives, as hover does. Null clears. */
+  highlightJoint: (name: string | null) => void;
+  /** Place the camera on a sphere around the robot's centre. Radians, metres. */
+  orbit: (azimuth: number, elevation: number, distance: number) => void;
+  frame: () => void;
+};
+
 /** What the viewer can tell the page about the part under the cursor. */
 export type HoveredJoint = {
   name: string;
@@ -200,6 +282,19 @@ interface RobotUrdfViewerProps {
   className?: string;
   /** Fires with the joint under the cursor, or null when nothing is hovered. */
   onHoverJoint?: (joint: HoveredJoint | null) => void;
+  /**
+   * Fires whenever the pose changes with the links currently intersecting each
+   * other. Kinematic only — geometry and joint limits, no physics.
+   */
+  onCollisions?: (pairs: CollisionPair[]) => void;
+  /**
+   * Run the self-collision check. Off by default: it is a diagnostic, not
+   * something someone browsing the model asked for, and a red panel on a page
+   * whose job is "here is our robot" reads as a fault rather than a feature.
+   */
+  collisionCheck?: boolean;
+  /** Hands the page a programmatic handle once the model is ready. */
+  onViewerReady?: (api: ViewerApi) => void;
   /** Fires once when the model loads, with every movable joint and its limits. */
   onJointsLoaded?: (joints: HoveredJoint[]) => void;
   /**
@@ -216,6 +311,9 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   onHoverJoint,
   onPoseChange,
   onJointsLoaded,
+  onCollisions,
+  onViewerReady,
+  collisionCheck = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<URDFViewerElement | null>(null);
@@ -237,6 +335,14 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   poseCb.current = onPoseChange;
   const jointsCb = useRef(onJointsLoaded);
   jointsCb.current = onJointsLoaded;
+  const collisionCb = useRef(onCollisions);
+  collisionCb.current = onCollisions;
+  const checkOn = useRef(collisionCheck);
+  checkOn.current = collisionCheck;
+  const collidersRef = useRef<Collider[]>([]);
+  const postRef = useRef<Post | null>(null);
+  const readyCb = useRef(onViewerReady);
+  readyCb.current = onViewerReady;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -256,33 +362,54 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     // as the same interaction.
     viewer.setAttribute("highlight-color", HIGHLIGHT);
 
-    // Match Robot3D's lighting. The element ships its own lights, so replace
-    // rather than add — stacking them washes the model out.
-    viewer.scene.traverse((o: THREE.Object3D) => {
-      const l = o as THREE.Light;
-      if (l.isLight) l.intensity = 0;
-    });
-    // Ambient kept low: it is the enemy of shape. Every extra unit of it lifts the
-    // shadowed faces toward the lit ones, so a bright ambient plus a bright key
-    // gives a well-exposed model with no form at all.
-    const ambient = new THREE.AmbientLight(0xffffff, 0.42);
-    // Light positions are in the SCENE's frame, which is three.js-default Y-up —
-    // the robot is Z-up only inside the element's `world` container. So "above"
-    // here is +Y, not +Z. (The previous key sat at y = -2.4, i.e. underneath the
-    // robot, which is why it lit from below.)
+    // LIGHTING — deliberately rebuilt from nothing.
     //
-    // Raking three-quarter key: high, front, and off to one side. A near-vertical
-    // light flattens the model — every upward face gets the same value, so the
-    // torso caps and head merge into one silhouette.
-    const key = new THREE.DirectionalLight(0xffffff, 1.55);
-    key.position.set(5.5, 4.0, 2.0);
-    // Cool rim from behind-left to peel the dark plastic off the background.
-    const rim = new THREE.DirectionalLight(0xdfe8ff, 0.5);
-    rim.position.set(-4.0, 2.0, -3.5);
-    // Low fill so shadowed flanks keep some shape instead of going flat black.
-    const fill = new THREE.DirectionalLight(0xffffff, 0.14);
-    fill.position.set(-2.5, 0.4, 3.5);
-    viewer.scene.add(ambient, key, rim, fill);
+    // Three parties add lights to this scene before we get here: the
+    // urdf-viewer element (a HemisphereLight, and a DirectionalLight at
+    // intensity Math.PI), and createUrdfViewer (an AmbientLight at 1.0 and a
+    // DirectionalLight at 0.8). Stacked with an environment map that is itself
+    // a full lighting solution, the model washes out — and muting them by
+    // setting intensity to 0 leaves them in the graph to be re-enabled by
+    // anything that walks it.
+    //
+    // So they are REMOVED, and exactly what is wanted is added back. If the
+    // scene ever looks doubly-lit again, count the lights: there should be two.
+    const preexisting: THREE.Object3D[] = [];
+    viewer.scene.traverse((o: THREE.Object3D) => {
+      if ((o as THREE.Light).isLight) preexisting.push(o);
+    });
+    preexisting.forEach((l) => l.removeFromParent());
+
+    // The environment map carries the lighting; these two are supporting.
+    //
+    // The key is kept mainly for the SHADOW — a directional light is what casts
+    // one, and an environment map alone leaves the robot floating with nothing
+    // anchoring it to the floor. It is deliberately weak enough that the shading
+    // is mostly image-based, so surfaces pick up tinted reflections rather than
+    // flat white.
+    //
+    // Intensities are in three's physical units (r155+), where legacy 1.0 is
+    // about Math.PI.
+    const L = lightingOverrides();
+    // Warm-white key/fill (~4500K). With the environment dialled low the
+    // direct lights carry the shading, so their colour is what tints the model.
+    const key = new THREE.DirectionalLight(0xffe9d2, L.key);
+    key.position.set(4.0, 5.5, 3.0);
+    // The element's own directional light was the shadow caster; removing it
+    // above killed shadows entirely. A grounded contact shadow is the single
+    // biggest thing separating "a render" from "a model floating in a void",
+    // so the replacement key takes the job over. Tight ortho bounds keep the
+    // shadow map's texels dense enough to stay crisp on a ~1.3 m robot.
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    const sc = key.shadow.camera as THREE.OrthographicCamera;
+    sc.left = -1.6; sc.right = 1.6; sc.top = 1.6; sc.bottom = -1.6;
+    sc.near = 0.1; sc.far = 14;
+    key.shadow.bias = -0.0004;
+    key.shadow.normalBias = 0.02;
+    const fill = new THREE.DirectionalLight(0xfff1e0, L.fill);
+    fill.position.set(-3.0, 1.5, 3.5);
+    viewer.scene.add(key, fill);
 
     // Floor grid, matching the one on the remote page's model.
     //
@@ -290,6 +417,124 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     // element rotates its inner `world` container instead (see _setUp), so the
     // scene itself stays three.js-default Y-up and GridHelper's native XZ plane
     // is already the ground. Rotating it stands the grid on its edge.
+    // Image-based lighting. A single environment map does more for how machined
+    // metal and moulded plastic read than any number of directional lights: it
+    // gives every surface something to reflect. RoomEnvironment ships with
+    // three, so this costs no download.
+    const renderer = (viewer as unknown as { renderer?: THREE.WebGLRenderer }).renderer;
+    if (renderer) {
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      // Exposure is the safe brightness dial. The pass order is
+      //   scene -> TAA -> SSAO -> bloom -> OutputPass
+      // and OutputPass is where tone mapping happens, so exposure is applied
+      // AFTER bloom has already decided what glows. Raising it brightens the
+      // image without pushing more pixels over the bloom threshold.
+      //
+      // environmentIntensity and the key light are the opposite: they run
+      // before bloom, so raising those to brighten things brings the veiling
+      // back. Reach for exposure first.
+      renderer.toneMappingExposure = L.exposure;
+      // Studio HDRI, downsampled to 512x256 from the 2k original. The map is
+      // never drawn — it only lights — and PMREM convolves it heavily for the
+      // diffuse and rough mips, so resolution beyond this buys nothing visible
+      // while costing 6.1 MB instead of 512 KB. Downsampled in linear light, so
+      // mean radiance is preserved to 0.36% (the RGBE mantissa, not the resize).
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      pmrem.compileEquirectangularShader();
+
+      // A procedural environment goes in immediately, then the HDRI replaces it
+      // when it arrives. Two reasons: the model is never unlit (the direct
+      // lights here are deliberately weak because IBL is meant to carry the
+      // scene, so a missing environment reads as "everything is too dark"), and
+      // a failed fetch degrades instead of silently removing the lighting —
+      // which is indistinguishable from a tuning problem and wastes an
+      // afternoon.
+      viewer.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      viewer.redraw();
+
+      new RGBELoader().load(
+        "/env/studio_loft_512.hdr",
+        (hdrTexture) => {
+          hdrTexture.mapping = THREE.EquirectangularReflectionMapping;
+          const prev = viewer.scene.environment;
+          const baked = pmrem.fromEquirectangular(hdrTexture).texture;
+          viewer.scene.environment = baked;
+          // `?showenv=1` draws the environment as the background — the direct
+          // answer to "is my HDRI even loading?". If you see the studio loft,
+          // it is; if you see the flat page colour, it is not.
+          if (new URLSearchParams(window.location.search).has("showenv")) {
+            viewer.scene.background = baked;
+          }
+          prev?.dispose();
+          hdrTexture.dispose();
+          viewer.redraw();
+        },
+        undefined,
+        (err) => {
+          // Loud on purpose: the fallback means the page still looks fine, so
+          // nothing else would tell you the HDRI never loaded.
+          console.error("[RobotUrdfViewer] environment map failed to load", err);
+        }
+      );
+      // Reflections and fill, dialled well back — enough to give metal something
+      // to reflect without lifting everything toward grey.
+      // This is the colour dial, not just a brightness one. Direct lights are
+      // white, so they only ever add white; the environment is what puts tinted
+      // reflections on the metal and the gloss. Dropping it to compensate for
+      // the earlier over-brightness is what made the model look grey — the fix
+      // for "too bright" was removing the six redundant LIGHTS, not muting this.
+      viewer.scene.environmentIntensity = L.env;
+      // `environment` lights the scene; `background` is what you SEE.
+      //
+      // The background is painted EXPLICITLY rather than left transparent for
+      // the container colour to show through. Once rendering is routed through
+      // an EffectComposer the canvas is no longer composited over the page —
+      // the passes write to opaque offscreen targets — so a null background
+      // came out black. Reading the same theme token the container uses keeps
+      // the two identical and flat.
+      //
+      // Still do NOT put the environment map here: it would fill the frame with
+      // a photographic room.
+      // The background rides through the same ACES tone mapping and exposure as
+      // the robot, and ACES compresses AND desaturates midtones — at exposure
+      // 0.8 a warm paper white comes out cool grey. So this is NOT the colour
+      // that appears on screen: it is the pre-grade source, hand-tuned so the
+      // graded result reads as warm paper next to the page's own hfffdf7
+      // backdrop. The 1.35 factor is exposure headroom (fine in a HalfFloat
+      // chain); ffedcf is the tuned hex. Change it via `?bg=<hex>`, judge by
+      // eye, then bake the winner here.
+      const bg = new THREE.Color(isDark ? "#262320" : "#ffedcf");
+      const bgHex = new URLSearchParams(window.location.search).get("bg");
+      if (bgHex && /^[0-9a-fA-F]{6}$/.test(bgHex)) bg.set(`#${bgHex}`);
+      if (!isDark || bgHex) bg.multiplyScalar(1.35);
+      viewer.scene.background = bg;
+    }
+
+    // Post-processing. Attached after the lights and environment so the passes
+    // see the finished scene. TAA also replaces the MSAA that goes away the
+    // moment rendering is routed through an offscreen target.
+    // `?nopost=1` renders straight to the canvas with no composer. This exists
+    // because "it looks too dark" has two completely different causes — the
+    // lighting rig, or the passes subtracting from it — and they are impossible
+    // to tell apart by eye when both are on. Compare the two and you know which
+    // half to tune.
+    const noPost =
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).has("nopost");
+
+    if (renderer && !noPost) {
+      const rect = container.getBoundingClientRect();
+      postRef.current = attachPostProcessing(
+        renderer,
+        viewer.scene,
+        viewer.camera,
+        { width: Math.max(1, rect.width), height: Math.max(1, rect.height) }
+      );
+      // Any camera move or pose change makes accumulated samples stale.
+      viewer.controls.addEventListener?.("change", () => postRef.current?.invalidate());
+      viewer.addEventListener("angle-change", () => postRef.current?.invalidate());
+    }
+
     const grid = new THREE.GridHelper(3, 12, 0xcdc1a8, 0xccc4b6);
     // Invisible to raycasts. urdf-loader's PointerURDFDragControls raycasts the
     // WHOLE scene and takes intersections[0] — the nearest hit — so a floor plane
@@ -313,6 +558,8 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
         try {
           styleAndFrame(viewer, buildFinishLookup(doc));
           readPose();
+          // Hide collision geometry and index it for the self-collision test.
+          robotColliders(viewer);
           // Movable joints only: the model has 45 joints but most are fixed frames
           // (cameras, standin shells) with nothing to report.
           const joints = (viewer.robot as unknown as {
@@ -321,6 +568,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
             }>;
           })?.joints;
           if (joints) {
+            handOutApi(viewer);
             jointsCb.current?.(
               Object.entries(joints)
                 .filter(([, j]) => j.jointType && j.jointType !== "fixed")
@@ -367,7 +615,91 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       }
       poseCb.current?.(pose);
     };
-    const onAngleChange = () => readPose();
+    const onAngleChange = () => {
+      readPose();
+      runCollisionCheck(viewer);
+    };
+
+    const robotColliders = (v: URDFViewerElement) => {
+      if (!v.robot) return;
+      v.robot.traverse((o: THREE.Object3D) => {
+        if ((o as unknown as { isURDFCollider?: boolean }).isURDFCollider) {
+          o.visible = false;
+        }
+      });
+      collidersRef.current = collectColliders(v.robot);
+      runCollisionCheck(v);
+    };
+
+    // Same visual the manipulator uses on hover, driven programmatically. The
+    // traversal rule matches the element's: colour every mesh under the joint,
+    // stopping where a deeper movable joint begins.
+    const demoHighlight = new THREE.MeshStandardMaterial({
+      color: 0xa1d873,
+      emissive: 0xa1d873,
+      emissiveIntensity: 0.25,
+      roughness: 0.6,
+    });
+    const highlighted = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
+    const clearHighlight = () => {
+      highlighted.forEach((m, mesh) => (mesh.material = m));
+      highlighted.clear();
+    };
+    const applyHighlight = (root: THREE.Object3D) => {
+      const walk = (o: THREE.Object3D, isRoot: boolean) => {
+        const j = o as unknown as { isURDFJoint?: boolean; jointType?: string };
+        if (!isRoot && j.isURDFJoint && j.jointType !== "fixed") return;
+        const mesh = o as THREE.Mesh;
+        if (mesh.isMesh && !(o as unknown as { isURDFCollider?: boolean }).isURDFCollider) {
+          if (!highlighted.has(mesh)) {
+            highlighted.set(mesh, mesh.material);
+            mesh.material = demoHighlight;
+          }
+        }
+        o.children.forEach((c) => walk(c, false));
+      };
+      walk(root, true);
+    };
+
+    const handOutApi = (v: URDFViewerElement) => {
+      const robot = v.robot as unknown as {
+        joints?: Record<string, THREE.Object3D>;
+      };
+      readyCb.current?.({
+        setJoint: (name, value) => v.setJointValue(name, value),
+        highlightJoint: (name) => {
+          clearHighlight();
+          if (name && robot?.joints?.[name]) applyHighlight(robot.joints[name]);
+          v.redraw();
+          postRef.current?.invalidate();
+        },
+        orbit: (azimuth, elevation, distance) => {
+          const t = v.controls.target;
+          v.camera.position.set(
+            t.x + distance * Math.cos(elevation) * Math.cos(azimuth),
+            t.y + distance * Math.sin(elevation),
+            t.z + distance * Math.cos(elevation) * Math.sin(azimuth)
+          );
+          v.camera.lookAt(t);
+          v.controls.update();
+          v.redraw();
+          postRef.current?.invalidate();
+        },
+        frame: () => {
+          v.redraw();
+          postRef.current?.invalidate();
+        },
+      });
+    };
+
+    const runCollisionCheck = (v: URDFViewerElement) => {
+      if (!v.robot || !collisionCb.current) return;
+      if (!checkOn.current || collidersRef.current.length === 0) {
+        collisionCb.current([]);
+        return;
+      }
+      collisionCb.current(findCollisions(v.robot, collidersRef.current));
+    };
 
     viewer.addEventListener("urdf-processed", onProcessed);
     viewer.addEventListener("error", onError);
@@ -377,10 +709,28 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
 
     // `package` must be set even though the mesh loader rewrites full URLs:
     // urdf-loader consults it while resolving package:// before loadMeshFunc runs.
+    // The viewer element always parses collision geometry (urdf-viewer-element
+    // sets loader.parseCollision unconditionally) and hides it unless
+    // `show-collision` is set — so the shapes are already in the scene, already
+    // invisible, and just need indexing for the self-collision test.
+    // Turns on the element's shadow-receiving ground plane, which it keeps
+    // parked just under the robot's bounding box.
+    viewer.setAttribute("display-shadow", "");
     viewer.setAttribute("package", "/");
     viewer.setAttribute("urdf", URDF_PATH);
 
+    const onResize = () => {
+      const r = container.getBoundingClientRect();
+      postRef.current?.setSize(Math.max(1, r.width), Math.max(1, r.height));
+      postRef.current?.invalidate();
+    };
+    const ro = new ResizeObserver(onResize);
+    ro.observe(container);
+
     return () => {
+      ro.disconnect();
+      postRef.current?.dispose();
+      postRef.current = null;
       viewer.removeEventListener("urdf-processed", onProcessed);
       viewer.removeEventListener("error", onError);
       viewer.removeEventListener("joint-mouseover", onJointOver);
@@ -394,11 +744,24 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Flipping the toggle re-evaluates the current pose rather than waiting for
+  // the next drag, so switching it on tells you about the pose you are looking
+  // at now.
+  useEffect(() => {
+    const v = viewerRef.current;
+    if (!v?.robot || !onCollisions) return;
+    onCollisions(
+      collisionCheck && collidersRef.current.length
+        ? findCollisions(v.robot, collidersRef.current)
+        : []
+    );
+  }, [collisionCheck, onCollisions]);
+
   return (
     <div className={cn("relative", className)}>
       <div
         ref={containerRef}
-        className="h-full w-full overflow-hidden rounded-md border bg-nori-hf6f4eb"
+        className="h-full w-full overflow-hidden rounded-md border bg-nori-hfffdf7"
       />
 
       {status === "loading" && (

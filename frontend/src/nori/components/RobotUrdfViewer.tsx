@@ -348,6 +348,8 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     typeof window !== "undefined" &&
     window.matchMedia("(pointer: coarse)").matches;
   const [touchMode, setTouchMode] = useState<TouchMode>("pose");
+  const touchModeRef = useRef(touchMode);
+  touchModeRef.current = touchMode;
 
   // Held in a ref so the mount effect can call the latest callback without
   // listing it as a dependency — depending on it would rebuild the viewer (and
@@ -781,9 +783,6 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Flipping the toggle re-evaluates the current pose rather than waiting for
-  // the next drag, so switching it on tells you about the pose you are looking
-  // at now.
   // Applied via OrbitControls' touch map rather than `.enabled`: the element's
   // own drag handler toggles `.enabled` around every joint drag, so a mode
   // implemented through `.enabled` gets silently reverted after the first drag.
@@ -795,6 +794,72 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     if (touches) touches.ONE = touchMode === "camera" ? THREE.TOUCH.ROTATE : -1;
   }, [touchMode, isCoarse, status]);
 
+  // Freeing the finger from OrbitControls is only half of it: urdf-loader's
+  // PointerURDFDragControls listens for mousedown/mousemove/mouseup ONLY, and a
+  // mobile browser synthesizes those from a tap, never from a drag. So on touch
+  // there was no path to posing a joint at all. Drive the very same drag
+  // controls from touch events here — same raycast, same setGrabbed/moveRay
+  // calls the mouse handlers make, so highlighting, the manipulate-start/end
+  // events and the OrbitControls lockout all behave identically.
+  useEffect(() => {
+    const v = viewerRef.current as
+      | (URDFViewerElement & {
+          renderer: THREE.WebGLRenderer;
+          dragControls?: {
+            manipulating: unknown;
+            moveRay: (ray: THREE.Ray) => void;
+            setGrabbed: (grabbed: boolean) => void;
+          };
+        })
+      | null;
+    if (!v || !isCoarse || status !== "ready") return;
+    const drag = v.dragControls;
+    const el = v.renderer?.domElement;
+    if (!drag || !el) return;
+
+    const raycaster = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+    const aimAt = (t: Touch) => {
+      const rect = el.getBoundingClientRect();
+      ndc.x = ((t.clientX - rect.left) / rect.width) * 2 - 1;
+      ndc.y = -((t.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(ndc, v.camera);
+      drag.moveRay(raycaster.ray);
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      // Two fingers always mean the camera (pinch/pan), in either mode.
+      if (touchModeRef.current !== "pose" || e.touches.length !== 1) return;
+      aimAt(e.touches[0]);
+      drag.setGrabbed(true);
+      // Only swallow the gesture once a joint is actually grabbed, so a drag
+      // that starts on empty background still scrolls the page.
+      if (drag.manipulating) e.preventDefault();
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (!drag.manipulating || e.touches.length !== 1) return;
+      e.preventDefault();
+      aimAt(e.touches[0]);
+    };
+    const onTouchEnd = () => {
+      if (drag.manipulating) drag.setGrabbed(false);
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: false });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd);
+    el.addEventListener("touchcancel", onTouchEnd);
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchEnd);
+    };
+  }, [isCoarse, status]);
+
+  // Flipping the toggle re-evaluates the current pose rather than waiting for
+  // the next drag, so switching it on tells you about the pose you are looking
+  // at now.
   useEffect(() => {
     const v = viewerRef.current;
     if (!v?.robot || !onCollisions) return;

@@ -6,6 +6,7 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { servoThermalThresholds, type ServoThermalThresholds } from "@/nori/robotModels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
@@ -99,7 +100,14 @@ const CONTROL_REMEDIES: Record<string, string> = {
     "The robot's motor control is down or restarting. It should return shortly; video keeps working.",
   connection_lost:
     "The robot's motor control restarted. It should return shortly; video keeps working.",
+  servo_overheat:
+    "A motor is too hot and the robot has stopped moving to protect it. SUPPORT OR LOWER THE ARM — it may go slack. Cooling takes several minutes; video keeps working and control returns on its own once it cools.",
 };
+
+// Reasons where "reconnecting" is a LIE: the robot is not coming back on its own
+// timescale, and telling an operator to wait is the wrong instruction when the arm
+// may be about to sag. Keeps the headline honest without a second banner component.
+const NOT_RECONNECTING = new Set(["servo_overheat", "unauthorized"]);
 export function controlRemedy(reason?: string): string {
   return (reason && CONTROL_REMEDIES[reason]) || CONTROL_REMEDIES.unreachable;
 }
@@ -113,7 +121,9 @@ export function ControlOfflineBanner({ status }: { status: DaemonStatus | null }
   return (
     <div className="rounded-md border border-nori-hd24a3d/35 bg-nori-hfde7e4 px-4 py-3 text-nori-ha3271c">
       <p className="font-mono text-[11px] uppercase tracking-[0.14em]">
-        Robot motor control offline, reconnecting
+        {status.reason && NOT_RECONNECTING.has(status.reason)
+          ? "Robot motor control stopped"
+          : "Robot motor control offline, reconnecting"}
       </p>
       <p className="mt-1 text-sm">{controlRemedy(status.reason)}</p>
     </div>
@@ -121,20 +131,28 @@ export function ControlOfflineBanner({ status }: { status: DaemonStatus | null }
 }
 
 // Persistent over-temp banner (telemetry status.latch_reason = "overtemp:<motor>"). The latch
-// holds for the several MINUTES the servo needs to cool below the 58°C threshold, and reset is
+// holds for the several MINUTES the servo needs to cool below the cut threshold, and reset is
 // REFUSED until then — without this banner that reads as a robot that ignores reset presses.
 // Driven by latch_reason (not servo_temps) so it exactly tracks the latch lifecycle: appears on
 // trip, survives reconnects, drops the moment a reset actually succeeds.
-export function OvertempBanner({ latchReason }: { latchReason?: string | null }) {
+//
+// The cut temperature is per-model (L2 58 °C, A3 60 °C) so it is passed in rather than
+// written into the copy. The motor name rides in the reason itself ("overtemp:<motor>") —
+// naming it beats "at least one servo" when an operator has to go and hold something.
+export function OvertempBanner(
+  { latchReason, cutC }: { latchReason?: string | null; cutC?: number },
+) {
   if (!latchReason?.startsWith("overtemp")) return null;
+  const motor = latchReason.slice("overtemp:".length).trim();
   return (
     <div className="rounded-md border border-nori-hd24a3d/35 bg-nori-hfde7e4 px-4 py-3 text-nori-ha3271c">
       <p className="font-mono text-[11px] uppercase tracking-[0.14em]">
         Servo over temperature limit
       </p>
       <p className="mt-1 text-sm">
-        At least one servo is over the temperature limit. Cooling may take several minutes,
-        and motion will not unlatch till then.
+        {motor ? `${shortMotor(motor)} is` : "At least one servo is"} over the
+        {cutC ? ` ${cutC}°C` : ""} temperature limit. Support or lower the arm — it may go
+        slack. Cooling takes several minutes, and motion will not unlatch till then.
       </p>
     </div>
   );
@@ -210,6 +228,7 @@ export function TelemetryPanel({
   stale,
   inVr,
   daemonStatus,
+  servoThermal = servoThermalThresholds(null),
 }: {
   connState: string;
   tel: TelemetryView;
@@ -217,6 +236,9 @@ export function TelemetryPanel({
   stale: boolean; // no telemetry frame for a while -> the readouts below are not live
   inVr: boolean;
   daemonStatus?: DaemonStatus | null; // robot-reported motor-control health (null = none received yet)
+  // Per-model servo cut point (L2 58 C, A3 60 C). Defaults to the unknown-serial
+  // fallback, which is the LOWEST cut and therefore warns earliest.
+  servoThermal?: ServoThermalThresholds;
 }) {
   const connected = connState === "connected";
   // loop_hz should sit near 50; flag a sag so a struggling control loop is visible.
@@ -267,14 +289,16 @@ export function TelemetryPanel({
       <Stat label="temp" value={tel.tempC > 0 ? `${tel.tempC.toFixed(0)}°C` : "—"}
         tone={tel.tempC >= 80 ? "bad" : tel.tempC >= 70 ? "warn" : "default"} />
       {/* Hottest SERVO case temp (telemetry servo_temps, new daemons; "—" on old ones).
-          The joint's torque latches OFF at 58°C — tones track that, not the Pi's SoC bands.
-          Hover names the joint; the ServoTemps rows below list every joint ≥50°C. */}
+          The joint loses torque at the model's cut point — tones track that, not the Pi's
+          SoC bands. Hover names the joint; the ServoTemps rows below list every warm one. */}
       {(() => {
         const hot = Object.entries(tel.servoTemps ?? {}).sort((a, b) => b[1] - a[1])[0];
         return (
           <span title={hot ? `hottest joint: ${shortMotor(hot[0])}` : undefined}>
             <Stat label="servo" value={hot ? `${hot[1]}°C` : "—"}
-              tone={!hot ? "default" : hot[1] >= 56 ? "bad" : hot[1] >= 50 ? "warn" : "good"} />
+              tone={!hot ? "default"
+                : hot[1] >= servoThermal.hotC ? "bad"
+                : hot[1] >= servoThermal.warnC ? "warn" : "good"} />
           </span>
         );
       })()}
@@ -395,25 +419,31 @@ export function GripForce({ currents }: { currents: Record<string, number> }) {
 // decoded fault string carries the raw 0xNN hex (authoritative; names are best-effort).
 const MOTOR_NO_RESPONSE = "no response"; // sentinel the daemon sends for an unreadable motor
 
-// Servo case temps (telemetry servo_temps, °C, 1 Hz — the daemon's own L3-guard sweep).
-// Silent while everything is comfortably cool; from WARN_C up it lists the warm joints so an
-// operator can watch one climb toward the 58 °C torque-cut latch and back off BEFORE it fires
-// (cooling back under 58 takes minutes — see SAFETY.md 2026-08-07). Amber = warm, red = within
-// 2 °C of the latch. Empty/missing map (old daemon, mock, guard disabled) renders nothing.
-const TEMP_WARN_C = 50;   // start showing a joint
-const TEMP_HOT_C = 56;    // red — latch at 58 is imminent
-export function ServoTemps({ temps }: { temps?: Record<string, number> | null }) {
+// Servo case temps (telemetry servo_temps, °C, 1 Hz — the robot's own over-temp sweep).
+// Silent while everything is comfortably cool; from warnC up it lists the warm joints so an
+// operator can watch one climb toward the torque cut and back off BEFORE it fires (cooling
+// back under it takes minutes — see SAFETY.md 2026-08-07). Amber = warm, red = within 2 °C
+// of the cut. Empty/missing map (old daemon, mock, guard disabled) renders nothing.
+// Thresholds are per-model and come from the caller (servoThermalThresholds); the
+// defaults are L2's, which is also the safe fallback for an unknown serial because
+// its cut point is the lowest and therefore warns earliest.
+export function ServoTemps(
+  { temps, thresholds = servoThermalThresholds(null) }: {
+    temps?: Record<string, number> | null;
+    thresholds?: ServoThermalThresholds;
+  },
+) {
   const warm = temps
-    ? Object.entries(temps).filter(([, t]) => t >= TEMP_WARN_C).sort((a, b) => b[1] - a[1])
+    ? Object.entries(temps).filter(([, t]) => t >= thresholds.warnC).sort((a, b) => b[1] - a[1])
     : [];
   if (warm.length === 0) return null;
   return (
     <div className="space-y-1.5">
       <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-nori-h8f2318">
-        Motor temperature (torque cuts at 58°C)
+        {`Motor temperature (torque cuts at ${thresholds.cutC}°C)`}
       </span>
       {warm.map(([k, t]) => {
-        const cls = t >= TEMP_HOT_C
+        const cls = t >= thresholds.hotC
           ? "border-nori-hd24a3d/40 bg-nori-hd24a3d/15 text-nori-h8f2318"
           : "border-nori-hdb9346/40 bg-nori-hfdf1de text-nori-h8a5a12";
         return (

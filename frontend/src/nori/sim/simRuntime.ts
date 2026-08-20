@@ -9,6 +9,7 @@
 import * as THREE from "three";
 
 import type { URDFViewerElement } from "@/lib/urdfViewerHelpers";
+import { SSAO_SCALE } from "@/nori/components/postprocess";
 import { buildApartment, PIP_ONLY_LAYER, roomAt, type Apartment } from "./apartment";
 import {
   axesFromKeys,
@@ -99,6 +100,10 @@ type SimOptions = {
   invalidate?: () => void;
   /** Switch the bloom chain off for the duration; see the note where it is called. */
   setBloomEnabled?: (enabled: boolean) => void;
+  /** Switch ambient occlusion off for the duration; see the note where it is called. */
+  setSsaoEnabled?: (enabled: boolean) => void;
+  /** Re-scale ambient occlusion, in world metres, for a room instead of a robot. */
+  setSsaoScale?: (radius: number, range: number) => void;
   onState?: (state: SimState) => void;
   initialCameraView?: CameraView | null;
 };
@@ -138,6 +143,29 @@ export function measureDriveGeometry(robot: THREE.Object3D): DriveGeometry {
 
 /** Height of each measured slice of the robot, metres. */
 const SLAB_HEIGHT = 0.15;
+
+/**
+ * Ambient occlusion for the sim, overridable from the URL as
+ * `?ssao=0.2&ssaorange=0.6` — both in world metres.
+ *
+ * Same default as everywhere else (SSAO_SCALE); this exists to RE-APPLY it,
+ * because the sim widens the camera's near/far and the pass is scaled against
+ * that range. The knobs are in the same spirit as the lighting ones in
+ * RobotUrdfViewer: judging occlusion is an eyeball exercise, and one reload per
+ * value beats one rebuild per value. `?nossao=1` turns it off for an A/B.
+ */
+function ssaoOverrides(): [number, number] {
+  const q =
+    typeof window === "undefined"
+      ? new URLSearchParams()
+      : new URLSearchParams(window.location.search);
+  const num = (key: string, fallback: number) => {
+    const v = parseFloat(q.get(key) ?? "");
+    return Number.isFinite(v) && v > 0 ? v : fallback;
+  };
+  return [num("ssao", SSAO_SCALE.radius), num("ssaorange", SSAO_SCALE.range)];
+}
+
 
 /**
  * Slice the robot's own collision geometry into height bands, each a rectangle
@@ -246,6 +274,7 @@ let running: SimHandle | null = null;
 export function startSim(opts: SimOptions): SimHandle | null {
   running?.dispose();
   const { viewer, keyLight, grid, invalidate, onState, setBloomEnabled } = opts;
+  const { setSsaoEnabled, setSsaoScale } = opts;
   const robot = viewer.robot as
     | (THREE.Object3D & {
         joints?: Record<
@@ -325,6 +354,9 @@ export function startSim(opts: SimOptions): SimHandle | null {
   // Bloom exists to make the eyes glow. At sim distances they are a handful of
   // pixels, and it is the single most expensive pass in the chain.
   setBloomEnabled?.(false);
+
+  // Re-convert the ambient occlusion against the camera range set just above.
+  setSsaoScale?.(...ssaoOverrides());
   // `no-auto-recenter` is not enough on its own. The element also subscribes
   // recenter() to OrbitControls' `change` event, and THAT path does not consult
   // the flag — so every camera move (including the follow below) snapped the
@@ -894,6 +926,7 @@ export function startSim(opts: SimOptions): SimHandle | null {
         removeEventListener?: (t: string, f: () => void) => void;
       }).removeEventListener?.("change", onControlsChange);
       setBloomEnabled?.(true);
+      setSsaoScale?.(SSAO_SCALE.radius, SSAO_SCALE.range);
       if (restore.autoRecenter) viewer.removeAttribute("no-auto-recenter");
       if (keyLight && restore.keyLightPosition && restore.shadowBounds) {
         keyLight.position.copy(restore.keyLightPosition);

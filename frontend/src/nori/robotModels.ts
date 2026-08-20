@@ -47,6 +47,44 @@ export function usesStylisedSchematic(serial: string | null | undefined): boolea
   return !!serial && serialModelCode(serial) === "L2";
 }
 
+/**
+ * Servo case-temperature thresholds, per model. These differ by GENERATION and
+ * getting them from the wire is not possible today — the `ack` carries no model
+ * field — so they are derived from the serial, like every other model-keyed
+ * behaviour in this file.
+ *
+ *   L2  torque cuts at 58 C: the daemon's own software latch (SAFETY.md
+ *       2026-08-07). Warn from 50, red from 56.
+ *   A3  torque cuts at 60 C: a SOFTWARE policy in the supervisor/driver,
+ *       deliberately independent of the servo's EEPROM Max_Temperature_Limit
+ *       (tools/bringup/recovery.md "Phase 4e"). The robot also warns at 58, so
+ *       red starts there; amber keeps L2's 8 C lead-in, from 52.
+ *
+ * Unknown serials get the L2 numbers on purpose: the lowest cut point warns
+ * EARLIEST. Guessing high on an unknown robot would warn too late, which is the
+ * one error that costs a servo.
+ */
+export interface ServoThermalThresholds {
+  /** Start listing a joint at all (amber). */
+  warnC: number;
+  /** Red — the cut is imminent. */
+  hotC: number;
+  /** Where torque is actually lost. */
+  cutC: number;
+}
+
+const L2_SERVO_THERMAL: ServoThermalThresholds = { warnC: 50, hotC: 56, cutC: 58 };
+const A3_SERVO_THERMAL: ServoThermalThresholds = { warnC: 52, hotC: 58, cutC: 60 };
+
+export function servoThermalThresholds(
+  serial: string | null | undefined,
+): ServoThermalThresholds {
+  if (!serial) return L2_SERVO_THERMAL;
+  return serialModelCode(serial)?.startsWith("A")
+    ? A3_SERVO_THERMAL
+    : L2_SERVO_THERMAL;
+}
+
 /** True when this serial's model is blocked in this app build. Unknown / non-fleet
  * serials are NEVER blocked — the gate only stops KNOWN disallowed models (e.g. L3),
  * so it can't accidentally reject a legacy or dev serial it doesn't recognize. */

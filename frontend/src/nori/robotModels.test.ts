@@ -6,6 +6,7 @@ import {
   usesStylisedSchematic,
   isRobotModelBlocked,
   serialModelCode,
+  servoThermalThresholds,
 } from "@/nori/robotModels";
 
 describe("serialModelCode", () => {
@@ -80,5 +81,34 @@ describe("usesStylisedSchematic", () => {
     expect(usesStylisedSchematic("")).toBe(false);
     expect(usesStylisedSchematic(null)).toBe(false);
     expect(usesStylisedSchematic(undefined)).toBe(false);
+  });
+});
+
+describe("servoThermalThresholds", () => {
+  it("uses the A3's 60 C cut for A-series serials", () => {
+    expect(servoThermalThresholds("NORI-A3-0001")).toEqual({
+      warnC: 52, hotC: 58, cutC: 60,
+    });
+  });
+
+  it("uses the L2's 58 C cut for L-series serials", () => {
+    expect(servoThermalThresholds("NORI-L2-0042").cutC).toBe(58);
+    expect(servoThermalThresholds("NORI-L3-0007").cutC).toBe(58);
+  });
+
+  it("defaults an unknown serial to the LOWEST cut, so it warns earliest", () => {
+    // Guessing high on an unknown robot warns too late -- the one error that
+    // costs a servo.
+    expect(servoThermalThresholds("dev-room").cutC).toBe(58);
+    expect(servoThermalThresholds(null).cutC).toBe(58);
+    expect(servoThermalThresholds(undefined).cutC).toBe(58);
+  });
+
+  it("keeps red strictly below the cut", () => {
+    for (const serial of ["NORI-A3-0001", "NORI-L2-0042", null]) {
+      const t = servoThermalThresholds(serial);
+      expect(t.warnC).toBeLessThan(t.hotC);
+      expect(t.hotC).toBeLessThan(t.cutC);
+    }
   });
 });

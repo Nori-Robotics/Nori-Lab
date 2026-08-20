@@ -24,7 +24,7 @@ import { useConnectGate } from "@/nori/components/ConnectionPanel";
 import { TelemetryPanel, GripForce, MotorFaults, ServoTemps, OvertempBanner, ControlLegend, BaseCommandLegend, CallBar, ConnectionBanner, ControlOfflineBanner, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
 import RobotUrdfViewer from "@/nori/components/RobotUrdfViewer";
-import { usesStylisedSchematic } from "@/nori/robotModels";
+import { servoThermalThresholds, usesStylisedSchematic } from "@/nori/robotModels";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import LeaderSetup from "@/nori/pages/leader-setup";
 import { playAudioFile, type ClipHandle } from "@/nori/remote/audioClip";
@@ -112,6 +112,10 @@ const Remote = () => {
   const m6 = isM6VideoEnabled();
 
   const [showLog, setShowLog] = useState(false);
+  // Servo cut point differs by generation (L2 58 C, A3 60 C) and the ack carries no
+  // model field, so it comes from the serial -- and the session's room IS the active
+  // robot's serial (same reasoning as the 3D schematic below).
+  const servoThermal = servoThermalThresholds(settings.room);
   // Each control-mode card (keyboard / leader / VR) collapses like Robot logs and
   // Session settings; expanded by default, remembered per mode while on the page.
   const [showKeyboardCard, setShowKeyboardCard] = useState(true);
@@ -573,7 +577,7 @@ const Remote = () => {
           {/* Persistent while an over-temp latch holds: cooling takes minutes and reset is
               refused until the joint is back under threshold — say so, or the refused reset
               reads as a bug. */}
-          {running && <OvertempBanner latchReason={tel.latchReason} />}
+          {running && <OvertempBanner latchReason={tel.latchReason} cutC={servoThermal.cutC} />}
           <div className="relative">
             <video
               ref={videoRef}
@@ -643,6 +647,7 @@ const Remote = () => {
                 stale={stale}
                 inVr={inVr}
                 daemonStatus={running ? daemonStatus : null}
+                servoThermal={servoThermal}
               />
             </div>
             <h2 className="mt-4 flex items-center gap-1.5 text-sm font-semibold">
@@ -662,7 +667,7 @@ const Remote = () => {
             {/* Servo temps — silent until a joint reaches 50°C, then lists it warming toward
                 the 58°C torque-cut latch (amber) / imminent (red). */}
             <div className="mt-2">
-              <ServoTemps temps={tel.servoTemps} />
+              <ServoTemps temps={tel.servoTemps} thresholds={servoThermal} />
             </div>
           </div>
 

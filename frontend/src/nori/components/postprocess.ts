@@ -66,6 +66,25 @@ export type Post = {
    * away in a room and the eyes are a few pixels across.
    */
   setBloomEnabled: (enabled: boolean) => void;
+  /** Turn ambient occlusion off without tearing the composer down. */
+  setSsaoEnabled: (enabled: boolean) => void;
+  /**
+   * Re-scale ambient occlusion for a different sized scene. Both arguments are
+   * WORLD METRES; the conversion the shader actually needs happens in here.
+   *
+   * That conversion is the whole reason this exists. `kernelRadius` really is
+   * in view-space metres, but `minDistance` and `maxDistance` are NOT — they
+   * are compared against a delta of two `viewZToOrthographicDepth` values,
+   * which is a 0..1 fraction of the camera's near..far range. Setting them as
+   * if they were metres silently breaks the pass: give it a 0.22 m radius and
+   * a "0.006 m" minimum and the minimum is really 0.006 x 44.9 = 0.26 m, wider
+   * than the entire sampling sphere, so no sample can ever qualify and the
+   * output is exactly, measurably, nothing.
+   *
+   * @param radius   how far samples reach around a fragment
+   * @param range    how large a depth step still counts as occlusion
+   */
+  setSsaoScale: (radius: number, range: number) => void;
   dispose: () => void;
 };
 
@@ -90,6 +109,22 @@ export function passFlags() {
     taa: !q.has("notaa"),
   };
 }
+
+/**
+ * Ambient-occlusion scale, in world metres, everywhere this viewer is used.
+ *
+ * `radius` is how far samples reach around a fragment; `range` is how large a
+ * depth step still counts as occlusion, and has to exceed the radius or samples
+ * fall outside the window and nothing is ever occluded.
+ *
+ * One value for the close-up and for the sim on purpose. The pass was
+ * originally set to a 3 cm radius, which is smaller than anything in a room:
+ * every sample landed on the same flat face and the result was measurably
+ * nothing at all — a mean difference of 0.018/255 against having it switched
+ * off. Twenty centimetres reaches across the gaps that actually exist in both
+ * scenes.
+ */
+export const SSAO_SCALE = { radius: 0.2, range: 0.6 };
 
 export function attachPostProcessing(
   renderer: THREE.WebGLRenderer,
@@ -135,20 +170,36 @@ export function attachPostProcessing(
   // SSAO builds its own depth/normal targets from the camera's near/far. Those
   // are set tight in RobotUrdfViewer for exactly this reason — see the note on
   // camera.near there before widening them.
-  // Tuned for a ~1.3 m robot in metres: a radius in the centimetres darkens
-  // panel gaps and joint seams. Scene-scale units matter here — the defaults
-  // assume a much larger scene and produce a uniform grey wash.
-  ssao.kernelRadius = 0.03;
-  ssao.minDistance = 0.0008;
-  // Short range on purpose: AO should darken where parts actually meet, not
-  // shade whole surfaces. A long maxDistance is what turns SSAO from contact
-  // shading into an overall grey that also reads as desaturation, because it
-  // only ever subtracts light.
-  ssao.maxDistance = 0.03;
+  applySsaoScale(SSAO_SCALE.radius, SSAO_SCALE.range);
   // SSAO occludes by darkening, so it only ever removes light. Left at full
   // strength on top of an already-graded image it reads as grime rather than
   // shading — this keeps it to a suggestion of contact.
   ssao.output = SSAOPass.OUTPUT.Default;
+
+  /**
+   * Set the ambient occlusion from world metres.
+   *
+   * The conversion is the whole point. `kernelRadius` really is in view-space
+   * metres, but `minDistance` and `maxDistance` are NOT — the shader compares
+   * them against a delta of two `viewZToOrthographicDepth` values, which is a
+   * 0..1 fraction of the camera's near..far range. Setting them as if they were
+   * metres silently breaks the pass: a 0.22 m radius with a "0.006 m" minimum
+   * makes that minimum 0.006 x 44.9 = 0.26 m, wider than the whole sampling
+   * sphere, so no sample can ever qualify and the output is exactly nothing.
+   *
+   * Because it depends on near and far, this has to be re-applied whenever the
+   * camera's range changes — which is why it is exposed on the returned handle
+   * and not just called once here.
+   */
+  function applySsaoScale(radius: number, range: number) {
+    const cam = camera as THREE.PerspectiveCamera;
+    const span = Math.max(1e-6, cam.far - cam.near);
+    ssao.kernelRadius = radius;
+    ssao.maxDistance = range / span;
+    // A couple of millimetres, just enough to stop a surface occluding itself.
+    // Anything larger starts eating the contact shading it exists to protect.
+    ssao.minDistance = 0.002 / span;
+  }
   if (flags.ssao) composer.addPass(ssao);
 
   // Bloom, deliberately hard to trigger.
@@ -292,6 +343,10 @@ export function attachPostProcessing(
     invalidate: () => {
       taa.accumulate = false;
     },
+    setSsaoEnabled: (enabled) => {
+      ssao.enabled = flags.ssao && enabled;
+    },
+    setSsaoScale: applySsaoScale,
     setBloomEnabled: (enabled) => {
       bloomEnabled = flags.bloom && enabled;
       // The combine pass has to go with it: left enabled it would keep adding

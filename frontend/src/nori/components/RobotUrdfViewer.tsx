@@ -12,6 +12,7 @@ import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment
 import {
   attachPostProcessing,
   BLOOM_LAYER,
+  SSAO_SCALE,
   type Post,
 } from "@/nori/components/postprocess";
 import {
@@ -664,6 +665,10 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
         }
         try {
           styleAndFrame(viewer, buildFinishLookup(doc));
+          // styleAndFrame is what finally sets the camera's near and far, and
+          // ambient occlusion is scaled against that range — so its metres have
+          // to be converted again now, not at the moment the pass was built.
+          postRef.current?.setSsaoScale(SSAO_SCALE.radius, SSAO_SCALE.range);
           readPose();
           // Hide collision geometry and index it for the self-collision test.
           robotColliders(viewer);
@@ -954,6 +959,8 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       grid: gridRef.current,
       invalidate: () => postRef.current?.invalidate(),
       setBloomEnabled: (on) => postRef.current?.setBloomEnabled(on),
+      setSsaoEnabled: (on) => postRef.current?.setSsaoEnabled(on),
+      setSsaoScale: (radius, range) => postRef.current?.setSsaoScale(radius, range),
       onState: (state) => simStateCb.current?.(state),
       initialCameraView: simViewRef.current ?? null,
     });

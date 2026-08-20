@@ -20,7 +20,14 @@ use std::time::{Duration, Instant};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 const BACKEND_ADDR: &str = "127.0.0.1:8000";
-const BACKEND_URL: &str = "http://127.0.0.1:8000/";
+// The webview loads `localhost`, NOT `127.0.0.1`, even though the server binds the
+// latter. They are different ORIGINS to a browser engine, and the web UI's API base
+// defaults to `http://localhost:8000` (DEFAULT_LOCALHOST in frontend ApiContext.tsx).
+// Loading the app from 127.0.0.1 therefore made every one of its own API calls
+// cross-origin: the local API's auth cookie is SameSite=Strict so it never attached,
+// and localStorage is partitioned per origin so the token below never reached the
+// code that sends it. Same host, one letter, entire app broken.
+const BACKEND_ORIGIN: &str = "http://localhost:8000";
 
 // Keep the child handle so we can kill it on shutdown.
 struct Backend(Mutex<Option<Child>>);
@@ -31,6 +38,23 @@ fn backend_binary_name() -> &'static str {
     } else {
         "lelab-backend"
     }
+}
+
+/// A fresh local API token for this launch, handed to the backend through the
+/// environment (`get_or_create_local_token()` in lelab/local_auth.py prefers
+/// `LELAB_TOKEN` over its on-disk secret) and to the webview through the launch
+/// URL. Without it the backend runs in its default `enforce` mode and rejects
+/// every request this app makes.
+///
+/// Per-launch rather than reading the backend's persisted file: the desktop
+/// bundle is self-contained, this keeps the secret out of Rust's hands beyond
+/// the one process it spawns, and there is no file to race on first run. The
+/// tradeoff is that a browser tab separately opened at localhost:8000 needs its
+/// own `?token=` — the app's own window always carries one.
+fn new_local_token() -> String {
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes).expect("OS entropy unavailable");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn wait_for_port(timeout: Duration) -> bool {
@@ -59,8 +83,10 @@ fn main() {
                 .join("backend");
             let exe = backend_dir.join(backend_binary_name());
 
+            let token = new_local_token();
             let child = Command::new(&exe)
                 .current_dir(&backend_dir)
+                .env("LELAB_TOKEN", &token)
                 .spawn()
                 .unwrap_or_else(|e| panic!("failed to start backend {exe:?}: {e}"));
             app.state::<Backend>().0.lock().unwrap().replace(child);
@@ -68,6 +94,12 @@ fn main() {
             // Open the window only once the server answers, so the user never
             // sees a connection-refused page.
             let handle = app.handle().clone();
+            // Loading this URL is what authenticates the window: the backend
+            // exchanges the `?token=` for its HttpOnly SameSite=Strict cookie
+            // before the SPA boots, and the SPA's own initLocalAuth() also
+            // stashes it for the WebSocket/cross-origin paths and scrubs it
+            // from the address.
+            let launch_url = format!("{BACKEND_ORIGIN}/?token={token}");
             thread::spawn(move || {
                 if !wait_for_port(Duration::from_secs(60)) {
                     eprintln!("backend never came up on {BACKEND_ADDR}");
@@ -78,7 +110,7 @@ fn main() {
                 let mut builder = WebviewWindowBuilder::new(
                     &handle,
                     "main",
-                    WebviewUrl::External(BACKEND_URL.parse().unwrap()),
+                    WebviewUrl::External(launch_url.parse().unwrap()),
                 )
                 .title("Nori Lab")
                 .inner_size(1400.0, 900.0)

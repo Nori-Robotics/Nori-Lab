@@ -133,6 +133,20 @@ fixes: `[Errno 48] Address already in use` on the next launch because a prior fr
 backend still held :8000. Manual clear if ever needed:
 `lsof -nP -iTCP:8000 -sTCP:LISTEN -t | xargs kill`.
 
+**Local-API auth (implemented).** `lelab/local_auth.py` defaults to `enforce`, so the
+backend rejects every request that arrives without the local API token. `main.rs` now
+generates a per-launch token, passes it to the spawned backend as `LELAB_TOKEN`
+(`get_or_create_local_token()` prefers the env var over its on-disk secret), and loads the
+window at `http://localhost:8000/?token=<tok>` — the backend exchanges that for its
+HttpOnly SameSite=Strict cookie before the SPA boots.
+
+Note the host: the window must load **`localhost`**, not `127.0.0.1`. They are distinct
+origins to a browser engine, and the web UI's API base defaults to `http://localhost:8000`
+(`DEFAULT_LOCALHOST`, `frontend/src/contexts/ApiContext.tsx`). Loading from `127.0.0.1`
+makes every API call the app issues cross-origin, so the SameSite=Strict cookie never
+attaches and the origin-partitioned localStorage never sees the token — which broke every
+API call and WebSocket in the packaged app.
+
 ### 4. Build matrix + signing (1–2 days) — 📄 OWNED SEPARATELY
 **Full handoff:** [`BUILD_AND_SIGNING.md`](BUILD_AND_SIGNING.md). Assigned to a colleague;
 it's a self-contained CI + platform-signing chunk that doesn't touch app code. Summary:

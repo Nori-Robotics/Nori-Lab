@@ -13,6 +13,10 @@ tauri = { version = "2", features = [] }
 # this app IS a webview: an in-page link to the hosted docs would navigate the app away from
 # itself with no way back. Scoped to https:// only — see capabilities/default.json.
 tauri-plugin-opener = "2"
+# CSPRNG for the per-launch local API token handed to the backend. Already in the
+# tree as a transitive dep of tauri; declared here so we can call it directly
+# rather than hand-rolling entropy for a capability secret.
+getrandom = "0.2"
 
 [[bin]]
 name = "lelab-desktop"

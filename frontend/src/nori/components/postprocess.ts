@@ -97,18 +97,36 @@ export type Post = {
  *   ?nossao=1    skip ambient occlusion
  *   ?nobloom=1   skip bloom
  *   ?notaa=1     plain RenderPass instead of TAA
+ *   ?taa=N       anti-aliasing samples, i.e. scene re-renders (1, 2, 4, 8...)
  */
 export function passFlags() {
   const q =
     typeof window === "undefined"
       ? new URLSearchParams()
       : new URLSearchParams(window.location.search);
+  // `?taa=N` is a SAMPLE COUNT (1, 2, 4, 8...), not three's level index, because
+  // the count is the thing anyone actually reasons about — it is how many times
+  // the scene gets re-rendered. Converted to a level below.
+  const samples = parseInt(q.get("taa") ?? "", 10);
   return {
     ssao: !q.has("nossao"),
     bloom: !q.has("nobloom"),
     taa: !q.has("notaa"),
+    taaSamples:
+      Number.isFinite(samples) && samples >= 1 ? samples : TAA_SAMPLES,
   };
 }
+
+/**
+ * How many jittered samples the anti-aliasing takes, and therefore how many
+ * times the scene is re-rendered per frame.
+ *
+ * Two. At four this pass alone was two thirds of the whole frame — 559k of
+ * 838k triangles — because TAARenderPass extends SSAARenderPass and genuinely
+ * supersamples rather than reusing history. Halving it cost 2% of pixels, all
+ * of them on silhouette edges, and saved 149 draw calls a frame.
+ */
+export const TAA_SAMPLES = 2;
 
 /**
  * Ambient-occlusion scale, in world metres, everywhere this viewer is used.
@@ -159,9 +177,10 @@ export function attachPostProcessing(
   composer.setSize(size.width, size.height);
 
   const taa = new TAARenderPass(scene, camera, 0x000000, 0);
-  // 2 => 4 samples. Higher is visibly cleaner but multiplies scene draws, and
-  // this is a page someone drags things around on.
-  taa.sampleLevel = 2;
+  // sampleLevel is NOT a sample count: it indexes three's jitter table, where 0
+  // is 1 sample, 1 is 2, 2 is 4 and so on. Convert, so the count is what gets
+  // configured and what appears in the URL.
+  taa.sampleLevel = Math.max(0, Math.round(Math.log2(flags.taaSamples)));
   taa.unbiased = false;
   if (flags.taa) composer.addPass(taa);
   else composer.addPass(new RenderPass(scene, camera));

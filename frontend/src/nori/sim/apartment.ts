@@ -20,6 +20,7 @@
 // the robot lives, so these axes line up with the robot's own.
 
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 import type { Box2, Box3 } from "./driveModel";
 
@@ -294,6 +295,8 @@ export function buildApartment(): Apartment {
   // ~40 solids drawn with ~10 materials rather than 40 keeps the draw calls
   // batched and the disposal list short.
   const matCache = new Map<string, THREE.MeshStandardMaterial>();
+  const lookKey = (s: Pick<Solid, "color" | "roughness" | "metalness">) =>
+    `${s.color}|${s.roughness ?? 0.8}|${s.metalness ?? 0}`;
   const materialFor = (color: number, roughness = 0.8, metalness = 0.0) => {
     const key = `${color}|${roughness}|${metalness}`;
     const hit = matCache.get(key);
@@ -303,6 +306,21 @@ export function buildApartment(): Apartment {
     materials.push(m);
     return m;
   };
+
+  /**
+   * Furniture waiting to be merged, gathered by the look it is drawn with.
+   *
+   * Every piece is a separate box, and a separate box is a separate draw call
+   * in every pass — the main image, the shadow map, each anti-aliasing sample,
+   * the bloom blackout, the inset. Nothing about a sofa needs to be addressed
+   * individually, so they are baked into one geometry per material and drawn in
+   * one call each. WALLS are excluded: those get hidden individually when they
+   * stand between the camera and the robot, which needs a mesh apiece.
+   */
+  const mergeable = new Map<
+    string,
+    { material: THREE.MeshStandardMaterial; parts: THREE.BufferGeometry[] }
+  >();
 
   const add = (mesh: THREE.Mesh) => {
     mesh.castShadow = true;
@@ -334,6 +352,23 @@ export function buildApartment(): Apartment {
   floor.castShadow = false;
   add(floor);
 
+  // The extra height only the robot's cameras see, on the shell alone.
+  //
+  // NOT added to the wall segment. Segments are the things the chase camera
+  // hides to see past, and this section is already invisible to it — while the
+  // robot's own camera, which does see it, must keep seeing it.
+  const addShellUpper = (s: Solid, wall: THREE.Mesh) => {
+    if (!s.shell) return;
+    const upperH = SHELL_WALL_H - s.h;
+    const upperGeo = new THREE.BoxGeometry(s.sx, s.sy, upperH);
+    geometries.push(upperGeo);
+    const upper = new THREE.Mesh(upperGeo, wall.material);
+    upper.position.set(s.x, s.y, s.h + upperH / 2);
+    upper.raycast = () => {};
+    upper.layers.set(PIP_ONLY_LAYER);
+    group.add(upper);
+  };
+
   const { solids, start } = plan();
   const obstacles: Box3[] = [];
   const walls: WallSegment[] = [];
@@ -345,31 +380,38 @@ export function buildApartment(): Apartment {
     // CylinderGeometry is built along ITS OWN +Y. These coordinates are Z-up, so
     // stand it upright; box geometry is already axis-aligned and needs nothing.
     if (s.round) geo.rotateX(Math.PI / 2);
-    geometries.push(geo);
-    const mesh = new THREE.Mesh(
-      geo,
-      materialFor(s.color, s.roughness ?? 0.8, s.metalness ?? 0)
-    );
-    mesh.position.set(s.x, s.y, (s.base ?? 0) + s.h / 2);
-    add(mesh);
+    const material = materialFor(s.color, s.roughness ?? 0.8, s.metalness ?? 0);
     if (!s.passable) obstacles.push(volume(s));
-    if (s.wall) walls.push({ box: { ...footprint(s), minZ: 0, maxZ: s.h }, mesh });
 
-    // The extra height only the robot's cameras see, on the shell alone.
-    if (s.wall && s.shell) {
-      const upperH = SHELL_WALL_H - s.h;
-      const upperGeo = new THREE.BoxGeometry(s.sx, s.sy, upperH);
-      geometries.push(upperGeo);
-      const upper = new THREE.Mesh(upperGeo, mesh.material);
-      upper.position.set(s.x, s.y, s.h + upperH / 2);
-      upper.raycast = () => {};
-      upper.layers.set(PIP_ONLY_LAYER);
-      group.add(upper);
-      // NOT added to the wall segment. Segments are the things the chase camera
-      // hides to see past, and this section is already invisible to it — while
-      // the robot's own camera, which does see it, must keep seeing it.
+    if (s.wall) {
+      geometries.push(geo);
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(s.x, s.y, (s.base ?? 0) + s.h / 2);
+      add(mesh);
+      walls.push({ box: { ...footprint(s), minZ: 0, maxZ: s.h }, mesh });
+      addShellUpper(s, mesh);
+      continue;
     }
+
+    // Not a wall: bake its position into the geometry and set it aside to be
+    // merged, rather than giving it a mesh of its own.
+    geo.translate(s.x, s.y, (s.base ?? 0) + s.h / 2);
+    const key = lookKey(s);
+    const bucket = mergeable.get(key);
+    if (bucket) bucket.parts.push(geo);
+    else mergeable.set(key, { material, parts: [geo] });
   }
+
+  for (const { material, parts } of mergeable.values()) {
+    const merged = mergeGeometries(parts);
+    // Never rendered, so they hold no GPU buffers; disposed anyway rather than
+    // leaving the intent unclear.
+    parts.forEach((p) => p.dispose());
+    if (!merged) continue;
+    geometries.push(merged);
+    add(new THREE.Mesh(merged, material));
+  }
+
 
   return {
     group,

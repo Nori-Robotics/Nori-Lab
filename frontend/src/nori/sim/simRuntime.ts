@@ -351,9 +351,16 @@ export function startSim(opts: SimOptions): SimHandle | null {
     addEventListener?: (t: string, f: () => void) => void;
   }).addEventListener?.("change", onControlsChange);
 
-  // Bloom exists to make the eyes glow. At sim distances they are a handful of
-  // pixels, and it is the single most expensive pass in the chain.
-  setBloomEnabled?.(false);
+  // Bloom stays ON, contrary to the obvious saving.
+  //
+  // It is the most expensive pass here — a whole extra render of the scene with
+  // every material blacked out — and the eyes are only a few pixels across at
+  // chase distance, so switching it off looked like free performance. It is
+  // not: bloom's entire job is to spread light BEYOND its source, so a few
+  // bright pixels still throw a halo big enough to read, and with it off the
+  // robot lost the one thing that makes it look switched on. `?nobloom=1`
+  // remains for anyone who wants the frames back.
+  setBloomEnabled?.(true);
 
   // Re-convert the ambient occlusion against the camera range set just above.
   setSsaoScale?.(...ssaoOverrides());

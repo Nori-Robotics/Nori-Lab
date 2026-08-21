@@ -154,6 +154,50 @@ const SLAB_HEIGHT = 0.15;
  * RobotUrdfViewer: judging occlusion is an eyeball exercise, and one reload per
  * value beats one rebuild per value. `?nossao=1` turns it off for an A/B.
  */
+/**
+ * Sim lighting, and why these numbers and not the viewer's own.
+ *
+ * A shadow is not a thing that gets drawn darker — it is the absence of one
+ * light. So how dark a shadow reads is entirely the ratio between the light
+ * that casts it and everything filling in behind it. The first pass at this had
+ * the key at 0.55 against an environment of 0.5 plus an ambient of 0.35, so a
+ * shadowed surface still kept about 60% of its illumination and the shadows
+ * came out as faint smudges.
+ *
+ * These push most of the light into the key and pull the fill down, then drop
+ * the exposure to land the lit surfaces back where they were. Same overall
+ * brightness, far more separation between lit and unlit.
+ *
+ * `three` does have `light.shadow.intensity`, but it only ever LIGHTENS a
+ * shadow toward none — there is no setting that darkens past the full loss of
+ * the light, which is what this ratio controls.
+ *
+ * Exposure is the safe brightness dial: it runs after the passes have decided
+ * what glows, so raising it lifts the image without changing what blooms. It
+ * does lift the shadows slightly too, since ACES compresses the highlights more
+ * than the low end — `simamb` is the one to drop if they start washing out.
+ *
+ * Tunable live: `?simkey=1.5&simamb=0.1&simenv=0.28&simexp=0.72`.
+ */
+const SIM_LIGHTING = { key: 1.5, ambient: 0.1, environment: 0.28, exposure: 0.72 };
+
+function simLighting() {
+  const q =
+    typeof window === "undefined"
+      ? new URLSearchParams()
+      : new URLSearchParams(window.location.search);
+  const num = (key: string, fallback: number) => {
+    const v = parseFloat(q.get(key) ?? "");
+    return Number.isFinite(v) && v >= 0 ? v : fallback;
+  };
+  return {
+    key: num("simkey", SIM_LIGHTING.key),
+    ambient: num("simamb", SIM_LIGHTING.ambient),
+    environment: num("simenv", SIM_LIGHTING.environment),
+    exposure: num("simexp", SIM_LIGHTING.exposure),
+  };
+}
+
 function ssaoOverrides(): [number, number] {
   const q =
     typeof window === "undefined"
@@ -318,6 +362,7 @@ export function startSim(opts: SimOptions): SimHandle | null {
     environmentIntensity: scene.environmentIntensity,
     exposure: renderer.toneMappingExposure,
     keyLightPosition: keyLight?.position.clone() ?? null,
+    keyLightIntensity: keyLight?.intensity ?? null,
     shadowBounds: keyLight
       ? (() => {
           const c = keyLight.shadow.camera as THREE.OrthographicCamera;
@@ -385,19 +430,14 @@ export function startSim(opts: SimOptions): SimHandle | null {
   camera.far = 45;
   camera.updateProjectionMatrix();
 
-  // The viewer's lighting is tuned for ONE robot against a pale flat backdrop:
-  // the environment is dialled right down (0.2) and the direct lights carry the
-  // shading. Point that at a whole apartment and every surface comes out muddy
-  // brown, because there is almost no ambient light for the walls and floor to
-  // pick up. An interior needs the environment doing the work, so it goes back
-  // up for the duration, with a little exposure to match.
-  scene.environmentIntensity = 0.5;
-  renderer.toneMappingExposure = 0.78;
-  // A flat lift on top of that. The rig has one key and one weak fill, both
-  // from the same side, which is flattering on a robot and leaves every
-  // away-facing surface of a ROOM — the outside of walls, the backs of
-  // furniture — reading as black. This is the floor under that.
-  const simFill = new THREE.AmbientLight(0xfff2e0, 0.35);
+  // See SIM_LIGHTING for why the balance differs from the viewer's own.
+  const lighting = simLighting();
+  scene.environmentIntensity = lighting.environment;
+  renderer.toneMappingExposure = lighting.exposure;
+  // A small flat lift so that away-facing surfaces of a ROOM — the backs of
+  // furniture, walls turned from the key — do not read as pure black. Kept low
+  // on purpose: this is exactly the term that washes shadows out.
+  const simFill = new THREE.AmbientLight(0xfff2e0, lighting.ambient);
   scene.add(simFill);
 
   // And a quieter sky.
@@ -417,6 +457,7 @@ export function startSim(opts: SimOptions): SimHandle | null {
   // left the middle of the room.
   const lightOffset = keyLight?.position.clone() ?? null;
   if (keyLight) {
+    keyLight.intensity = lighting.key;
     const c = keyLight.shadow.camera as THREE.OrthographicCamera;
     // Wide enough to cover a whole room around the robot rather than just the
     // robot. The shadow map is 2048 square, so this trades texel density for
@@ -556,7 +597,28 @@ export function startSim(opts: SimOptions): SimHandle | null {
   // misses can still be covering half of it. Cheaper and steadier than casting
   // a ray per corner of the robot.
   const SIGHT_MARGIN = 0.45;
-  const mainLayers = camera.layers;
+
+  /**
+   * How a blocking wall gets out of the way: it keeps its place in the scene
+   * and simply writes nothing.
+   *
+   * Hiding it — `visible = false`, or moving it to a layer the camera lacks —
+   * takes its SHADOW with it, and a shadow blinking out as the camera crosses a
+   * doorway is more distracting than the wall was. three's shadow pass requires
+   * the caster to be `visible`, to have a `visible` material, and to pass
+   * `object.layers.test( camera.layers )` against the VIEW camera — so none of
+   * those may change. What it does NOT inherit is the write masks: the depth
+   * material it renders with is its own, so a caster that writes neither colour
+   * nor depth still lands in the shadow map.
+   *
+   * The cost is one no-op draw call per blocked wall, which at one or two walls
+   * is cheaper than the second mesh the alternative would need.
+   */
+  const invisibleWall = new THREE.MeshBasicMaterial({
+    colorWrite: false,
+    depthWrite: false,
+  });
+  const blocked = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
 
   /**
    * How close a blocking wall has to be, in metres, before it gets out of the
@@ -598,13 +660,14 @@ export function startSim(opts: SimOptions): SimHandle | null {
         reach
       );
       const blocking = hit !== null && hit < NEAR_WALL;
-      // Moved to the inset's layer rather than hidden outright. The chase camera
-      // stops drawing it; the robot's own camera, which has that layer enabled,
-      // carries on seeing a solid wall — which it must, since a first-person
-      // view with a hole punched in it is worse than one with a wall in it.
-      const hiddenNow = !wall.mesh.layers.test(mainLayers);
-      if (hiddenNow !== blocking) {
-        wall.mesh.layers.set(blocking ? PIP_ONLY_LAYER : 0);
+      const hiddenNow = blocked.has(wall.mesh);
+      if (blocking && !hiddenNow) {
+        blocked.set(wall.mesh, wall.mesh.material);
+        wall.mesh.material = invisibleWall;
+        changed = true;
+      } else if (!blocking && hiddenNow) {
+        wall.mesh.material = blocked.get(wall.mesh)!;
+        blocked.delete(wall.mesh);
         changed = true;
       }
     }
@@ -684,9 +747,14 @@ export function startSim(opts: SimOptions): SimHandle | null {
     renderer.setScissorTest(true);
     renderer.setScissor(x, y, w, h);
     renderer.setViewport(x, y, w, h);
+    // Blocked walls come back for this one render. They are only hidden to keep
+    // the CHASE camera's view clear; the robot is standing inside the room and
+    // its camera must see the walls of it.
+    for (const [mesh, material] of blocked) mesh.material = material;
     // autoClear is left ON: the clear is scissored too, so this paints the
     // scene background into the inset and nowhere else.
     renderer.render(scene, pipCamera);
+    for (const mesh of blocked.keys()) mesh.material = invisibleWall;
     renderer.setViewport(prevViewport);
     renderer.setScissor(prevScissor);
 
@@ -896,7 +964,9 @@ export function startSim(opts: SimOptions): SimHandle | null {
       }
       pipCamera.removeFromParent();
 
-      for (const wall of apartment.walls) wall.mesh.layers.set(0);
+      for (const [mesh, material] of blocked) mesh.material = material;
+      blocked.clear();
+      invisibleWall.dispose();
       world.remove(apartment.group);
       apartment.dispose();
 
@@ -937,6 +1007,8 @@ export function startSim(opts: SimOptions): SimHandle | null {
       if (restore.autoRecenter) viewer.removeAttribute("no-auto-recenter");
       if (keyLight && restore.keyLightPosition && restore.shadowBounds) {
         keyLight.position.copy(restore.keyLightPosition);
+        if (restore.keyLightIntensity !== null)
+          keyLight.intensity = restore.keyLightIntensity;
         const c = keyLight.shadow.camera as THREE.OrthographicCamera;
         c.left = restore.shadowBounds.left;
         c.right = restore.shadowBounds.right;

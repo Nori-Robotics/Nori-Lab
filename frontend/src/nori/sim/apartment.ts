@@ -57,6 +57,7 @@ const SHELL_WALL_H = 4.6;
 
 export const PIP_ONLY_LAYER = 2;
 
+
 /** Interior envelope. 9.0 x 7.2 m of floor, about 65 m2 of rooms. */
 const BOUNDS = { minX: -1.0, maxX: 8.0, minY: -3.6, maxY: 3.6 };
 
@@ -411,7 +412,6 @@ export function buildApartment(): Apartment {
     geometries.push(merged);
     add(new THREE.Mesh(merged, material));
   }
-
 
   return {
     group,

@@ -742,15 +742,29 @@ export function assembleDataset(
   });
 }
 
-/** POST /nori/datasets/assemble/estimate — estimated assembly seconds for the
- *  selected recordings + options. Today this is base assembly time (options add
- *  nothing until the processing tools land). Callers should fail SOFT: the
- *  endpoint may be absent on an older backend. */
+/** POST /nori/datasets/assemble/estimate — how long the selection will take.
+ *
+ *  TWO phases, reported separately because they differ by orders of magnitude:
+ *    assembly_seconds   minutes; after this the dataset is trainable.
+ *    processing_seconds  map derivation on GPUs — HOURS for a large selection
+ *                        (measured ~0.6 h for one 4-camera episode of normals).
+ *                        `null` means "selected but the rate isn't measured
+ *                        yet" and MUST render as unknown, never as instant.
+ *
+ *  `estimated_seconds` is kept for back-compat and equals assembly_seconds.
+ *  Callers should fail SOFT: the endpoint may be absent on an older backend,
+ *  and the split fields are absent on a backend older than the split. */
 export function estimateAssembly(
   baseUrl: string,
   fetcher: Fetcher,
   args: { sources: string[]; deriveMaps?: string[]; videoProcessing?: string[] }
-): Promise<{ estimated_seconds: number; frame_count: number; episode_count: number }> {
+): Promise<{
+  estimated_seconds: number;
+  assembly_seconds?: number;
+  processing_seconds?: number | null;
+  frame_count: number;
+  episode_count: number;
+}> {
   return noriRequest(baseUrl, fetcher, "/nori/datasets/assemble/estimate", {
     method: "POST",
     body: {

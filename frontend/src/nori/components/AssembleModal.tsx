@@ -37,8 +37,14 @@ const chipCls = (active: boolean) =>
 
 const prettyOption = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, " ");
 
-const fmtEta = (s: number) =>
-  s < 90 ? `~${Math.max(1, Math.round(s))} sec` : `~${Math.round(s / 60)} min`;
+const fmtEta = (s: number) => {
+  if (s < 90) return `~${Math.max(1, Math.round(s))} sec`;
+  if (s < 3600) return `~${Math.round(s / 60)} min`;
+  // Map derivation runs to hours (~0.6 h for one 4-camera episode of normals,
+  // ~6 h for twenty). Minutes past this point stop being readable.
+  const h = s / 3600;
+  return h < 10 ? `~${h.toFixed(1)} hr` : `~${Math.round(h)} hr`;
+};
 
 // Client mirror of the backend assembly-time model (routes/datasets.py
 // ASSEMBLY_SETUP_SECONDS / ASSEMBLY_SECONDS_PER_KFRAME) — a provisional fallback
@@ -76,7 +82,13 @@ export function AssembleModal({
   // consume them don't exist yet, so these change nothing about today's output).
   const [deriveMaps, setDeriveMaps] = useState<Set<string>>(new Set());
   const [videoProcessing, setVideoProcessing] = useState<Set<string>>(new Set());
+  // Any GPU post-processing selected? Drives whether the estimate splits into
+  // "assembly" + "map processing" or stays a single line.
+  const anyProcessing = deriveMaps.size > 0 || videoProcessing.size > 0;
   const [estimateSec, setEstimateSec] = useState<number | null>(null);
+  // Processing is a SEPARATE, much longer phase. undefined = not yet known,
+  // null = the backend says "selected but unmeasured" (render as unknown).
+  const [processingSec, setProcessingSec] = useState<number | null | undefined>(undefined);
   const [estimating, setEstimating] = useState(false);
   const cancelled = useRef(false);
   useEffect(() => () => {
@@ -107,7 +119,12 @@ export function AssembleModal({
       videoProcessing: [...videoProcessing],
     })
       .then((r) => {
-        if (!stale) setEstimateSec(r.estimated_seconds);
+        if (!stale) {
+          // assembly_seconds when the backend splits the two; estimated_seconds
+          // is the same number on older deploys.
+          setEstimateSec(r.assembly_seconds ?? r.estimated_seconds);
+          setProcessingSec(r.processing_seconds);
+        }
       })
       .catch(() => {
         if (!stale) setEstimateSec(null);
@@ -312,18 +329,48 @@ export function AssembleModal({
             {/* Estimated assembly time — base assembly today; the options add time
                 only once the processing tools land. Hidden if the backend can't
                 estimate (older deploy without the endpoint). */}
-            <div className="mt-4 flex items-center justify-between border-t border-border pt-3 text-sm">
-              <span className="text-muted-foreground">Estimated time</span>
-              <span className="font-medium text-nori-h14131a [font-variant-numeric:tabular-nums]">
-                {(() => {
-                  // Backend estimate wins; otherwise the client fallback from frame
-                  // count; otherwise the spinner (or — if we have neither).
-                  const shown =
-                    estimateSec ??
-                    (sourceFrameCount != null ? clientAssemblyEstimate(sourceFrameCount) : null);
-                  return shown != null ? fmtEta(shown) : estimating ? "…" : "—";
-                })()}
-              </span>
+            {/* TWO estimates, deliberately separate. Assembly is minutes and
+                ends with a trainable dataset; map derivation is GPU work that
+                runs to HOURS and lands afterwards as an extra layer. Collapsing
+                them into one number either hides a multi-hour job or makes
+                plain assembly look broken. */}
+            <div className="mt-4 space-y-1.5 border-t border-border pt-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">
+                  {anyProcessing ? "Assembly time" : "Estimated time"}
+                </span>
+                <span className="font-medium text-nori-h14131a [font-variant-numeric:tabular-nums]">
+                  {(() => {
+                    // Backend estimate wins; otherwise the client fallback from
+                    // frame count; otherwise the spinner (or — if neither).
+                    const shown =
+                      estimateSec ??
+                      (sourceFrameCount != null ? clientAssemblyEstimate(sourceFrameCount) : null);
+                    return shown != null ? fmtEta(shown) : estimating ? "…" : "—";
+                  })()}
+                </span>
+              </div>
+              {anyProcessing && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Map processing</span>
+                    <span className="font-medium text-nori-h14131a [font-variant-numeric:tabular-nums]">
+                      {processingSec === undefined
+                        ? estimating
+                          ? "…"
+                          : "—"
+                        : processingSec === null
+                          ? "unknown"
+                          : fmtEta(processingSec)}
+                    </span>
+                  </div>
+                  <p className="pt-0.5 text-xs text-muted-foreground">
+                    Your dataset is ready to train as soon as assembly finishes. Maps
+                    are generated on GPUs afterwards and appear as an extra
+                    downloadable layer.
+                  </p>
+                </>
+              )}
             </div>
 
             <div className="mt-5 flex justify-end gap-2">

@@ -4,14 +4,14 @@
 // No hardware, no DOM, no real Worker (worker isolation is B5, a manual browser check).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ActionStatus, ExternalJog, PerceptionView, RemoteTeleop, TelemetryView } from "@nori/sdk";
+import type { RobotDescriptor, ActionStatus, ExternalJog, PerceptionView, RemoteTeleop, TelemetryView } from "@nori/sdk";
 import { ScriptDriver, type ScriptDriverOptions } from "./ScriptDriver";
 
 // Minimal stand-in for RemoteTeleop: only the methods ScriptDriver calls, recording every call.
 // Action API (Phase E) defaults to a SILENT daemon — actionStatus() null, awaitAction() never
 // resolves — so moveTo exercises its client-side fallback (the pre-Phase-E behavior) unless a test
 // flips `action.speaking` and calls `action.resolve` to simulate the daemon's authoritative verdict.
-function makeFakeTeleop() {
+function makeFakeTeleop(descriptor?: RobotDescriptor) {
   const jogs: (ExternalJog | null)[] = [];
   const commands: string[] = [];
   const actions: Record<string, number>[] = [];
@@ -25,6 +25,8 @@ function makeFakeTeleop() {
     nextActionId: () => "act-1",
     actionStatus: () => (action.speaking ? { action_id: "act-1", state: "active" } as ActionStatus : null),
     awaitAction: () => new Promise<ActionStatus>((res) => { action.resolve = res; }),
+    // Undefined descriptor = a robot that sent no ack descriptor = the L-series fleet.
+    robotInfo: () => (descriptor ? { descriptor } : null),
   } as unknown as RemoteTeleop;
   return { teleop, jogs, commands, actions, perception, action };
 }
@@ -32,8 +34,8 @@ function makeFakeTeleop() {
 // Minimal telemetry frame carrying just a `state` dict for moveTo.
 const telWithState = (state: Record<string, number>) => ({ state } as unknown as TelemetryView);
 
-function setup(opts: Partial<ScriptDriverOptions> = {}) {
-  const fake = makeFakeTeleop();
+function setup(opts: Partial<ScriptDriverOptions> = {}, descriptor?: RobotDescriptor) {
+  const fake = makeFakeTeleop(descriptor);
   const driver = new ScriptDriver({ teleop: fake.teleop, ...opts });
   driver.start(); // pushes the initial zero-hold {}
   return { driver, ...fake };
@@ -90,11 +92,32 @@ describe("op -> ExternalJog mapping", () => {
     await p;
   });
 
-  it("lift maps a scalar onto <side>_lift", async () => {
+  it("lift maps a scalar onto <side>_lift on an L-series robot", async () => {
     const { driver, jogs } = setup();
     const p = driver.exec("lift", ["left", 0.3, 100]);
     await vi.advanceTimersByTimeAsync(1);
     expect(lastJog(jogs)).toEqual({ left_lift: 0.3 });
+    await vi.advanceTimersByTimeAsync(100);
+    await p;
+  });
+
+  it("lift uses the BARE central key on an A-series robot", async () => {
+    // The composed `${side}_lift` named a key an A3 does not have. Unknown jog keys are
+    // dropped in silence, so a scripted or agent-issued lift reported success and moved
+    // nothing — the worst failure shape there is for an unattended run.
+    const { driver, jogs } = setup({}, { aux: ["lift"], ranges: { "lift.pos": [0, 720] } });
+    const p = driver.exec("lift", ["left", 0.3, 100]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(lastJog(jogs)).toEqual({ lift: 0.3 });
+    await vi.advanceTimersByTimeAsync(100);
+    await p;
+  });
+
+  it("lift moves nothing, and claims nothing, on a robot with no lift", async () => {
+    const { driver, jogs } = setup({}, { aux: [] });
+    const p = driver.exec("lift", ["left", 0.3, 100]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(lastJog(jogs)).toEqual({}); // the zero-hold, not an invented key
     await vi.advanceTimersByTimeAsync(100);
     await p;
   });

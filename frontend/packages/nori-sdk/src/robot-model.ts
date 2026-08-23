@@ -28,7 +28,8 @@
 //
 // No external assets (CSP-safe) — every part is a box/cylinder primitive.
 import * as THREE from "three";
-import { railReading } from "./rail";
+import { railReading, liftAxes } from "./rail";
+import type { RobotDescriptor } from "./teleop";
 import type { ArmSide } from "./teleop";
 
 // Clamped normalized joint value (≈ degrees, see header). Missing key -> 0 (rest pose).
@@ -101,6 +102,16 @@ export interface RobotModel {
 export interface RobotModelOptions {
   /** Floor grid under the robot. Nice for the desktop card; noisy floating in VR. */
   showGrid?: boolean;
+  /**
+   * The robot's ack descriptor, used to resolve WHICH lift it has and how far that lift
+   * travels. Omit it and the model falls back to the L-series per-arm rails at the default
+   * travel — correct for the frozen fleet, which sends no descriptor anyway.
+   *
+   * It matters for the A-series: that robot has ONE central column keyed the bare "lift.pos",
+   * so without this both carriages sat frozen at the top of the rail no matter where the real
+   * lift was.
+   */
+  descriptor?: RobotDescriptor;
 }
 
 function box(
@@ -242,14 +253,24 @@ export function buildRobotModel(opts: RobotModelOptions = {}): RobotModel {
 
   const arms: Record<ArmSide, ArmParts> = { left: left.parts, right: right.parts };
 
+  // Resolved once, not per frame. A per-arm rail matches on side; a single central column is
+  // shared by both arms. Falls back to the L-series pair when no descriptor was supplied.
+  const axes = liftAxes(opts.descriptor);
+  const liftAxisFor = (side: ArmSide) =>
+    axes.find((a) => a.side === side) ?? axes.find((a) => a.side === null);
+
   function poseArm(side: ArmSide, state: Record<string, number>, active: boolean) {
     const a = arms[side];
     const p = `${side}_arm_`;
     const sign = side === "left" ? 1 : -1;
 
     // Rail carriage height for this arm (0 = top, grows downward), clamped so it never
-    // overruns the rail.
-    const { frac } = railReading(state, `${side}_lift.pos`);
+    // overruns the rail. On an A-series robot BOTH arms ride the one central column, so both
+    // resolve to the same axis and move together — which is physically what happens.
+    const axis = liftAxisFor(side);
+    const { frac } = axis
+      ? railReading(state, axis.key, axis.travelMm)
+      : { frac: 0 };
     const visFrac = Math.min(1, frac * RAIL_VIS_GAIN);
     const carriageY = RAIL_TOP_Y - visFrac * RAIL_LEN;
     a.carriage.position.set(sign * 0.015, carriageY, 0);

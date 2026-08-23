@@ -654,7 +654,7 @@ const Remote = () => {
               Rail height <RailHeightHelp />
             </h2>
             <div className="mt-2">
-              <RailHeight state={tel.state} />
+              <RailHeight state={tel.state} descriptor={teleop?.robotInfo()?.descriptor} />
             </div>
             <h2 className="mt-4 text-sm font-semibold">Grip force / motor current</h2>
             <div className="mt-2">

@@ -17,6 +17,7 @@ import type { SignalingTransport } from "./signaling";
 import { AudioLatencyProbe, audioLatencyEnabled } from "./audioLatency";
 import { VideoQualityLoop, type VideoNetState } from "./videoQuality";
 import { NORI_PROTOCOL_VERSION } from "./version";
+import { liftJogKey } from "./rail";
 
 export type ControlMode = "cylindrical" | "joint";
 export type ArmSide = "left" | "right";
@@ -314,9 +315,20 @@ export interface RobotDescriptor {
   buses?: string[];
   joints?: string[];   // every drivable "<motor>.pos" key
   base?: string[];     // base DOFs ("x.vel", "theta.vel")
-  aux?: string[];      // extra actuators (e.g. "left_lift")
+  aux?: string[];      // extra actuators (e.g. "left_lift", or A3's single "lift")
   cameras?: string[];  // camera roles — matches the composite CameraLayout tiles
   ranges?: Record<string, [number, number]>;
+  // How a normalized jog rate [-1,1] converts to NOMINAL COMMANDED motion on this robot
+  // (nori-protocol ack.json / MODELS.md "Knowing how fast 1.0 is"). Never achieved
+  // velocity: the watchdog warn state, acceleration limits, and Servo's singularity/
+  // collision scaling all reduce the real rate — verify against telemetry. Absent on the
+  // frozen L2 fleet forever, so absence means UNKNOWN and a caller must not assume.
+  jog_scale?: {
+    joints?: Record<string, number>; // norm_mode units/s per "<name>.pos" at full deflection
+    task?: { x?: number; y?: number; z?: number; pitch?: number; shoulder_pan?: number };
+    base?: { linear?: number; angular?: number }; // m/s, rad/s (JOG namespace keys)
+    lift?: number;                   // mm/s, matching <side>_lift.pos / lift.pos
+  };
 }
 
 // The parsed handshake. `accepted:false` means the daemon refused the session (error says
@@ -332,6 +344,26 @@ export interface RobotInfo {
   initialState?: Record<string, number>; // joint pose at session start ("<name>.pos" -> value)
   error?: string;                        // set when accepted === false
   versionMismatch: boolean;              // daemon protocolVersion differs from this SDK's target
+  // ADVISORY model/generation label ("L2", "A3") for logs and dataset provenance only —
+  // never branch on it; branch on descriptor + capabilities (nori-protocol MODELS.md).
+  model?: string;
+  // Optional verbs this robot honours beyond the always-present core. THREE-VALUED by
+  // design: undefined = the ack predates the field (unknown — probe or assume legacy);
+  // [] = explicitly none. Use supportsCapability() rather than .includes() so the
+  // legacy case stays visible. Known values include "task_jog", "pose_targets",
+  // "record", "leader_action_deg", "lift_targets", "policy_stream", "call".
+  capabilities?: string[];
+}
+
+// Three-valued capability check (mirrors nori-sdk-py RobotInfo.supports): true/false when
+// the robot declared its capabilities, undefined when the ack predates the field — callers
+// must treat undefined as "unknown, probe or assume legacy", never as false.
+export function supportsCapability(
+  info: RobotInfo | null | undefined, capability: string,
+): boolean | undefined {
+  const caps = info?.capabilities;
+  if (caps === undefined) return undefined;
+  return caps.includes(capability);
 }
 
 // Coerce a wire `ack` frame into a RobotInfo. Tolerant of old daemons that send a bare
@@ -360,6 +392,11 @@ export function parseAck(
         : undefined,
     error: typeof m.error === "string" ? m.error : undefined,
     versionMismatch: protocolVersion !== undefined && protocolVersion !== sdkProtocolVersion,
+    model: typeof m.model === "string" && m.model ? m.model : undefined,
+    capabilities:
+      Array.isArray(m.capabilities) && m.capabilities.every((c) => typeof c === "string")
+        ? (m.capabilities as string[])
+        : undefined,
   };
 }
 
@@ -894,6 +931,58 @@ export class RemoteTeleop {
   // Mint a fresh, unique action_id for a move (Phase E). Human-readable for logs.
   nextActionId(): string {
     return `a${++this.actionSeq}`;
+  }
+
+  // Send an absolute Cartesian pose target for ONE arm's gripper TCP (nori-protocol
+  // control.pose; capability "pose_targets"). The robot solves IK ON-BOARD — the wire never
+  // carries joint solutions — then latches and tracks the result exactly like sendAction:
+  // a zero jog does not cancel it, the watchdog's t_stop drops it. Lifecycle rides the
+  // action_id through action_status (awaitAction resolves on the terminal state; the
+  // intermediate "active" means solved-and-tracking). Failure is a modelled `blocked`
+  // reason, not an exception: "no_ik_solution" (full pose: not retriable at this lift
+  // height; position-only: wrist-dependent, retry with an orientation), "ik_timeout"
+  // (retry), "limit:<joint>", "singularity", "collision", "lift_moved" (re-send to
+  // re-solve), "config_jump" (split the move into waypoints), "frame:<name>".
+  //
+  // Conventions (NORMATIVE, nori-protocol control.json): metres in base_footprint, REP-103
+  // (+x forward, +y left, +z up), quaternion [x, y, z, w]. OMIT the orientation for "get
+  // the gripper to this point, any wrist angle" — the robot solves at its current wrist.
+  //
+  // THROWS if the robot's ack EXPLICITLY lacks "pose_targets" (the frame would be silently
+  // ignored — a hung move with no error is worse than a throw). An ack that predates
+  // capabilities entirely passes through: probe-or-assume-legacy is the ack contract.
+  // Malformed vectors also throw here rather than costing a round trip to a "bad_pose".
+  sendPose(
+    side: "left" | "right",
+    positionM: [number, number, number] | number[],
+    orientationXyzw?: [number, number, number, number] | number[],
+    actionId?: string,
+  ) {
+    if (supportsCapability(this.ackInfo, "pose_targets") === false) {
+      throw new Error(
+        "this robot does not advertise the pose_targets capability — a pose frame would " +
+        "be silently ignored");
+    }
+    if (side !== "left" && side !== "right") {
+      throw new Error(`sendPose: side must be "left" or "right", got ${String(side)}`);
+    }
+    if (positionM.length !== 3) {
+      throw new Error(`sendPose: positionM needs [x, y, z] metres, got ${positionM.length}`);
+    }
+    if (orientationXyzw !== undefined && orientationXyzw.length !== 4) {
+      throw new Error(
+        `sendPose: orientationXyzw needs [x, y, z, w], got ${orientationXyzw.length}`);
+    }
+    const target: Record<string, unknown> = {
+      frame: "base_footprint",
+      position_m: [...positionM],
+    };
+    if (orientationXyzw !== undefined) target.orientation_xyzw = [...orientationXyzw];
+    const frame: Record<string, unknown> = {
+      type: "control", seq: this.seq++, pose: { [`${side}_arm`]: target },
+    };
+    if (actionId) frame.action_id = actionId;
+    this.dcSend(frame);
   }
 
   // Drive the robot's policy streamer (STREAM_INTEGRATION_PLAN §3): the observation
@@ -1845,7 +1934,6 @@ export class RemoteTeleop {
         `v${NORI_PROTOCOL_VERSION}. Proceeding (unknown frames are ignored by both sides); ` +
         `expect vocabulary gaps, not unsafe behavior.`);
     }
-    this.robotInfo = info;
     this.dynamicKeymap = null;   // rebuild the per-motor map from this ack
     const d = info.descriptor;
     const l3 = l3JointShorts(d, this.o.arm);
@@ -2012,14 +2100,16 @@ export class RemoteTeleop {
     }
   }
 
-  // The robot's handshake, kept for descriptor-driven behavior (L3 keymaps).
-  private robotInfo: RobotInfo | null = null;
+  // NOTE: the handshake lives in `ackInfo` (declared above) and is read through the public
+  // robotInfo() accessor. There used to be a SECOND private field named `robotInfo` here
+  // holding the same value — which shadowed that method on every instance, so
+  // `teleop.robotInfo()` threw "is not a function" for the whole life of the session.
   private dynamicKeymap: { arm: string; map: Record<string, [string, number]> } | null = null;
 
   // Descriptor shorts for the CURRENTLY selected arm, or null on L2 robots.
   // Public so the page can render the matching legend.
   armJointShorts(): string[] | null {
-    return l3JointShorts(this.robotInfo?.descriptor, this.o.arm);
+    return l3JointShorts(this.ackInfo?.descriptor, this.o.arm);
   }
 
   private armKeymap() {
@@ -2131,8 +2221,15 @@ export class RemoteTeleop {
     // keeps the daemon's latest_jog fresh so a released base key can't latch its last speed.
     const jog: Record<string, unknown> = leader ? { base } : { [`${this.o.arm}_arm`]: a };
     if (!leader && Object.keys(base).length) jog.base = base;
-    // u/o lift the CURRENTLY SELECTED arm (the dropdown that scopes the arm keys).
-    if (z) jog[`${this.o.arm}_lift`] = z;
+    // u/o lift the CURRENTLY SELECTED arm (the dropdown that scopes the arm keys) on a robot
+    // with per-arm rails; on an A-series robot there is ONE central column and both arm
+    // selections drive it. Resolved from the descriptor rather than composed as
+    // `${arm}_lift`, which named a key an A3 does not have — the robot ignored it in silence,
+    // so the operator's lift keys did nothing at all and reported nothing.
+    if (z) {
+      const lk = liftJogKey(this.ackInfo?.descriptor, this.o.arm);
+      if (lk) jog[lk] = z;
+    }
     const frame: Record<string, unknown> = { type: "control", seq: this.seq++, jog };
     if (leader) frame.leader_action_deg = leader;
     this.dcSend(frame);

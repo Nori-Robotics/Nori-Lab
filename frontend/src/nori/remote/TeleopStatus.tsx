@@ -520,18 +520,27 @@ export function MotorFaults({ faults }: { faults: Record<string, string> }) {
 // robot became shared with the headset: this gauge, the desktop 3D card and the in-VR model all
 // derive the carriage height from that one function, so they can't drift. Re-exported here
 // because existing callers import it from this module.
-import { railReading, RAIL_TRAVEL_MM } from "@nori/sdk";
+import { railReading, liftAxes, RAIL_TRAVEL_MM } from "@nori/sdk";
+import type { RobotDescriptor } from "@nori/sdk";
 export { railReading, RAIL_TRAVEL_MM };
 
-export function RailHeight({ state }: { state: Record<string, number> }) {
-  const rails: { key: string; label: string }[] = [
-    { key: "left_lift.pos", label: "L rail" },
-    { key: "right_lift.pos", label: "R rail" },
-  ];
+// `descriptor` resolves WHICH lifts this robot has and how far each travels. Omit it and you
+// get the L-series pair at the 950 mm default, which is what a robot sending no descriptor is
+// — so the frozen fleet renders exactly as before. Pass it and an A-series robot renders its
+// one central column against its real advertised travel; without it that column is invisible
+// (its key is the bare "lift.pos") and the gauge reads ~24% short.
+export function RailHeight({
+  state, descriptor,
+}: { state: Record<string, number>; descriptor?: RobotDescriptor }) {
+  const rails = liftAxes(descriptor);
+  if (rails.length === 0) {
+    // A robot that advertises no lift: say so, rather than draw a rail pinned at zero.
+    return <p className="font-mono text-xs text-nori-h14131a/50">no rail on this robot</p>;
+  }
   return (
     <div className="space-y-2">
-      {rails.map(({ key, label }) => {
-        const { known, depthMm, frac } = railReading(state, key);
+      {rails.map(({ key, label, travelMm }) => {
+        const { known, depthMm, frac } = railReading(state, key, travelMm);
         const pct = frac * 100;
         // orange through descent, darker mid, red as it approaches the bottom hard stop.
         const tone = frac >= 0.85 ? "bg-nori-hd24a3d" : frac >= 0.6 ? "bg-nori-hc97929" : "bg-nori-hd98b3d";

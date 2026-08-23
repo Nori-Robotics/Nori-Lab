@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import RobotUrdfViewer, { type HoveredJoint } from "@/nori/components/RobotUrdfViewer";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
-import { railReading } from "@nori/sdk";
+import { railReading, liftKeysInState } from "@nori/sdk";
 import { Robot3D } from "@/nori/remote/Robot3D";
 import { useNori } from "@/nori/NoriContext";
 import { hasUrdfModel, isRobotModelBlocked } from "@/nori/robotModels";
@@ -78,9 +78,10 @@ const ModelReadout: React.FC<{
   const { running, connState, tel } = useTeleopSession();
   const live = running && connState === "connected";
 
-  // The lift key differs per robot generation, so find it rather than hardcode:
-  // any *_lift.pos in the telemetry dict is the one we want.
-  const liftKey = Object.keys(tel.state ?? {}).find((k) => k.endsWith("_lift.pos"));
+  // The lift key differs per robot generation, so resolve it in the SDK rather than match
+  // here: the A-series column is the BARE "lift.pos", which the old `endsWith("_lift.pos")`
+  // test skipped entirely -- this panel showed no live lift at all on an A3.
+  const liftKey = liftKeysInState(tel.state ?? {})[0];
   const liveLift = liftKey ? railReading(tel.state, liftKey) : null;
 
   // With nothing connected the MODEL is the only pose that exists — and it is a

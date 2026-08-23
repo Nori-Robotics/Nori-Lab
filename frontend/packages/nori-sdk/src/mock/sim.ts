@@ -114,6 +114,14 @@ export class MockDaemonSim {
       type: "ack",
       accepted: true,
       protocol_version: this.protocolVersion,
+      // Advisory label so logs name the double honestly (never branch on it).
+      model: "SIM",
+      // The TRUTHFUL set of optional verbs this double honours — the spec's rule for a
+      // merged stack. Deliberately NOT "pose_targets": this sim refuses to invent
+      // kinematics, so a pose frame would be silently dropped — and advertising a verb
+      // the double ignores is how a client learns exactly the wrong lesson (the SDK's
+      // sendPose gate throws against this ack, which is the correct teaching).
+      capabilities: ["task_jog", "record"],
       norm_mode: "range_m100_100",
       watchdog_profile: { ...this.watchdog },
       descriptor: JSON.parse(JSON.stringify(this.descriptor)),

@@ -1,7 +1,7 @@
 // parseAck (P4.1): the handshake parse must survive the full fixture ack, a bare old-daemon
 // ack, and a rejection — and flag (not fail on) a protocol version mismatch.
 import { describe, expect, it } from "vitest";
-import { parseAck, NORI_PROTOCOL_VERSION } from "@nori/sdk";
+import { parseAck, supportsCapability, NORI_PROTOCOL_VERSION } from "@nori/sdk";
 
 // Mirrors nori-protocol fixtures/ack.json (the daemon's golden handshake frame).
 const FIXTURE_ACK: Record<string, unknown> = {
@@ -68,5 +68,44 @@ describe("parseAck", () => {
   it("drops a malformed watchdog_profile instead of propagating garbage", () => {
     const info = parseAck({ type: "ack", watchdog_profile: { t_warn_ms: "soon" } });
     expect(info.watchdogProfile).toBeUndefined();
+  });
+
+  it("parses model and capabilities (A3-era ack)", () => {
+    const info = parseAck({
+      ...FIXTURE_ACK,
+      model: "A3",
+      capabilities: ["task_jog", "pose_targets", "record"],
+    });
+    expect(info.model).toBe("A3");
+    expect(info.capabilities).toEqual(["task_jog", "pose_targets", "record"]);
+    expect(supportsCapability(info, "pose_targets")).toBe(true);
+    expect(supportsCapability(info, "call")).toBe(false);
+  });
+
+  it("capability check is THREE-VALUED: an ack predating the field is unknown, not false", () => {
+    const legacy = parseAck(FIXTURE_ACK); // no capabilities key — pre-2026-08 robots
+    expect(legacy.capabilities).toBeUndefined();
+    expect(supportsCapability(legacy, "pose_targets")).toBeUndefined();
+    // Explicitly-empty means NONE — distinct from unknown.
+    const none = parseAck({ ...FIXTURE_ACK, capabilities: [] });
+    expect(supportsCapability(none, "pose_targets")).toBe(false);
+  });
+
+  it("drops malformed capabilities/model instead of propagating garbage", () => {
+    const info = parseAck({ ...FIXTURE_ACK, capabilities: ["task_jog", 7], model: "" });
+    expect(info.capabilities).toBeUndefined(); // mixed types -> unknown, never partial
+    expect(info.model).toBeUndefined();        // empty label is the legacy signal
+  });
+
+  it("parses jog_scale through the descriptor (advisory commanded scale)", () => {
+    const info = parseAck({
+      ...FIXTURE_ACK,
+      descriptor: {
+        ...(FIXTURE_ACK.descriptor as Record<string, unknown>),
+        jog_scale: { task: { x: 0.08, z: 0.08 }, lift: 50.0 },
+      },
+    });
+    expect(info.descriptor?.jog_scale?.task?.x).toBe(0.08);
+    expect(info.descriptor?.jog_scale?.lift).toBe(50.0);
   });
 });

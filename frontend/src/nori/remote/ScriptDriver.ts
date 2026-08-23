@@ -18,7 +18,7 @@
 // apart. Say so in the UI.
 
 import type { RemoteTeleop, ExternalJog, ArmSide, TelemetryView, ActionStatus } from "@nori/sdk";
-import { TASK_KEYS, JOINT_KEYS, BASE_KEYS } from "@nori/sdk";
+import { liftJogKey, TASK_KEYS, JOINT_KEYS, BASE_KEYS } from "@nori/sdk";
 import { playAudioUrl, type ClipHandle } from "./audioClip";
 
 // The real DOF vocabulary, derived from the SDK's exported keybind maps so it can never drift
@@ -268,7 +268,13 @@ export class ScriptDriver {
   private lift(args: unknown[]): Promise<void> {
     const [side, dir, ms] = args as [ArmSide, number, number];
     const rate = clampRate(dir, this.capRate);
-    return this.hold({ [`${side}_lift`]: rate }, ms);
+    // Resolved from the descriptor, not composed as `${side}_lift`: an A-series robot has ONE
+    // central column keyed the bare "lift", so the composed name was a key it does not have.
+    // Unknown jog keys are dropped in SILENCE, which meant a scripted or agent-issued lift
+    // reported success and moved nothing — the worst shape of failure for an unattended run.
+    const key = liftJogKey(this.teleop.robotInfo()?.descriptor, side);
+    if (!key) return this.sleep(ms); // no lift on this robot: burn the time, move nothing
+    return this.hold({ [key]: rate }, ms);
   }
 
   private wait(args: unknown[]): Promise<void> {

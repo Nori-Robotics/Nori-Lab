@@ -79,12 +79,19 @@ export function AssembleModal({
   const [error, setError] = useState<string | null>(null);
   const [doneNote, setDoneNote] = useState<string | null>(null); // e.g. skipped episodes
   // Derive-maps + video-processing (PREP: persisted onto the job; the tools that
-  // consume them don't exist yet, so these change nothing about today's output).
+  // consume them are live: depth from the masking stage, normals/albedo/
+  // roughness from one inverse-rendering pass on a GPU).
   const [deriveMaps, setDeriveMaps] = useState<Set<string>>(new Set());
   const [videoProcessing, setVideoProcessing] = useState<Set<string>>(new Set());
   // Any GPU post-processing selected? Drives whether the estimate splits into
   // "assembly" + "map processing" or stays a single line.
   const anyProcessing = deriveMaps.size > 0 || videoProcessing.size > 0;
+  // Which cameras to derive maps for. Maps are computed PER CAMERA on a GPU, so
+  // a 4-camera recording costs 4x a 1-camera one. Wrist views are close-ups
+  // where scene geometry and material maps mean least, so overhead-only is
+  // usually the right trade. "all" sends [] (every camera).
+  const [mapScope, setMapScope] = useState<"all" | "overhead">("overhead");
+  const mapCameras = mapScope === "overhead" ? ["overhead"] : [];
   const [estimateSec, setEstimateSec] = useState<number | null>(null);
   // Processing is a SEPARATE, much longer phase. undefined = not yet known,
   // null = the backend says "selected but unmeasured" (render as unknown).
@@ -117,6 +124,7 @@ export function AssembleModal({
       sources,
       deriveMaps: [...deriveMaps],
       videoProcessing: [...videoProcessing],
+      mapCameras,
     })
       .then((r) => {
         if (!stale) {
@@ -135,7 +143,7 @@ export function AssembleModal({
     return () => {
       stale = true;
     };
-  }, [sources, deriveMaps, videoProcessing, baseUrl, fetchWithHeaders]);
+  }, [sources, deriveMaps, videoProcessing, mapScope, baseUrl, fetchWithHeaders]);
 
   const submit = useCallback(async () => {
     setError(null);
@@ -152,6 +160,7 @@ export function AssembleModal({
         name: mode === "new" ? name.trim() || null : null,
         deriveMaps: [...deriveMaps],
         videoProcessing: [...videoProcessing],
+        mapCameras,
       });
       // Poll to terminal. The heavy work runs in an ephemeral cloud job, so this
       // can take a few minutes; keep polling until DONE/FAILED.
@@ -181,7 +190,7 @@ export function AssembleModal({
       setError(e instanceof Error ? e.message : String(e));
       setPhase("error");
     }
-  }, [mode, targetId, name, sources, deriveMaps, videoProcessing, baseUrl, fetchWithHeaders, onClose, onDone]);
+  }, [mode, targetId, name, sources, deriveMaps, videoProcessing, mapScope, baseUrl, fetchWithHeaders, onClose, onDone]);
 
   const running = phase === "running";
 
@@ -287,8 +296,8 @@ export function AssembleModal({
               </select>
             )}
 
-            {/* Derive maps + process videos (PREP — persisted onto the job; a no-op
-                until the processing tools exist). */}
+            {/* Derive maps + process videos. Live: depth from the masking stage,
+                normals/albedo/roughness from one inverse-rendering pass. */}
             <div className="mt-4 space-y-3">
               <div>
                 <p className="text-xs font-medium text-nori-h14131a">Derive maps</p>
@@ -305,6 +314,31 @@ export function AssembleModal({
                   ))}
                 </div>
               </div>
+              {deriveMaps.size > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-nori-h14131a">Map cameras</p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setMapScope("overhead")}
+                      className={chipCls(mapScope === "overhead")}
+                    >
+                      Overhead only
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMapScope("all")}
+                      className={chipCls(mapScope === "all")}
+                    >
+                      All cameras
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Maps are generated per camera, so every extra camera multiplies
+                    the GPU time. Overhead usually carries the useful geometry.
+                  </p>
+                </div>
+              )}
               <div>
                 <p className="text-xs font-medium text-nori-h14131a">Process videos</p>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">

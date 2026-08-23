@@ -707,9 +707,14 @@ export interface AssemblyJob {
 }
 
 /** Maps derivable from recordings + video-processing passes, offered at assemble
- *  time. PREP: the backend persists these onto the job; the processing tools that
- *  consume them don't exist yet, so selecting them is a no-op today. */
-export const DERIVE_MAPS = ["depth", "normals", "albedo", "roughness", "metallic"] as const;
+ *  time. These are LIVE now: depth comes from the masking stage, and
+ *  normals/albedo/roughness from one inverse-rendering pass on a GPU. */
+/** Selectable per-frame maps. `metallic` is deliberately ABSENT: the model
+ *  emits it, but on our footage it is salt-and-pepper noise (the quantity is
+ *  ill-posed from a single view — see the SDG findings), so it would ship a map
+ *  nobody can use. The backend rejects it with a 422, so offering it here would
+ *  only produce a failed assemble. */
+export const DERIVE_MAPS = ["depth", "normals", "albedo", "roughness"] as const;
 export const VIDEO_PROCESSING = ["color_jitter", "full_relight"] as const;
 export type DeriveMap = (typeof DERIVE_MAPS)[number];
 export type VideoProcessing = (typeof VIDEO_PROCESSING)[number];
@@ -726,6 +731,10 @@ export function assembleDataset(
     name?: string | null;
     deriveMaps?: string[];
     videoProcessing?: string[];
+    /** Cameras to derive maps for; [] = all. MUST match what was sent to
+     *  estimateAssembly, or the quoted time describes a different job than the
+     *  one that runs. */
+    mapCameras?: string[];
   }
 ): Promise<{ assembly_job_id: string; status: string }> {
   return noriRequest(baseUrl, fetcher, "/nori/datasets/assemble", {
@@ -737,6 +746,7 @@ export function assembleDataset(
       name: args.name ?? null,
       derive_maps: args.deriveMaps ?? [],
       video_processing: args.videoProcessing ?? [],
+      map_cameras: args.mapCameras ?? [],
     },
     action: "Assemble dataset",
   });
@@ -757,7 +767,13 @@ export function assembleDataset(
 export function estimateAssembly(
   baseUrl: string,
   fetcher: Fetcher,
-  args: { sources: string[]; deriveMaps?: string[]; videoProcessing?: string[] }
+  args: {
+    sources: string[];
+    deriveMaps?: string[];
+    videoProcessing?: string[];
+    /** Cameras to derive maps for; [] = all. Cost is per (episode x camera). */
+    mapCameras?: string[];
+  }
 ): Promise<{
   estimated_seconds: number;
   assembly_seconds?: number;
@@ -771,6 +787,7 @@ export function estimateAssembly(
       sources: args.sources,
       derive_maps: args.deriveMaps ?? [],
       video_processing: args.videoProcessing ?? [],
+      map_cameras: args.mapCameras ?? [],
     },
     action: "Estimate assembly time",
   });

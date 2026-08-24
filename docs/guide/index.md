@@ -1,7 +1,7 @@
 # What is Nori?
 
 ::: info Hardware setup on this site covers the Nori L2
-[Nori A3](/guide/a3) setup pages are coming soon; A3 specifications and simulation assets are
+Full [Nori A3](/guide/a3) docs are coming soon; A3 specifications and simulation assets are
 already on that page. Everything else here — the app, video, teleoperation, safety, and the
 SDK — applies to either robot.
 :::

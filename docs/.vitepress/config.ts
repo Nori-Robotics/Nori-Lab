@@ -13,7 +13,7 @@ export default defineConfig({
   // and LLM crawlers quote when they summarise the site, and without it they happily present
   // L2 hardware steps as "Nori documentation" for whichever robot the reader actually owns.
   description:
-    "Documentation and troubleshooting for Nori robots, the Nori desktop app, and the @nori/sdk teleoperation SDK. Hardware setup pages currently cover the Nori L2; Nori A3 setup pages are coming soon.",
+    "Documentation and troubleshooting for Nori robots, the Nori desktop app, and the @nori/sdk teleoperation SDK. Hardware setup pages currently cover the Nori L2; full Nori A3 docs are coming soon.",
   lang: "en-US",
   cleanUrls: true,
 

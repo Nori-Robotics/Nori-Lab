@@ -33,7 +33,7 @@ export default {
       "layout-top": () =>
         h("div", { class: "nori-model-banner" }, [
           h("span", { class: "nori-model-banner-text" }, [
-            h("strong", null, "Nori A3 hardware docs are coming soon."),
+            h("strong", null, "Full Nori A3 docs coming soon."),
             " ",
             h("a", { href: "/guide/a3" }, "What works today"),
             ".",

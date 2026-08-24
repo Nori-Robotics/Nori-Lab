@@ -196,7 +196,10 @@
   height: var(--vp-layout-top-height);
   padding: 0 16px;
   border-bottom: 1px solid var(--vp-c-divider);
-  background-color: var(--vp-c-brand-soft);
+  /* brand-soft is translucent (14% alpha) — fine on a static surface, but this banner is
+   * position: fixed, so page content scrolls underneath it. Composite the tint over the opaque
+   * page background so nothing shows through; the rendered colour is unchanged in both modes. */
+  background: linear-gradient(var(--vp-c-brand-soft), var(--vp-c-brand-soft)) var(--vp-c-bg);
   color: var(--vp-c-brand-1);
   font-size: 13px;
   line-height: 20px;

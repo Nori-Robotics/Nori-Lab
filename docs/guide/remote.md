@@ -7,16 +7,10 @@ anywhere with a network.
 
 There is almost nothing in it, on purpose.
 
-**The robot is chosen by pairing, not typed.** The room is the active robot's serial and fills
-itself in from the Pairing page. There is no room field to get wrong, and **no room token** — that
-scheme is retired. An operator can only join a robot their account owns, enforced by the backend,
-so there is nothing here to configure or leak.
-
-**TURN fields are gone.** Relay credentials are minted per session at connect. A hand-typed static
-credential would now be *rejected* by the relay, so the field could only turn a working session
-into a broken one. See [Connectivity](/sdk/connectivity).
+**The robot is chosen by pairing, then connecting.**  
 
 **STUN is still editable**, and you should still never need to touch it.
+See [Connectivity](/sdk/connectivity) for more info.
 
 <!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write

@@ -1,36 +1,8 @@
-# Recording and training
+# Training
 
-Record demonstrations by teleoperating the robot, then train a policy on them and run it back.
-
-## How recording works
-
-Recording lives on the **Remote Operation** page while connected. The flow is two-tier: **start a
-session** with a task label, then record **episodes** one at a time — start, drive, stop, then
-keep or reject.
-
-The copy you train on is made **on the robot**: full-resolution camera frames plus joint state and
-actions at 50 Hz. The preview you watch while recording is just the live teleop stream — it often
-drops bitrate to spare the robot's compute, and that never affects the training copy. Rejecting an
-episode deletes the robot's copy too, before it can upload.
-
-### Stereo capture (front + overhead)
-
-The front and overhead cameras can record as a **stereo pair**. Flip **Enforce stereo view** on
-the recording card before starting a session — it's session-scoped, fixed once the session opens.
-The robot then holds both cameras to one matched frame rate so frames pair 1:1, and the card shows
-**"stereo enforced"**, reported by the robot itself — a robot that doesn't support it shows
-nothing rather than a false promise.
-
-There is no hardware shutter sync: both streams carry per-frame timestamps, and pairing happens at
-assembly with a worst-case misalignment of half a frame period. Each episode stores the measured
-extrinsics between the two cameras, and the published
-[robot description](/guide/a3#try-it-in-simulation) carries their precise mounting orientation —
-together, everything needed to reconstruct the stereo geometry.
-
-Upload begins after you **finish the session and disconnect**: the robot ships the session as one
-bundle the next time it's powered and idle, showing an indicator on its kiosk for the duration.
-The recording then appears under **Robot recordings** in My Stuff; once it's safely in your cloud,
-the robot deletes its local copy to reclaim space.
+Turn uploaded recordings into a trainable dataset, train a policy in the cloud, and run it back
+locally. Capturing the recordings themselves is covered in
+[Video and recording](/guide/video#how-recording-works).
 
 ## From recordings to a trainable dataset
 
@@ -72,7 +44,7 @@ Two things to know before ticking the boxes:
 :::
 -->
 
-## Why training is cloud and inference is local
+## Training and inference
 
 **Inference is local** — which is why the desktop download is ~770 MB rather than ~200 MB. A
 robot's motor-command loop must not depend on your Wi-Fi holding up.

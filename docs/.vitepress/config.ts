@@ -58,11 +58,15 @@ export default defineConfig({
         {
           text: "Using the app",
           items: [
-            { text: "Remote teleoperation", link: "/guide/remote" },
-            { text: "Video", link: "/guide/video" },
-            { text: "VR", link: "/guide/vr" },
+            {
+              text: "Remote teleoperation",
+              link: "/guide/remote",
+              collapsed: false,
+              items: [{ text: "VR", link: "/guide/vr" }],
+            },
+            { text: "Video and recording", link: "/guide/video" },
+            { text: "Training", link: "/guide/training" },
             { text: "Audio and calls", link: "/guide/audio" },
-            { text: "Recording and training", link: "/guide/training" },
           ],
         },
         {
@@ -76,7 +80,7 @@ export default defineConfig({
           text: "Reference",
           items: [
             { text: "Safety states", link: "/guide/safety-states" },
-            { text: "Developer posture (preview)", link: "/guide/dev-posture" },
+            { text: "Developer posture", link: "/guide/dev-posture" },
             { text: "Getting help", link: "/guide/getting-help" },
             { text: "Licenses & attribution", link: "/licenses" },
           ],

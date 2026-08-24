@@ -1,6 +1,8 @@
-# Video
+# Video and recording
 
-What the robot sends, what to expect from it, and what to do when it degrades.
+Two different video paths share this page on purpose: the **live feed** you watch (degraded to fit
+the robot's power budget) and the **full-quality copy the robot records** for training. Knowing
+which one you're looking at answers most video questions.
 
 ## What the video feed actually is {#video-quality}
 
@@ -56,3 +58,37 @@ confirmed as a Raspberry Pi 5 (see the A3 hardware paper), so the Pi-specific di
 to both robots — move those sections out of the L2 page into a shared location.
 :::
 -->
+
+## How recording works {#how-recording-works}
+
+Record demonstrations from the **Remote Operation** page while connected. The flow is two-tier:
+**start a session** with a task label, then record **episodes** one at a time — start, drive,
+stop, then keep or reject.
+
+The copy you train on is made **on the robot**: full-resolution camera frames plus joint state and
+actions at 50 Hz. The preview you watch while recording is just the live feed described above — it
+often drops bitrate to spare the robot's compute, and that never affects the training copy.
+Rejecting an episode deletes the robot's copy too, before it can upload.
+
+### Stereo capture (front + overhead)
+
+The front and overhead cameras can record as a **stereo pair**. Flip **Enforce stereo view** on
+the recording card before starting a session — it's session-scoped, fixed once the session opens.
+The robot then holds both cameras to one matched frame rate so frames pair 1:1, and the card shows
+**"stereo enforced"**, reported by the robot itself — a robot that doesn't support it shows
+nothing rather than a false promise.
+
+There is no hardware shutter sync: both streams carry per-frame timestamps, and pairing happens at
+assembly with a worst-case misalignment of half a frame period. Each episode stores the measured
+extrinsics between the two cameras, and the published
+[robot description](/guide/a3#try-it-in-simulation) carries their precise mounting orientation —
+together, everything needed to reconstruct the stereo geometry.
+
+### Upload
+
+Upload begins after you **finish the session and disconnect**: the robot ships the session as one
+bundle the next time it's powered and idle, showing an indicator on its kiosk for the duration.
+The recording then appears under **Robot recordings** in My Stuff; once it's safely in your cloud,
+the robot deletes its local copy to reclaim space.
+
+From there: [assemble recordings into a dataset and train a policy](/guide/training).

@@ -1,13 +1,12 @@
-# Developer posture (preview)
+# Developer posture
 
 ::: warning In progress page
 This describes a planned capability. The shape below may still change. If you have questions, [get in touch](/guide/getting-help).
 :::
 
 For robotics and ML engineers who want to run their own low-latency control loops right next to
-motor control — full SSH, open LAN access, and low-level control of all hardware, with nothing
-traversing Nori's backend or signaling. The product here is a **documented, versioned, local
-control interface**, not just a stripped robot.
+motor control, this posture provides full SSH, open LAN access, and low-level control of all hardware, with nothing
+traversing Nori's backend or signaling.
 
 ## Overview
 
@@ -60,7 +59,7 @@ of this site describes the normal posture.
 
 The serial number survives: it is asset identity (hardware, QC, warranty), not a credential.
 
-## The trust boundary, stated plainly
+## Trust boundary
 
 On a dev unit, **the LAN is the trust boundary.** The arbiter arbitrates between clients but does
 not authenticate them, and the open graph is reachable by any host on your network. Isolate the

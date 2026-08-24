@@ -1,11 +1,12 @@
 # What is Nori?
 
 ::: info Hardware setup on this site covers the Nori L2
-[Nori A3](/guide/a3) hardware documentation is coming soon. Everything else here — the app,
-video, teleoperation, safety, and the SDK — applies to either robot.
+[Nori A3](/guide/a3) setup pages are coming soon; A3 specifications and simulation assets are
+already on that page. Everything else here — the app, video, teleoperation, safety, and the
+SDK — applies to either robot.
 :::
 
-A Nori robot is a dual mobile manipulator you can drive from a browser, a VR headset, and/or your own code. Three pieces make that work:
+A Nori robot is a dual-arm mobile manipulator you can drive from a browser, a VR headset, and/or your own code. Three pieces make that work:
 
 | Piece | What it is | Where it runs |
 |---|---|---|

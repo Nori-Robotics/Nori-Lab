@@ -51,8 +51,8 @@ over plain HTTP from a non-localhost origin.
 Port the operator-facing parts of `frontend/HTTPS_SETUP.md` (mkcert, self-signed certs in
 `certs/`, running uvicorn with `--ssl-keyfile`/`--ssl-certfile`). Skip the dev-only detail.
 
-Also: the throttling and brownout links above point into `/guide/l2`, because the diagnostics
-are Pi-specific and we have not yet confirmed the A3's compute. Once the A3 hardware is known,
-either confirm they apply and move those sections out of the L2 page, or write A3 equivalents.
+Also: the throttling and brownout links above point into `/guide/l2`. The A3's compute is
+confirmed as a Raspberry Pi 5 (see the A3 hardware paper), so the Pi-specific diagnostics apply
+to both robots — move those sections out of the L2 page into a shared location.
 :::
 -->

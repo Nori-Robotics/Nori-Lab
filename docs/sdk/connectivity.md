@@ -57,8 +57,7 @@ const teleop = new RemoteTeleop({
 });
 ```
 
-`forceRelay: true` forces all traffic through the relay. It's useful to *verify* the TURN path is
-working — not something to leave on.
+`forceRelay: true` is useful to *verify* the TURN path is working — not something to leave on.
 
 ::: tip Privacy
 A relay never sees your media in the clear. WebRTC is DTLS-SRTP end-to-end encrypted; a TURN

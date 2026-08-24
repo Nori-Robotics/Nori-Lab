@@ -1,12 +1,9 @@
 # Quick start
 
 The fastest path: use the reference **Supabase** transport with the room + Supabase credentials we
-provision for you. Access to a real robot's room is gated by **Supabase RLS** on a private channel:
-you sign the `supabase` client in as the robot's paired account and RLS admits you — there is **no
-room token** to pass (the legacy HMAC room token is retired). Pairing an account to a robot is a
-one-time step done in the Nori app using the **pair code printed on the robot's box**; that's
-upstream of the SDK, not a connect option. See [Connectivity](/sdk/connectivity) for when you'd
-additionally need TURN values.
+provision for you. A real robot's room is a private channel gated by **Supabase RLS** — sign the
+`supabase` client in as the robot's paired account and you're admitted; there is no room token to
+pass. Pairing is a one-time step, upstream of the SDK — see [Install](/sdk/install).
 
 ```ts
 import { RemoteTeleop } from "@nori/sdk";

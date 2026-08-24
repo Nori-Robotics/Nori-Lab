@@ -8,6 +8,9 @@ Record demonstrations by teleoperating the robot, then train a policy on them an
 - Do not worry about your training data -- it is saved on-board the robot at full quality, and will upload to the cloud once your session is complete. 
 - You must be disconnected as an operator for data upload to begin, and you will see a visual indicator on Nori's kiosk for its duration.
 - Afterwards you can download your data from the My Stuff page of the app.
+- Datasets are saved in a LeRobot-compatible format, so existing training pipelines apply without
+  conversion. Each episode records the grippers' current draw (raw and normalized) alongside joint
+  positions — a grip-force signal with no dedicated force sensor.
 
 <!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 ::: info 🚧 To write

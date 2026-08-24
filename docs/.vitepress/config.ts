@@ -13,7 +13,7 @@ export default defineConfig({
   // and LLM crawlers quote when they summarise the site, and without it they happily present
   // L2 hardware steps as "Nori documentation" for whichever robot the reader actually owns.
   description:
-    "Documentation and troubleshooting for Nori robots, the Nori desktop app, and the @nori/sdk teleoperation SDK. Hardware setup pages currently cover the Nori L2; Nori A3 hardware docs are coming soon.",
+    "Documentation and troubleshooting for Nori robots, the Nori desktop app, and the @nori/sdk teleoperation SDK. Hardware setup pages currently cover the Nori L2; Nori A3 setup pages are coming soon.",
   lang: "en-US",
   cleanUrls: true,
 
@@ -51,8 +51,8 @@ export default defineConfig({
             { text: "Your first session", link: "/guide/first-session" },
             { text: "Something's broken", link: "/guide/broken" },
             // Sits in the first group, not buried under hardware: an A3 owner needs to know
-            // these pages aren't theirs before they start following any of them.
-            { text: "Nori A3 (coming soon)", link: "/guide/a3" },
+            // which pages aren't theirs before they start following any of them.
+            { text: "Nori A3", link: "/guide/a3" },
           ],
         },
         {

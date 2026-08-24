@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Nori
   text: Docs & troubleshooting
-  tagline: Set up a robot, drive it from anywhere, and build on top of it with the @nori/sdk. Nori A3 hardware docs are coming soon.
+  tagline: Set up a robot, drive it from anywhere, and build on top of it with the @nori/sdk. Nori A3 setup pages are coming soon.
   image:
     src: /nori-logo.png
     alt: Nori

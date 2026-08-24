@@ -10,7 +10,7 @@ number's position — are L2. See [Nori A3](/guide/a3) if that's what you have.
 2. First step is always to connect to Wifi: find it by tapping on Nori's face, navigating to Settings, Wifi, then wait as local networks are discovered. Select your one and enter the password.
 3. Sign up/in on the Nori app, and pair the robot at the Pairing page, using your secret pair code and the serial number (found on the back of Nori's head just above the neck). You may also grant your Nori a nickname on this page.
 4. Connect to your Nori on the landing page (Nori logo) or anywhere on the Remote Operation, Coding or Agent pages (connection persists within the app).
-5. It may take a few seconds to connect. Once your see it light up green, check telemetry: you will see stats from the robot, its safety status, your connection, and more. Remember to take off any camera covers that your Nori may have been shipped with.
+5. It may take a few seconds to connect. Once you see it light up green, check telemetry: you will see stats from the robot, its safety status, your connection, and more. Remember to take off any camera covers that your Nori may have been shipped with.
 6. Drive it: the keyboard control panel is the easiest way to get started. Make sure you're focused on the page, and give it a try. Tweak sensitivity at any time to moderate the speed.
 7. To stop, just disconnect at any time. After disconnecting for a while, Nori's arms will go limp to protect the motors.
 8. Nori will automatically sleep after being left idle, and will be woken up by a tap of your finger on Nori's face, or by connecting via the app. Powering off is not necessary between sessions within a day or two, but prolonged sleeping can drain your battery.

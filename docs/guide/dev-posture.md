@@ -71,9 +71,7 @@ No standing vendor path into a box you were told you own. Tailscale is installed
 by default** — no key on disk, no tailnet membership, zero Nori reachability. Support is a
 **consent-based session that you start and you end**:
 
-**Start.** When you ask for support, Nori mints a one-time auth key — **ephemeral** (the node
-auto-removes from the tailnet on disconnect), **single-use** (spent after one join), **short-lived**
-(a leaked key dies on its own), and tagged so the tailnet ACL limits reach to Nori's support group.
+**Start.** When you ask for support, Nori mints a one-time auth key limited to Nori's support group.
 You are the one who runs it:
 
 ```bash

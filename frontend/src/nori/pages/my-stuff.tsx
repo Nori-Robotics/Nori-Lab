@@ -71,8 +71,19 @@ const TONE: Record<Tone, string> = {
   accent: "bg-accent",
   secondary: "bg-secondary",
 };
-const Pill = ({ tone, children }: { tone: Tone; children: React.ReactNode }) => (
+const Pill = ({
+  tone,
+  children,
+  title,
+}: {
+  tone: Tone;
+  children: React.ReactNode;
+  /** Native tooltip. Used to explain a muted map pill ("Still generating"),
+   *  which is otherwise indistinguishable from a styling choice. */
+  title?: string;
+}) => (
   <span
+    title={title}
     className={`inline-flex items-center gap-1.5 rounded-full ${TONE[tone]} px-2.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-ink`}
   >
     {children}
@@ -1517,18 +1528,38 @@ const MyStuff = () => {
                   {d.episode_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(d.episode_count)}</b> episodes</span>}
                   {d.frame_count != null && <span><b className="font-semibold text-nori-h14131a">{fmt(d.frame_count)}</b> frames</span>}
                 </div>
-                {/* Assemble-time processing (REQUESTED — the tools aren't wired yet):
-                    video processing + derived maps this dataset was assembled with. */}
-                {((d.video_processing?.length ?? 0) > 0 || (d.derived_maps?.length ?? 0) > 0) && (
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    {(d.video_processing ?? []).map((v) => (
-                      <Pill key={`vp-${v}`} tone="secondary">{v.replace(/_/g, " ")}</Pill>
-                    ))}
-                    {(d.derived_maps ?? []).map((m) => (
-                      <Pill key={`map-${m}`} tone="accent">{m}</Pill>
-                    ))}
-                  </div>
-                )}
+                {/* Derived maps + video processing. A map that was REQUESTED but
+                    not yet PRODUCED is still generating on a GPU (can be hours),
+                    so it renders muted with an ellipsis rather than looking
+                    ready. produced_maps can also exceed derived_maps — one
+                    inverse-rendering pass emits normals+albedo+roughness
+                    together — so the union is shown. */}
+                {(() => {
+                  const requested = d.derived_maps ?? [];
+                  const produced = d.produced_maps ?? [];
+                  const allMaps = [...new Set([...produced, ...requested])].sort();
+                  const vp = d.video_processing ?? [];
+                  if (!allMaps.length && !vp.length) return null;
+                  return (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      {vp.map((v) => (
+                        <Pill key={`vp-${v}`} tone="secondary">{v.replace(/_/g, " ")}</Pill>
+                      ))}
+                      {allMaps.map((m) => {
+                        const ready = produced.includes(m);
+                        return (
+                          <Pill
+                            key={`map-${m}`}
+                            tone={ready ? "accent" : "secondary"}
+                            title={ready ? "Ready to download" : "Still generating"}
+                          >
+                            {ready ? m : `${m} …`}
+                          </Pill>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
                 <div className="mt-3 border-t border-dashed border-border pt-2.5 text-[13px] text-nori-h14131a/70">
                   {d.policies.length === 0 ? (
                     <span className="italic text-muted-foreground">No policies trained yet.</span>

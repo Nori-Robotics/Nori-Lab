@@ -586,7 +586,12 @@ export interface LibraryDataset {
   published?: boolean;
   /** Assemble-time processing options (REQUESTED, not produced — the processing
    * tools aren't wired yet). Shown as badges; the maps drive the viewer's picker. */
+  /** Maps REQUESTED at assemble time. */
   derived_maps?: string[];
+  /** Maps actually written and downloadable. A map in derived_maps but not here
+   *  is still generating (GPU work, can be hours). Can also be a superset: one
+   *  inverse-rendering pass emits normals+albedo+roughness together. */
+  produced_maps?: string[];
   video_processing?: string[];
   policies: LibraryPolicy[];
 }

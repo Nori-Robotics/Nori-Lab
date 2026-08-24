@@ -189,9 +189,11 @@ What's in a `RobotInfo`:
 | `protocolVersion` | The daemon's nori-protocol major. Compared against this SDK's `NORI_PROTOCOL_VERSION`; a difference sets `versionMismatch`. |
 | `normMode` | Units of every `.pos` value in state/action: `"range_m100_100"` (normalized) or `"degrees"`. |
 | `watchdogProfile` | `{ t_warn_ms, t_stop_ms }` — control-frame silence beyond these slows, then stops, the robot. **Disclosure, not negotiation**: the daemon picks it from the measured link; you can't change it. |
-| `descriptor` | What the robot is: `joints` (every drivable `<motor>.pos` key), `base`, `aux` (e.g. lifts), `cameras` (roles, matching the composite layout tiles), and `ranges` — the authoritative `[min, max]` per key. Out-of-range values are **clamped robot-side, never rejected**, so use `ranges` to scale your inputs, not to pre-validate. |
+| `descriptor` | What the robot is: `joints` (every drivable `<motor>.pos` key), `base`, `aux` (e.g. lifts), `cameras` (roles, matching the composite layout tiles), `ranges` — the authoritative `[min, max]` per key (out-of-range values are **clamped robot-side, never rejected**, so use `ranges` to scale your inputs, not to pre-validate) — and optional `jog_scale`, the nominal commanded scale of a full-deflection jog per namespace (never achieved velocity; absent on the frozen L2 fleet forever). |
 | `initialState` | The joint pose at session start. |
 | `versionMismatch` | **Advisory.** Mixed daemon versions exist across the fleet, so the SDK warns and proceeds — unknown frame types are ignored by both sides, so a mismatch means vocabulary gaps, never unsafe behavior. |
+| `model` | **Advisory label** ("L2", "A3") for logs and dataset provenance only. Never branch on it — branch on `descriptor` and `capabilities` (nori-protocol MODELS.md). |
+| `capabilities` | Optional verbs this robot honours beyond the core (`"task_jog"`, `"pose_targets"`, `"record"`, …). **Three-valued** — check with `supportsCapability(info, cap)`, which returns `true`/`false` when declared and `undefined` when the ack predates the field; `undefined` means *unknown, probe or assume legacy*, never *no*. An explicitly empty `[]` means none. |
 
 Old daemons may send a bare ack — every field except `accepted` is optional, so null-check what
 you read. The ack is re-sent on every daemon (re)connect (a robot restart mid-session refreshes
@@ -444,6 +446,50 @@ for logging. The executor's `nori.moveTo(...)` uses all of this internally and r
 > is built but **not yet deployed to every robot**, with tolerances still being tuned on hardware;
 > until a robot has it, `moveTo` transparently falls back to its client-side heuristic.
 
+## Cartesian pose targets — `sendPose` (capability `pose_targets`)
+
+`sendPose(side, positionM, orientationXyzw?, actionId?)` commands an absolute gripper-TCP pose
+and the **robot solves the IK on-board** — the wire never carries joint solutions, so every
+client shares one IK implementation instead of each shipping its own (the architecture `vr.ts`
+records the rpi4 era moving away from). Metres in `base_footprint` (fixed to the robot, stable
+across lift travel), REP-103 axes (+x forward, +y left, +z up), optional ROS-order quaternion
+`[x, y, z, w]` — omit it for "get the gripper to this point, any wrist angle" (v1 solves at the
+robot's current wrist, so a position-only failure is worth retrying with an explicit
+orientation). The lifecycle rides the same `action_status` path as `sendAction`:
+
+```ts
+if (supportsCapability(teleop.robotInfo(), "pose_targets")) {
+  const id = teleop.nextActionId();
+  teleop.sendPose("right", [0.42, -0.18, 0.95], undefined, id);
+  const status = await teleop.awaitAction(id, { timeoutMs: 15000 });
+  // "done" — or "blocked" with a reason that says what to do next:
+  //   no_ik_solution  full pose: unreachable at this lift height, don't retry
+  //   ik_timeout / ik_no_reply   solver busy or silent — retry
+  //   config_jump     the solve needed an elbow flip — split the move into waypoints
+  //   lift_moved      the lift moved since the solve — re-send to re-solve
+  //   limit:<joint> / singularity / collision / frame:<name>
+  // The reason set is OPEN: render unknown values verbatim, never fail on one.
+}
+```
+
+Three contracts worth knowing:
+
+- **Capability-gated, three-valued.** A robot without `pose_targets` ignores the frame
+  *silently*, so `sendPose` **throws** on an explicitly missing capability rather than letting
+  a script hang to its timeout. A legacy ack (no capabilities field at all) passes through —
+  probe-or-assume-legacy is the ack contract. The mock advertises its truthful set *without*
+  `pose_targets`, so `sendPose` against mock mode throws: that is the correct teaching, not a bug.
+- **Terminal states come from observed motion**, never from the solver returning: the
+  intermediate `active` means solved-and-tracking, and a pose that stops progressing ends
+  `blocked` with the live Servo status named. There is no accepted-then-nothing state.
+- **One arm per call** (arms fail independently — a dual-arm pose is two calls); the gripper
+  stays on `sendAction`; the lift never moves implicitly — a pose out of reach at the current
+  lift height is a refusal, never a surprise lift move.
+
+> **Status:** SDK side implemented and unit-tested against the spec fixtures; the A3 gateway
+> is bench-verified through the full lifecycle. The browser-SDK path has **not yet run
+> end-to-end against a live robot** (see nori_ws docs/runbooks/pose-targets-sdk-hardware-test.md).
+
 ## Recording training data (on-robot episodes)
 
 `record(...)` drives the robot's **on-robot recorder** — the part of the robot that spools
@@ -633,6 +679,8 @@ are Nori-original additions, marked with `// NORI:` header comments.
 
 `v0`, for a small set of collaborating devs — not a public release. The core teleop + VR surface
 is stable; the two-way **call** API (`joinCall`/`leaveCall`/mic/camera on `RemoteTeleop`) is
-present but **experimental** and may change. Note the robot-side consent gate: `joinCall()`
+present but **experimental** and may change. **Cartesian pose targets** (`sendPose` +
+`supportsCapability`) are new (2026-08-24): wire shape pinned to the nori-protocol fixtures and
+unit-tested, robot side bench-verified, browser end-to-end still pending its first live run. Note the robot-side consent gate: `joinCall()`
 rings an accept prompt at the robot and room audio stays silent until a person there accepts
 (clips via `sendClipAudio` are exempt — see "Streaming audio").

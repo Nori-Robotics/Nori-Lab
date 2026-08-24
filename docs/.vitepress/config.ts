@@ -76,6 +76,7 @@ export default defineConfig({
           text: "Reference",
           items: [
             { text: "Safety states", link: "/guide/safety-states" },
+            { text: "Developer posture (preview)", link: "/guide/dev-posture" },
             { text: "Getting help", link: "/guide/getting-help" },
             { text: "Licenses & attribution", link: "/licenses" },
           ],
@@ -89,6 +90,7 @@ export default defineConfig({
             { text: "Overview", link: "/sdk/" },
             { text: "Install", link: "/sdk/install" },
             { text: "Quick start", link: "/sdk/quickstart" },
+            { text: "Python client", link: "/sdk/python" },
           ],
         },
         {

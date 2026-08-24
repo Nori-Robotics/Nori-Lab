@@ -5,9 +5,10 @@
 | `@nori/sdk` | `RemoteTeleop`, telemetry/jog/keybind types, `SignalingTransport` contract, `NORI_PROTOCOL_VERSION` | none |
 | `@nori/sdk/vr` | `VrJogMapper`, `VrSession`, `DEFAULT_BINDINGS`, VR types | `three` |
 | `@nori/sdk/supabase` | `SupabaseSignaling` (reference transport) | `@supabase/supabase-js` |
+| `@nori/sdk/mock` | `createMockRobot`, `MockDaemonSim`, `createLoopbackSignaling` — the dev/CI fake robot ([quick start](/sdk/quickstart#develop-without-a-robot)) | none |
 
-The **core** has zero runtime dependencies. VR and Supabase signaling sit behind their own subpath
-imports so you never pull them unless you ask for them.
+The **core** has zero runtime dependencies. VR, Supabase signaling, and the mock sit behind their
+own subpath imports so you never pull them unless you ask for them.
 
 ## Protocol version
 

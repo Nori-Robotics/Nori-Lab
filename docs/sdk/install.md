@@ -1,6 +1,7 @@
 # Install
 
-Not on public npm. Install from the release tarball we send you, or from the GitHub release URL:
+Not on public npm yet — that lands with the open-source release. Until then, install from the
+release tarball we send you, or from the GitHub release URL:
 
 ```bash
 npm i ./nori-sdk-<version>.tgz
@@ -60,7 +61,7 @@ to another account. Re-pairing a robot you already own is idempotent (no code ne
 
 ## Entry points
 
-Three imports: the core, `@nori/sdk/vr`, and `@nori/sdk/supabase` — see
-[Entry points](/sdk/reference) for what each contains.
+Four imports: the core, `@nori/sdk/vr`, `@nori/sdk/supabase`, and `@nori/sdk/mock` (a dev/CI fake
+robot, no extra deps) — see [Entry points](/sdk/reference) for what each contains.
 
 Next: [Quick start](/sdk/quickstart).

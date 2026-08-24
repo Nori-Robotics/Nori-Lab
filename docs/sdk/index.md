@@ -24,10 +24,19 @@ The SDK is not model-specific: the same client drives a **Nori L2** or a **Nori 
 an A3, see [Nori A3](/guide/a3) — including a published robot description you can load into a
 simulator today.
 
+Two clients speak the protocol: **`@nori/sdk`** (TypeScript — the browser client these pages
+document) and [**`nori-sdk` for Python**](/sdk/python) — headless scripts, policy and agent
+drivers, dataset tooling, CI. Neither is on a public registry yet; both go public with the
+open-source release.
+
+Need lower-level than an operator SDK — your own control loops on the robot itself, nothing
+through Nori's cloud? That's the planned [developer posture](/guide/dev-posture).
+
 ## Where to start
 
-- [**Install**](/sdk/install) — it's not on public npm; you install from a tarball we send you.
-- [**Quick start**](/sdk/quickstart) — a connected, driving robot in one code block.
+- [**Install**](/sdk/install) — from the release tarball we send you.
+- [**Quick start**](/sdk/quickstart) — a connected, driving robot in one code block, and a
+  [mock robot](/sdk/quickstart#develop-without-a-robot) for building with zero hardware.
 - [**Telemetry**](/sdk/telemetry) — every field the robot streams back, and what `null` means in each.
 - [**The safety contract**](/sdk/safety) — the part you must read.
 

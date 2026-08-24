@@ -59,6 +59,26 @@ teleop.start();                                  // video appears in the element
 // teleop.stop() to tear down.
 ```
 
+## Develop without a robot
+
+`@nori/sdk/mock` ships a fake robot — zero hardware, zero cloud, zero network. It runs the real
+SDK path (handshake, loopback WebRTC with synthetic video, telemetry, jog), so code developed
+against it talks to a real Nori unchanged:
+
+```ts
+import { RemoteTeleop } from "@nori/sdk";
+import { createMockRobot } from "@nori/sdk/mock";
+
+const robot = createMockRobot();
+const teleop = new RemoteTeleop({ signaling: robot.signaling /* ...options as usual... */ });
+await teleop.start();
+```
+
+Honest limits: no audio, no perception frames (use `injectPerception()`), and motion is plausible
+rather than kinematically true — never validate motion or train on mock trajectories.
+`createMockRobot()` needs a browser (WebRTC + canvas); `MockDaemonSim` alone runs anywhere,
+including Node CI.
+
 ## Next
 
 - [Driving the robot](/sdk/driving) — keyboard, programmatic jog, commands.

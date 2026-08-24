@@ -1,0 +1,94 @@
+# Developer posture (preview)
+
+::: warning In progress page
+This describes a planned capability. The shape below may still change. If you have questions, [get in touch](/guide/getting-help).
+:::
+
+For robotics and ML engineers who want to run their own low-latency control loops right next to
+motor control — full SSH, open LAN access, and low-level control of all hardware, with nothing
+traversing Nori's backend or signaling. The product here is a **documented, versioned, local
+control interface**, not just a stripped robot.
+
+## Overview
+
+**Every robot ships as a default product; going dev is a transition you choose on your own unit.**
+It is not a separate SKU — you try the normal product first, then convert.
+
+**The transition is one-way.** It wipes the unit's identity and credentials; there is no
+supported field path back (you will have to request us to mail you a new SD card). It is not a
+runtime toggle — the posture can never be flipped from the LAN or the touchscreen.
+
+After the transition you own the box: SSH with your own key (you add it at handover; password
+auth then turns off; your private key never reaches Nori), an open ROS 2 graph on your LAN, and
+your own workspace.
+
+## What you get to code against
+
+- **The ros2_control graph at 50 Hz** — `/joint_states`, `JointJog` servo topics, the trajectory
+  controllers, `/cmd_vel/*` through `twist_mux`, `/imu/data`, `/battery_state`, `/scan`, and
+  camera topics.
+- **The teleop arbiter, as an optional authority layer.** On a trusted LAN you may publish
+  straight to the controllers and skip it. Both patterns will be documented.
+- **A direct serial SDK** for the servo bus, with no ROS in the loop — the lowest-latency path.
+  It bypasses the arbiter, the thermal monitor, and the supervisor, so it ships with an explicit
+  **"you own safety here"** boundary.
+- **A clean layer split.** A platform underlay (robot description, hardware plugins, controller
+  config, safety and bringup) is managed by Nori as prebuilt, signed platform releases —
+  notify-don't-apply, so nothing updates under you. Your code lives in an application overlay
+  that sources it and is never touched by an update. Platform bringup comes up
+  active-but-disarmed so your overlay connects to a live graph; taking bringup over entirely
+  will be documented too.
+
+## What stays on
+
+Three gates protect the hardware from your own code:
+
+- the **servo-resident 60 °C over-temperature cutoff** — enforced inside the servo itself,
+  non-negotiable;
+- the **driver-level whole-bus thermal lockout**;
+- the **torque and comms watchdogs**.
+
+Everything else becomes a documented, overridable parameter, and the docs will state exactly
+where each fence is.
+
+## What goes away
+
+The backend-coupled stack is **absent, not broken**: no gateway, no dataset uploader, no agent.
+That means no remote teleoperation through Nori's cloud, no recording upload, and no cloud
+training or marketplace on that unit — your media and control never touch Nori's cloud. The rest
+of this site describes the normal posture.
+
+The serial number survives: it is asset identity (hardware, QC, warranty), not a credential.
+
+## The trust boundary, stated plainly
+
+On a dev unit, **the LAN is the trust boundary.** The arbiter arbitrates between clients but does
+not authenticate them, and the open graph is reachable by any host on your network. Isolate the
+robot's network accordingly.
+
+## Support after the transition
+
+No standing vendor path into a box you were told you own. Tailscale is installed but **logged out
+by default** — no key on disk, no tailnet membership, zero Nori reachability. Support is a
+**consent-based session that you start and you end**:
+
+**Start.** When you ask for support, Nori mints a one-time auth key — **ephemeral** (the node
+auto-removes from the tailnet on disconnect), **single-use** (spent after one join), **short-lived**
+(a leaked key dies on its own), and tagged so the tailnet ACL limits reach to Nori's support group.
+You are the one who runs it:
+
+```bash
+sudo tailscale up --authkey=<one-time-key> --advertise-tags=tag:dev-support --ssh
+```
+
+**During.** Nori can reach the box and, via Tailscale SSH scoped to the support group, get a shell
+for the session. Watch it live with `tailscale status`.
+
+**End.** `sudo tailscale down` takes the box off the tailnet (`sudo tailscale logout` also drops
+the node key); the ephemeral key means the node vanishes from Nori's side on disconnect. You own
+root, so you can also remove Tailscale entirely. Either way, the only path back is you running
+`tailscale up` again with a fresh key — **there is no Nori-side action that opens or re-opens
+access.**
+
+Privacy-strict customers can skip this entirely: keep the unit on your own network or VPN and
+invite us in per incident.

@@ -1588,11 +1588,13 @@ const MyStuff = () => {
                           {job.phase}
                         </div>
                       )}
-                      {failed && job.failure_reason && (
-                        // First line only: the reason can be a full container
-                        // traceback, and the headline is what is actionable.
+                      {failed && (job.failure_headline || job.failure_reason) && (
+                        // failure_headline, NOT the first line of the raw
+                        // reason: reasons are container tracebacks, so the first
+                        // line is a mid-traceback fragment while the exception
+                        // message is at the end. The backend extracts it.
                         <div className="mt-0.5 break-words font-mono text-[11px]">
-                          {job.failure_reason.split("\n")[0].slice(0, 220)}
+                          {(job.failure_headline ?? job.failure_reason ?? "").slice(0, 240)}
                         </div>
                       )}
                       {!failed && (job.attempts ?? 0) > 1 && (

@@ -829,6 +829,10 @@ export type ProcessingJob = {
   /** Why it failed. The whole reason these routes exist — a failed job used to
    *  be indistinguishable from a slow one. */
   failure_reason: string | null;
+  /** The ONE actionable line of failure_reason: reasons are container
+   *  tracebacks, so the first line is a mid-traceback fragment while the
+   *  exception message sits at the end. The backend extracts it; prefer this. */
+  failure_headline: string | null;
   attempts: number | null;
   created_at: string | null;
   staged_at: string | null;
@@ -884,13 +888,18 @@ export interface ExportJob {
 export function exportDataset(
   baseUrl: string,
   fetcher: Fetcher,
-  datasetSessionId: string
+  datasetSessionId: string,
+  /** Extra derived-map layers to pack alongside the base dataset. [] = base
+   *  only. The backend keys its export REUSE on this, so asking for more
+   *  layers correctly builds a new tarball rather than handing back the old
+   *  base-only one. */
+  include: string[] = []
 ): Promise<ExportJob> {
   return noriRequest<ExportJob>(
     baseUrl,
     fetcher,
     `/nori/datasets/${encodeURIComponent(datasetSessionId)}/export`,
-    { method: "POST", action: "Prepare dataset download" }
+    { method: "POST", body: { include }, action: "Prepare dataset download" }
   );
 }
 

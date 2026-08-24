@@ -6,7 +6,7 @@ locally. Capturing the recordings themselves is covered in
 
 ## From recordings to a trainable dataset
 
-A recording isn't trainable by itself — **assemble** it from My Stuff, which flattens one or more
+A recording isn't trainable by itself. You must **assemble** it from My Stuff, which flattens one or more
 recordings into a dataset (a new one, or appended onto an existing one). Datasets are
 **LeRobot-format**, so existing training pipelines apply without conversion, and each episode
 records the grippers' current draw (raw and normalized) alongside joint positions — a grip-force
@@ -15,8 +15,8 @@ downloadable — as soon as it's done.
 
 ## Synthetic maps and relighting (optional)
 
-At assemble time you can enrich a dataset with **derived per-frame maps** — `depth`, `normals`,
-`albedo`, `roughness` — generated from the recorded video (depth from a segmentation pass; the
+At assemble time you can enrich a dataset with **derived per-frame maps** ( `depth`, `normals`,
+`albedo`, `roughness`) generated from the recorded video (depth from a segmentation pass; the
 other three from a single inverse-rendering pass), for all cameras or just the ones you pick. Two
 **video-processing** passes are also offered: `color_jitter` and `full_relight` (synthetic
 relighting).

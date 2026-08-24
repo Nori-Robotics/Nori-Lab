@@ -77,11 +77,27 @@ export function EpisodeReviewModal({
   // a derived map (depth/…) 404s until the processing tools produce it, so the
   // tile shows a "not yet generated" placeholder in that case.
   const [maps, setMaps] = useState<string[]>([]);
+  // Which maps exist FOR EACH CAMERA. Maps are derived per camera and users
+  // restrict that to cut GPU cost, so a dataset-level list over-promises: it
+  // offered depth on every camera and 404'd on all but one, which read as "not
+  // generated yet" when the map simply belonged to another camera.
+  const [mapsByCamera, setMapsByCamera] = useState<Record<string, string[]>>({});
   const [mapChannel, setMapChannel] = useState<string>("rgb");
   // Non-rgb maps that 404'd (not produced yet) → show a placeholder for them.
   // A map that loads is never added, so this auto-lights-up when the tools land.
   const [failedMaps, setFailedMaps] = useState<Set<string>>(new Set());
-  const mapMissing = mapChannel !== "rgb" && failedMaps.has(mapChannel);
+  // Maps available for the camera in view. Empty mapping (older backend, or no
+  // layer yet) falls back to the dataset-level list so behaviour is unchanged.
+  const camMaps = (camera && mapsByCamera[camera]) || null;
+  const mapOnThisCamera = (m: string) => m === "rgb" || !camMaps || camMaps.includes(m);
+  // Which OTHER cameras have the selected map — turns "not generated yet" into
+  // something the user can act on.
+  const camerasWithMap = (m: string) =>
+    Object.entries(mapsByCamera)
+      .filter(([, ms]) => ms.includes(m))
+      .map(([c]) => c);
+  const mapMissing =
+    mapChannel !== "rgb" && (failedMaps.has(mapChannel) || !mapOnThisCamera(mapChannel));
   const [clipToken, setClipToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [marked, setMarked] = useState<Set<number>>(new Set());
@@ -117,8 +133,12 @@ export function EpisodeReviewModal({
             : await listEpisodes(baseUrl, source.repoId);
       setEpisodes(listing.episodes);
       setCameras(listing.cameras);
-      setCamera((c) => c ?? listing.cameras[0] ?? null);
+      // default_camera prefers one with derived maps; the first camera is
+      // arbitrary info.json order and landing there hides a working layer.
+      const preferred = listing.default_camera ?? listing.cameras[0] ?? null;
+      setCamera((c) => c ?? preferred);
       setMaps(listing.maps ?? []);
+      setMapsByCamera(listing.maps_by_camera ?? {});
       if ("token" in listing) setClipToken(listing.token);
       if (isCloud && source.kind === "cloud") {
         try {
@@ -348,19 +368,32 @@ export function EpisodeReviewModal({
               view vs. which derived channel). Bordered + non-mono to read distinctly. */}
           {maps.length > 1 && (
             <div className="flex items-center gap-1 rounded-full border border-border p-1">
-              {maps.map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setMapChannel(m)}
-                  className={`rounded-full px-3 py-1 text-[11px] transition-colors ${
-                    mapChannel === m
-                      ? "bg-nori-h14131a/10 font-medium text-nori-h14131a"
-                      : "text-muted-foreground hover:text-nori-h14131a"
-                  }`}
-                >
-                  {m === "rgb" ? "RGB" : m.charAt(0).toUpperCase() + m.slice(1)}
-                </button>
-              ))}
+              {maps.map((m) => {
+                const here = mapOnThisCamera(m);
+                const elsewhere = here ? [] : camerasWithMap(m);
+                return (
+                  <button
+                    key={m}
+                    onClick={() => setMapChannel(m)}
+                    title={
+                      here
+                        ? undefined
+                        : elsewhere.length
+                          ? `Derived for ${elsewhere.join(", ")} — switch camera`
+                          : "Not generated yet"
+                    }
+                    className={`rounded-full px-3 py-1 text-[11px] transition-colors ${
+                      mapChannel === m
+                        ? "bg-nori-h14131a/10 font-medium text-nori-h14131a"
+                        : here
+                          ? "text-muted-foreground hover:text-nori-h14131a"
+                          : "text-muted-foreground/40"
+                    }`}
+                  >
+                    {m === "rgb" ? "RGB" : m.charAt(0).toUpperCase() + m.slice(1)}
+                  </button>
+                );
+              })}
             </div>
           )}
           <button aria-label="Close" className="rounded-lg p-1.5 hover:bg-secondary" onClick={onClose}>

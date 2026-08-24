@@ -29,6 +29,15 @@ export interface EpisodeListing {
   /** Derived-map channels for a map picker (["rgb", ...derived]); absent/empty
    * when none were requested. Only cloud-dataset listings carry this. */
   maps?: string[];
+  /** Which maps exist FOR EACH CAMERA, e.g. {overhead: ["rgb","depth"]}.
+   * Maps are derived per camera (users restrict this to cut GPU cost), so the
+   * flat `maps` list over-promises: it offered depth on every camera and 404'd
+   * on all but one, which read as "not generated yet" when the map merely
+   * belonged to another camera. Prefer this when present. */
+  maps_by_camera?: Record<string, string[]>;
+  /** Camera to open on — prefers one that HAS derived maps, since the first
+   * camera is arbitrary info.json order and landing there hides a real layer. */
+  default_camera?: string | null;
   episodes: DatasetEpisode[];
 }
 

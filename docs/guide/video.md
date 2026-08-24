@@ -43,13 +43,15 @@ back to decoding and re-encoding, which costs noticeably more CPU per frame.
 That is a power symptom, not a video one — the USB rail is running out of current and the device
 is re-enumerating. See [Brownouts and throttling](/guide/l2#brownouts).
 
+
+
+<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
+
 ## Phone as a camera
 
 Streaming a phone camera into the app requires **HTTPS** — browsers won't hand out camera access
 over plain HTTP from a non-localhost origin.
 
-<!-- TODO-DOCS (hidden from the live site; uncomment to restore)
-::: info 🚧 To write
 Port the operator-facing parts of `frontend/HTTPS_SETUP.md` (mkcert, self-signed certs in
 `certs/`, running uvicorn with `--ssl-keyfile`/`--ssl-certfile`). Skip the dev-only detail.
 

@@ -814,6 +814,51 @@ export interface ActiveAssembly {
   target_dataset_session_id: string | null;
 }
 
+/** One map-processing job (sdg_jobs), as the UI needs it. */
+export type ProcessingJob = {
+  id: string;
+  dataset_session_id: string | null;
+  /** PENDING | RUNNING | FAILED | DONE | CANCELLED */
+  status: string;
+  /** Human-readable stage progress, e.g. "masking: dispatched (3 units)". Also
+   *  carries a camera-fallback note when the requested camera wasn't present. */
+  phase: string | null;
+  units_total: number;
+  requested_maps: string[];
+  produced_maps: string[];
+  /** Why it failed. The whole reason these routes exist — a failed job used to
+   *  be indistinguishable from a slow one. */
+  failure_reason: string | null;
+  attempts: number | null;
+  created_at: string | null;
+  staged_at: string | null;
+  updated_at: string | null;
+};
+
+/** GET /nori/datasets/mine/processing/active — in-flight AND recently-failed
+ *  map processing. Failures are included deliberately: map derivation runs for
+ *  minutes to hours after the assemble modal closes, so a failure is otherwise
+ *  invisible. Fail SOFT — absent on an older backend. */
+export function getActiveProcessing(
+  baseUrl: string,
+  fetcher: Fetcher
+): Promise<{ processing: ProcessingJob[] }> {
+  return noriRequest(baseUrl, fetcher, "/nori/datasets/mine/processing/active", {
+    action: "Load map-processing status",
+  });
+}
+
+/** GET /nori/datasets/mine/processing/{id} — poll one map-processing job. */
+export function getProcessingJob(
+  baseUrl: string,
+  fetcher: Fetcher,
+  sdgJobId: string
+): Promise<ProcessingJob> {
+  return noriRequest(baseUrl, fetcher, `/nori/datasets/mine/processing/${sdgJobId}`, {
+    action: "Poll map-processing job",
+  });
+}
+
 /** GET /nori/datasets/assemblies/active — the caller's in-flight assembly jobs. */
 export function getActiveAssemblies(baseUrl: string, fetcher: Fetcher): Promise<{ assemblies: ActiveAssembly[] }> {
   return noriRequest(baseUrl, fetcher, "/nori/datasets/assemblies/active", {

@@ -6,6 +6,7 @@
 // never signed in and does not own an A3. That is the point: it is the link we
 // hand a developer who is evaluating the robot.
 import { Link } from "react-router-dom";
+import * as THREE from "three";
 import { ArrowRight, Gamepad2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -313,10 +314,202 @@ const ModelPage = () => {
     }
   }, []);
 
+  // ?traj=1 (optionally &speed=N, &src=/file.json): joint-trajectory playback.
+  // Streams a precomputed IK trajectory (e.g. the whiteboard demo's plan,
+  // solved by the robot's own /compute_ik) through the SAME ViewerApi paths a
+  // user's drag takes — setJoint per frame, looping — and mounts a procedural
+  // whiteboard (canvas-textured plane, attached to the robot root so its
+  // coordinates are plain base-frame metres) that accumulates real ink as the
+  // pen writes. Trajectory shape: {"traj": [{"t": s, "j": {...}, "uv": [u,v],
+  // "pen": bool}], "board": {pos, bx, by, bz}}.
+  const runTraj = useCallback((api: ViewerApi) => {
+    const q = new URLSearchParams(window.location.search);
+    const speed = Number(q.get("speed") ?? 3) || 3;
+    const src = q.get("src") ?? "/wb_traj.json";
+    // Visual-only: the solved lift schedule tops out at 0.66 m, which reads
+    // as an implausible full-mast stretch in the viewer. Lower arm AND board
+    // by the same constant so pen-to-ink contact stays exact (chosen so the
+    // lowest scheduled lift lands at 0).
+    const LIFT_VISUAL_OFFSET = 0.24;
+    // Visual-only: breathing room between robot and board. Along the board's
+    // into-the-plane axis, so the writing stays parallel — the pen ends a few
+    // cm shy of the surface, which reads fine at viewing distance.
+    const BOARD_VISUAL_PUSHOUT = 0.08;
+    let stopped = false;
+    type Wp = { t: number; j: Record<string, number>; uv: [number, number]; pen: boolean };
+    type Board = { pos: number[]; bx: number[]; by: number[]; bz: number[] };
+    void fetch(src)
+      .then((r) => r.json())
+      .then((data: { traj: Wp[]; board: Board }) => {
+        const traj = data.traj;
+        const B = data.board;
+        if (!traj?.length || !B) return;
+
+        // --- procedural whiteboard, oversized frame around the true-scale
+        // writing area (ink must stay 1:1 or the pen tip and the text drift).
+        const AREA_W = 0.3, AREA_H = 0.45;       // writing area, metres
+        const FRAME_W = 0.72, FRAME_H = 0.92;    // the board itself — bigger than RViz's
+        const PX_PER_M = 2000;
+        const canvas = document.createElement("canvas");
+        canvas.width = AREA_W * PX_PER_M;
+        canvas.height = AREA_H * PX_PER_M;
+        const ctx = canvas.getContext("2d")!;
+        const paintBase = () => {
+          ctx.fillStyle = "#fdfdfb";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.strokeStyle = "#eceee9";
+          ctx.lineWidth = 2;
+          for (let x = 100; x < canvas.width; x += 200) {
+            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+          }
+          for (let y = 100; y < canvas.height; y += 200) {
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+          }
+          ctx.lineCap = "round";
+          ctx.lineJoin = "round";
+          ctx.strokeStyle = "#1c3f8f";
+          ctx.lineWidth = 0.0028 * PX_PER_M;
+        };
+        paintBase();
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.anisotropy = 4;
+
+        const board = new THREE.Group();
+        // Basis columns = board axes in base frame; origin = writing-area
+        // top-left, dropped by the same visual offset as the lift.
+        const m = new THREE.Matrix4().makeBasis(
+          new THREE.Vector3(...B.bx), new THREE.Vector3(...B.by), new THREE.Vector3(...B.bz));
+        m.setPosition(
+          B.pos[0] + B.bz[0] * BOARD_VISUAL_PUSHOUT,
+          B.pos[1] + B.bz[1] * BOARD_VISUAL_PUSHOUT,
+          B.pos[2] - LIFT_VISUAL_OFFSET + B.bz[2] * BOARD_VISUAL_PUSHOUT);
+        board.matrixAutoUpdate = false;
+        board.matrix.copy(m);
+        // Same white as the canvas base so the whole rectangle reads as one
+        // uniform board rather than a bordered panel.
+        const boardWhite = new THREE.MeshStandardMaterial({
+          color: 0xfdfdfb, side: THREE.DoubleSide, roughness: 0.9 });
+        const frame = new THREE.Mesh(
+          new THREE.PlaneGeometry(FRAME_W, FRAME_H), boardWhite);
+        frame.position.set(AREA_W / 2, AREA_H / 2, 0.006);
+        const tray = new THREE.Mesh(
+          new THREE.BoxGeometry(FRAME_W * 0.75, 0.025, 0.05), boardWhite);
+        tray.position.set(AREA_W / 2, AREA_H / 2 + FRAME_H / 2 + 0.012, -0.02);
+        // Lit like the frame (same material model + roughness), or the two
+        // rectangles shade differently and read as different materials.
+        const surface = new THREE.Mesh(
+          new THREE.PlaneGeometry(AREA_W, AREA_H),
+          new THREE.MeshStandardMaterial({ map: texture, side: THREE.DoubleSide,
+                                           roughness: 0.9 }));
+        // PlaneGeometry UV: +x right, +y UP — board v runs DOWN, so flip.
+        surface.scale.y = -1;
+        surface.position.set(AREA_W / 2, AREA_H / 2, 0.001);
+        board.add(frame, tray, surface);
+        const root = api.getRobotRoot();
+        root?.add(board);
+
+        // The viewer's key light sits on the robot's other side, leaving the
+        // board face in shadow. A dedicated fill for the board, positioned in
+        // base-frame coordinates (child of the robot root, like the board
+        // itself) on the robot's side of the plane, aimed at its centre.
+        // No shadow casting — it exists to lift the face, not to re-shade
+        // the scene.
+        const centre = new THREE.Vector3(AREA_W / 2, AREA_H / 2, 0)
+          .applyMatrix4(board.matrix);
+        const boardLight = new THREE.DirectionalLight(0xfff3e2, 1.4);
+        // Out along the board normal (toward the robot), raised a touch.
+        boardLight.position.set(
+          centre.x - B.bz[0] * 1.4,
+          centre.y - B.bz[1] * 1.4,
+          centre.z - B.bz[2] * 1.4 + 0.6);
+        boardLight.target.position.copy(centre);
+        root?.add(boardLight, boardLight.target);
+
+        // Visual-only marker held between the gripper fingers. The TCP frame
+        // is flipped 180 deg from the wrist (URDF rpy 0 pi pi), so +z_tcp is
+        // the OUTWARD tool axis — during writing it points straight at the
+        // board (verified: the solve's wrist quat maps z_tcp to -y_base).
+        // Body runs from inside the grip past the TCP origin; blue tip out.
+        const tcp = root?.getObjectByName("right_gripper_tcp_link");
+        if (tcp) {
+          const pen = new THREE.Group();
+          const body = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.0095, 0.0095, 0.11, 20),
+            new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.55 }));
+          body.rotation.x = Math.PI / 2;
+          body.position.z = -0.01;      // -0.065 .. +0.045 along z_tcp
+          const tip = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.0055, 0.0028, 0.016, 16),
+            new THREE.MeshStandardMaterial({ color: 0x1c3f8f, roughness: 0.4 }));
+          tip.rotation.x = -Math.PI / 2; // narrow end forward
+          tip.position.z = 0.053;
+          pen.add(body, tip);
+          tcp.add(pen);
+        } else {
+          console.warn("traj playback: right_gripper_tcp_link not found — no marker prop");
+        }
+
+        api.orbit(-1.15, 0.24, 2.1, 0.25);
+        const tEnd = traj[traj.length - 1].t;
+        let t0 = performance.now();
+        let idx = 0;
+        let inked = 0; // waypoint index up to which ink is painted
+        const inkTo = (upto: number) => {
+          for (; inked < upto; inked++) {
+            const a = traj[inked], b = traj[inked + 1];
+            if (a.pen && b.pen) {
+              ctx.beginPath();
+              ctx.moveTo(a.uv[0] * PX_PER_M, a.uv[1] * PX_PER_M);
+              ctx.lineTo(b.uv[0] * PX_PER_M, b.uv[1] * PX_PER_M);
+              ctx.stroke();
+            }
+          }
+          texture.needsUpdate = true;
+        };
+        const step = () => {
+          if (stopped) return;
+          let simT = ((performance.now() - t0) / 1000) * speed;
+          if (simT > tEnd + 2 / speed) {
+            t0 = performance.now();
+            idx = 0;
+            inked = 0;
+            simT = 0;
+            paintBase();
+            texture.needsUpdate = true;
+          }
+          while (idx < traj.length - 2 && traj[idx + 1].t <= simT) idx++;
+          inkTo(idx);
+          const a = traj[idx];
+          const b = traj[Math.min(idx + 1, traj.length - 1)];
+          const f = Math.min(1, Math.max(0, (simT - a.t) / Math.max(b.t - a.t, 1e-6)));
+          for (const name of Object.keys(a.j)) {
+            let v = a.j[name] + (b.j[name] - a.j[name]) * f;
+            if (name === "lift_extension_joint") {
+              v = Math.max(0, v - LIFT_VISUAL_OFFSET);
+            }
+            api.setJoint(name, v);
+          }
+          api.redraw();
+          requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      });
+    return () => {
+      stopped = true;
+    };
+  }, []);
+
   const onReady = useCallback(
     (api: ViewerApi) => {
       apiRef.current = api;
       const q = new URLSearchParams(window.location.search);
+      // DEV-ONLY tool: import.meta.env.DEV is a compile-time constant, so
+      // this whole branch (and the playback path behind it) is stripped from
+      // production builds — ?traj=1 on the live site is inert by construction.
+      if (import.meta.env.DEV && q.has("traj")) {
+        runTraj(api);
+        return;
+      }
       // ?rig=1: hand the viewer controls to the page's window for scripted
       // probing (used to find choreography poses empirically — e.g. which
       // joint values actually produce a self-collision against the real
@@ -338,7 +531,7 @@ const ModelPage = () => {
         }
       }
     },
-    [demo, steppedMode, runDemo]
+    [demo, steppedMode, runDemo, runTraj]
   );
 
   const value = (j: HoveredJoint) => {

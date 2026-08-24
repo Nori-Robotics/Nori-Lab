@@ -286,6 +286,12 @@ export type ViewerApi = {
    *  lift raises the robot ~0.5 m and a fixed target crops the head off. */
   orbit: (azimuth: number, elevation: number, distance: number, targetYOffset?: number) => void;
   frame: () => void;
+  /** The robot's root Object3D (URDF/base coordinates). For choreography
+   *  props (e.g. the ?traj=1 whiteboard) that must ride the robot's frame —
+   *  attach children here and their coordinates are plain base-frame metres. */
+  getRobotRoot: () => THREE.Object3D | null;
+  /** Request a render after out-of-band scene changes (e.g. texture paint). */
+  redraw: () => void;
 };
 
 /** What the viewer can tell the page about the part under the cursor. */
@@ -781,6 +787,11 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       };
       readyCb.current?.({
         setJoint: (name, value) => v.setJointValue(name, value),
+        getRobotRoot: () => (v.robot as unknown as THREE.Object3D) ?? null,
+        redraw: () => {
+          v.redraw();
+          postRef.current?.invalidate();
+        },
         highlightJoint: (name) => {
           clearHighlight();
           if (name && robot?.joints?.[name]) applyHighlight(robot.joints[name]);

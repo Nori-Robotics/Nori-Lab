@@ -33,6 +33,8 @@ import {
   deletePolicy,
   downloadPolicy,
   getActiveAssemblies,
+  getActiveProcessing,
+  type ProcessingJob,
   getLibrary,
   getRobotRecordings,
   getTrainingEstimateParams,
@@ -539,6 +541,9 @@ const MyStuff = () => {
   // "On this laptop" datasets, which are no longer produced.
   const [robot, setRobot] = useState<RobotRecordings | null>(null);
   const [assemblies, setAssemblies] = useState<ActiveAssembly[]>([]); // in-flight assembly jobs
+  // Map-processing jobs: in-flight AND recently failed. Separate from
+  // assemblies because processing runs for minutes to HOURS afterwards.
+  const [processing, setProcessing] = useState<ProcessingJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeRef, setActiveRef] = useState<string | null>(null); // hovered policy's source
@@ -602,6 +607,11 @@ const MyStuff = () => {
     } catch {
       setAssemblies([]);
     }
+    try {
+      setProcessing((await getActiveProcessing(baseUrl, fetchWithHeaders)).processing);
+    } catch {
+      setProcessing([]); // absent on an older backend — panel just stays hidden
+    }
     setLoading(false);
   }, [baseUrl, fetchWithHeaders]);
 
@@ -616,6 +626,10 @@ const MyStuff = () => {
     const bundles = robot?.bundles ?? [];
     return (
       assemblies.length > 0 ||
+      // Live processing keeps the page refreshing so a phase/status change
+      // lands on its own. FAILED is terminal — polling it forever would be a
+      // permanent spinner.
+      processing.some((j) => j.status === "PENDING" || j.status === "RUNNING") ||
       (robot?.on_robot_pending ?? 0) > 0 ||
       bundles.some(
         (b) =>
@@ -626,7 +640,18 @@ const MyStuff = () => {
           (b.status === "PROMOTED" && b.assembling !== true && b.local_deleted_at == null),
       )
     );
-  }, [robot, assemblies]);
+  }, [robot, assemblies, processing]);
+
+  // Newest processing job per dataset. Newest wins: a re-run after a failure
+  // should show the re-run, not the stale failure.
+  const processingByDataset = useMemo(() => {
+    const m = new Map<string, ProcessingJob>();
+    for (const j of processing) {
+      if (!j.dataset_session_id) continue;
+      if (!m.has(j.dataset_session_id)) m.set(j.dataset_session_id, j);
+    }
+    return m;
+  }, [processing]);
 
   // Datasets currently being assembled into (append/rebuild targets) — edits blocked.
   const assemblingDatasetIds = useMemo(
@@ -1534,6 +1559,48 @@ const MyStuff = () => {
                     ready. produced_maps can also exceed derived_maps — one
                     inverse-rendering pass emits normals+albedo+roughness
                     together — so the union is shown. */}
+                {(() => {
+                  // Map-processing status. This is the panel whose absence let a
+                  // job fail at 00:22 with a clear CUDA OOM reason and show only
+                  // "not generated yet" for half a day (2026-08-24).
+                  const job = processingByDataset.get(d.session_id);
+                  if (!job) return null;
+                  const failed = job.status === "FAILED";
+                  const queued = job.status === "PENDING";
+                  return (
+                    <div
+                      className={`mt-2 rounded-md border px-2.5 py-2 text-xs ${
+                        failed
+                          ? "border-red-300 bg-red-50 text-red-900"
+                          : "border-border bg-muted/40 text-muted-foreground"
+                      }`}
+                    >
+                      <div className="font-medium">
+                        {failed
+                          ? "Map generation failed"
+                          : queued
+                            ? "Map generation queued"
+                            : "Generating maps…"}
+                        {job.units_total > 0 && !failed ? ` · ${job.units_total} units` : ""}
+                      </div>
+                      {!failed && job.phase && (
+                        <div className="mt-0.5 [font-variant-numeric:tabular-nums]">
+                          {job.phase}
+                        </div>
+                      )}
+                      {failed && job.failure_reason && (
+                        // First line only: the reason can be a full container
+                        // traceback, and the headline is what is actionable.
+                        <div className="mt-0.5 break-words font-mono text-[11px]">
+                          {job.failure_reason.split("\n")[0].slice(0, 220)}
+                        </div>
+                      )}
+                      {!failed && (job.attempts ?? 0) > 1 && (
+                        <div className="mt-0.5">retried {job.attempts}×</div>
+                      )}
+                    </div>
+                  );
+                })()}
                 {(() => {
                   const requested = d.derived_maps ?? [];
                   const produced = d.produced_maps ?? [];

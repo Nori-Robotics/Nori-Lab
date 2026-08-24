@@ -48,3 +48,6 @@ yarn-error.log*
 .yarn-integrity
 .vercel
 .env*
+
+# Dev-only whiteboard-sim trajectory data (?traj=1 tool); never ship in builds
+public/wb_traj.json

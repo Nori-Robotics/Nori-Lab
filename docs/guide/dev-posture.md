@@ -67,7 +67,7 @@ robot's network accordingly.
 
 ## Support after the transition
 
-No standing vendor path into a box you were told you own. Tailscale is installed but **logged out
+No standing vendor path into a box you own. Tailscale is installed but **logged out
 by default** — no key on disk, no tailnet membership, zero Nori reachability. Support is a
 **consent-based session that you start and you end**:
 

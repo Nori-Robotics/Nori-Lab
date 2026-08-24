@@ -9,7 +9,10 @@ which one you're looking at answers most video questions.
 **Low resolution and ~15 fps is expected, not a bug.**
 
 The robot sends **one H.264 track** containing **all cameras tiled into a composite grid** —
-typically 320×240 per tile at 15 fps. There are no per-camera tracks on the wire. This is
+typically 320×240 per tile at 15 fps. The tiles are the robot's four cameras, identified by
+**role**: `left_wrist`, `right_wrist`, `overhead`, and `front` — the same four roles on both the
+L2 and the A3 ([where each one sits](/guide/l2#cameras)). There are no per-camera tracks on the
+wire. This is
 deliberate: the Pi 5 has no hardware H.264 encoder, so every encoded pixel costs robot power, and
 one encode is far cheaper than N.
 
@@ -67,8 +70,10 @@ Record demonstrations from the **Remote Operation** page while connected. The fl
 **start a session** with a task label, then record **episodes** one at a time — start, drive,
 stop, then keep or reject.
 
-The copy you train on is made **on the robot**: full-resolution camera frames plus joint state and
-actions at 50 Hz. The preview you watch while recording is just the live feed described above — it
+The copy you train on is made **on the robot**: full-resolution frames from `left_wrist`,
+`right_wrist`, and `overhead`, plus joint state and actions at 50 Hz. The `front` camera is
+primarily your driving view and stays out of the standard training copy — the stereo capture
+option below is the exception. The preview you watch while recording is just the live feed described above — it
 often drops bitrate to spare the robot's compute, and that never affects the training copy.
 Rejecting an episode deletes the robot's copy too, before it can upload.
 

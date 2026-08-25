@@ -55,6 +55,10 @@ external backend.
    the stack) and `~/nori_ws/docs/dev-interface.md` (the full control interface — topics, rates,
    safety).
 
+**License.** The software on the unit is **source-available** under the
+[PolyForm Internal Use License 1.0.0](https://polyformproject.org/licenses/internal-use/1.0.0):
+you may use and modify it for your own internal work, but not redistribute it.
+
 The rest of the page applies unchanged — in particular the [trust boundary](#trust-boundary)
 (keep the robot on a network you control) and [support](#support-after-the-transition), which on
 these units too exists only when you open a session.

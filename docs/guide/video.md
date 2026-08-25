@@ -46,6 +46,10 @@ back to decoding and re-encoding, which costs noticeably more CPU per frame.
 That is a power symptom, not a video one — the USB rail is running out of current and the device
 is re-enumerating. See [Brownouts and throttling](/guide/l2#brownouts).
 
+A camera that is **missing from the start of a session** (or two views swapped) is different: the
+saved port→role mapping is stale and the camera needs re-identifying. See
+[If some cameras aren't found](/guide/l2#camera-identification).
+
 
 
 <!-- TODO-DOCS (hidden from the live site; uncomment to restore)

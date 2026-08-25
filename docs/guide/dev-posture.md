@@ -11,7 +11,9 @@ traversing Nori's backend or signaling.
 ## Overview
 
 **Every robot ships as a default product; going dev is a transition you choose on your own unit.**
-It is not a separate SKU — you try the normal product first, then convert.
+It is not a separate SKU — you try the normal product first, then convert. (A small number of
+special units [ship already in dev posture](#shipped-as-dev) — if yours did, start there and skip
+the transition.)
 
 **The transition is one-way.** It wipes the unit's identity and credentials; there is no
 supported field path back (you will have to request us to mail you a new SD card). It is not a
@@ -20,6 +22,42 @@ runtime toggle — the posture can never be flipped from the LAN or the touchscr
 After the transition you own the box: SSH with your own key (you add it at handover; password
 auth then turns off; your private key never reaches Nori), an open ROS 2 graph on your LAN, and
 your own workspace.
+
+## If your unit shipped as dev {#shipped-as-dev}
+
+Some special units ship already in developer posture, never paired to a Nori account, and have no transition. The first
+login uses a one-time password instead of a key handover. Nothing on the unit connects to an
+external backend.
+
+1. **Power on.** The face display and settings panel come up, and the motion stack and cameras
+   start automatically after a short delay — you'll see battery status and can adjust the lift from the face once that happens.
+
+2. **Get it on your network.** join your Wi-Fi network from the
+   on-screen settings panel.
+
+3. **Find it.** By hostname which is your serial number — `nori-model-number.local`, shown on the box — or by its IP from your router.
+
+4. **First login.** SSH in with the one-time password included with your unit. The `dev` account
+   has sudo.
+
+   ```bash
+   # example:
+   ssh dev@nori-a3-0123.local
+   ```
+
+5. **Make it yours.** You own this unit — do any of:
+   - Add your SSH key (`ssh-copy-id`), then lock down to key-only login:
+     `sudo nori-ssh-lockdown` (it won't let you lock yourself out).
+   - Or just change the password: `passwd`.
+   - Keeping password login on a trusted home network is fine — your call.
+
+6. **Where to go next.** On the unit itself: `~/nori_ws/SETUP.md` (setup, starting and stopping
+   the stack) and `~/nori_ws/docs/dev-interface.md` (the full control interface — topics, rates,
+   safety).
+
+The rest of the page applies unchanged — in particular the [trust boundary](#trust-boundary)
+(keep the robot on a network you control) and [support](#support-after-the-transition), which on
+these units too exists only when you open a session.
 
 ## What you get to code against
 

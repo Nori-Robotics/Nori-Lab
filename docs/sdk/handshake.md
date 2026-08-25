@@ -28,6 +28,8 @@ const teleop = new RemoteTeleop({
 | `descriptor` | What the robot is: `joints` (every drivable `<motor>.pos` key), `base`, `aux` (e.g. lifts), `cameras` (roles, matching the composite layout tiles), and `ranges` — the authoritative `[min, max]` per key. Out-of-range values are **clamped robot-side, never rejected**, so use `ranges` to scale your inputs, not to pre-validate. |
 | `initialState` | The joint pose at session start. |
 | `versionMismatch` | **Advisory.** Mixed daemon versions exist across the fleet, so the SDK warns and proceeds — unknown frame types are ignored by both sides, so a mismatch means vocabulary gaps, never unsafe behavior. |
+| `model` | **Advisory label** ("L2", "A3") for logs and dataset provenance. Don't branch on it — branch on `descriptor` and `capabilities` — with one sanctioned exception the SDK already handles internally: the frozen L2 fleet's base-angular wire sign ([Driving → Base](/sdk/driving#base)). Deployed L2 daemons predate this field and never send it, so absence is not evidence of a non-L2 robot. |
+| `capabilities` | Optional verbs this robot honours beyond the core (`"task_jog"`, `"pose_targets"`, `"record"`, …). **Three-valued**: check with `supportsCapability(info, cap)` — `true`/`false` when declared, `undefined` when the ack predates the field, which means *unknown, probe or assume legacy*, never *no*. An explicit `[]` means none. |
 
 Old daemons may send a bare ack — every field except `accepted` is optional, so **null-check what
 you read**. The ack is re-sent on every daemon (re)connect, so a robot restart mid-session

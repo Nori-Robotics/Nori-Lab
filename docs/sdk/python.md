@@ -4,10 +4,14 @@ The Python operator client. It speaks the same **nori-protocol** over a WebRTC d
 `@nori/sdk`, and exists for the clients a browser can't serve: headless scripts, policy and agent
 drivers, dataset tooling, and CI.
 
-::: warning Alpha
-The pure layers — protocol, types, motion helpers, and the mock — are complete and tested. The
-live session (`RemoteTeleop`) is written but **not yet verified against a real robot**. Develop
-against the mock; treat the hardware path as pre-release.
+::: tip v1.0.0
+The full surface — protocol, types, motion helpers, the mock, and the live `RemoteTeleop`
+session — is tested, and the live session has driven real hardware (the mock's
+`A3_DESCRIPTOR` is transcribed from a live A3's wire descriptor). The package `README.md`'s
+Status section is the authoritative list of what is and isn't hardware-verified. Develop
+against the mock first: it now mirrors the gateway's refusals verbatim (`unknown_joint`,
+`empty_action`, `estop_latched`, `empty_pose`), so what passes here behaves the same way on
+a robot.
 :::
 
 ## Install
@@ -67,6 +71,12 @@ The thing to internalize is the same as in TypeScript: **jog is a stream, and si
 command** — `jog(payload, duration=...)` handles the repetition; if you drive the stream yourself,
 resend inside `info.watchdog_profile.t_warn_ms`. [The safety contract](/sdk/safety) applies
 unchanged — it lives on the robot, not in either SDK.
+
+One place the Python SDK is deliberately stricter than the browser client: `estop()` **raises
+`TeleopError`** when the control channel is known-dead, because a silently dropped E-STOP must
+never read as success — and `estop_confirmed(timeout=...)` goes further, awaiting the robot
+*reporting* the latch in telemetry before returning. Delivery is not execution; unattended
+scripts should use the confirmed form.
 
 ## Reference
 

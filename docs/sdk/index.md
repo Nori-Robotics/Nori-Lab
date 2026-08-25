@@ -20,9 +20,11 @@ Targets **nori-protocol v1** (`NORI_PROTOCOL_VERSION`); a daemon on a different 
 connection. Read [the safety contract](/sdk/safety) before you ship.
 :::
 
-The SDK is not model-specific: the same client drives a **Nori L2** or a **Nori A3**. If you have
-an A3, see [Nori A3](/guide/a3) — including a published robot description you can load into a
-simulator today.
+The SDK is not model-specific: the same client drives a **Nori L2** or a **Nori A3** — including
+the one model-dependent wire quirk (the frozen L2 fleet's base-angular sign), which the SDK
+resolves internally so your code never learns it exists (see [Driving → Base](/sdk/driving#base)).
+If you have an A3, see [Nori A3](/guide/a3) — including a published robot description you can
+load into a simulator today.
 
 Two clients speak the protocol: **`@nori/sdk`** (TypeScript — the browser client these pages
 document) and [**`nori-sdk` for Python**](/sdk/python) — headless scripts, policy and agent

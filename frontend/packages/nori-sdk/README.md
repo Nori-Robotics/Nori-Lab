@@ -18,8 +18,8 @@ video + telemetry, and drive it — from the browser, in ~20 lines.
 
 ## Install
 
-Not on public npm (v0 ships to a named team). Install from the release tarball we send you —
-or from the GitHub release URL if you have repo access:
+Not on public npm yet — that lands with the open-source release. Until then, install from the
+release tarball we send you, or from the GitHub release URL if you have repo access:
 
 ```bash
 npm i ./nori-sdk-<version>.tgz
@@ -192,7 +192,7 @@ What's in a `RobotInfo`:
 | `descriptor` | What the robot is: `joints` (every drivable `<motor>.pos` key), `base`, `aux` (e.g. lifts), `cameras` (roles, matching the composite layout tiles), `ranges` — the authoritative `[min, max]` per key (out-of-range values are **clamped robot-side, never rejected**, so use `ranges` to scale your inputs, not to pre-validate) — and optional `jog_scale`, the nominal commanded scale of a full-deflection jog per namespace (never achieved velocity; absent on the frozen L2 fleet forever). |
 | `initialState` | The joint pose at session start. |
 | `versionMismatch` | **Advisory.** Mixed daemon versions exist across the fleet, so the SDK warns and proceeds — unknown frame types are ignored by both sides, so a mismatch means vocabulary gaps, never unsafe behavior. |
-| `model` | **Advisory label** ("L2", "A3") for logs and dataset provenance only. Never branch on it — branch on `descriptor` and `capabilities` (nori-protocol MODELS.md). |
+| `model` | **Advisory label** ("L2", "A3") for logs and dataset provenance. Don't branch on it — branch on `descriptor` and `capabilities` (nori-protocol MODELS.md) — with ONE sanctioned exception the SDK already handles internally: the frozen L2 fleet's base-angular wire sign (see "Driving the robot → Base"). Deployed L2 daemons predate this field and never send it, so absence is not evidence of a non-L2 robot. |
 | `capabilities` | Optional verbs this robot honours beyond the core (`"task_jog"`, `"pose_targets"`, `"record"`, …). **Three-valued** — check with `supportsCapability(info, cap)`, which returns `true`/`false` when declared and `undefined` when the ack predates the field; `undefined` means *unknown, probe or assume legacy*, never *no*. An explicitly empty `[]` means none. |
 
 Old daemons may send a bare ack — every field except `accepted` is optional, so null-check what
@@ -226,6 +226,22 @@ teleop.setExternalJog({
 });
 teleop.setExternalJog(null); // stop
 ```
+
+**Base** — the mobile base rides the same jog stream under the `base` group, normalized rates
+with **REP-103 signs: +`linear` drives forward, +`angular` turns LEFT** (counter-clockwise).
+Emit that convention and nothing else — never negate client-side:
+
+```ts
+teleop.setExternalJog({ base: { linear: 0.4, angular: -0.2 } }); // forward, turning right
+```
+
+The frozen L2 fleet's firmware turns opposite on `angular` and can never be updated, so the
+SDK flips that one sign on the wire for a **positively-matched L2 only** (resolved from
+`ack.model`, else the transport room's fleet serial) — your code stays sign-blind either way.
+For an L2 living in a room the auto-detection can't classify (a non-fleet dev room), pass
+`baseSigns: "l2-legacy"` to `RemoteTeleop`; everything else is already the default
+(`"rep103"`). Unknown never resolves to the legacy branch, so a future model can't inherit
+the quirk by omission.
 
 **Commands & mode:**
 
@@ -677,9 +693,11 @@ are Nori-original additions, marked with `// NORI:` header comments.
 
 ## Status
 
-`v0`, for a small set of collaborating devs — not a public release. The core teleop + VR surface
-is stable; the two-way **call** API (`joinCall`/`leaveCall`/mic/camera on `RemoteTeleop`) is
-present but **experimental** and may change. **Cartesian pose targets** (`sendPose` +
+`v1.0.0`. The core teleop + VR surface is stable and the wire base-sign convention is pinned to
+the nori-protocol fixture (spec REP-103 everywhere; the L2 legacy flip lives behind a positive
+model match — see "Driving the robot → Base"). The two-way **call** API
+(`joinCall`/`leaveCall`/mic/camera on `RemoteTeleop`) is present but **experimental** and may
+change. **Cartesian pose targets** (`sendPose` +
 `supportsCapability`) are new (2026-08-24): wire shape pinned to the nori-protocol fixtures and
 unit-tested, robot side bench-verified, browser end-to-end still pending its first live run. Note the robot-side consent gate: `joinCall()`
 rings an accept prompt at the robot and room audio stays silent until a person there accepts

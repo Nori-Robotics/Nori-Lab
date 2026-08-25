@@ -31,6 +31,27 @@ watchdog thresholds, the robot slows and then stops on its own. That's the watch
 — see [the safety contract](/sdk/safety).
 :::
 
+## Base {#base}
+
+The mobile base rides the same jog stream under the `base` group, as normalized rates with
+**REP-103 signs: +`linear` drives forward, +`angular` turns LEFT** (counter-clockwise). Emit
+that convention and nothing else — never negate client-side:
+
+```ts
+teleop.setExternalJog({ base: { linear: 0.4, angular: -0.2 } }); // forward, turning right
+```
+
+::: tip The L2 exception is handled for you
+The frozen L2 fleet's firmware turns opposite on `angular` and can never be updated, so the
+SDK flips that one sign on the wire for a **positively-matched L2 only** (resolved from
+`ack.model`, else the signaling room's fleet serial). Your code stays sign-blind either way.
+For an L2 living in a room the auto-detection can't classify — a non-fleet dev room — pass
+`baseSigns: "l2-legacy"` to `RemoteTeleop`; everything else is already the default
+(`"rep103"`), and an unknown serial never resolves to the legacy branch.
+:::
+
+Omitting the `base` group in a jog means **stop**, never "hold the last velocity".
+
 ## Commands and mode
 
 ```ts

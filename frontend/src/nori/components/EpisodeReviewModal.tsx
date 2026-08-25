@@ -83,9 +83,13 @@ export function EpisodeReviewModal({
   // generated yet" when the map simply belonged to another camera.
   const [mapsByCamera, setMapsByCamera] = useState<Record<string, string[]>>({});
   const [mapChannel, setMapChannel] = useState<string>("rgb");
-  // Non-rgb maps that 404'd (not produced yet) → show a placeholder for them.
-  // A map that loads is never added, so this auto-lights-up when the tools land.
+  // Non-rgb map TILES that 404'd → placeholder for that tile only. Keyed by
+  // camera:map:episode, NOT by map: a single bad episode used to mark the map
+  // dead everywhere, so the grid flashed real frames and then replaced all of
+  // them with "not generated yet". A map that loads is never added, so this
+  // auto-lights-up when the tools land.
   const [failedMaps, setFailedMaps] = useState<Set<string>>(new Set());
+  const tileKey = (epIndex: number) => `${camera ?? ""}:${mapChannel}:${epIndex}`;
   // Maps available for the camera in view. Empty mapping (older backend, or no
   // layer yet) falls back to the dataset-level list so behaviour is unchanged.
   const camMaps = (camera && mapsByCamera[camera]) || null;
@@ -96,8 +100,12 @@ export function EpisodeReviewModal({
     Object.entries(mapsByCamera)
       .filter(([, ms]) => ms.includes(m))
       .map(([c]) => c);
-  const mapMissing =
-    mapChannel !== "rgb" && (failedMaps.has(mapChannel) || !mapOnThisCamera(mapChannel));
+  // Camera-level: this map was never derived for the camera in view. Applies to
+  // every tile, and is knowable before any request.
+  const mapMissing = mapChannel !== "rgb" && !mapOnThisCamera(mapChannel);
+  // Tile-level: this map exists for the camera but THIS episode failed to load.
+  const tileMissing = (epIndex: number) =>
+    mapMissing || (mapChannel !== "rgb" && failedMaps.has(tileKey(epIndex)));
   const [clipToken, setClipToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [marked, setMarked] = useState<Set<number>>(new Set());
@@ -516,7 +524,7 @@ export function EpisodeReviewModal({
                     }`}
                   >
                     <div className="relative aspect-video bg-secondary">
-                      {mapMissing ? (
+                      {tileMissing(ep.index) ? (
                         // Selected derived map isn't produced yet (the processing
                         // tools aren't wired) — placeholder until it is.
                         <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 px-2 text-center text-muted-foreground">
@@ -533,7 +541,7 @@ export function EpisodeReviewModal({
                           muted
                           onError={() => {
                             if (mapChannel !== "rgb")
-                              setFailedMaps((s) => new Set(s).add(mapChannel));
+                              setFailedMaps((s) => new Set(s).add(tileKey(ep.index)));
                           }}
                         />
                       ) : (
@@ -551,7 +559,7 @@ export function EpisodeReviewModal({
                               className="absolute inset-0 h-full w-full object-cover"
                               onError={(e) => {
                                 if (mapChannel !== "rgb")
-                                  setFailedMaps((s) => new Set(s).add(mapChannel));
+                                  setFailedMaps((s) => new Set(s).add(tileKey(ep.index)));
                                 (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
                               }}
                             />

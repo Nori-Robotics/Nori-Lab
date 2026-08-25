@@ -839,26 +839,30 @@ export type ProcessingJob = {
   updated_at: string | null;
 };
 
-/** GET /nori/datasets/mine/processing/active — in-flight AND recently-failed
+/** GET /nori/datasets/processing/active — in-flight AND recently-failed
  *  map processing. Failures are included deliberately: map derivation runs for
  *  minutes to hours after the assemble modal closes, so a failure is otherwise
- *  invisible. Fail SOFT — absent on an older backend. */
+ *  invisible. Fail SOFT — absent on an older backend.
+ *
+ *  No `mine/` segment: the backend declares these on `mine_router`, but that
+ *  router's prefix is plain `/datasets` (same as assemblies/active below). The
+ *  variable name is not part of the URL. */
 export function getActiveProcessing(
   baseUrl: string,
   fetcher: Fetcher
 ): Promise<{ processing: ProcessingJob[] }> {
-  return noriRequest(baseUrl, fetcher, "/nori/datasets/mine/processing/active", {
+  return noriRequest(baseUrl, fetcher, "/nori/datasets/processing/active", {
     action: "Load map-processing status",
   });
 }
 
-/** GET /nori/datasets/mine/processing/{id} — poll one map-processing job. */
+/** GET /nori/datasets/processing/{id} — poll one map-processing job. */
 export function getProcessingJob(
   baseUrl: string,
   fetcher: Fetcher,
   sdgJobId: string
 ): Promise<ProcessingJob> {
-  return noriRequest(baseUrl, fetcher, `/nori/datasets/mine/processing/${sdgJobId}`, {
+  return noriRequest(baseUrl, fetcher, `/nori/datasets/processing/${sdgJobId}`, {
     action: "Poll map-processing job",
   });
 }

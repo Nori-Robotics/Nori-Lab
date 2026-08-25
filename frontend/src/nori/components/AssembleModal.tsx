@@ -13,6 +13,7 @@ import {
   getAssemblyJob,
   DERIVE_MAPS,
   VIDEO_PROCESSING,
+  VIDEO_PROCESSING_ENABLED,
 } from "@/nori/api/client";
 
 interface DatasetOption {
@@ -342,17 +343,34 @@ export function AssembleModal({
               <div>
                 <p className="text-xs font-medium text-nori-h14131a">Process videos</p>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {VIDEO_PROCESSING.map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      onClick={() => toggle(setVideoProcessing, p)}
-                      className={chipCls(videoProcessing.has(p))}
-                    >
-                      {prettyOption(p)}
-                    </button>
-                  ))}
+                  {VIDEO_PROCESSING.map((p) => {
+                    const enabled = VIDEO_PROCESSING_ENABLED.includes(p);
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        disabled={!enabled}
+                        // Shown-but-disabled rather than hidden: these are on the
+                        // roadmap, and a user who was told the feature exists
+                        // should see it coming rather than conclude it vanished.
+                        title={enabled ? undefined : "Coming soon — the render pass runs but its output isn't downloadable yet"}
+                        onClick={() => enabled && toggle(setVideoProcessing, p)}
+                        className={
+                          enabled
+                            ? chipCls(videoProcessing.has(p))
+                            : `${chipCls(false)} cursor-not-allowed opacity-50`
+                        }
+                      >
+                        {prettyOption(p)}
+                      </button>
+                    );
+                  })}
                 </div>
+                {VIDEO_PROCESSING_ENABLED.length === 0 && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Relighting and colour jitter are coming soon.
+                  </p>
+                )}
               </div>
             </div>
 

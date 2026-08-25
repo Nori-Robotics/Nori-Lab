@@ -41,6 +41,12 @@ current, not a bug. [Brownouts and throttling](/guide/l2#brownouts).
 **Is it the cable?** A charge-only USB cable is physically identical to a data cable and is the
 single most common cause of "the app can't see my arm."
 
+## Physically broken?
+
+If a part snapped rather than misbehaved, check
+[printable parts](/guide/a3#printable-parts) — for a growing set of
+A3 parts you can download the file and print a replacement yourself.
+
 ## Still stuck?
 
 [Getting help](/guide/getting-help) — what to send us so we can actually diagnose it.

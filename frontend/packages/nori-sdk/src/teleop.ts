@@ -344,8 +344,11 @@ export interface RobotInfo {
   initialState?: Record<string, number>; // joint pose at session start ("<name>.pos" -> value)
   error?: string;                        // set when accepted === false
   versionMismatch: boolean;              // daemon protocolVersion differs from this SDK's target
-  // ADVISORY model/generation label ("L2", "A3") for logs and dataset provenance only —
-  // never branch on it; branch on descriptor + capabilities (nori-protocol MODELS.md).
+  // Model/generation label ("L2", "A3") for logs and dataset provenance. Behavioural
+  // branching belongs on descriptor + capabilities (nori-protocol MODELS.md) — with ONE
+  // sanctioned exception: the L2 legacy base-sign wire quirk (see legacyL2Base), a hardware
+  // trait no capability can express. Note the deployed L2 daemon predates this field and
+  // never sends it, so absence is NOT evidence of a non-L2 robot.
   model?: string;
   // Optional verbs this robot honours beyond the always-present core. THREE-VALUED by
   // design: undefined = the ack predates the field (unknown — probe or assume legacy);
@@ -364,6 +367,16 @@ export function supportsCapability(
   const caps = info?.capabilities;
   if (caps === undefined) return undefined;
   return caps.includes(capability);
+}
+
+// Fleet-serial model code: "NORI-L3-0007" -> "L3", "NORI-A3-0000" -> "A3"; non-fleet /
+// unrecognized serials (dev rooms, legacy formats) -> null. Case-insensitive, same parse as
+// the backend's _FLEET_SERIAL and the app's robotModels.ts. Lives in the SDK because the
+// wire itself is model-dependent in exactly one place (the L2 legacy base-angular sign) and
+// the SDK must resolve that without the app's help.
+export function serialModelCode(serial: string): string | null {
+  const m = /^NORI-([A-Z]\d+)/i.exec(serial.trim());
+  return m ? m[1].toUpperCase() : null;
 }
 
 // Coerce a wire `ack` frame into a RobotInfo. Tolerant of old daemons that send a bare
@@ -468,6 +481,13 @@ export interface RemoteTeleopOptions {
   // NOTE: the signaling ROOM is now owned by the SignalingTransport (it addresses the room),
   // so it's no longer a RemoteTeleop option. The room token is gone too: the robot gates
   // private rooms via Supabase RLS, so the operator no longer proves a token over signaling.
+  //
+  // Base wire sign convention override. Normally auto-resolved (ack.model, else the
+  // transport's room serial): everything speaks spec REP-103 on the wire except the frozen
+  // L2 fleet, whose firmware turns opposite on angular and can never be updated. Set this
+  // only for a robot the auto-detection can't classify — an L2 living in a non-fleet dev
+  // room needs "l2-legacy"; anything else is already the default. See legacyL2Base().
+  baseSigns?: "rep103" | "l2-legacy";
   stun: string;
   turnUrls: string[];
   turnUser: string;
@@ -2062,6 +2082,40 @@ export class RemoteTeleop {
     return this.ackInfo;
   }
 
+  // Does THIS robot need the L2 legacy base wire (angular negated on the wire)? The public
+  // convention is spec REP-103 everywhere — +linear forward, +angular left — and every jog
+  // producer in this SDK now emits it. The deployed L2 fleet's firmware turns opposite on
+  // ANGULAR (only — its linear is true; the old keyboard both-axes negation was a bug that
+  // drove keyboard-forward backwards on every model) and its daemon is frozen, so the
+  // compensation the spec says belongs in the robot's own actuator adapter has to live
+  // client-side for L2, forever, behind this positive match. Resolution order:
+  //   1. opts.baseSigns — explicit override for robots auto-detection can't classify.
+  //   2. ack.model — a robot that names itself is believed (no deployed L2 sends it, but a
+  //      positive non-L2 answer beats any room-name guess).
+  //   3. the transport room's fleet serial ("NORI-L2-0007" -> L2).
+  // Unknown resolves to REP-103: the legacy branch is keyed to a positive L2 match and is
+  // never the fallback, so a future model can't inherit the quirk by omission.
+  private legacyL2Base(): boolean {
+    if (this.o.baseSigns) return this.o.baseSigns === "l2-legacy";
+    const ackModel = this.ackInfo?.model;
+    if (ackModel) return ackModel.toUpperCase() === "L2";
+    const room = this.o.signaling.room;
+    return !!room && serialModelCode(room) === "L2";
+  }
+
+  // The one place REP-103 becomes wire bytes. Identity for every robot except a matched L2,
+  // where base.angular flips sign (zeros pass unchanged — -0 stops a robot just as well).
+  // Applied at BOTH outbound jog sites (keyboard tick + externalJog), so VR mappers and
+  // script drivers stay sign-blind: they emit REP-103 and never learn the quirk exists.
+  private wireJog<T extends object>(jog: T): T {
+    if (!this.legacyL2Base()) return jog;
+    const base = (jog as { base?: unknown }).base;
+    if (!base || typeof base !== "object") return jog;
+    const b = base as Record<string, number>;
+    if (typeof b.angular !== "number" || b.angular === 0) return jog;
+    return { ...jog, base: { ...b, angular: -b.angular } };
+  }
+
   // ---- perception (Phase F / G3) -------------------------------------------
   // Latest world-state from the daemon perception process, or null if none has arrived (detector
   // not running / not connected). A running script polls this to close a loop:
@@ -2179,13 +2233,14 @@ export class RemoteTeleop {
     // control-liveness heartbeat stays fresh. sendAction is the sole arm driver.
     const leader = this.policyDriving ? null : this.externalLeader;
 
-    // VR (or another mapper) owns the stream: send its payload verbatim. It already
+    // VR (or another mapper) owns the stream: send its payload through the same wireJog
+    // gate as the keyboard path (identity except the L2 legacy angular flip). It already
     // carries left_arm/right_arm/base/left_lift/right_lift in the daemon's jog vocabulary, so this is
     // the identical wire frame the keyboard path below produces — just a different source.
     // Suppressed while a leader source drives the arms: leader (absolute) and VR-jog would
     // otherwise fight over the same arm joints.
     if (this.externalJog && !leader) {
-      this.dcSend({ type: "control", seq: this.seq++, jog: this.externalJog });
+      this.dcSend({ type: "control", seq: this.seq++, jog: this.wireJog(this.externalJog) });
       return;
     }
 
@@ -2209,10 +2264,12 @@ export class RemoteTeleop {
       // While a leader source drives the arms, arm keys are ignored (leader wins on those
       // joints); base + lift keys still apply so the operator drives the base/rails by hand.
       if (!leader && k in km) { const [d, s] = km[k]; a[d] = s * sp; }
-      // Firmware drives the base opposite our sign convention on BOTH axes (+linear =
-      // forward, +angular = left), so negate on the wire — keeps BASE_KEYS/legend reading
-      // naturally (i/w = forward, a/j = left) while sending what the firmware actually wants.
-      else if (k in BASE_KEYS) { const [dof, s] = BASE_KEYS[k]; base[dof] = -s * sp; }
+      // REP-103 straight through: BASE_KEYS signs (i/w = +linear forward, a/j = +angular
+      // left) ARE the wire values. This used to negate both axes "for the firmware" — but
+      // only the L2 turns opposite, only on angular, and that flip now happens in wireJog
+      // behind a positive L2 match, so the negation here inverted keyboard-forward on every
+      // model and keyboard-left on everything that wasn't an L2.
+      else if (k in BASE_KEYS) { const [dof, s] = BASE_KEYS[k]; base[dof] = s * sp; }
       else if (k in ZLIFT_KEYS) z = ZLIFT_KEYS[k] * sp;
     }
     // Leader mode: arms come from leader_action_deg, so the jog carries only base + lift.
@@ -2230,7 +2287,7 @@ export class RemoteTeleop {
       const lk = liftJogKey(this.ackInfo?.descriptor, this.o.arm);
       if (lk) jog[lk] = z;
     }
-    const frame: Record<string, unknown> = { type: "control", seq: this.seq++, jog };
+    const frame: Record<string, unknown> = { type: "control", seq: this.seq++, jog: this.wireJog(jog) };
     if (leader) frame.leader_action_deg = leader;
     this.dcSend(frame);
   }

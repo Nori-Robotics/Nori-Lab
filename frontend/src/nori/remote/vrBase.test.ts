@@ -1,15 +1,13 @@
 // NORI: Additive. Regression guard for the VR base-steering sign.
 //
-// Why this exists: "+angular = left" is OUR convention, but the firmware turns the base the
-// opposite way, so every path has to negate angular on the way to the wire. The keyboard
-// (teleop.ts BASE_KEYS) and scripts (ScriptDriver.base — see its own test) both got that fix;
-// the VR thumbstick path did NOT, and steered mirrored on hardware for months. It slipped
-// because the VR mapper had no tests at all.
-//
-// The VR path is special: RemoteTeleop sends an ExternalJog VERBATIM (teleop.ts — `dcSend({jog:
-// this.externalJog})`, no sign fixups), so VrJogMapper must emit the WIRE sign directly rather
-// than our internal one. Concretely: stick RIGHT must put a POSITIVE angular on the wire, which
-// is the same sign the keyboard emits for its "turn right" key (d/l -> -(-1) = +1).
+// Why this exists: the VR thumbstick path once emitted a different base sign than the
+// keyboard/script paths and steered mirrored on hardware for months — it slipped because the
+// VR mapper had no tests at all. The convention has since been unified: EVERY jog producer
+// (keyboard, scripts, VR) emits spec REP-103 — +linear = forward, +angular = turn LEFT — and
+// the only robot that turns opposite (the frozen L2 fleet, angular only) gets its sign flipped
+// in RemoteTeleop.wireJog behind a positive model match. So the mapper's contract is now the
+// spec's: stick RIGHT = turn right = NEGATIVE angular, identical to what the keyboard's
+// turn-right key emits. This test pins that the mapper stays sign-blind to the connected robot.
 import { describe, it, expect } from "vitest";
 import { VrJogMapper, type VrControllerFrame } from "@nori/sdk/vr";
 
@@ -27,13 +25,12 @@ function stick(x: number, y = 0): VrControllerFrame {
 const baseOf = (x: number, y = 0) => new VrJogMapper().map({ right: stick(x, y) }).jog?.base;
 
 describe("VR base steering", () => {
-  it("stick right = turn right (positive angular on the wire)", () => {
-    // The bug: this used to be negative, i.e. pushing right turned the robot LEFT.
-    expect(baseOf(1)?.angular).toBeGreaterThan(0);
+  it("stick right = turn right (negative angular, REP-103)", () => {
+    expect(baseOf(1)?.angular).toBeLessThan(0);
   });
 
-  it("stick left = turn left (negative angular on the wire)", () => {
-    expect(baseOf(-1)?.angular).toBeLessThan(0);
+  it("stick left = turn left (positive angular, REP-103)", () => {
+    expect(baseOf(-1)?.angular).toBeGreaterThan(0);
   });
 
   it("stick up = drive forward (positive linear)", () => {

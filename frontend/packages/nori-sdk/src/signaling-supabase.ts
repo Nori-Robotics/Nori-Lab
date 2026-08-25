@@ -39,7 +39,9 @@ export class SupabaseSignaling implements SignalingTransport {
   // familiar "channel: SUBSCRIBED" trace survives the extraction.
   constructor(
     private supabase: SupabaseClient,
-    private room: string,
+    // Readonly-public: RemoteTeleop reads the room (usually the fleet serial) to key
+    // per-model wire quirks — see SignalingTransport.room.
+    readonly room: string,
     private log?: (...args: unknown[]) => void,
     private opts: { private?: boolean } = {}
   ) {}

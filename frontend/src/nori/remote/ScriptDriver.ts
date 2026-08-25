@@ -257,10 +257,11 @@ export class ScriptDriver {
 
   private base(args: unknown[]): Promise<void> {
     const [vec, ms] = args as [{ linear?: number; angular?: number }, number];
-    // Firmware turns the base opposite our "+angular = left" convention (same fix as the
-    // keyboard path in teleop.ts), so negate angular here — scripts/agent still pass +left.
+    // REP-103 straight through (+angular = left). The L2-only wire flip that used to be
+    // negated here now lives in RemoteTeleop.wireJog behind a positive model match, so
+    // every jog producer — this one, keyboard, VR — emits the same convention.
     const dofs = buildArmDofs(
-      { linear: vec.linear ?? 0, angular: -(vec.angular ?? 0) || 0 }, BASE_DOFS, this.capRate, "base",
+      { linear: vec.linear ?? 0, angular: vec.angular ?? 0 }, BASE_DOFS, this.capRate, "base",
     );
     return this.hold({ base: dofs }, ms);
   }

@@ -99,4 +99,9 @@ export interface SignalingTransport {
   sendBye(): void;
   // Tear down the room subscription. Idempotent.
   close(): Promise<void>;
+  // Optional: the room this transport addresses, when it is a fleet serial ("NORI-A3-0001").
+  // RemoteTeleop reads it to key per-model WIRE quirks (today: the L2 legacy base-angular
+  // sign) before the ack arrives. A BYO transport may omit it — absence means "unknown",
+  // which resolves to the spec (REP-103) convention, never to a legacy one.
+  readonly room?: string;
 }

@@ -1,7 +1,7 @@
 # Developer posture
 
 ::: warning In progress page
-This describes a planned capability. The shape below may still change. If you have questions, [get in touch](/guide/getting-help).
+Information below is subject to change. If you have questions, [get in touch](/guide/getting-help).
 :::
 
 For robotics and ML engineers who want to run their own low-latency control loops right next to

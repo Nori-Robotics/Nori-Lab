@@ -156,7 +156,12 @@ export function createMockRobot(opts?: MockRobotOptions): MockRobotHandle {
       for (const track of stream.getVideoTracks()) pc.addTrack(track, stream);
     }
 
-    const channel = pc.createDataChannel("control"); // robot opens 'control' (teleop.ts:1357)
+    // Robot opens 'control' (teleop.ts), with the REAL bridge's reliability flags
+    // (rpi5 webrtc_robot: ordered=false, max-retransmits=0). An in-page loopback will
+    // rarely drop or reorder anything in practice — loss itself is NOT simulated — but a
+    // default reliable+ordered channel silently promised delivery guarantees no real
+    // session has, hiding the whole lost/reordered-frame failure class from dev code.
+    const channel = pc.createDataChannel("control", { ordered: false, maxRetransmits: 0 });
     dc = channel;
     channel.onopen = () => {
       if (gen !== generation) return;

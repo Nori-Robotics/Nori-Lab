@@ -25,6 +25,13 @@ export interface MockSimOptions {
   jogUnitsPerS?: number;
   // Slew speed for absolute `action` targets, units/s.
   actionUnitsPerS?: number;
+  // The optional verbs this double honours — and it honours exactly these: pose is served
+  // only when "pose_targets" is advertised, so the ack can never over- or under-claim.
+  // Default matches what a healthy A3 gateway sends with motion + the recorder up
+  // (nori_ws protocol.py on_channel_open: task_jog, pose_targets, record). Trim it to
+  // rehearse the capability gate: new MockDaemonSim({ capabilities: ["task_jog","record"] })
+  // makes the SDK's sendPose gate throw pre-flight, exactly as a capability-less robot would.
+  capabilities?: string[];
 }
 
 // The SO101-shaped default: 2 arms x 6 joints, diff base, two lifts, four cameras — mirrors
@@ -74,6 +81,7 @@ export class MockDaemonSim {
   readonly descriptor: RobotDescriptor;
   readonly watchdog: WatchdogProfile;
   readonly protocolVersion: number;
+  readonly capabilities: string[];
 
   private st: Record<string, number> = {};
   private initial: Record<string, number> = {};
@@ -81,6 +89,7 @@ export class MockDaemonSim {
   private pending: PendingAction[] = [];
   private safety: "ok" | "latched" = "ok";
   private latchReason: string | null = null;
+  private wdState: "ok" | "warn" | "stop" = "ok"; // last tick's watchdog verdict (edge detect)
   private lastControlMs: number | null = null;
   private lastTickMs: number | null = null;
   private moved = new Set<string>(); // joints that moved last tick (drives fake currents)
@@ -97,6 +106,7 @@ export class MockDaemonSim {
     this.rng = (opts?.seed ?? 42) >>> 0 || 42;
     this.jogRate = opts?.jogUnitsPerS ?? 60;
     this.actionRate = opts?.actionUnitsPerS ?? 120;
+    this.capabilities = opts?.capabilities ?? ["task_jog", "pose_targets", "record"];
 
     const joints = this.descriptor.joints ?? [];
     this.idleCurrentMotor = joints.length ? joints[joints.length - 1].replace(/\.pos$/, "") : null;
@@ -116,12 +126,12 @@ export class MockDaemonSim {
       protocol_version: this.protocolVersion,
       // Advisory label so logs name the double honestly (never branch on it).
       model: "SIM",
-      // The TRUTHFUL set of optional verbs this double honours — the spec's rule for a
-      // merged stack. Deliberately NOT "pose_targets": this sim refuses to invent
-      // kinematics, so a pose frame would be silently dropped — and advertising a verb
-      // the double ignores is how a client learns exactly the wrong lesson (the SDK's
-      // sendPose gate throws against this ack, which is the correct teaching).
-      capabilities: ["task_jog", "record"],
+      // The TRUTHFUL set of optional verbs this double honours — advertise-and-serve, so
+      // the ack can never over- or under-claim (handlePose is gated on this same list).
+      // The default matches the fleet: the A3 gateway advertises pose_targets and serves
+      // it, so a plain sim must too — omitting it made pose() throw here while working on
+      // hardware, the exact more/less-capable-than-the-fleet lie a double must not tell.
+      capabilities: [...this.capabilities],
       norm_mode: "range_m100_100",
       watchdog_profile: { ...this.watchdog },
       descriptor: JSON.parse(JSON.stringify(this.descriptor)),
@@ -249,34 +259,95 @@ export class MockDaemonSim {
     if (frame.reset && typeof frame.reset === "object") {
       for (const [armKey, on] of Object.entries(frame.reset as Record<string, unknown>)) {
         if (!on) continue;
+        // Derived from the state this descriptor seeded, not a hardcoded joint list — a
+        // custom-descriptor sim resets ALL of that arm's joints, exactly what it advertised.
         const targets: Record<string, number> = {};
-        for (const j of ARM_JOINTS) {
-          const key = `${armKey}_${j}.pos`;
-          if (key in this.initial) targets[key] = this.initial[key];
+        const prefix = `${armKey}_`;
+        for (const key of Object.keys(this.initial)) {
+          if (key.startsWith(prefix) && key.endsWith(".pos")) targets[key] = this.initial[key];
         }
         this.pending.push({ id: "", targets, clamped: false, announcedActive: true });
       }
     }
 
+    if (frame.pose && typeof frame.pose === "object") {
+      out.push(...this.handlePose(frame.pose as Frame, frame));
+    }
+
     if (frame.action && typeof frame.action === "object") {
       const id = typeof frame.action_id === "string" ? frame.action_id : "";
       if (this.safety === "latched") {
-        if (id) out.push(this.actionStatus(id, "blocked", `latched:${this.latchReason ?? "estop"}`));
+        // The gateway's string (apply_action: "estop_latched"), NOT the telemetry safety
+        // STATE "latched" — two vocabularies, and clients classify on this one.
+        if (id) out.push(this.actionStatus(id, "blocked", "estop_latched"));
         return out;
       }
+      // Gateway-verbatim vocabulary (apply_action, nori_ws motion.py:305-337): the keymap is
+      // the descriptor's joint list; unknown keys and non-numeric values collect; known keys
+      // still apply (partial miss = accepted); a TOTAL miss with an action_id refuses with
+      // ONE terminal frame. `.vel` keys are not in any keymap — the old instant-velocity
+      // easter egg reported motion the gateway would have refused as unknown_joint.
+      const vocab = new Set(this.descriptor.joints ?? []);
       const targets: Record<string, number> = {};
+      const unknown: string[] = [];
       let clamped = false;
       for (const [key, v] of Object.entries(frame.action as Record<string, unknown>)) {
-        if (typeof v !== "number" || !(key in this.st)) continue;
+        if (typeof v !== "number" || !vocab.has(key)) {
+          unknown.push(String(key));
+          continue;
+        }
         const c = this.clampKey(key, v);
         if (c !== v) clamped = true;
-        if (key.endsWith(".vel")) this.st[key] = c; // velocities apply instantly
-        else targets[key] = c;
+        targets[key] = c;
+      }
+      if (id && !Object.keys(targets).length) {
+        out.push(this.actionStatus(id, "blocked",
+          unknown.length ? "unknown_joint:" + unknown.sort().join(",") : "empty_action"));
+        return out;
       }
       this.pending.push({ id, targets, clamped, announcedActive: false });
       if (id) out.push(this.actionStatus(id, "accepted"));
     }
     return out;
+  }
+
+  // control.pose — served only when advertised (the ack's advertise-and-serve contract).
+  // No IK here: the shape and lifecycle are gateway-verbatim (apply_pose, nori_ws
+  // motion.py:340-420 — refusal order estop_latched -> empty_pose -> one_arm_per_pose ->
+  // frame:<name> -> bad_pose), and an accepted pose teleports a plausible nudge on a joint
+  // that arm actually HAS, then rides the normal accepted -> active -> done slew. Geometry
+  // truth lives on the robot; this rehearses PROTOCOL flow only.
+  private handlePose(pose: Frame, frame: Frame): Frame[] {
+    if (!this.capabilities.includes("pose_targets")) return []; // unadvertised: dropped in silence
+    const id = typeof frame.action_id === "string" ? frame.action_id : "";
+    const refuse = (reason: string): Frame[] => (id ? [this.actionStatus(id, "blocked", reason)] : []);
+    if (this.safety === "latched") return refuse("estop_latched");
+    // Sides = the arms this robot HAS that the payload addresses (gateway: self.arms).
+    const armOf = (k: string) => k.slice(0, -"_arm".length);
+    const hasArm = (side: string) =>
+      (this.descriptor.joints ?? []).some((j) => j.startsWith(`${side}_arm_`));
+    const sides = Object.keys(pose).filter((k) => k.endsWith("_arm") && hasArm(armOf(k))).map(armOf);
+    if (!sides.length) return refuse("empty_pose");
+    if (sides.length > 1) return refuse("one_arm_per_pose");
+    const side = sides[0];
+    const target = pose[`${side}_arm`] as Record<string, unknown>;
+    if (!target || typeof target !== "object") return refuse("bad_pose");
+    const frameName = String(target.frame ?? "");
+    if (frameName !== "base_footprint") return refuse(`frame:${frameName || "missing"}`);
+    const position = target.position_m;
+    if (!Array.isArray(position) || position.length !== 3
+        || !position.every((v) => typeof v === "number")) return refuse("bad_pose");
+    const orientation = target.orientation_xyzw;
+    if (orientation !== undefined && (!Array.isArray(orientation) || orientation.length !== 4
+        || !orientation.every((v) => typeof v === "number"))) return refuse("bad_pose");
+    const jointKey = (this.descriptor.joints ?? []).find((j) => j.startsWith(`${side}_arm_`))!;
+    this.pending.push({
+      id,
+      targets: { [jointKey]: this.clampKey(jointKey, (this.st[jointKey] ?? 0) - 5) },
+      clamped: false,
+      announcedActive: false,
+    });
+    return id ? [this.actionStatus(id, "accepted")] : [];
   }
 
   private handleCommand(frame: Frame): Frame[] {
@@ -293,9 +364,11 @@ export class MockDaemonSim {
       this.latchReason = "estop";
       this.jog = null;
       this.zeroVelocities();
+      // Every open action ends NOW with the gateway's reason string (motion.py estop():
+      // "estop_latched") — an operator who e-stops must not find lifecycle waits hanging.
       const out = this.pending
         .filter((p) => p.id)
-        .map((p) => this.actionStatus(p.id, "blocked", "latched:estop"));
+        .map((p) => this.actionStatus(p.id, "blocked", "estop_latched"));
       this.pending = [];
       return out;
     }
@@ -317,22 +390,28 @@ export class MockDaemonSim {
     this.moved.clear();
 
     // Watchdog: arrival-keyed like the real one — armed by the first control frame, trips on
-    // silence. On stop, motion ceases (velocities zero, jog dropped) but nothing latches.
+    // silence. On the TRANSITION to stop the gateway drops ALL intent and fails every open
+    // action with timeout/"watchdog_stop" (motion.py _update_watchdog + _drop_all_intent): a
+    // stale target must never resume on its own — the app re-commands after frames return.
+    // This sim used to freeze-and-RESUME pending actions instead, which taught link-loss
+    // recovery code the exact opposite of hardware behavior. Nothing latches (safe hold, not
+    // an E-STOP): motion verbs work again the moment control frames resume.
     let wd: "ok" | "warn" | "stop" = "ok";
     if (this.lastControlMs !== null) {
       const silence = nowMs - this.lastControlMs;
-      if (silence > this.watchdog.t_stop_ms) {
-        wd = "stop";
-        this.jog = null;
-        this.zeroVelocities();
-      } else if (silence > this.watchdog.t_warn_ms) wd = "warn";
+      if (silence > this.watchdog.t_stop_ms) wd = "stop";
+      else if (silence > this.watchdog.t_warn_ms) wd = "warn";
     }
+    if (wd === "stop" && this.wdState !== "stop") {
+      this.jog = null;
+      this.zeroVelocities();
+      for (const p of this.pending) {
+        if (p.id) out.push(this.actionStatus(p.id, "timeout", "watchdog_stop"));
+      }
+      this.pending = [];
+    }
+    this.wdState = wd;
 
-    // Motion runs only when nothing is stopping it. Watchdog `stop` must halt EVERYTHING, not
-    // just the jog: an in-flight `action` that kept slewing to completion after the control link
-    // went silent would report `done` on the mock while a real robot froze mid-move — teaching
-    // link-loss recovery code the opposite of the truth. Pending actions are kept, not failed:
-    // they resume if control returns, and freeze meanwhile.
     if (this.safety !== "latched" && wd !== "stop" && dt > 0) {
       this.integrateJog(dt);
       out.push(...this.slewActions(dt));

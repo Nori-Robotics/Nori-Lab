@@ -154,26 +154,31 @@ describe("MockDaemonSim safety", () => {
     expect((rec.status as Record<string, unknown>).watchdog).toBe("ok");
   });
 
-  it("watchdog stop freezes an in-flight action instead of completing it", () => {
-    // A real daemon halts ALL motion on control silence; an action that kept slewing to `done`
-    // would teach link-loss recovery code the opposite of hardware behavior.
+  it("watchdog stop drops all intent and fails the in-flight action with timeout/watchdog_stop", () => {
+    // The gateway drops ALL intent on the stop transition and emits a timeout verdict for
+    // every open action (motion.py _update_watchdog + _drop_all_intent): a stale target must
+    // never resume on its own. This sim used to freeze-and-RESUME instead, which taught
+    // link-loss recovery code the exact opposite of hardware behavior.
     const sim = new MockDaemonSim({ actionUnitsPerS: 20 });
     sim.tick(0);
     sim.handleFrame({ type: "control", action: { "right_arm_shoulder_pan.pos": 90 }, action_id: "w1" }, 0);
     sim.tick(100);
     const posAtStop = sim.state()["right_arm_shoulder_pan.pos"];
-    // Go silent well past t_stop_ms, then keep ticking: motion must not advance, and no
-    // terminal status may be emitted.
+    // Go silent well past t_stop_ms: motion halts and the action gets ONE timeout verdict.
     const frames = [...sim.tick(2000), ...sim.tick(4000), ...sim.tick(6000)];
     expect((frames.find((f) => f.type === "telemetry")!.status as Record<string, unknown>).watchdog).toBe("stop");
-    expect(frames.filter((f) => f.type === "action_status")).toEqual([]);
+    expect(frames.filter((f) => f.type === "action_status")).toEqual([
+      expect.objectContaining({ action_id: "w1", state: "timeout", reason: "watchdog_stop" }),
+    ]);
     expect(sim.state()["right_arm_shoulder_pan.pos"]).toBe(posAtStop);
 
-    // Control returns -> the frozen action resumes and completes.
+    // Control returns -> safe hold clears (no latch), but the DEAD action must not resume:
+    // the arm stays put until the app re-commands.
     const resumed = drive(sim, 6100, 12000);
-    expect(resumed.filter((f) => f.type === "action_status")).toContainEqual(
-      expect.objectContaining({ action_id: "w1", state: "done" })
-    );
+    expect(resumed.filter((f) => f.type === "action_status")).toEqual([]);
+    expect(sim.state()["right_arm_shoulder_pan.pos"]).toBe(posAtStop);
+    const last = resumed.filter((f) => f.type === "telemetry").at(-1)!;
+    expect((last.status as Record<string, unknown>).watchdog).toBe("ok");
   });
 });
 
@@ -202,14 +207,110 @@ describe("MockDaemonSim actions", () => {
     expect(sim.state()["right_arm_gripper.pos"]).toBe(100);
   });
 
-  it("blocks actions while latched", () => {
+  it("blocks actions while latched, with the gateway's reason string", () => {
     const sim = new MockDaemonSim();
     sim.handleFrame({ type: "command", name: "estop" }, 0);
     const replies = sim.handleFrame(
       { type: "control", action: { "right_arm_gripper.pos": 50 }, action_id: "a3" },
       10
     );
-    expect(replies).toEqual([expect.objectContaining({ action_id: "a3", state: "blocked" })]);
+    // "estop_latched" is what the gateway emits (motion.py apply_action) — NOT the telemetry
+    // safety STATE "latched"; clients classify refusals on this exact string.
+    expect(replies).toEqual([
+      expect.objectContaining({ action_id: "a3", state: "blocked", reason: "estop_latched" }),
+    ]);
+  });
+
+  it("refuses an all-unknown action with the gateway's sorted unknown_joint reason", () => {
+    // Gateway apply_action: unknown keys and non-numeric values collect; a TOTAL miss with an
+    // action_id gets ONE terminal frame. The sim used to drop unknown keys and report `done`
+    // for the empty remainder — vocabulary misses confirmed as success.
+    const sim = new MockDaemonSim();
+    sim.tick(0);
+    const replies = sim.handleFrame(
+      { type: "control", action: { "zzz.pos": 5, "aaa.pos": 5 }, action_id: "u1" }, 10,
+    );
+    expect(replies).toEqual([
+      expect.objectContaining({ state: "blocked", reason: "unknown_joint:aaa.pos,zzz.pos" }),
+    ]);
+    // ...and no later tick may resurrect it as done.
+    expect(drive(sim, 50, 2000).filter((f) => f.type === "action_status")).toEqual([]);
+  });
+
+  it("refuses an empty action as empty_action and accepts a partial-miss", () => {
+    const sim = new MockDaemonSim();
+    sim.tick(0);
+    expect(sim.handleFrame({ type: "control", action: {}, action_id: "e1" }, 10)).toEqual([
+      expect.objectContaining({ state: "blocked", reason: "empty_action" }),
+    ]);
+    // Known + unknown keys: the known one applies and the action is ACCEPTED (gateway rule).
+    const replies = sim.handleFrame(
+      { type: "control", action: { "right_arm_gripper.pos": 50, "bogus.pos": 1 }, action_id: "p1" }, 20,
+    );
+    expect(replies).toEqual([expect.objectContaining({ action_id: "p1", state: "accepted" })]);
+    const end = drive(sim, 50, 2000).filter((f) => f.type === "action_status");
+    expect(end.at(-1)).toEqual(expect.objectContaining({ action_id: "p1", state: "done" }));
+    expect(sim.state()["bogus.pos"]).toBeUndefined(); // no invented telemetry key
+  });
+
+  it("counts .vel keys as unknown instead of applying them instantly", () => {
+    const sim = new MockDaemonSim();
+    sim.tick(0);
+    const replies = sim.handleFrame(
+      { type: "control", action: { "x.vel": 0.5 }, action_id: "v1" }, 10,
+    );
+    expect(replies).toEqual([
+      expect.objectContaining({ state: "blocked", reason: "unknown_joint:x.vel" }),
+    ]);
+    expect(sim.state()["x.vel"]).toBe(0);
+  });
+});
+
+describe("MockDaemonSim pose (capability pose_targets)", () => {
+  const POSE = { frame: "base_footprint", position_m: [0.4, -0.1, 0.9] };
+
+  it("advertises pose_targets by default (what the A3 gateway sends) and serves the verb", () => {
+    const sim = new MockDaemonSim();
+    expect(sim.ackFrame().capabilities as string[]).toEqual(["task_jog", "pose_targets", "record"]);
+    sim.tick(0);
+    const replies = sim.handleFrame(
+      { type: "control", pose: { right_arm: POSE }, action_id: "pp1" }, 10,
+    );
+    expect(replies).toEqual([expect.objectContaining({ action_id: "pp1", state: "accepted" })]);
+    const frames = drive(sim, 50, 2000).filter((f) => f.type === "action_status");
+    expect(frames.at(-1)).toEqual(expect.objectContaining({ action_id: "pp1", state: "done" }));
+  });
+
+  it("drops pose in silence when the capability is trimmed (advertise-and-serve)", () => {
+    const sim = new MockDaemonSim({ capabilities: ["task_jog", "record"] });
+    sim.tick(0);
+    expect(sim.handleFrame(
+      { type: "control", pose: { right_arm: POSE }, action_id: "pp2" }, 10,
+    )).toEqual([]);
+  });
+
+  it("refuses gateway-verbatim: estop_latched, empty_pose, one_arm_per_pose, frame, bad_pose", () => {
+    const sim = new MockDaemonSim();
+    sim.tick(0);
+    const send = (pose: Record<string, unknown>, id: string) =>
+      sim.handleFrame({ type: "control", pose, action_id: id }, 10);
+    // An arm this robot doesn't have -> empty_pose (gateway draws sides from its own arms).
+    expect(send({ middle_arm: POSE }, "r1")).toEqual([
+      expect.objectContaining({ state: "blocked", reason: "empty_pose" }),
+    ]);
+    expect(send({ left_arm: POSE, right_arm: POSE }, "r2")).toEqual([
+      expect.objectContaining({ state: "blocked", reason: "one_arm_per_pose" }),
+    ]);
+    expect(send({ right_arm: { ...POSE, frame: "map" } }, "r3")).toEqual([
+      expect.objectContaining({ state: "blocked", reason: "frame:map" }),
+    ]);
+    expect(send({ right_arm: { frame: "base_footprint", position_m: [1, 2] } }, "r4")).toEqual([
+      expect.objectContaining({ state: "blocked", reason: "bad_pose" }),
+    ]);
+    sim.handleFrame({ type: "command", name: "estop" }, 20);
+    expect(send({ right_arm: POSE }, "r5")).toEqual([
+      expect.objectContaining({ state: "blocked", reason: "estop_latched" }),
+    ]);
   });
 });
 

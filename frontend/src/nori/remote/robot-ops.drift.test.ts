@@ -81,3 +81,48 @@ describe("robot-ops manifest ↔ executor/agent dispatch", () => {
     expect(committed).toBe(fresh); // stale? run: UPDATE_ROBOT_TOOLS=1 npx vitest run robot-ops.drift
   });
 });
+
+// ---- descriptor-driven joint vocabulary (H2) --------------------------------------------
+// The static rendering above is the L2 legacy view (what robot-tools.json ships for LeLab's
+// L2-era server path). A LIVE session rebuilds move_to from the connected robot's descriptor,
+// so an A3 agent is taught elbow_pitch and friends instead of six joints it doesn't have.
+
+import { buildAgentTools, jointDofsFor, L2_JOINT_DOFS, type RobotDescriptor } from "@nori/sdk";
+
+const A3_JOINTS = [
+  "shoulder_pitch", "shoulder_roll", "bicep_yaw", "elbow_pitch",
+  "forearm_yaw", "wrist_pitch", "wrist_roll", "gripper",
+];
+const A3_DESCRIPTOR: RobotDescriptor = {
+  joints: ["left", "right"].flatMap((s) => A3_JOINTS.map((j) => `${s}_arm_${j}.pos`)),
+  base: ["x.vel", "theta.vel"],
+  aux: ["lift"],
+  cameras: ["front"],
+  ranges: {},
+};
+
+describe("descriptor-driven joint vocabulary", () => {
+  it("jointDofsFor: descriptor wins; L2 set is ONLY the no-descriptor fallback", () => {
+    expect(jointDofsFor(undefined, "right")).toEqual([...L2_JOINT_DOFS]);
+    expect(jointDofsFor(A3_DESCRIPTOR, "right")).toEqual(A3_JOINTS);
+    // A descriptor that lacks the arm yields [] — never a substituted vocabulary.
+    expect(jointDofsFor({ joints: ["left_arm_gripper.pos"], ranges: {} } as RobotDescriptor, "right"))
+      .toEqual([]);
+  });
+
+  it("buildAgentTools(descriptor) rewrites the move_to targets vocabulary", () => {
+    const moveTo = buildAgentTools(A3_DESCRIPTOR).find((t) => t.name === "move_to")!;
+    const desc = (moveTo.input_schema.properties as Record<string, { description: string }>)
+      .targets.description;
+    expect(desc).toContain("elbow_pitch");
+    expect(desc).not.toContain("elbow_flex"); // the L2 joint an A3 doesn't have
+  });
+
+  it("buildAgentTools() with no descriptor is byte-identical to the static manifest", () => {
+    expect(buildAgentTools()).toEqual(
+      ROBOT_OPS.filter((o) => o.agent).map((o) => ({
+        name: o.agent!.tool, description: o.agent!.summary, input_schema: o.agent!.input_schema,
+      })),
+    );
+  });
+});

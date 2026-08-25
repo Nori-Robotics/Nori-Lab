@@ -19,6 +19,7 @@ import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { useApi } from "@/contexts/ApiContext";
 import { isDirectBackend } from "@/nori/api/client";
 import { hostedAgentTurn } from "@/nori/llm/hostedLlm";
+import type { RobotDescriptor } from "@nori/sdk";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
 import {
   AgentSession, AgentBudgetError,
@@ -104,8 +105,12 @@ const Agent = () => {
   // since baseUrl points at a dead localhost there. Both raise AgentBudgetError on a 429.
   const postTurn = async (
     messages: AgentMessage[], robotState: Record<string, number> | undefined, cameraLayout: string | undefined,
+    descriptor?: RobotDescriptor | null,
   ): Promise<AgentTurn> => {
-    if (isDirectBackend()) return hostedAgentTurn(messages, robotState, cameraLayout);
+    // Hosted path only: the LeLab server path below assembles its own tools server-side and
+    // drives the L2-era stack, so the descriptor (which rebuilds move_to for THIS robot's
+    // joints) stops here for it.
+    if (isDirectBackend()) return hostedAgentTurn(messages, robotState, cameraLayout, descriptor);
     const res = await fetchWithHeaders(`${baseUrl}/nori/llm/agent`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

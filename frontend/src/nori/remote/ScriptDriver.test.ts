@@ -375,3 +375,35 @@ describe("queue serialization", () => {
     expect(lastJog(jogs)).toEqual({});
   });
 });
+
+describe("descriptor-driven joint vocabulary (H2)", () => {
+  // A 7-DoF A3-shaped right arm: the joints the static L2 set used to client-refuse.
+  const A3_DESC = {
+    joints: ["elbow_pitch", "wrist_pitch", "gripper"].map((j) => `right_arm_${j}.pos`),
+    ranges: {},
+  } as RobotDescriptor;
+
+  it("joint accepts the descriptor's real joints and refuses the L2 ghost", async () => {
+    const { driver, jogs } = setup({}, A3_DESC);
+    const p = driver.exec("joint", ["right", { elbow_pitch: 0.4 }, 100]);
+    await vi.advanceTimersByTimeAsync(150);
+    await p;
+    expect(jogs).toContainEqual({ right_arm: { elbow_pitch: 0.4 } });
+    // elbow_flex exists only in the L2 vocabulary — this robot never advertised it.
+    await expect(driver.exec("joint", ["right", { elbow_flex: 1 }, 100]))
+      .rejects.toThrow(/unknown DOF "elbow_flex"/);
+  });
+
+  it("moveTo validates against the descriptor, naming the real joints in the error", async () => {
+    const { driver } = setup({}, A3_DESC);
+    driver.setTelemetry(telWithState({ "right_arm_elbow_pitch.pos": 0 }));
+    await expect(driver.exec("moveTo", ["right", { shoulder_lift: 10 }, undefined]))
+      .rejects.toThrow(/allowed: elbow_pitch, wrist_pitch, gripper/);
+  });
+
+  it("no descriptor keeps the exact L2 fallback (the legacy fleet)", async () => {
+    const { driver } = setup();
+    await expect(driver.exec("joint", ["right", { elbow_pitch: 1 }, 100]))
+      .rejects.toThrow(/unknown DOF "elbow_pitch"/);
+  });
+});

@@ -619,6 +619,30 @@ export function l3JointShorts(
   return shorts;
 }
 
+// The legacy 6-DOF joint vocabulary, derived from JOINT_KEYS so there is exactly one copy.
+export const L2_JOINT_DOFS: readonly string[] = [
+  ...new Set(Object.values(JOINT_KEYS).map(([dof]) => dof)),
+];
+
+// The per-joint DOF vocabulary ONE ARM actually accepts — what scripted/agent surfaces
+// (ScriptDriver `joint`/`moveTo`, the LLM `move_to` tool schema) validate against and
+// advertise. Derived from the descriptor when the robot sent one (spec MODELS.md: branch on
+// descriptor, never on model); the compiled-in L2 set survives ONLY as the no-descriptor
+// legacy fallback — the one place a hardcoded joint list is legitimate. A descriptor that
+// names no joints for `side` yields [] (that arm does not exist; the gateway would refuse
+// every key as unknown_joint), never the L2 fallback: substituting a vocabulary the robot
+// didn't advertise is how an agent gets taught joints that aren't there.
+export function jointDofsFor(
+  descriptor: RobotDescriptor | undefined | null, side: string,
+): string[] {
+  const joints = descriptor?.joints;
+  if (!joints) return [...L2_JOINT_DOFS];
+  const prefix = `${side}_arm_`;
+  return joints
+    .filter((k) => k.startsWith(prefix) && k.endsWith(".pos"))
+    .map((k) => k.slice(prefix.length, -".pos".length));
+}
+
 // Build a per-motor keymap for descriptor-advertised joints. The gripper
 // always keeps the last pair, so it can never fall off the keyboard.
 export function jointKeymapForShorts(

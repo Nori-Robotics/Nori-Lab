@@ -113,3 +113,21 @@ describe("dailyView", () => {
       .toEqual({ spent: 5, allowed: null, remaining: null, warn: null, capped: true });
   });
 });
+
+describe("buildAgentSystem joint grounding (H2)", () => {
+  it("a descriptor adds a joint override line naming THIS robot's joints", () => {
+    const descriptor = {
+      joints: ["left", "right"].flatMap((s) =>
+        ["shoulder_pitch", "elbow_pitch", "gripper"].map((j) => `${s}_arm_${j}.pos`)),
+      ranges: {},
+    } as never;
+    const s = buildAgentSystem(undefined, undefined, descriptor);
+    expect(s).toContain("CONTEXT FOR THIS RUN:");
+    expect(s).toContain("shoulder_pitch, elbow_pitch, gripper");
+    expect(s).toContain("OVERRIDE");
+  });
+
+  it("no descriptor leaves the prompt byte-identical (the legacy path)", () => {
+    expect(buildAgentSystem(undefined, undefined, null)).toBe(NORI_AGENT_SYSTEM);
+  });
+});

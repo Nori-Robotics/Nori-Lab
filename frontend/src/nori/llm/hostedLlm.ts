@@ -17,6 +17,8 @@ import { getAccessToken } from "@/nori/auth/session";
 import { getDirectBackendUrl } from "@/nori/api/client";
 import { AgentBudgetError, type AgentMessage, type AgentTurn } from "@/nori/remote/AgentSession";
 import { NORI_CODEGEN_SYSTEM, AGENT_TOOLS } from "./prompts.generated";
+import { buildAgentTools } from "@nori/sdk";
+import type { RobotDescriptor } from "@nori/sdk";
 import {
   buildCodegenContent, buildAgentSystem, inferNewRun, dailyView, type CodegenRequest,
 } from "./promptAssembly";
@@ -63,6 +65,7 @@ export async function hostedAgentTurn(
   messages: AgentMessage[],
   robotState: Record<string, number> | undefined,
   cameraLayout: string | undefined,
+  descriptor?: RobotDescriptor | null,
 ): Promise<AgentTurn> {
   const res = await fetch(`${backendBase()}${LLM_BASE}/messages`, {
     method: "POST",
@@ -70,8 +73,11 @@ export async function hostedAgentTurn(
     body: JSON.stringify({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      system: buildAgentSystem(robotState, cameraLayout),
-      tools: AGENT_TOOLS,
+      system: buildAgentSystem(robotState, cameraLayout, descriptor),
+      // Rebuilt per-connection: with a descriptor the move_to schema names the joints THIS
+      // robot has; without one (legacy/no ack yet) it is byte-identical to the generated
+      // AGENT_TOOLS, which remains the L2 rendering LeLab's server-side path also ships.
+      tools: descriptor ? buildAgentTools(descriptor) : AGENT_TOOLS,
       messages,
       new_run: inferNewRun(messages),
     }),

@@ -18,13 +18,16 @@
 // apart. Say so in the UI.
 
 import type { RemoteTeleop, ExternalJog, ArmSide, TelemetryView, ActionStatus } from "@nori/sdk";
-import { liftJogKey, TASK_KEYS, JOINT_KEYS, BASE_KEYS } from "@nori/sdk";
+import { liftJogKey, jointDofsFor, TASK_KEYS, BASE_KEYS } from "@nori/sdk";
 import { playAudioUrl, type ClipHandle } from "./audioClip";
 
-// The real DOF vocabulary, derived from the SDK's exported keybind maps so it can never drift
-// from what the daemon actually accepts. TASK_* = cylindrical mode, JOINT_* = per-joint mode.
+// Task and base vocabularies are gateway-static, derived from the SDK's exported keybind maps
+// so they can never drift from what the daemon accepts. The JOINT vocabulary is NOT static:
+// it is per-robot and per-arm, resolved from the ack descriptor at op time (jointDofsFor) with
+// the L2 set as the no-descriptor legacy fallback — the compiled-in list used to be the only
+// one, which client-refused an A3's real joints (elbow_pitch, …) while passing L2 names the
+// gateway then bounced as unknown_joint.
 const CYLINDRICAL_DOFS = new Set(Object.values(TASK_KEYS).map(([dof]) => dof));
-const JOINT_DOFS = new Set(Object.values(JOINT_KEYS).map(([dof]) => dof));
 const BASE_DOFS = new Set(Object.values(BASE_KEYS).map(([dof]) => dof));
 
 // Gripper sign convention for the grip() convenience op. Positive opens, negative closes — this
@@ -171,7 +174,8 @@ export class ScriptDriver {
       case "reach":
         return this.enqueue(() => this.arm("reach", CYLINDRICAL_DOFS, args));
       case "joint":
-        return this.enqueue(() => this.arm("joint", JOINT_DOFS, args));
+        // Vocabulary resolved inside arm() per side, from the live descriptor.
+        return this.enqueue(() => this.arm("joint", null, args));
       case "grip":
         return this.enqueue(() => this.grip(args));
       case "base":
@@ -240,10 +244,20 @@ export class ScriptDriver {
     });
   }
 
-  private arm(label: string, allowed: Set<string>, args: unknown[]): Promise<void> {
+  private arm(label: string, allowed: Set<string> | null, args: unknown[]): Promise<void> {
     const [side, dofs, ms] = args as [ArmSide, Record<string, number>, number];
-    const clamped = buildArmDofs(dofs, allowed, this.capRate, label);
+    // null = per-joint mode: the vocabulary is whatever THIS robot's descriptor names for
+    // that arm (L2 fallback only when no descriptor arrived — the legacy fleet).
+    const vocab = allowed ?? this.jointVocab(side);
+    const clamped = buildArmDofs(dofs, vocab, this.capRate, label);
     return this.hold({ [`${side}_arm`]: clamped }, ms);
+  }
+
+  // The connected robot's per-joint vocabulary for one arm, resolved at op time so a script
+  // written before the ack (or against another model) gets a client-side refusal that NAMES
+  // the real joints, instead of the gateway's silent drop or round-trip unknown_joint.
+  private jointVocab(side: ArmSide): Set<string> {
+    return new Set(jointDofsFor(this.teleop.robotInfo()?.descriptor, side));
   }
 
   private grip(args: unknown[]): Promise<void> {
@@ -307,9 +321,10 @@ export class ScriptDriver {
     if (!this.lastTelemetry) throw new Error("moveTo: no telemetry yet (is the session connected?)");
     const slew = Math.min(MAX_MOVE_SLEW, Math.max(1, opts?.slew ?? DEFAULT_MOVE_SLEW));
     const state0 = this.lastTelemetry.state ?? {};
+    const vocab = this.jointVocab(side);
     const plan = Object.entries(targets).map(([joint, to]) => {
-      if (!JOINT_DOFS.has(joint)) {
-        throw new Error(`moveTo: unknown joint "${joint}" (allowed: ${[...JOINT_DOFS].join(", ")})`);
+      if (!vocab.has(joint)) {
+        throw new Error(`moveTo: unknown joint "${joint}" (allowed: ${[...vocab].join(", ")})`);
       }
       const [lo, hi] = joint === "gripper" ? [0, 100] : [-100, 100];
       const posKey = `${side}_arm_${joint}.pos`;

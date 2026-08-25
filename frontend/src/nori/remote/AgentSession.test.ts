@@ -36,6 +36,7 @@ function makeFakeTeleop(opts: { layout?: CameraLayout | null; snapshot?: (settle
     },
     cameraLayout: () => (layout ? "2x2 layout" : null),
     cameraLayoutInfo: () => layout,
+    robotInfo: () => null, // no ack descriptor = legacy vocabulary throughout these tests
   } as unknown as RemoteTeleop;
   return { teleop, commands, snapshots };
 }

@@ -15,7 +15,7 @@
 // The network transport is INJECTED (postTurn) rather than reached for directly, so this file has no
 // dependency on the app's fetch/baseUrl wiring and is unit-testable with a fake transport + teleop.
 
-import type { RemoteTeleop, TelemetryView } from "@nori/sdk";
+import type { RemoteTeleop, RobotDescriptor, TelemetryView } from "@nori/sdk";
 import { ScriptDriver } from "./ScriptDriver";
 
 // ---- wire types (mirror the server's /nori/llm/agent contract) ---------------
@@ -74,6 +74,11 @@ export type PostTurn = (
   messages: AgentMessage[],
   robotState: Record<string, number> | undefined,
   cameraLayout: string | undefined,
+  // The connected robot's ack descriptor: the hosted path rebuilds the move_to tool schema
+  // and the system-prompt joint grounding from it, so the model is taught THIS robot's
+  // joints rather than the generated prompt's L2 vocabulary. Optional — the LeLab
+  // server-side path (which drives the L2-era stack) ignores it.
+  descriptor?: RobotDescriptor | null,
 ) => Promise<AgentTurn>;
 
 export type AgentMessage = { role: "user" | "assistant"; content: AgentBlock[] };
@@ -213,7 +218,10 @@ export class AgentSession {
         return;
       }
 
-      const turn = await this.o.postTurn(this.messages, this.robotState(), this.cameraLayout());
+      const turn = await this.o.postTurn(
+        this.messages, this.robotState(), this.cameraLayout(),
+        this.o.teleop.robotInfo()?.descriptor ?? null,
+      );
       if (this.stopped) return; // an E-STOP during the request
       this.messages.push({ role: "assistant", content: turn.content });
       this.o.onEvent?.({ kind: "assistant", content: turn.content, usage: turn.usage });

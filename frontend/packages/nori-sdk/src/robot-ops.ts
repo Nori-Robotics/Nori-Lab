@@ -15,10 +15,17 @@
 // frontend imports these helpers directly. Change an op here → regenerate → the executor drift test
 // and the LLM context move together (see robot-ops.drift.test.ts).
 //
-// DOF vocabularies are deliberately NOT re-listed — they derive from TASK_KEYS/JOINT_KEYS/BASE_KEYS
-// (the very maps ScriptDriver validates against), so they can't drift from what the daemon accepts.
+// DOF vocabularies are deliberately NOT re-listed — task/base derive from TASK_KEYS/BASE_KEYS
+// (gateway-static vocabularies), and the JOINT vocabulary is rebuilt from the LIVE descriptor
+// once the ack arrives (buildAgentTools(descriptor); ScriptDriver validates the same way), so
+// neither can drift from what the connected robot accepts. The static JOINT_DOFS below is the
+// L2 legacy rendering only — it is what robot-tools.json ships (LeLab's Python drives the
+// L2-era stack) and what a session without a descriptor falls back to, per the spec's
+// discovery rules (MODELS.md: the no-descriptor fallback is the ONLY legitimate hardcoded
+// joint list).
 
-import { TASK_KEYS, JOINT_KEYS, BASE_KEYS } from "./teleop";
+import { TASK_KEYS, JOINT_KEYS, BASE_KEYS, jointDofsFor } from "./teleop";
+import type { RobotDescriptor } from "./teleop";
 
 // Unique DOF names per mode, in declaration order, from the same keybind maps the jog stream uses.
 const dofNames = (m: Record<string, [string, number]>): string[] => [
@@ -393,13 +400,56 @@ export const ROBOT_OPS: RobotOp[] = [
 
 // ---- derived views (consumed by LeLab via robot-tools.json, and by the frontend directly) ----
 
-/** The Anthropic tools array — drop-in for lelab/server.py NORI_AGENT_TOOLS. */
-export function buildAgentTools(): Array<{ name: string; description: string; input_schema: Record<string, unknown> }> {
-  return ROBOT_OPS.filter((o) => o.agent).map((o) => ({
-    name: o.agent!.tool,
-    description: o.agent!.summary,
-    input_schema: o.agent!.input_schema,
-  }));
+// The live joint vocabulary rendered for the move_to schema. One list when both arms match
+// (the common case), per-arm lists when a descriptor is asymmetric — the LLM must never be
+// taught a joint that only exists on the other arm.
+function jointTargetsDescription(descriptor: RobotDescriptor): string {
+  const left = jointDofsFor(descriptor, "left");
+  const right = jointDofsFor(descriptor, "right");
+  const example = (dofs: string[]) => {
+    const first = dofs.find((d) => d !== "gripper") ?? dofs[0] ?? "gripper";
+    return dofs.includes("gripper")
+      ? `{"${first}": 30, "gripper": 0}`
+      : `{"${first}": 30}`;
+  };
+  if (left.join(",") === right.join(",")) {
+    return `subset of {${left.join(", ")}} -> target, e.g. ${example(left)}`;
+  }
+  return (
+    `per-arm vocabulary: left arm subset of {${left.join(", ")}}; ` +
+    `right arm subset of {${right.join(", ")}} -> target, e.g. ${example(right)}`
+  );
+}
+
+/**
+ * The Anthropic tools array — drop-in for lelab/server.py NORI_AGENT_TOOLS.
+ *
+ * Pass the CONNECTED robot's descriptor (RobotInfo.descriptor, from the ack) so the move_to
+ * schema teaches the joints this robot actually has — without it the L2 legacy vocabulary is
+ * rendered, which on an A3 names six joints that don't exist while omitting the seven that do
+ * (every hallucinated call then costs a round-trip unknown_joint refusal).
+ */
+export function buildAgentTools(
+  descriptor?: RobotDescriptor | null,
+): Array<{ name: string; description: string; input_schema: Record<string, unknown> }> {
+  return ROBOT_OPS.filter((o) => o.agent).map((o) => {
+    let schema = o.agent!.input_schema;
+    if (descriptor && o.agent!.tool === "move_to") {
+      const props = schema.properties as Record<string, Record<string, unknown>>;
+      schema = {
+        ...schema,
+        properties: {
+          ...props,
+          targets: { ...props.targets, description: jointTargetsDescription(descriptor) },
+        },
+      };
+    }
+    return {
+      name: o.agent!.tool,
+      description: o.agent!.summary,
+      input_schema: schema,
+    };
+  });
 }
 
 /** Tool names that command motion (mirror of AgentSession MOTION_TOOLS). */

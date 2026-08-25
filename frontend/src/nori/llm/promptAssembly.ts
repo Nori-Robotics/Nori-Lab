@@ -6,6 +6,10 @@
 // Parity with the Python is enforced by these tests + the gen_llm_prompts drift guard.
 
 import { NORI_AGENT_SYSTEM } from "./prompts.generated";
+// jointDofsFor is a pure descriptor lookup (no DOM/WebRTC) — the one SDK import this module
+// needs so the live robot's joint vocabulary can override the generated prompt's L2 prose.
+import { jointDofsFor } from "@nori/sdk";
+import type { RobotDescriptor } from "@nori/sdk";
 import type { AgentMessage } from "@/nori/remote/AgentSession";
 
 // The logical codegen inputs the page gathers (same field set as LeLab's NoriLlmGenerateBody).
@@ -72,10 +76,25 @@ export function buildCodegenContent(body: CodegenRequest): ContentBlock[] {
 // `nori_llm_agent`. Returns the base prompt unchanged when there's nothing to ground.
 export function buildAgentSystem(
   robotState: Record<string, number> | undefined, cameraLayout: string | undefined,
+  descriptor?: RobotDescriptor | null,
 ): string {
   const grounding: string[] = [];
   if (cameraLayout) grounding.push(`Camera layout (which composite tile is which): ${cameraLayout}`);
   if (robotState) grounding.push("Current robot state (proprioceptive, normalized): " + JSON.stringify(robotState));
+  if (descriptor) {
+    // The generated base prompt narrates the L2 anatomy (shoulder_pan, shoulder_lift, …).
+    // A connected robot's ack descriptor is the truth; without this override an A3 agent is
+    // taught six joints that don't exist while its real seven go unnamed.
+    const left = jointDofsFor(descriptor, "left");
+    const right = jointDofsFor(descriptor, "right");
+    const arms = left.join(",") === right.join(",")
+      ? `each arm has, torso out: ${left.join(", ")}`
+      : `left arm: ${left.join(", ")}; right arm: ${right.join(", ")}`;
+    grounding.push(
+      `THIS robot's actual arm joints (${arms}). These OVERRIDE any joint names in the body ` +
+      `layout above — command only these; other names are refused as unknown_joint.`,
+    );
+  }
   return grounding.length ? NORI_AGENT_SYSTEM + "\n\nCONTEXT FOR THIS RUN:\n" + grounding.join("\n") : NORI_AGENT_SYSTEM;
 }
 

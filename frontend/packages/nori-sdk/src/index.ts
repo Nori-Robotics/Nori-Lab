@@ -17,6 +17,8 @@ export * from "./videoQuality";
 export * from "./robot-ops";
 // Z-lift (rail) telemetry reading — pure, shared by the 2D gauge and the 3D robot model.
 export * from "./rail";
+// Pure-math L-series forward kinematics (gripper position in mm) — no three.js.
+export * from "./fk";
 // The signaling transport contract (bring your own, or use @nori/sdk/supabase).
 export * from "./signaling";
 // The nori-protocol version this SDK targets + the compat policy.

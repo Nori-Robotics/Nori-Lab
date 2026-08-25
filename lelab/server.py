@@ -770,7 +770,8 @@ THE ROBOT / TOOLS:
              SCENE camera to judge robot left/right and object locations, or a wrist camera for a
              close-up of that arm's workspace. On a single-camera robot, call `look` with no argument.
   get_state  Current joint positions + lift + base (proprioceptive, normalized: arm joints ~[-100,100],
-             grippers [0,100]). No image.
+             grippers [0,100]), plus — when available — a "gripper ≈ (x, y, z) mm" line: each
+             gripper's real position from forward kinematics, in the frame that line names. No image.
   move_to    ABSOLUTE joint move on one arm: go to target positions and WAIT for arrival. Returns a real
              outcome: "done" (arrived), "blocked" (stalled/obstructed — do NOT blindly retry into the
              same spot), "clamped" (target was out of range), or "timeout". Same normalized scale as
@@ -794,6 +795,15 @@ THE ROBOT / TOOLS:
 UNITS: rates are normalized to [-1,1]. ~0.3-0.5 is a gentle move; 0.6-0.8 is a normal working pace — use it freely; 1.0 is the max (further clamped by a half-speed session cap). Durations are milliseconds. Don't waste turns on needlessly tiny increments — take a real step, look, adjust.
 
 VISION — READ CAREFULLY: you look at ONE camera at a time (see the `look` tool). If a "Camera layout" is provided, trust it for which tile is which camera/arm and act on the CORRECT side. A wrist camera is mounted ON its arm, so its image left/right is EGOCENTRIC and is NOT the robot's left/right — judge the robot's left vs right (and which side an object is on) from the OVERHEAD or FRONT scene cameras, never from a wrist camera. It is a single still, not depth — estimate coarsely, never assume exact distances. If no layout is given, state your assumption in text.
+
+DEPTH: a `look` result may include a "Relative depth grid" text block after the image — a coarse
+grid over that frame where 1.00 = the nearest surface in the frame and 0.00 = the farthest. It is
+PER-FRAME normalized: values are ordinal within one image (use them to judge which objects are
+nearer/farther, whether something sits between the gripper and the target, and how depth changes
+after you move), NEVER metres, and never comparable across frames. Cross-reference grid cells with
+what you see: cell (row, col) covers the matching region of the image.
+
+METRIC GROUNDING: when a "Gripper position" line appears in CONTEXT (and in get_state results), it is each gripper's REAL position in millimetres from forward kinematics, refreshed every turn — in the frame the line itself names (+x forward, +y robot-left, +z up). USE IT: anchor your distance estimates to it ("the cup looks ~150mm beyond my gripper"), plan moves in real units, and after moving compare the new coordinates against what you intended — if the gripper moved ~200mm when you wanted ~50mm, recalibrate your sense of scale. It is approximate (labelled so): trust it for planning magnitudes, but verify contact visually, never by coordinates alone.
 
 SAFETY (you cannot bypass these, but work WITH them): a human supervises with live video and an E-STOP; the daemon clamps joint ranges, latches on stall/over-temp, and safe-stops if the stream dies. You do NOT need to be timid — those layers plus the half-speed session cap are the safety net, so move at a normal working pace and take real steps rather than tiny ones; a run that inches along wastes turns. Still act sensibly: prefer `move_to` (bounded, reports blocked) over long open-loop jogs, keep base drives short, and if a `move_to` returns "blocked" do not shove into the same obstruction — re-look and rethink. Explain each action in text before the tool call so the supervisor can stop you.
 
@@ -839,6 +849,9 @@ class NoriLlmAgentBody(BaseModel):
     messages: list[dict]
     robot_state: dict | None = None  # optional grounding: current proprioceptive pose
     camera_layout: str | None = None  # optional: which composite tile is which camera/arm
+    # Optional grounding: one browser-computed FK line — each gripper's world position in mm
+    # (frontend poseSummary.ts; the browser has the telemetry + URDF, the server does not).
+    pose_summary: str | None = None
     # Optional explicit "first turn of a new run" signal for the backend's run_count.
     # If omitted, the server infers it from messages[] (no assistant turn yet).
     new_run: bool | None = None
@@ -898,6 +911,12 @@ def nori_llm_agent(body: NoriLlmAgentBody, request: Request):
         grounding.append(
             "Current robot state (proprioceptive, normalized): " + json.dumps(body.robot_state)
         )
+    if body.pose_summary:
+        # Keep this line text identical to promptAssembly.ts buildAgentSystem (hosted mirror).
+        grounding.append(
+            "Gripper position (world-frame FK from joint telemetry, refreshed every turn): "
+            + body.pose_summary
+        )
     if grounding:
         system = system + "\n\nCONTEXT FOR THIS RUN:\n" + "\n".join(grounding)
 
@@ -948,6 +967,25 @@ def nori_llm_agent(body: NoriLlmAgentBody, request: Request):
         "usage": result.get("usage", {}),
         "daily": _daily_view(result.get("budget", {})),
     }
+
+
+class NoriDepthBody(BaseModel):
+    # The JPEG the browser just captured for `look`, forwarded verbatim (base64, no data: prefix).
+    image_b64: str
+    grid_w: int = 8
+    grid_h: int = 6
+
+
+@app.post("/nori/depth")
+def nori_depth(body: NoriDepthBody, request: Request):
+    """Depth proxy for the agentic vision loop: forward one `look` frame to Nori-Backend's
+    POST /api/v1/agent/depth (Depth Anything V2, CPU) and return its relative-depth grid.
+    Same auth posture as /nori/llm/agent — customer JWT forwarded, fails closed. The browser
+    folds the grid into the look tool_result as text (AgentSession.doLook)."""
+    nori = _nori_client(request)
+    return _nori_proxy(
+        lambda: nori.depth(image_b64=body.image_b64, grid_w=body.grid_w, grid_h=body.grid_h)
+    )
 
 
 def nori_jwt(request: Request) -> str | None:

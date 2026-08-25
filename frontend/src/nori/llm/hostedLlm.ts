@@ -59,6 +59,21 @@ export async function hostedGenerateStream(body: CodegenRequest): Promise<Respon
   });
 }
 
+/** Hosted depth fetch: POST one look-frame JPEG to the backend's depth endpoint and return the
+ * raw grid result, or null on any failure (depth is best-effort grounding, never a dependency). */
+export async function hostedDepthGrid(imageB64: string): Promise<unknown | null> {
+  try {
+    const res = await fetch(`${backendBase()}/api/v1/agent/depth`, {
+      method: "POST",
+      headers: await authHeaders(),
+      body: JSON.stringify({ image_b64: imageB64 }),
+    });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Hosted agent turn: POST the browser-held messages to the backend proxy with the agent system +
  * tools, return the normalized AgentTurn (429 -> AgentBudgetError, like the LeLab path). */
 export async function hostedAgentTurn(
@@ -66,6 +81,7 @@ export async function hostedAgentTurn(
   robotState: Record<string, number> | undefined,
   cameraLayout: string | undefined,
   descriptor?: RobotDescriptor | null,
+  poseSummary?: string,
 ): Promise<AgentTurn> {
   const res = await fetch(`${backendBase()}${LLM_BASE}/messages`, {
     method: "POST",
@@ -73,7 +89,7 @@ export async function hostedAgentTurn(
     body: JSON.stringify({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      system: buildAgentSystem(robotState, cameraLayout, descriptor),
+      system: buildAgentSystem(robotState, cameraLayout, descriptor, poseSummary),
       // Rebuilt per-connection: with a descriptor the move_to schema names the joints THIS
       // robot has; without one (legacy/no ack yet) it is byte-identical to the generated
       // AGENT_TOOLS, which remains the L2 rendering LeLab's server-side path also ships.

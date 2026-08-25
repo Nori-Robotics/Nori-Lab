@@ -46,7 +46,15 @@ function handlers() {
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 describe("SupabaseSignaling private rooms (1e)", () => {
-  it("joins public by default (flag off) — no private flag, no fallback", async () => {
+  it("joins PRIVATE by default — the fleet is private-only, and the documented quickstart passes no opts", async () => {
+    const sb = new FakeSupabase();
+    const sig = new SupabaseSignaling(sb as never, "NORI-A3-0000", undefined);
+    await sig.connect(handlers());
+    expect(sb.channels).toHaveLength(1);
+    expect(sb.channels[0].isPrivate).toBe(true);
+  });
+
+  it("public only on explicit opt-out ({ private: false }) — an intentional join, no fallback", async () => {
     const sb = new FakeSupabase();
     const h = handlers();
     const sig = new SupabaseSignaling(sb as never, "Nori-L2-1", undefined, { private: false });

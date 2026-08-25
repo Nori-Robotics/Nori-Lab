@@ -721,6 +721,13 @@ export interface AssemblyJob {
  *  only produce a failed assemble. */
 export const DERIVE_MAPS = ["depth", "normals", "albedo", "roughness"] as const;
 export const VIDEO_PROCESSING = ["color_jitter", "full_relight"] as const;
+/** Which of the above a user may actually request. Empty on purpose: both
+ *  passes RUN, but their output is not yet packaged into a downloadable layer
+ *  (the backend's finalize only writes MAP layers), so selecting one spent GPU
+ *  hours and delivered nothing while still reporting success. The backend
+ *  rejects them with a 422 that says exactly that, so offering them here would
+ *  only produce a failed assemble. Flip this when the relight lane ships. */
+export const VIDEO_PROCESSING_ENABLED: readonly string[] = [];
 export type DeriveMap = (typeof DERIVE_MAPS)[number];
 export type VideoProcessing = (typeof VIDEO_PROCESSING)[number];
 

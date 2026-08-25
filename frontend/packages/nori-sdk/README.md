@@ -58,6 +58,8 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY); // the public va
 const video = document.querySelector("video")!;
 
 const teleop = new RemoteTeleop({
+  // Joins the robot's PRIVATE room by default — the fleet is private-only (RLS-gated).
+  // Only a legacy public dev room needs an explicit opt-out: `{ private: false }`.
   signaling: new SupabaseSignaling(supabase, ROOM, (...m) => console.log(...m)),
   videoEl: video,
   stun: "stun:stun.l.google.com:19302",

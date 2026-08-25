@@ -30,8 +30,11 @@ export interface ExternalJog {
   left_arm?: Record<string, number>;
   right_arm?: Record<string, number>;
   base?: Record<string, number>;
-  // Per-arm lift (velocity, [-1,1]). The robot has one lift per arm; drive them
-  // independently. (Was a single `z_lift`.)
+  // PER-HAND lift intent (velocity, [-1,1]), NOT necessarily the wire key: an L-series
+  // robot has one lift per arm and these pass through verbatim, but the A-series has ONE
+  // central column keyed bare "lift" — RemoteTeleop resolves per-hand intent against the
+  // robot's descriptor before sending (resolveLifts), because a mapper has no descriptor
+  // and hand-derived lift keys are exactly how the A-series went silently unsupported.
   left_lift?: number;
   right_lift?: number;
 }
@@ -1071,8 +1074,39 @@ export class RemoteTeleop {
   }
 
   // Public command surface for non-keyboard inputs (VR E-STOP / reset). Mirrors sendCmd.
+  // NOTE: command("estop") THROWS when the control channel is known-dead — see sendCmd.
   command(cmd: "estop" | "reset_latch" | "reset") {
     this.sendCmd(cmd);
+  }
+
+  // estopConfirmed(): resolvers waiting for the NEXT wire-reported "latched" safety state.
+  private estopWaiters: Array<() => void> = [];
+
+  // command("estop"), then await the robot REPORTING the latch in telemetry. Delivery is
+  // not execution: the channel is unreliable by design (a sent frame can vanish in flight)
+  // and the robot drops command frames with no reply while its motion stack is down.
+  // Confirmation is OBSERVED STATE — a status block parsed off the wire AFTER the send;
+  // the cached telemetry view is deliberately not consulted, because a stale "latched"
+  // from minutes ago would confirm an estop that went nowhere. Rejects on a dead channel
+  // (via command) and on timeout; the only safe reading of either is "the robot is NOT
+  // stopped". Mirrors nori-sdk-py's estop_confirmed().
+  async estopConfirmed(timeoutMs = 2000): Promise<void> {
+    let onLatched!: () => void;
+    const latched = new Promise<void>((res) => { onLatched = res; });
+    // Subscribed BEFORE the send, so a fast robot cannot report into the gap.
+    this.estopWaiters.push(onLatched);
+    try {
+      this.command("estop"); // throws on a known-dead channel
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(
+          `estop sent but the robot never reported the latch within ${timeoutMs} ms — ` +
+          "assume it is NOT stopped (motion stack down, or the frame was lost)")), timeoutMs);
+        latched.then(() => { clearTimeout(timer); resolve(); });
+      });
+    } finally {
+      const i = this.estopWaiters.indexOf(onLatched);
+      if (i >= 0) this.estopWaiters.splice(i, 1);
+    }
   }
 
   // Ask the robot to drop / restore its camera-encoder bitrate to free CPU+bandwidth while
@@ -1527,8 +1561,17 @@ export class RemoteTeleop {
       // robot (re)joined the room -> re-announce 'ready' so it (re)offers. The room token is
       // retired: the robot gates private-room access itself (Supabase RLS), so there's no HMAC
       // proof to compute here anymore — we just handshake.
+      //
+      // Do NOT clear `connected` here. The gateway broadcasts robot_here on EVERY room join —
+      // including its own signaling auto-reconnect mid-session — and the only thing that ever
+      // sets the flag back is pc.onconnectionstatechange, which never re-fires on a healthy
+      // peer. Clearing it re-armed the 2 s ready-resend forever and disabled the live-session
+      // guards on onNack/onState, so a stray nack or a routine CHANNEL_ERROR flap painted
+      // `failed` over a session that was actively driving. The ready IS still sent: a gateway
+      // that already has us dedupes re-readys, and a RESTARTED one (no session) needs it to
+      // offer — its robot_here usually beats us noticing the dead peer. Same fix as the
+      // Python SDK's _on_robot_here.
       onRobotHere: async () => {
-        this.connected = false;
         this.log("robot announced — sending 'ready'");
         this.sendReady();
       },
@@ -1552,7 +1595,10 @@ export class RemoteTeleop {
       },
 
       onOpen: () => {
-        this.connected = false;
+        // No `connected = false` here either (see onRobotHere): onOpen fires on every
+        // signaling reconnect, and the connection-state callback owns that flag. The
+        // retry loop below already no-ops while connected, so a live session never
+        // chatters — and if the peer later drops, the same loop resumes announcing.
         this.sendReady();
         this.log("announced 'ready' — waiting for robot offer");
         // Only (re)enter `waiting` from a pre-connection phase. onOpen also fires on a mid-session
@@ -1825,7 +1871,15 @@ export class RemoteTeleop {
             motor_faults?: Record<string, string> }
         | undefined;
       if (status) {
-        if (status.safety) this.tel.safety = status.safety;
+        if (status.safety) {
+          this.tel.safety = status.safety;
+          // estopConfirmed(): only a latch reported ON THE WIRE counts, and this is the
+          // one place a wire status block is parsed — waiters can never resolve from the
+          // cached view.
+          if (status.safety === "latched" && this.estopWaiters.length) {
+            for (const w of this.estopWaiters.splice(0)) w();
+          }
+        }
         // null/absent -> not latched; replace wholesale so a cleared latch drops the banner.
         this.tel.latchReason = typeof status.latch_reason === "string" ? status.latch_reason : null;
         if (status.watchdog) this.tel.watchdog = status.watchdog;
@@ -2140,18 +2194,26 @@ export class RemoteTeleop {
     this.ingestPerception({ type: "perception", ...frame } as unknown as Record<string, unknown>);
   }
 
-  private dcSend(obj: unknown) {
-    if (this.controlCh && this.controlCh.readyState === "open") {
+  // True when the frame was handed to an open channel, false when it was dropped. Dropping
+  // is correct for ordinary verbs (the channel is unreliable by design and the robot is
+  // watchdogged, so a frame into a dead channel has no meaning to preserve) — but a caller
+  // must not claim delivery it didn't get: log on the return value, not on having called.
+  private dcSend(obj: unknown): boolean {
+    if (!this.controlCh || this.controlCh.readyState !== "open") return false;
+    try {
       this.controlCh.send(JSON.stringify(obj));
-      const rec = obj as Record<string, unknown>;
-      if (rec && rec.type === "control" && this.o.onControlSent) {
-        try {
-          this.o.onControlSent(rec, Date.now());
-        } catch {
-          // observer must never break the control path
-        }
+    } catch {
+      return false;
+    }
+    const rec = obj as Record<string, unknown>;
+    if (rec && rec.type === "control" && this.o.onControlSent) {
+      try {
+        this.o.onControlSent(rec, Date.now());
+      } catch {
+        // observer must never break the control path
       }
     }
+    return true;
   }
 
   // NOTE: the handshake lives in `ackInfo` (declared above) and is read through the public
@@ -2186,9 +2248,19 @@ export class RemoteTeleop {
   private sendCmd(cmd: string) {
     this.pressed.clear(); // don't let a held key fight the command
     const armKey = `${this.o.arm}_arm`;
-    if (cmd === "reset") this.dcSend({ type: "control", reset: { [armKey]: true } });
-    else this.dcSend({ type: "command", [cmd]: true });
-    this.log("cmd: " + cmd);
+    const sent = cmd === "reset"
+      ? this.dcSend({ type: "control", reset: { [armKey]: true } })
+      : this.dcSend({ type: "command", [cmd]: true });
+    if (!sent && cmd === "estop") {
+      // The one verb where a silent drop must not read as success: an E-STOP that went
+      // nowhere means the caller has to reach for the physical button, and this used to
+      // log "cmd: estop" unconditionally — a lie on a dead channel. Ordinary verbs keep
+      // the drop-silently contract. Mirrors nori-sdk-py's estop().
+      throw new Error(
+        "estop: control channel is not open — the frame went NOWHERE. This session " +
+        "cannot stop the robot; use the physical E-STOP or the robot's face button.");
+    }
+    this.log("cmd: " + cmd + (sent ? "" : " (dropped — channel not open)"));
   }
 
   // ---- keyboard (called by the page's window listeners) --------------------
@@ -2204,7 +2276,12 @@ export class RemoteTeleop {
       return true;
     }
     if (k in CMD_KEYS) {
-      if (!this.cmdDown.has(k)) { this.cmdDown.add(k); this.sendCmd(CMD_KEYS[k]); }
+      if (!this.cmdDown.has(k)) {
+        this.cmdDown.add(k);
+        // estop THROWS on a dead channel (see sendCmd); the session log is the surface —
+        // it must not escape into the page's window keydown listener.
+        try { this.sendCmd(CMD_KEYS[k]); } catch (e) { this.log((e as Error).message); }
+      }
       return true;
     }
     if (k in this.armKeymap() || k in BASE_KEYS || k in ZLIFT_KEYS) {
@@ -2220,6 +2297,29 @@ export class RemoteTeleop {
     this.cmdDown.delete(k);
   }
 
+  // External mappers (VR) speak PER-HAND lift intent: left_lift / right_lift. That is the
+  // wire vocabulary on an L-series robot, but the A-series has ONE central column keyed
+  // bare "lift" — the per-hand names there are ignored in SILENCE, so the operator pressed
+  // lift and nothing moved. The keyboard path and ScriptDriver were both fixed for exactly
+  // this (rail.ts liftJogKey is the single resolver); this is the same fix for the external
+  // stream, applied here because the mapper is descriptor-blind and this class holds the
+  // ack. When both hands land on the same central column the rates sum, clamped, so an
+  // opposing pair holds rather than one hand silently winning.
+  private resolveLifts(jog: ExternalJog): Record<string, unknown> {
+    const { left_lift, right_lift, ...rest } = jog;
+    const out: Record<string, unknown> = { ...rest };
+    const hands: Array<["left" | "right", number | undefined]> =
+      [["left", left_lift], ["right", right_lift]];
+    for (const [side, rate] of hands) {
+      if (!rate) continue; // absent/zero: nothing commanded (absence reads as rate 0)
+      const key = liftJogKey(this.ackInfo?.descriptor, side);
+      if (!key) continue;  // robot advertises no lift: omit rather than invent a key
+      const prev = typeof out[key] === "number" ? (out[key] as number) : 0;
+      out[key] = Math.max(-1, Math.min(1, prev + rate));
+    }
+    return out;
+  }
+
   // 50 Hz level jog stream from the held-key set (daemon is level-triggered)
   private jogTick() {
     const ch = this.controlCh;
@@ -2233,14 +2333,14 @@ export class RemoteTeleop {
     // control-liveness heartbeat stays fresh. sendAction is the sole arm driver.
     const leader = this.policyDriving ? null : this.externalLeader;
 
-    // VR (or another mapper) owns the stream: send its payload through the same wireJog
-    // gate as the keyboard path (identity except the L2 legacy angular flip). It already
-    // carries left_arm/right_arm/base/left_lift/right_lift in the daemon's jog vocabulary, so this is
-    // the identical wire frame the keyboard path below produces — just a different source.
+    // VR (or another mapper) owns the stream: resolve its per-hand lift intent against the
+    // descriptor (resolveLifts — the mapper is descriptor-blind), then send through the same
+    // wireJog gate as the keyboard path (identity except the L2 legacy angular flip).
     // Suppressed while a leader source drives the arms: leader (absolute) and VR-jog would
     // otherwise fight over the same arm joints.
     if (this.externalJog && !leader) {
-      this.dcSend({ type: "control", seq: this.seq++, jog: this.wireJog(this.externalJog) });
+      this.dcSend({ type: "control", seq: this.seq++,
+        jog: this.wireJog(this.resolveLifts(this.externalJog)) });
       return;
     }
 

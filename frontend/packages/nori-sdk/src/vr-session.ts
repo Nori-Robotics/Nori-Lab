@@ -745,9 +745,16 @@ export class VrSession {
         // null = nothing engaged this frame -> hand the stream back to the keyboard.
         this.o.teleop.setExternalJog(res.jog);
         if (res.estop) {
-          this.o.teleop.command("estop");
+          // command("estop") THROWS on a dead control channel: the operator must be told
+          // the frame went nowhere (reach for the physical button), and the throw must
+          // not escape the XR render loop.
+          try {
+            this.o.teleop.command("estop");
+            this.o.onLog("E-STOP — re-squeeze grip to resume");
+          } catch (e) {
+            this.o.onLog((e as Error).message);
+          }
           this.mapper.reclutch();
-          this.o.onLog("E-STOP — re-squeeze grip to resume");
         }
         const resetHeld = this.buttonDown(this.b.reset, sources);
         this.handleResetHold(resetHeld);   // sustained hold of the reset button = reset_latch

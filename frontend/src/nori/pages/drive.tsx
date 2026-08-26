@@ -21,6 +21,7 @@ import type { Session } from "@supabase/supabase-js";
 import { useNori } from "@/nori/NoriContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { ControlLegend } from "@/nori/remote/TeleopStatus";
+import { taskModeLabel } from "@nori/sdk";
 import { signInWithPassword, signOut, getSession, onAuthStateChange } from "@/nori/auth/session";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -283,11 +284,11 @@ export default function DrivePage() {
                     onClick={toggleControlMode}
                     className="rounded-md border px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground"
                   >
-                    {mode === "joint" ? "per-motor" : "cylindrical"} · switch
+                    {mode === "joint" ? "per-motor" : taskModeLabel(teleop?.robotInfo()?.descriptor)} · switch
                   </button>
                 </div>
 
-                <ControlLegend mode={mode} />
+                <ControlLegend mode={mode} descriptor={teleop?.robotInfo()?.descriptor ?? null} />
 
                 <label className="flex items-center gap-2 text-sm" title="Held-key jog speed (100% = full)">
                   <span className="w-16 text-muted-foreground">speed</span>

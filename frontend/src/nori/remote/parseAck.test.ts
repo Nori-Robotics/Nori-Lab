@@ -38,6 +38,23 @@ describe("parseAck", () => {
     expect(info.versionMismatch).toBe(false);
   });
 
+  it("preserves the A3 descriptor extensions (jog_scale.task, ranges_si) verbatim", () => {
+    // parseAck passes the descriptor object through wholesale — the optional A3 fields
+    // (jog_scale.task with canonical `yaw`, calibrated SI bounds in ranges_si — possibly
+    // INVERTED per spec, the order carries the axis direction) must survive intact.
+    const info = parseAck({
+      ...FIXTURE_ACK,
+      descriptor: {
+        ...(FIXTURE_ACK.descriptor as Record<string, unknown>),
+        jog_scale: { task: { x: 0.2, y: 0.2, z: 0.15, pitch: 1.0, yaw: 1.2, shoulder_pan: 1.2 } },
+        ranges_si: { "left_arm_shoulder_pan.pos": [2.79, -2.81] },
+      },
+    });
+    expect(info.descriptor?.jog_scale?.task?.yaw).toBe(1.2);
+    expect(info.descriptor?.jog_scale?.task?.z).toBe(0.15);
+    expect(info.descriptor?.ranges_si?.["left_arm_shoulder_pan.pos"]).toEqual([2.79, -2.81]);
+  });
+
   it("SDK's own protocol version is the default comparison target", () => {
     const info = parseAck({ type: "ack", protocol_version: NORI_PROTOCOL_VERSION });
     expect(info.versionMismatch).toBe(false);

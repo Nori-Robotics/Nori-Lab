@@ -332,6 +332,14 @@ export interface RobotDescriptor {
   aux?: string[];      // extra actuators (e.g. "left_lift", or A3's single "lift")
   cameras?: string[];  // camera roles — matches the composite CameraLayout tiles
   ranges?: Record<string, [number, number]>;
+  // The same [min, max] bounds as `ranges`, in SI units (radians for a revolute joint,
+  // metres for a prismatic one) — the robot's own per-unit calibration, what makes
+  // normalized->physical conversion exact (nori-protocol ack.json). Only NORMALIZED keys
+  // appear (the A-series lift.pos is already mm and MUST NOT have an entry). Bounds may be
+  // INVERTED (lower > upper) where calibration reverses the axis: interpolate lower->upper
+  // as written, never sort — the order carries the direction. Optional; the frozen L-series
+  // fleet never sends it, and absence means a client must not substitute a guess.
+  ranges_si?: Record<string, [number, number]>;
   // How a normalized jog rate [-1,1] converts to NOMINAL COMMANDED motion on this robot
   // (nori-protocol ack.json / MODELS.md "Knowing how fast 1.0 is"). Never achieved
   // velocity: the watchdog warn state, acceleration limits, and Servo's singularity/
@@ -339,7 +347,9 @@ export interface RobotDescriptor {
   // frozen L2 fleet forever, so absence means UNKNOWN and a caller must not assume.
   jog_scale?: {
     joints?: Record<string, number>; // norm_mode units/s per "<name>.pos" at full deflection
-    task?: { x?: number; y?: number; z?: number; pitch?: number; shoulder_pan?: number };
+    // `yaw` is the canonical angular-z verb; `shoulder_pan` is a deprecated alias the
+    // gateway still accepts (A3 advertises both). L2 daemons never send `task` at all.
+    task?: { x?: number; y?: number; z?: number; pitch?: number; yaw?: number; shoulder_pan?: number };
     base?: { linear?: number; angular?: number }; // m/s, rad/s (JOG namespace keys)
     lift?: number;                   // mm/s, matching <side>_lift.pos / lift.pos
   };
@@ -605,6 +615,40 @@ export const JOINT_KEYS: Record<string, [string, number]> = {
   t: ["wrist_roll", 1], g: ["wrist_roll", -1],
   y: ["gripper", 1], h: ["gripper", -1],
 };
+// ---- A3: descriptor-gated cartesian task jog (additive; L2 byte-identical) ----
+// The A3 gateway advertises descriptor.jog_scale.task = {x,y,z,pitch,yaw,shoulder_pan};
+// L2 daemons never send jog_scale.task. PRESENCE of that field — never a model string —
+// gates the cartesian keymap/label below. `yaw` is the canonical angular-z verb
+// (shoulder_pan is a deprecated alias the gateway still accepts); new clients send yaw.
+// Key choices deliberately avoid i/k/j/l (base), u/o (lift), m (mode toggle) and
+// space/p/c (commands); y/h are free in task mode (they only carry gripper in JOINT_KEYS).
+export const CARTESIAN_TASK_KEYS: Record<string, [string, number]> = {
+  q: ["yaw", 1], e: ["yaw", -1],
+  w: ["x", 1], s: ["x", -1], a: ["y", 1], d: ["y", -1],
+  y: ["z", 1], h: ["z", -1],
+  z: ["pitch", 1], x: ["pitch", -1], r: ["wrist_roll", 1], f: ["wrist_roll", -1],
+  t: ["gripper", 1], g: ["gripper", -1],
+};
+
+// The task-mode keymap for a given descriptor. No descriptor jog_scale.task (every L2,
+// and any pre-ack session) returns the EXACT legacy TASK_KEYS object — same reference,
+// same bytes on the wire — so deployed L2 units behave byte-identically.
+export function taskKeymapFor(
+  descriptor: RobotDescriptor | undefined | null,
+): Record<string, [string, number]> {
+  return descriptor?.jog_scale?.task ? CARTESIAN_TASK_KEYS : TASK_KEYS;
+}
+
+// Display label for the non-joint control mode. The ControlMode VALUE stays
+// "cylindrical" everywhere (public type, persisted state — never on the wire); only
+// what the operator READS changes: "cartesian" when the descriptor advertises a task
+// jog vocabulary (A3), "cylindrical" otherwise (L2 / unknown).
+export function taskModeLabel(
+  descriptor: RobotDescriptor | undefined | null,
+): "cartesian" | "cylindrical" {
+  return descriptor?.jog_scale?.task ? "cartesian" : "cylindrical";
+}
+
 // ---- L3: descriptor-driven per-motor jog (additive; L2 byte-identical) ----
 // L2 daemons advertise (or predate) the classic 6-DOF vocabulary in
 // JOINT_KEYS; the L3 gateway's ack descriptor advertises its real arm joints
@@ -737,7 +781,14 @@ export function baseKeyClusters(): BaseKeyCluster[] {
 
 // Structured control legend for a given mode — derived from the exported maps above so it
 // can never drift from what the keys actually send.
-export function keybindLegend(mode: ControlMode, jointShorts?: string[] | null): {
+export function keybindLegend(
+  mode: ControlMode,
+  jointShorts?: string[] | null,
+  // Descriptor threads the task vocabulary the same way jointShorts threads the L3
+  // per-motor one: with jog_scale.task advertised (A3) the legend shows yaw/z;
+  // omitted/null (every L2) renders the exact legacy legend.
+  descriptor?: RobotDescriptor | null,
+): {
   arm: KeybindRow[];
   base: KeybindRow[];
   lift: KeybindRow;
@@ -748,7 +799,7 @@ export function keybindLegend(mode: ControlMode, jointShorts?: string[] | null):
     arm: rowsFromAxisMap(
       mode === "joint"
         ? (jointShorts ? jointKeymapForShorts(jointShorts) : JOINT_KEYS)
-        : TASK_KEYS),
+        : taskKeymapFor(descriptor)),
     base: rowsFromAxisMap(BASE_KEYS),
     lift: { dof: "lift (selected arm)", posKey: u, negKey: o },
     commands: [
@@ -2310,7 +2361,9 @@ export class RemoteTeleop {
   }
 
   private armKeymap() {
-    if (this.mode !== "joint") return TASK_KEYS;
+    // Task mode: descriptor-gated (CARTESIAN_TASK_KEYS on A3; the EXACT legacy
+    // TASK_KEYS object when no jog_scale.task — every L2 stays byte-identical).
+    if (this.mode !== "joint") return taskKeymapFor(this.ackInfo?.descriptor);
     const cached = this.dynamicKeymap;
     if (cached && cached.arm === this.o.arm) return cached.map;
     const shorts = this.armJointShorts();
@@ -2323,7 +2376,9 @@ export class RemoteTeleop {
     this.mode = m;
     this.pressed.clear();
     this.o.onMode(m);
-    this.log("control mode: " + (m === "joint" ? "per-motor" : "cylindrical (rpi4)"));
+    this.log("control mode: " + (m === "joint" ? "per-motor"
+      : taskModeLabel(this.ackInfo?.descriptor) === "cartesian" ? "cartesian"
+      : "cylindrical (rpi4)"));
   }
 
   private sendCmd(cmd: string) {

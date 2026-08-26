@@ -4,9 +4,14 @@
 //   - "{side}_arm_{short}.pos"    7 arm joints per side, norm_mode range_m100_100 (-100..100)
 //   - "{side}_arm_gripper.pos"    0..100
 //   - "lift.pos"                  millimetres (0..720)
-// The descriptor's `ranges` are normalized spans, NOT radians — so the radian
-// span comes from the URDF joint limits themselves. If a future daemon ships a
-// `ranges_rad` field on the descriptor, that is preferred over the URDF limits.
+// The descriptor's `ranges` are normalized spans, NOT radians — so by default the
+// radian span comes from the URDF joint limits. When the daemon publishes
+// `ranges_si` (calibrated SI bounds per normalized key, nori-protocol ack.json),
+// that is preferred: it is the robot's own per-unit calibration, exact where the
+// URDF's nominal limits are silently off. Per spec the SI bounds may be INVERTED
+// (lower > upper) where calibration reverses the axis — interpolate lower→upper
+// as written, never sort (the order carries the direction). `lift.pos` never has
+// an entry (already physical mm).
 //
 // Mimic joints ({side}_gripper_idler_joint ×-1, lift_middle_joint ×0.5) must
 // never be driven directly: urdf-loader applies mimics automatically when the
@@ -45,10 +50,8 @@ export function liveStateToJointRadians(
   descriptor?: RobotDescriptor
 ): Record<string, number> {
   const out: Record<string, number> = {};
-  // Future-proofing: radian ranges straight from the robot, if the daemon ever
-  // ships them. Not in the current RobotDescriptor type, hence the cast.
-  const rangesRad = (descriptor as { ranges_rad?: Record<string, [number, number]> } | undefined)
-    ?.ranges_rad;
+  // Calibrated SI bounds straight from the robot, when the daemon ships them.
+  const rangesSi = descriptor?.ranges_si;
 
   for (const [key, value] of Object.entries(state)) {
     if (typeof value !== "number" || !Number.isFinite(value)) continue;
@@ -79,9 +82,22 @@ export function liveStateToJointRadians(
     }
     if (joint.mimicJoint) continue; // never drive a mimic directly
 
-    const range = rangesRad?.[key];
-    const lower = range ? range[0] : joint.limit?.lower;
-    const upper = range ? range[1] : joint.limit?.upper;
+    // Calibrated SI bounds win over URDF limits. Per spec they may be INVERTED
+    // (lower > upper: the order carries the axis direction) — interpolate as
+    // written, never sort. lift.pos is already physical and never has an entry
+    // (an entry there would be converting twice), so it stays on the URDF path.
+    const si = key === LIFT_KEY ? undefined : rangesSi?.[key];
+    if (
+      si &&
+      typeof si[0] === "number" && typeof si[1] === "number" &&
+      Number.isFinite(si[0]) && Number.isFinite(si[1]) && si[0] !== si[1]
+    ) {
+      out[jointName] = si[0] + fraction * (si[1] - si[0]);
+      continue;
+    }
+
+    const lower = joint.limit?.lower;
+    const upper = joint.limit?.upper;
     if (typeof lower !== "number" || typeof upper !== "number" || !(upper > lower)) {
       continue; // continuous (0..0) or malformed limits — nothing to map onto
     }

@@ -509,11 +509,13 @@ NORI_CODEGEN_SYSTEM = """You generate short JavaScript routines that drive a rob
 
 THE ROBOT API — every motion is OPEN-LOOP TIMED. You give a duration in ms; the move runs for that long then stops. There is NO arrival/success feedback (a "done" only means the time elapsed).
 
-  nori.reach(side, dofs, ms)   Task-space (cylindrical) jog via IK.
+  nori.reach(side, dofs, ms)   Task-space jog via IK.
                                  side: "left" | "right".
-                                 dofs: subset of { x, y, pitch, shoulder_pan, wrist_roll, gripper },
-                                 each a rate in [-1,1]. x/y translate the end-effector in the arm
-                                 plane; +x forward, +y left. Held ms, then zeroed.
+                                 dofs: a subset of the robot's advertised task DOFs. On an L2 that is
+                                 { x, y, pitch, shoulder_pan, wrist_roll, gripper }; on an A3 it also
+                                 accepts z and yaw (yaw is the canonical angular-z verb; shoulder_pan
+                                 is a deprecated alias). Each a rate in [-1,1]. x/y/z translate the
+                                 end-effector; +x forward, +y left, +z up. Held ms, then zeroed.
   nori.joint(side, dofs, ms)   Per-motor jog (no IK).
                                  dofs: subset of { shoulder_pan, shoulder_lift, elbow_flex,
                                  wrist_flex, wrist_roll, gripper }, each a rate in [-1,1].
@@ -561,7 +563,7 @@ UNITS: every rate is normalized to [-1,1]; the robot scales it to a safe per-tic
 
 HARD RULES you MUST follow:
 1. `await` every nori.* call so moves run in sequence.
-2. NEVER mix task DOFs (x, y, pitch) and joint DOFs (shoulder_lift, elbow_flex, wrist_flex) in the same call — the presence of a joint DOF switches that whole call to per-motor mode.
+2. NEVER mix task DOFs (x, y, z, pitch, yaw) and joint DOFs (shoulder_lift, elbow_flex, wrist_flex) in the same call — the presence of a joint DOF switches that whole call to per-motor mode.
 3. After any nori.joint(...) or nori.moveTo(...) move, call nori.reset() before a nori.reach(...) (the IK cursor goes stale and reach() would otherwise jump). Prefer one family per routine. For "go to a specific pose/config", PREFER nori.moveTo — absolute and holding, no timing guess.
 4. Your only sight is nori.perceive() (when a detector is running) and any photo in this request — otherwise you are BLIND: no world model, never assume where objects are. Prefer small, reversible moves and short durations. Do not drive the base more than briefly.
 5. No imports, no fetch, no DOM — only the robot API and plain JS (loops, math, variables).

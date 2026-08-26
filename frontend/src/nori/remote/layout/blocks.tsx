@@ -15,6 +15,7 @@ import { Pill } from "@/components/ui/pill";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ArmSide, ControlMode, RemoteTeleop, TelemetryView, CallState, DaemonStatus, ConnectStatus, RecordState } from "@nori/sdk";
+import { taskModeLabel } from "@nori/sdk";
 import type { ServoThermalThresholds } from "@/nori/robotModels";
 import { VrHandoff } from "@/nori/components/VrHandoff";
 import {
@@ -623,9 +624,11 @@ export const ActiveModeCard = ({ wide = false }: { wide?: boolean }) => {
             <ArmPills value={settings.arm} onChange={setArm} />
             <Button
               variant="outline" size="sm" onClick={toggleControlMode}
-              title="Switch between cylindrical (rpi4 feel) and per-motor control"
+              title={taskModeLabel(teleop?.robotInfo()?.descriptor) === "cartesian"
+                ? "Switch between cartesian (task-space) and per-motor control"
+                : "Switch between cylindrical (rpi4 feel) and per-motor control"}
             >
-              Mode: {mode === "joint" ? "per-motor" : "cylindrical"}
+              Mode: {mode === "joint" ? "per-motor" : taskModeLabel(teleop?.robotInfo()?.descriptor)}
             </Button>
           </div>
           <div className="mb-3">
@@ -635,7 +638,11 @@ export const ActiveModeCard = ({ wide = false }: { wide?: boolean }) => {
               onChange={(v) => setNum("kbSpeed", v)}
             />
           </div>
-          <ControlLegend mode={mode} jointShorts={teleop?.armJointShorts() ?? null} />
+          <ControlLegend
+            mode={mode}
+            jointShorts={teleop?.armJointShorts() ?? null}
+            descriptor={teleop?.robotInfo()?.descriptor ?? null}
+          />
         </CardContent>
       )}
     </Card>

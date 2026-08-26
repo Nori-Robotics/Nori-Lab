@@ -143,16 +143,46 @@ describe("liveStateToJointRadians", () => {
     expect(out).not.toHaveProperty("left_wheel_joint");
   });
 
-  it("prefers descriptor ranges_rad over URDF limits when present", () => {
-    // ranges_rad is future-proofing — not in today's RobotDescriptor type.
-    const descriptor = {
-      ranges_rad: { "left_arm_elbow_pitch.pos": [-1, 1] as [number, number] },
-    } as import("@nori/sdk").RobotDescriptor;
+  it("prefers descriptor ranges_si over URDF limits when present", () => {
+    const descriptor: import("@nori/sdk").RobotDescriptor = {
+      ranges_si: { "left_arm_elbow_pitch.pos": [-1, 1] },
+    };
     const out = liveStateToJointRadians(
       { "left_arm_elbow_pitch.pos": 100 },
       makeJoints(),
       descriptor
     );
     expect(out.left_elbow_pitch_joint).toBeCloseTo(1, 10);
+  });
+
+  it("interpolates INVERTED ranges_si bounds as written (spec: order carries direction)", () => {
+    // Mirrors nori-protocol fixtures ack_ranges_si_inverted.json: [2.79, -2.81].
+    const descriptor: import("@nori/sdk").RobotDescriptor = {
+      ranges_si: { "left_arm_elbow_pitch.pos": [2.79, -2.81] },
+    };
+    const joints = makeJoints();
+    // norm -100 -> fraction 0 -> first bound; +100 -> fraction 1 -> second bound.
+    expect(
+      liveStateToJointRadians({ "left_arm_elbow_pitch.pos": -100 }, joints, descriptor)
+        .left_elbow_pitch_joint
+    ).toBeCloseTo(2.79, 10);
+    expect(
+      liveStateToJointRadians({ "left_arm_elbow_pitch.pos": 100 }, joints, descriptor)
+        .left_elbow_pitch_joint
+    ).toBeCloseTo(-2.81, 10);
+    // Midpoint interpolates linearly between the bounds as written.
+    expect(
+      liveStateToJointRadians({ "left_arm_elbow_pitch.pos": 0 }, joints, descriptor)
+        .left_elbow_pitch_joint
+    ).toBeCloseTo((2.79 + -2.81) / 2, 10);
+  });
+
+  it("ranges_si never applies to lift.pos (already physical mm; URDF path clamps)", () => {
+    const descriptor: import("@nori/sdk").RobotDescriptor = {
+      // Invalid per spec (lift.pos MUST NOT have an entry) — the mapper ignores it.
+      ranges_si: { "lift.pos": [0, 99] },
+    };
+    const out = liveStateToJointRadians({ "lift.pos": 360 }, makeJoints(), descriptor);
+    expect(out.lift_extension_joint).toBeCloseTo(0.36, 10);
   });
 });

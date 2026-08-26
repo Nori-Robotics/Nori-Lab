@@ -16,7 +16,9 @@ import {
   baseKeyClusters,
   currentMa,
   keybindLegend,
+  taskModeLabel,
   CURRENT_FULL_LSB,
+  type RobotDescriptor,
   type BaseKeyCluster,
   type CallState,
   type ConnectFailure,
@@ -778,13 +780,17 @@ function Key({ children }: { children: React.ReactNode }) {
 // ("shoulder_pan"). Underscores are for the wire, not the operator.
 const dofLabel = (dof: string) => dof.replace(/_/g, " ");
 
-export function ControlLegend({ mode, jointShorts }: {
+export function ControlLegend({ mode, jointShorts, descriptor }: {
   mode: ControlMode;
   // Descriptor-driven joints (L3): the legend renders the SAME dynamic map
   // the jog stream uses. Omitted/null (every L2) -> the legacy legend.
   jointShorts?: string[] | null;
+  // Full descriptor (A3): with jog_scale.task advertised the task legend shows
+  // yaw/z. Omitted/null (every L2) -> the legacy cylindrical legend.
+  descriptor?: RobotDescriptor | null;
 }) {
-  const legend = keybindLegend(mode, jointShorts);
+  const legend = keybindLegend(mode, jointShorts, descriptor);
+  const taskLabel = taskModeLabel(descriptor);
   return (
     <div className="space-y-3 text-xs">
       <div className="flex items-center gap-2">
@@ -797,7 +803,9 @@ export function ControlLegend({ mode, jointShorts }: {
             </button>
           </TooltipTrigger>
           <TooltipContent className="max-w-64 text-xs">
-            Cylindrical maps to x/y/z; Motor allows per-motor control
+            {taskLabel === "cartesian"
+              ? "Cartesian jogs x/y/z (yaw turns); Motor allows per-motor control"
+              : "Cylindrical maps to x/y/z; Motor allows per-motor control"}
           </TooltipContent>
         </Tooltip>
       </div>

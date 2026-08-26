@@ -18,16 +18,15 @@
 // apart. Say so in the UI.
 
 import type { RemoteTeleop, ExternalJog, ArmSide, TelemetryView, ActionStatus } from "@nori/sdk";
-import { liftJogKey, jointDofsFor, TASK_KEYS, BASE_KEYS } from "@nori/sdk";
+import { liftJogKey, jointDofsFor, reachDofsFor, BASE_KEYS } from "@nori/sdk";
 import { playAudioUrl, type ClipHandle } from "./audioClip";
 
-// Task and base vocabularies are gateway-static, derived from the SDK's exported keybind maps
-// so they can never drift from what the daemon accepts. The JOINT vocabulary is NOT static:
-// it is per-robot and per-arm, resolved from the ack descriptor at op time (jointDofsFor) with
-// the L2 set as the no-descriptor legacy fallback — the compiled-in list used to be the only
-// one, which client-refused an A3's real joints (elbow_pitch, …) while passing L2 names the
-// gateway then bounced as unknown_joint.
-const CYLINDRICAL_DOFS = new Set(Object.values(TASK_KEYS).map(([dof]) => dof));
+// The base vocabulary is gateway-static, derived from the SDK's exported keybind map so it
+// can never drift from what the daemon accepts. The TASK and JOINT vocabularies are NOT
+// static: both are per-robot, resolved from the ack descriptor at op time (reachDofsFor /
+// jointDofsFor) with the L2 sets as the no-descriptor legacy fallback. On an A3 (descriptor
+// advertises jog_scale.task) reach accepts yaw (canonical; shoulder_pan stays a deprecated
+// alias the gateway honours) and z; on every L2 the set is exactly the legacy one.
 const BASE_DOFS = new Set(Object.values(BASE_KEYS).map(([dof]) => dof));
 
 // Gripper sign convention for the grip() convenience op. Positive opens, negative closes — this
@@ -172,7 +171,10 @@ export class ScriptDriver {
   exec(op: string, args: unknown[]): Promise<unknown> {
     switch (op) {
       case "reach":
-        return this.enqueue(() => this.arm("reach", CYLINDRICAL_DOFS, args));
+        // Task vocabulary resolved at op time from the live descriptor (yaw/z on an A3,
+        // the legacy cylindrical set on L2 / pre-ack).
+        return this.enqueue(() =>
+          this.arm("reach", new Set(reachDofsFor(this.teleop.robotInfo()?.descriptor)), args));
       case "joint":
         // Vocabulary resolved inside arm() per side, from the live descriptor.
         return this.enqueue(() => this.arm("joint", null, args));

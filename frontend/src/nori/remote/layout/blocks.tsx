@@ -424,9 +424,12 @@ export const ModePills = () => {
 // header, where three differently-styled buttons next to Connect read as
 // clutter. Wraps to two rows in narrow rails.
 export const ControlsStrip = () => (
-  <div className="flex min-h-16 flex-wrap items-center gap-3 rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-4 py-2 text-nori-h14131a shadow-sm">
+  // Eyebrow on its own line, content rows left-aligned below it: this strip
+  // only lives in narrow rails, where the old right-aligned ml-auto group
+  // wrapped into ragged rows that started mid-panel.
+  <div className="min-h-16 rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-4 text-nori-h14131a shadow-sm">
     <p className={EYEBROW}>// controls</p>
-    <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
       <ModePills />
       <ArmControl compact />
       <EStopButton compact />
@@ -703,52 +706,57 @@ export const Drawers = ({ items }: { items: { id: string; label: ReactNode; body
   );
 };
 
-// Pill tab bar + a single visible pane (Split + tabs). All panes stay mounted
-// (hidden with CSS) so collapsible/recording state survives tab flips and the
-// dataset card keeps observing the session while its tab is away.
-export const TabPanes = ({ items, initial }: { items: { id: string; label: ReactNode; body: ReactNode }[]; initial?: string }) => {
-  const [active, setActive] = useState(initial ?? items[0]?.id ?? "");
-  return (
-    <div>
-      <div className="mb-3 flex flex-wrap gap-2">
-        {items.map((i) => (
-          <Pill key={i.id} active={active === i.id} onClick={() => setActive(i.id)}>{i.label}</Pill>
-        ))}
-      </div>
-      {items.map((i) => (
-        <div key={i.id} className={active === i.id ? "" : "hidden"}>{i.body}</div>
-      ))}
-    </div>
-  );
-};
-
 // Stage/PIP switcher (Cockpit, Stage): the stage and the PIP swap places on a
-// click of the PIP. Both children stay mounted in a fixed order — only classes
-// move — so the <video> element inside is never re-created by a swap.
+// click of the PIP, and the PIP can be COLLAPSED into a small restore pill so
+// the schematic gets out of the way entirely. Both children stay mounted in a
+// fixed order through every state — only classes move — so the <video> element
+// inside is never re-created (a display:none video keeps its stream).
 export const StageSwitcher = ({
   video, schematic, className = "",
 }: { video: ReactNode; schematic: ReactNode; className?: string }) => {
   const [stageIs3d, setStageIs3d] = useState(false);
+  const [pipHidden, setPipHidden] = useState(false);
   const stageCls = "absolute inset-0";
   // aspect gives the PIP box a height of its own — its children size with
   // h-full, which would collapse in a width-only box.
-  const pipCls = "absolute bottom-3 right-3 z-10 aspect-[4/3] w-56 cursor-pointer overflow-hidden rounded-md border-2 border-background/60 shadow-lg transition-transform hover:scale-[1.03]";
+  const pipCls = "group absolute bottom-3 right-3 z-10 aspect-[4/3] w-56 cursor-pointer overflow-hidden rounded-md border-2 border-background/60 shadow-lg transition-transform hover:scale-[1.03]";
+  const pipLabel = stageIs3d ? "camera" : "3d";
+  const cls = (isStage: boolean) => (isStage ? stageCls : pipHidden ? "hidden" : pipCls);
+  const pipProps = (isStage: boolean) =>
+    isStage ? {} : {
+      onClick: () => setStageIs3d((v) => !v),
+      title: `Click to make the ${pipLabel} the stage`,
+    };
+  const collapseButton = (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); setPipHidden(true); }}
+      title={`Collapse the ${pipLabel} view`}
+      className="absolute right-1 top-1 z-20 hidden h-5 w-5 items-center justify-center rounded bg-nori-h14131a/70 font-mono text-xs leading-none text-background group-hover:flex"
+    >
+      –
+    </button>
+  );
   return (
     <div className={"relative " + className}>
-      <div
-        className={stageIs3d ? pipCls : stageCls}
-        onClick={stageIs3d ? () => setStageIs3d(false) : undefined}
-        title={stageIs3d ? "Click to make the video the stage" : undefined}
-      >
+      <div className={cls(!stageIs3d)} {...pipProps(!stageIs3d)}>
         {video}
+        {stageIs3d && !pipHidden && collapseButton}
       </div>
-      <div
-        className={stageIs3d ? stageCls : pipCls}
-        onClick={stageIs3d ? undefined : () => setStageIs3d(true)}
-        title={stageIs3d ? undefined : "Click to make the 3D schematic the stage"}
-      >
+      <div className={cls(stageIs3d)} {...pipProps(stageIs3d)}>
         {schematic}
+        {!stageIs3d && !pipHidden && collapseButton}
       </div>
+      {pipHidden && (
+        <button
+          type="button"
+          onClick={() => setPipHidden(false)}
+          title={`Restore the ${pipLabel} view`}
+          className="absolute bottom-3 right-3 z-10 rounded-full border border-background/50 bg-nori-h14131a/75 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.08em] text-background shadow hover:bg-nori-h14131a/90"
+        >
+          ▸ {pipLabel}
+        </button>
+      )}
     </div>
   );
 };

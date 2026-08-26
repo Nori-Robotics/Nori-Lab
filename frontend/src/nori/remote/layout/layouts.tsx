@@ -14,12 +14,13 @@
 //    leaving a gap under the shorter one.
 //
 // Field-test set — expect most of these to be deleted once usage narrows the
-// list to one or two. (Mission control already fell: too cramped.)
+// list to one or two. (Mission control and Split + tabs already fell.)
 
+import { useEffect, useRef, useState } from "react";
 import { useRemoteUi, PANEL, EYEBROW, PageHeader, Banners, VideoSurface, VitalsChips,
   TelemetryDetail, TelemetryCard, AudioCard, ModePills, ControlsStrip, ActiveModeCard,
   SchematicCard, LogsCard, LogBox, RecordBlock, DeployBlock, EStopButton, ArmControl,
-  Drawers, TabPanes, StageSwitcher, Breakout } from "./blocks";
+  Drawers, StageSwitcher, Breakout } from "./blocks";
 
 // ---------------------------------------------------------------------------
 // Classic — the page as it shipped: video column + 400px rail. The safe
@@ -42,6 +43,22 @@ const ClassicLayout = () => (
       <LogsCard />
     </div>
   </div>
+);
+
+// The one drawer set Cockpit and Stage share.
+const SecondaryDrawers = () => (
+  <Drawers
+    items={[
+      { id: "record", label: "record dataset", body: <RecordBlock open /> },
+      { id: "deploy", label: "deploy policy", body: <DeployBlock open /> },
+      {
+        id: "telemetry", label: "full telemetry",
+        body: <div className={PANEL}><TelemetryDetail /></div>,
+      },
+      { id: "audio", label: "audio", body: <AudioCard /> },
+      { id: "logs", label: "robot logs", body: <LogBox /> },
+    ]}
+  />
 );
 
 // ---------------------------------------------------------------------------
@@ -72,18 +89,7 @@ const CockpitLayout = () => {
             <div className={PANEL + " !py-2"}>
               <VitalsChips />
             </div>
-            <Drawers
-              items={[
-                { id: "record", label: "record dataset", body: <RecordBlock open /> },
-                { id: "deploy", label: "deploy policy", body: <DeployBlock open /> },
-                {
-                  id: "telemetry", label: "full telemetry",
-                  body: <div className={PANEL}><TelemetryDetail /></div>,
-                },
-                { id: "audio", label: "audio", body: <AudioCard /> },
-                { id: "logs", label: "robot logs", body: <LogBox /> },
-              ]}
-            />
+            <SecondaryDrawers />
           </div>
           <div className="min-w-0 space-y-3">
             <ControlsStrip />
@@ -105,50 +111,33 @@ const CockpitLayout = () => {
 };
 
 // ---------------------------------------------------------------------------
-// Split + tabs — pairing's proven 2:1 split: video and a TALL, orbitable 3D
-// viewer as equals, everything secondary in one tabbed panel below. The vitals
-// chip row stays pinned above the tabs so a warning can't hide behind them.
-const SplitTabsLayout = () => (
-  <Breakout>
-    <div className="space-y-3 px-1">
-      <PageHeader />
-      <Banners />
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start">
-        <VideoSurface />
-        {/* The video's 4:3 height leaves this column headroom, so the mode
-            pills + safety cluster live here, above the schematic. */}
-        <div className="min-w-0 space-y-3">
-          <ControlsStrip />
-          <SchematicCard heightClass="h-[420px]" interactive />
-        </div>
-      </div>
-      <div className={PANEL}>
-        <div className="mb-3"><VitalsChips /></div>
-        <TabPanes
-          initial="telemetry"
-          items={[
-            { id: "telemetry", label: "Telemetry", body: <TelemetryDetail /> },
-            { id: "controls", label: "Controls", body: <ActiveModeCard /> },
-            { id: "record", label: "Record dataset", body: <RecordBlock open /> },
-            { id: "deploy", label: "Deploy policy", body: <DeployBlock open /> },
-            { id: "audio", label: "Audio", body: <AudioCard /> },
-            { id: "logs", label: "Logs", body: <LogBox /> },
-          ]}
-        />
-      </div>
-    </div>
-  </Breakout>
-);
-
-// ---------------------------------------------------------------------------
 // Stage — one big canvas that swaps video <-> 3D, with an always-visible
-// status strip (vitals + arm + E-STOP) that never scrolls away and never
-// covers the feed. Drawers stack under the stage (audio included) so the
-// columns end together. Leader mode drops below the grid, as in Cockpit.
+// status strip (vitals + arm + E-STOP). The drawers ADAPT: while the rail's
+// mode card runs taller than the stage, they stay in the stage's column and
+// fill the space beside it; once the rail is the shorter one, they stretch
+// across the full width below the grid instead of leaving a hole beside the
+// rail. Leader mode drops below the grid, as in Cockpit.
 const StageLayout = () => {
   const { controlMode, recordState } = useRemoteUi();
   const leader = controlMode === "leader";
   const recording = recordState?.recording ?? false;
+
+  const stageRef = useRef<HTMLDivElement>(null);
+  const railRef = useRef<HTMLDivElement>(null);
+  const [railTaller, setRailTaller] = useState(false);
+  useEffect(() => {
+    const measure = () => {
+      const stage = stageRef.current?.offsetHeight ?? 0;
+      const rail = railRef.current?.offsetHeight ?? 0;
+      setRailTaller(rail > stage);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (stageRef.current) ro.observe(stageRef.current);
+    if (railRef.current) ro.observe(railRef.current);
+    return () => ro.disconnect();
+  }, []);
+
   return (
     <Breakout>
       <div className="space-y-3 px-1">
@@ -167,25 +156,16 @@ const StageLayout = () => {
         </div>
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
           <div className="min-w-0 space-y-3">
-            <StageSwitcher
-              className="aspect-[16/9]"
-              video={<VideoSurface fill className="h-full" />}
-              schematic={<SchematicCard bare heightClass="h-full" interactive />}
-            />
-            <Drawers
-              items={[
-                { id: "record", label: "record dataset", body: <RecordBlock open /> },
-                { id: "deploy", label: "deploy policy", body: <DeployBlock open /> },
-                {
-                  id: "telemetry", label: "full telemetry",
-                  body: <div className={PANEL}><TelemetryDetail /></div>,
-                },
-                { id: "audio", label: "audio", body: <AudioCard /> },
-                { id: "logs", label: "robot logs", body: <LogBox /> },
-              ]}
-            />
+            <div ref={stageRef}>
+              <StageSwitcher
+                className="aspect-[16/9]"
+                video={<VideoSurface fill className="h-full" />}
+                schematic={<SchematicCard bare heightClass="h-full" interactive />}
+              />
+            </div>
+            {railTaller && <SecondaryDrawers />}
           </div>
-          <div className="min-w-0 space-y-3">
+          <div ref={railRef} className="min-w-0 space-y-3">
             {!leader && <ActiveModeCard />}
             {leader && (
               <div className={PANEL}>
@@ -197,6 +177,7 @@ const StageLayout = () => {
             )}
           </div>
         </div>
+        {!railTaller && <SecondaryDrawers />}
         {leader && <ActiveModeCard />}
       </div>
     </Breakout>
@@ -206,12 +187,11 @@ const StageLayout = () => {
 // ---------------------------------------------------------------------------
 // registry
 
-export type RemoteLayoutId = "classic" | "cockpit" | "split" | "stage";
+export type RemoteLayoutId = "classic" | "cockpit" | "stage";
 
 export const REMOTE_LAYOUTS: { id: RemoteLayoutId; label: string; Component: () => JSX.Element }[] = [
   { id: "classic", label: "Classic", Component: ClassicLayout },
   { id: "cockpit", label: "Cockpit", Component: CockpitLayout },
-  { id: "split", label: "Split + tabs", Component: SplitTabsLayout },
   { id: "stage", label: "Stage", Component: StageLayout },
 ];
 
@@ -222,7 +202,7 @@ const STORAGE_KEY = "nori.remoteLayout";
 export function loadRemoteLayout(): RemoteLayoutId {
   try {
     const v = window.localStorage.getItem(STORAGE_KEY);
-    // Unknown ids (including deleted layouts, e.g. "mission") fall back cleanly.
+    // Unknown ids (including deleted layouts, e.g. "mission"/"split") fall back cleanly.
     if (v && REMOTE_LAYOUTS.some((l) => l.id === v)) return v as RemoteLayoutId;
   } catch { /* storage unavailable (private mode) — fall through */ }
   return DEFAULT_REMOTE_LAYOUT;

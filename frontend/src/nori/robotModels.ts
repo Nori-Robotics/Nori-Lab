@@ -5,6 +5,8 @@
 // backend API directly; this just keeps the shipped (notarized) customer app from
 // offering it. To open a model up later, remove it from BLOCKED_ROBOT_MODELS — no other
 // change needed.
+import type { RobotDescriptor } from "@nori/sdk";
+
 export const BLOCKED_ROBOT_MODELS: readonly string[] = ["L3"];
 
 /** Fleet-serial model code: "NORI-L3-0007" -> "L3", "NORI-A3-0000" -> "A3". Non-fleet /
@@ -83,6 +85,31 @@ export function servoThermalThresholds(
   return serialModelCode(serial)?.startsWith("A")
     ? A3_SERVO_THERMAL
     : L2_SERVO_THERMAL;
+}
+
+/**
+ * DISPLAY-ONLY descriptor stand-in for an A-series robot before the session ack
+ * arrives, so the mode label and keybind legend read "cartesian" with the same
+ * serial-keyed logic as the schematic/thermal gates above. Values mirror what
+ * the A3 gateway advertises in jog_scale.task; nothing here drives the wire —
+ * the SDK's armKeymap() only ever uses the REAL ack descriptor.
+ */
+const A3_TASK_DISPLAY_DESCRIPTOR = {
+  jog_scale: { task: { x: 0.08, y: 0.08, z: 0.08, pitch: 0.5, yaw: 0.5 } },
+} as RobotDescriptor;
+
+/**
+ * The descriptor UI surfaces should render from: the live ack descriptor when
+ * connected, else a serial-derived stand-in. Same inverse-shape rule as
+ * usesStylisedSchematic — only a known L2 gets the legacy (null → cylindrical)
+ * rendering; unknown serials show the current-generation (cartesian) UI.
+ */
+export function displayDescriptor(
+  descriptor: RobotDescriptor | null | undefined,
+  serial: string | null | undefined,
+): RobotDescriptor | null {
+  if (descriptor) return descriptor;
+  return usesStylisedSchematic(serial) ? null : A3_TASK_DISPLAY_DESCRIPTOR;
 }
 
 /** True when this serial's model is blocked in this app build. Unknown / non-fleet

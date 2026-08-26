@@ -517,6 +517,10 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       // the element tears itself down.
       (viewer as unknown as { dragControls?: { dispose: () => void } })
         .dragControls?.dispose();
+      // A non-interactive viewer is a display, not a control: freeze the camera
+      // too, or pointer drags still orbit it (and drag-selection highlights the
+      // surrounding page while they do).
+      (viewer.controls as unknown as { enabled?: boolean }).enabled = false;
       // Draw when something changes, and not otherwise. See `interactive`.
       viewer.removeAttribute("auto-redraw");
       (viewer.controls as unknown as {
@@ -1101,7 +1105,13 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     <div className={cn("relative", className)}>
       <div
         ref={containerRef}
-        className={cn("h-full w-full overflow-hidden bg-nori-hfffdf7", !frameless && "rounded-md border")}
+        className={cn(
+          "h-full w-full overflow-hidden bg-nori-hfffdf7",
+          !frameless && "rounded-md border",
+          // Display-only viewers must not eat pointer gestures (orbit-drag) or
+          // let a drag start a text selection across the page.
+          !interactive && "select-none [&_canvas]:pointer-events-none",
+        )}
       />
 
       {/* The bezel around the robot's-eye inset. Drawn in HTML rather than

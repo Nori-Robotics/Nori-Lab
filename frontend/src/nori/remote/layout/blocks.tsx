@@ -24,7 +24,7 @@ import {
 } from "@/nori/remote/TeleopStatus";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
 import RobotUrdfViewer from "@/nori/components/RobotUrdfViewer";
-import { usesStylisedSchematic } from "@/nori/robotModels";
+import { usesStylisedSchematic, displayDescriptor } from "@/nori/robotModels";
 import LeaderSetup from "@/nori/pages/leader-setup";
 import { DatasetCaptureCard } from "@/nori/remote/DatasetCaptureCard";
 import { PolicyDeployCard } from "@/nori/remote/PolicyDeployCard";
@@ -624,11 +624,11 @@ export const ActiveModeCard = ({ wide = false }: { wide?: boolean }) => {
             <ArmPills value={settings.arm} onChange={setArm} />
             <Button
               variant="outline" size="sm" onClick={toggleControlMode}
-              title={taskModeLabel(teleop?.robotInfo()?.descriptor) === "cartesian"
+              title={taskModeLabel(displayDescriptor(teleop?.robotInfo()?.descriptor, settings.room)) === "cartesian"
                 ? "Switch between cartesian (task-space) and per-motor control"
                 : "Switch between cylindrical (rpi4 feel) and per-motor control"}
             >
-              Mode: {mode === "joint" ? "per-motor" : taskModeLabel(teleop?.robotInfo()?.descriptor)}
+              Mode: {mode === "joint" ? "per-motor" : taskModeLabel(displayDescriptor(teleop?.robotInfo()?.descriptor, settings.room))}
             </Button>
           </div>
           <div className="mb-3">
@@ -641,7 +641,7 @@ export const ActiveModeCard = ({ wide = false }: { wide?: boolean }) => {
           <ControlLegend
             mode={mode}
             jointShorts={teleop?.armJointShorts() ?? null}
-            descriptor={teleop?.robotInfo()?.descriptor ?? null}
+            descriptor={displayDescriptor(teleop?.robotInfo()?.descriptor, settings.room)}
           />
         </CardContent>
       )}

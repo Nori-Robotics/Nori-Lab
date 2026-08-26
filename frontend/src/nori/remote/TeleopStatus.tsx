@@ -290,9 +290,11 @@ export function TelemetryPanel({
       {/* "offline", not "disconnected": this chip is false when ANY of the three signals above
           fails (channel closed, telemetry stale, motors unhealthy), and only the first of those
           is really a disconnection. The vaguer word is the more honest one here. */}
-      <Stat dense={dense} label="control" value={controlOk ? "online" : "offline"}
-        tone={controlOk ? "good" : "bad"} />
-      <Stat dense={dense} label="loop" value={`${tel.loopHz.toFixed(1)} Hz`} tone={hzTone} />
+      {/* With no session at all, "offline"/red would be an alarm about nothing —
+          every chip in the row goes empty/uncolored until a connection exists. */}
+      <Stat dense={dense} label="control" value={connected ? (controlOk ? "online" : "offline") : "—"}
+        tone={connected && controlOk ? "good" : connected ? "bad" : "default"} />
+      <Stat dense={dense} label="loop" value={connected ? `${tel.loopHz.toFixed(1)} Hz` : "—"} tone={hzTone} />
       <Stat dense={dense} label="safety" value={tel.safety} tone={safetyTone(tel.safety)} />
       <Stat dense={dense} label="watchdog" value={tel.watchdog} tone={watchdogTone(tel.watchdog)} />
       <Stat dense={dense} label="temp" value={tel.tempC > 0 ? `${tel.tempC.toFixed(0)}°C` : "—"}
@@ -530,7 +532,6 @@ export function MotorFaults({ faults }: { faults: Record<string, string> }) {
 // derive the carriage height from that one function, so they can't drift. Re-exported here
 // because existing callers import it from this module.
 import { railReading, liftAxes, RAIL_TRAVEL_MM } from "@nori/sdk";
-import type { RobotDescriptor } from "@nori/sdk";
 export { railReading, RAIL_TRAVEL_MM };
 
 // `descriptor` resolves WHICH lifts this robot has and how far each travels. Omit it and you

@@ -72,7 +72,7 @@ const CockpitLayout = () => {
   return (
     <Breakout>
       <div className="space-y-3 px-1">
-        <PageHeader />
+        <PageHeader showStatus={false} />
         <Banners />
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
           <div className="min-w-0 space-y-3">
@@ -99,7 +99,7 @@ const CockpitLayout = () => {
               <div className={PANEL}>
                 <p className={EYEBROW}>// leader arm</p>
                 <p className="mt-2 text-sm text-nori-h6f6858">
-                  Leader setup is open below the video — it needs the full page width.
+                  Leader setup open down below.
                 </p>
               </div>
             )}
@@ -140,11 +140,10 @@ const StageLayout = () => {
   }, []);
 
   return (
-    // Narrower than the other breakout layouts: the 4:3 feed in a wide 16:9
-    // stage stranded huge pillar bars. 3:2 stage + this width leaves slim ones.
-    <Breakout width="w-[min(90vw,1120px)]">
-      <div className="space-y-3 px-1">
-        <PageHeader extra={<ModePills />} />
+    // No Breakout: Stage sits at the shell's own width, same margins as
+    // Classic. The 3:2 stage keeps the 4:3 feed's pillar bars slim here.
+    <div className="space-y-3">
+      <PageHeader extra={<ModePills />} showStatus={false} />
         <Banners />
         <div className={PANEL + " flex flex-wrap items-center gap-3 !py-2"}>
           {recording && (
@@ -157,7 +156,12 @@ const StageLayout = () => {
           <ArmControl compact />
           <EStopButton />
         </div>
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
+        {/* The stage column is 1fr, so the rail's width is the only knob: taking
+            330px -> 380px widens the controls and narrows the video in one move.
+            Safe against the Breakout note above, which is about ASPECT (a 4:3
+            feed's pillar bars are a ratio, unchanged by absolute width) rather
+            than about how wide the column is. */}
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start">
           <div className="min-w-0 space-y-3">
             <div ref={stageRef}>
               <StageSwitcher
@@ -174,38 +178,37 @@ const StageLayout = () => {
               <div className={PANEL}>
                 <p className={EYEBROW}>// leader arm</p>
                 <p className="mt-2 text-sm text-nori-h6f6858">
-                  Leader setup is open below the stage — it needs the full page width.
+                  Leader setup open down below.
                 </p>
               </div>
             )}
           </div>
         </div>
-        {!railTaller && <SecondaryDrawers />}
-        {leader && <ActiveModeCard wide />}
-      </div>
-    </Breakout>
+      {!railTaller && <SecondaryDrawers />}
+      {leader && <ActiveModeCard wide />}
+    </div>
   );
 };
 
 // ---------------------------------------------------------------------------
 // registry
 
-export type RemoteLayoutId = "classic" | "cockpit" | "stage";
+export type RemoteLayoutId = "legacy" | "immersive" | "functional";
 
 export const REMOTE_LAYOUTS: { id: RemoteLayoutId; label: string; Component: () => JSX.Element }[] = [
-  { id: "classic", label: "Classic", Component: ClassicLayout },
-  { id: "cockpit", label: "Cockpit", Component: CockpitLayout },
-  { id: "stage", label: "Stage", Component: StageLayout },
+  { id: "functional", label: "Functional", Component: StageLayout },
+  { id: "immersive", label: "Immersive", Component: CockpitLayout },
+  { id: "legacy", label: "Legacy", Component: ClassicLayout },
 ];
 
-export const DEFAULT_REMOTE_LAYOUT: RemoteLayoutId = "classic";
+export const DEFAULT_REMOTE_LAYOUT: RemoteLayoutId = "functional";
 
 const STORAGE_KEY = "nori.remoteLayout";
 
 export function loadRemoteLayout(): RemoteLayoutId {
   try {
     const v = window.localStorage.getItem(STORAGE_KEY);
-    // Unknown ids (including deleted layouts, e.g. "mission"/"split") fall back cleanly.
+    // Unknown ids (deleted layouts, and the pre-rename "classic"/"cockpit"/"stage") fall back cleanly.
     if (v && REMOTE_LAYOUTS.some((l) => l.id === v)) return v as RemoteLayoutId;
   } catch { /* storage unavailable (private mode) — fall through */ }
   return DEFAULT_REMOTE_LAYOUT;

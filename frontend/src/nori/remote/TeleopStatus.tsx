@@ -266,11 +266,9 @@ export function TelemetryPanel({
   // Bare chip row — the page composes this into its combined // telemetry card.
   return (
     <div className={dense ? "flex flex-wrap gap-1.5" : "flex flex-wrap gap-2"}>
-      <Stat dense={dense}
-        label="link"
-        value={connected ? connState : connState}
-        tone={connected ? "good" : connState === "failed" ? "bad" : "warn"}
-      />
+      {/* No "link" chip: it mirrored the raw WebRTC state the shell's
+          ConnectionChip already shows. path/net below carry the link facts
+          that aren't duplicated. */}
       <Stat dense={dense}
         label="path"
         value={tel.linkMode ? tel.linkMode.toUpperCase() : "—"}

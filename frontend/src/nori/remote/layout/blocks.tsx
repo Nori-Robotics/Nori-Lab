@@ -171,13 +171,17 @@ export const EStopButton = ({ compact = false }: { compact?: boolean }) => {
 
 // Page header: title, status pill, connect/disconnect. `extra` lets a layout put
 // mode pills / E-STOP / the layout picker on the same row.
-export const PageHeader = ({ extra }: { extra?: ReactNode }) => {
+export const PageHeader = ({ extra, showStatus = true }: { extra?: ReactNode; showStatus?: boolean }) => {
   const { connected, status, running, connecting, connect, requestDisconnect, connectBlocked } = useRemoteUi();
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h1 className="text-3xl font-bold">Remote Operation</h1>
       <div className="flex flex-wrap items-center gap-3">
         {extra}
+        {/* showStatus=false for layouts whose header sits directly under the
+            shell's ConnectionChip — two identical pills a row apart read as a
+            glitch. Classic keeps it: its header is deeper into the page. */}
+        {showStatus && (
         <span
           className={
             "inline-flex h-9 items-center rounded-full px-3 font-mono text-xs " +
@@ -186,6 +190,7 @@ export const PageHeader = ({ extra }: { extra?: ReactNode }) => {
         >
           ● {status}
         </span>
+        )}
         {running ? (
           <Button size="sm" variant="destructive" onClick={requestDisconnect}>Disconnect</Button>
         ) : (
@@ -232,10 +237,20 @@ export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
       <span className="font-mono text-[11px] uppercase tracking-[0.14em]">
         motors: {!enabled ? "—" : armed ? "ARMED" : "disarmed"}
       </span>
-      <Button size="sm" variant={armed ? "destructive" : "default"}
-        disabled={!enabled} onClick={onClick} title={why}>
-        {armed ? "Disarm" : "Arm"}
-      </Button>
+      {/* Same retro recipe as EStopButton — hard drop shadow, press-down on
+          click — so the safety cluster reads as one family of controls. Green
+          arms; ink disarms (amber/red stay reserved for warnings and E-STOP). */}
+      <button
+        type="button" disabled={!enabled} onClick={onClick} title={why}
+        className={
+          "rounded-xl px-3 py-1.5 font-mono text-[11px] font-semibold uppercase tracking-[0.1em] transition-colors disabled:pointer-events-none disabled:opacity-40 " +
+          (armed
+            ? "bg-nori-h14131a text-background shadow-[0_2px_0_#000] hover:bg-nori-h14131a/85 active:translate-y-px active:shadow-none"
+            : "bg-nori-h8ab135 text-nori-h14131a shadow-[0_2px_0_theme(colors.nori.h4d6a1e)] hover:bg-nori-h799c2a active:translate-y-px active:shadow-none")
+        }
+      >
+        {armed ? "disarm" : "arm"}
+      </button>
     </div>
   );
 };
@@ -718,11 +733,21 @@ export const StageSwitcher = ({
   const [stageIs3d, setStageIs3d] = useState(false);
   const [pipHidden, setPipHidden] = useState(false);
   const stageCls = "absolute inset-0";
+  // The expanded 3D view is a centred SQUARE of the stage's height, not the
+  // video's wide aspect — a robot is taller than it is wide, and the wide
+  // frame stranded it between dead margins. The stage box itself keeps the
+  // video aspect so the page doesn't jump when swapping.
+  const stage3dCls = "absolute inset-y-0 left-1/2 aspect-square h-full -translate-x-1/2";
   // aspect gives the PIP box a height of its own — its children size with
-  // h-full, which would collapse in a width-only box.
-  const pipCls = "group absolute bottom-3 right-3 z-10 aspect-[4/3] w-56 cursor-pointer overflow-hidden rounded-md border-2 border-background/60 shadow-lg transition-transform hover:scale-[1.03]";
+  // h-full, which would collapse in a width-only box. The 3D PIP is SQUARE
+  // (like its expanded form — the robot is portrait); the camera PIP keeps
+  // the feed's 4:3.
+  const pipBase = "group absolute bottom-3 right-3 z-10 cursor-pointer overflow-hidden rounded-md border-2 border-background/60 shadow-lg transition-transform hover:scale-[1.03] ";
   const pipLabel = stageIs3d ? "camera" : "3d";
-  const cls = (isStage: boolean) => (isStage ? stageCls : pipHidden ? "hidden" : pipCls);
+  const cls = (isStage: boolean, is3d: boolean) =>
+    isStage ? (is3d ? stage3dCls : stageCls)
+    : pipHidden ? "hidden"
+    : pipBase + (is3d ? "aspect-square w-44" : "aspect-[4/3] w-56");
   const pipProps = (isStage: boolean) =>
     isStage ? {} : {
       onClick: () => setStageIs3d((v) => !v),
@@ -740,11 +765,11 @@ export const StageSwitcher = ({
   );
   return (
     <div className={"relative " + className}>
-      <div className={cls(!stageIs3d)} {...pipProps(!stageIs3d)}>
+      <div className={cls(!stageIs3d, false)} {...pipProps(!stageIs3d)}>
         {video}
         {stageIs3d && !pipHidden && collapseButton}
       </div>
-      <div className={cls(stageIs3d)} {...pipProps(stageIs3d)}>
+      <div className={cls(stageIs3d, true)} {...pipProps(stageIs3d)}>
         {schematic}
         {!stageIs3d && !pipHidden && collapseButton}
       </div>

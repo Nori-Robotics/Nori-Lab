@@ -500,7 +500,7 @@ const Remote = () => {
           htmlFor="remote-layout"
           className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground"
         >
-          layout
+          preferred layout:
         </label>
         <select
           id="remote-layout"

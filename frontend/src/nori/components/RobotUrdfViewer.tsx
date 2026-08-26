@@ -264,7 +264,7 @@ function styleAndFrame(
   // a little headroom so it isn't wedged against the edges. (1.45 read as
   // zoomed-out — the robot floated small in the frame; 2026-08-25.)
   const extent = Math.max(size.x, size.y, size.z);
-  const dist = (extent / 2 / Math.tan((camera.fov * Math.PI) / 180 / 2)) * 1.12;
+  const dist = (extent / 2 / Math.tan((camera.fov * Math.PI) / 180 / 2)) * 1.0;
 
   // Slightly off-axis and a touch below centre — the same gentle look-up as the
   // remote page, which reads better than a dead-on elevation.
@@ -893,6 +893,27 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     // refetch ~10 MB of meshes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The scene background, though, is BAKED into the viewer at mount — the
+  // effect above runs once, so a theme toggle left the canvas painting the
+  // old theme's colour over the (correctly flipped) container token. Repaint
+  // just the background on theme change; lights/materials read fine in both.
+  useEffect(() => {
+    const v = viewerRef.current;
+    if (!v?.scene) return;
+    const composed = Boolean(postRef.current);
+    let bg: THREE.Color;
+    if (composed) {
+      // Pre-grade source — same recipe as mount (see the comment there).
+      bg = new THREE.Color(isDark ? "#262320" : "#ffedcf");
+      if (!isDark) bg.multiplyScalar(1.35);
+    } else {
+      bg = new THREE.Color(isDark ? "#1a1918" : "#e9e5db");
+    }
+    v.scene.background = bg;
+    v.redraw();
+    postRef.current?.invalidate();
+  }, [isDark]);
 
   // Applied via OrbitControls' touch map rather than `.enabled`: the element's
   // own drag handler toggles `.enabled` around every joint drag, so a mode

@@ -5,12 +5,20 @@
 // layout picker in pages/remote.tsx; switching is locked while a session is
 // live, so layouts can assume they mount with no active stream.
 //
+// Conventions shared by every layout:
+//  - the header is status + Connect only; the safety cluster (arm/disarm +
+//    E-STOP) lives in the `// controls` strip (or Stage's status strip), so
+//    three differently-styled buttons never pile up next to Connect;
+//  - secondary surfaces (record/deploy/telemetry/audio/logs) stack in the same
+//    column as the thing they relate to, so columns end together instead of
+//    leaving a gap under the shorter one.
+//
 // Field-test set — expect most of these to be deleted once usage narrows the
-// list to one or two. Deleting a layout = removing its entry + component here.
+// list to one or two. (Mission control already fell: too cramped.)
 
 import { useRemoteUi, PANEL, EYEBROW, PageHeader, Banners, VideoSurface, VitalsChips,
   TelemetryDetail, TelemetryCard, AudioCard, ModePills, ControlsStrip, ActiveModeCard,
-  SchematicCard, LogsCard, LogBox, LogTicker, RecordBlock, DeployBlock, EStopButton, ArmControl,
+  SchematicCard, LogsCard, LogBox, RecordBlock, DeployBlock, EStopButton, ArmControl,
   Drawers, TabPanes, StageSwitcher, Breakout } from "./blocks";
 
 // ---------------------------------------------------------------------------
@@ -19,7 +27,7 @@ import { useRemoteUi, PANEL, EYEBROW, PageHeader, Banners, VideoSurface, VitalsC
 const ClassicLayout = () => (
   <div className="grid gap-4 lg:grid-cols-[1fr_400px]">
     <div className="min-w-0 space-y-3">
-      <PageHeader extra={<><ArmControl /><EStopButton compact /></>} />
+      <PageHeader />
       <Banners />
       <VideoSurface />
       <RecordBlock />
@@ -37,16 +45,17 @@ const ClassicLayout = () => (
 );
 
 // ---------------------------------------------------------------------------
-// Cockpit — video-first, vitals as a HUD over the feed, 3D as a click-to-swap
-// PIP, everything secondary in a bottom drawer bar. Leader mode's embedded
-// setup is far too tall for the rail, so it renders full-width below instead.
+// Cockpit — video-first: stage + vitals + drawers stack in the left column so
+// there's no dead space under either column; the rail is controls only.
+// Leader mode's embedded setup is far too tall for the rail, so it renders
+// full-width below instead.
 const CockpitLayout = () => {
   const { controlMode } = useRemoteUi();
   const leader = controlMode === "leader";
   return (
     <Breakout>
       <div className="space-y-3 px-1">
-        <PageHeader extra={<><ArmControl /><EStopButton /></>} />
+        <PageHeader />
         <Banners />
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
           <div className="min-w-0 space-y-3">
@@ -58,10 +67,23 @@ const CockpitLayout = () => {
               schematic={<SchematicCard bare heightClass="h-full" interactive />}
             />
             {/* Vitals as a strip UNDER the feed, not over it — chips are cream
-                panels and read as noise on top of dark video. */}
+                panels and read as noise on top of dark video. Drawers follow
+                immediately, same column, so vitals→drawers has no gap. */}
             <div className={PANEL + " !py-2"}>
               <VitalsChips />
             </div>
+            <Drawers
+              items={[
+                { id: "record", label: "record dataset", body: <RecordBlock open /> },
+                { id: "deploy", label: "deploy policy", body: <DeployBlock open /> },
+                {
+                  id: "telemetry", label: "full telemetry",
+                  body: <div className={PANEL}><TelemetryDetail /></div>,
+                },
+                { id: "audio", label: "audio", body: <AudioCard /> },
+                { id: "logs", label: "robot logs", body: <LogBox /> },
+              ]}
+            />
           </div>
           <div className="min-w-0 space-y-3">
             <ControlsStrip />
@@ -74,62 +96,13 @@ const CockpitLayout = () => {
                 </p>
               </div>
             )}
-            <AudioCard />
           </div>
         </div>
         {leader && <ActiveModeCard />}
-        <Drawers
-          items={[
-            { id: "record", label: "record dataset", body: <RecordBlock open /> },
-            { id: "deploy", label: "deploy policy", body: <DeployBlock open /> },
-            {
-              id: "telemetry", label: "full telemetry",
-              body: <div className={PANEL}><TelemetryDetail /></div>,
-            },
-            { id: "logs", label: "robot logs", body: <LogBox /> },
-          ]}
-        />
       </div>
     </Breakout>
   );
 };
-
-// ---------------------------------------------------------------------------
-// Mission control — three columns, nothing hidden: telemetry left, video
-// center with a log ticker, controls + 3D right.
-const MissionControlLayout = () => (
-  <Breakout>
-    <div className="space-y-3 px-1">
-      <PageHeader extra={<><ArmControl /><EStopButton /></>} />
-      <Banners />
-      <div className="grid gap-4 lg:grid-cols-[250px_minmax(0,1fr)_340px]">
-        <div className="min-w-0 space-y-3">
-          <div className={PANEL}>
-            <p className={EYEBROW}>// vitals</p>
-            <div className="mt-3"><VitalsChips /></div>
-          </div>
-          <div className={PANEL}><TelemetryDetail /></div>
-        </div>
-        <div className="min-w-0 space-y-3">
-          <VideoSurface />
-          <LogTicker />
-        </div>
-        <div className="min-w-0 space-y-3">
-          <ControlsStrip />
-          <ActiveModeCard />
-          <SchematicCard />
-          <AudioCard />
-          <Drawers
-            items={[
-              { id: "record", label: "record", body: <RecordBlock open /> },
-              { id: "deploy", label: "deploy", body: <DeployBlock open /> },
-            ]}
-          />
-        </div>
-      </div>
-    </div>
-  </Breakout>
-);
 
 // ---------------------------------------------------------------------------
 // Split + tabs — pairing's proven 2:1 split: video and a TALL, orbitable 3D
@@ -138,12 +111,12 @@ const MissionControlLayout = () => (
 const SplitTabsLayout = () => (
   <Breakout>
     <div className="space-y-3 px-1">
-      <PageHeader extra={<><ArmControl /><EStopButton /></>} />
+      <PageHeader />
       <Banners />
       <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start">
         <VideoSurface />
         {/* The video's 4:3 height leaves this column headroom, so the mode
-            pills live here, above the schematic, instead of in the header. */}
+            pills + safety cluster live here, above the schematic. */}
         <div className="min-w-0 space-y-3">
           <ControlsStrip />
           <SchematicCard heightClass="h-[420px]" interactive />
@@ -169,8 +142,9 @@ const SplitTabsLayout = () => (
 
 // ---------------------------------------------------------------------------
 // Stage — one big canvas that swaps video <-> 3D, with an always-visible
-// status strip (vitals + E-STOP) that never scrolls away and never covers the
-// feed. Leader mode drops below the grid, as in Cockpit.
+// status strip (vitals + arm + E-STOP) that never scrolls away and never
+// covers the feed. Drawers stack under the stage (audio included) so the
+// columns end together. Leader mode drops below the grid, as in Cockpit.
 const StageLayout = () => {
   const { controlMode, recordState } = useRemoteUi();
   const leader = controlMode === "leader";
@@ -188,15 +162,29 @@ const StageLayout = () => {
             </span>
           )}
           <div className="min-w-0 flex-1"><VitalsChips /></div>
-          <ArmControl />
+          <ArmControl compact />
           <EStopButton />
         </div>
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
-          <StageSwitcher
-            className="aspect-[16/9]"
-            video={<VideoSurface fill className="h-full" />}
-            schematic={<SchematicCard bare heightClass="h-full" interactive />}
-          />
+          <div className="min-w-0 space-y-3">
+            <StageSwitcher
+              className="aspect-[16/9]"
+              video={<VideoSurface fill className="h-full" />}
+              schematic={<SchematicCard bare heightClass="h-full" interactive />}
+            />
+            <Drawers
+              items={[
+                { id: "record", label: "record dataset", body: <RecordBlock open /> },
+                { id: "deploy", label: "deploy policy", body: <DeployBlock open /> },
+                {
+                  id: "telemetry", label: "full telemetry",
+                  body: <div className={PANEL}><TelemetryDetail /></div>,
+                },
+                { id: "audio", label: "audio", body: <AudioCard /> },
+                { id: "logs", label: "robot logs", body: <LogBox /> },
+              ]}
+            />
+          </div>
           <div className="min-w-0 space-y-3">
             {!leader && <ActiveModeCard />}
             {leader && (
@@ -207,21 +195,9 @@ const StageLayout = () => {
                 </p>
               </div>
             )}
-            <AudioCard />
           </div>
         </div>
         {leader && <ActiveModeCard />}
-        <Drawers
-          items={[
-            { id: "record", label: "record dataset", body: <RecordBlock open /> },
-            { id: "deploy", label: "deploy policy", body: <DeployBlock open /> },
-            {
-              id: "telemetry", label: "full telemetry",
-              body: <div className={PANEL}><TelemetryDetail /></div>,
-            },
-            { id: "logs", label: "robot logs", body: <LogBox /> },
-          ]}
-        />
       </div>
     </Breakout>
   );
@@ -230,12 +206,11 @@ const StageLayout = () => {
 // ---------------------------------------------------------------------------
 // registry
 
-export type RemoteLayoutId = "classic" | "cockpit" | "mission" | "split" | "stage";
+export type RemoteLayoutId = "classic" | "cockpit" | "split" | "stage";
 
 export const REMOTE_LAYOUTS: { id: RemoteLayoutId; label: string; Component: () => JSX.Element }[] = [
   { id: "classic", label: "Classic", Component: ClassicLayout },
   { id: "cockpit", label: "Cockpit", Component: CockpitLayout },
-  { id: "mission", label: "Mission control", Component: MissionControlLayout },
   { id: "split", label: "Split + tabs", Component: SplitTabsLayout },
   { id: "stage", label: "Stage", Component: StageLayout },
 ];
@@ -247,6 +222,7 @@ const STORAGE_KEY = "nori.remoteLayout";
 export function loadRemoteLayout(): RemoteLayoutId {
   try {
     const v = window.localStorage.getItem(STORAGE_KEY);
+    // Unknown ids (including deleted layouts, e.g. "mission") fall back cleanly.
     if (v && REMOTE_LAYOUTS.some((l) => l.id === v)) return v as RemoteLayoutId;
   } catch { /* storage unavailable (private mode) — fall through */ }
   return DEFAULT_REMOTE_LAYOUT;

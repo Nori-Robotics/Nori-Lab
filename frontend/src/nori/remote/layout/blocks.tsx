@@ -206,7 +206,7 @@ export const PageHeader = ({ extra }: { extra?: ReactNode }) => {
 // whose gateway doesn't report `armed`. Confirm dialogs are deliberate:
 // arming energizes hardware, disarming lets gravity-loaded arms drop after
 // the robot's idle timer. Customer-grade needs role gating + a real dialog.
-export const ArmControl = () => {
+export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
   const { teleop, running, daemonStatus } = useRemoteUi();
   // Always rendered; greyed out until the robot can actually take the verb.
   // `armed` present in daemon_status is the capability signal — an older
@@ -228,7 +228,10 @@ export const ArmControl = () => {
     if (ok) teleop.setArmed(!armed);
   };
   return (
-    <div className={"flex items-center gap-3 rounded-md border border-nori-h14131a/15 px-4 py-2"
+    // compact drops the bordered wrapper — for hosts (the controls strip) that
+    // already provide a panel around it.
+    <div className={"flex items-center gap-3" +
+        (compact ? "" : " rounded-md border border-nori-h14131a/15 px-4 py-2")
         + (enabled ? "" : " opacity-50")}>
       <span className="font-mono text-[11px] uppercase tracking-[0.14em]">
         motors: {!enabled ? "—" : armed ? "ARMED" : "disarmed"}
@@ -416,10 +419,18 @@ export const ModePills = () => {
 };
 
 // The classic `// controls` strip: eyebrow + pills in a panel.
+// The controls strip is also the safety cluster's home: mode pills, then
+// arm/disarm, then E-STOP — grouped here rather than scattered through the
+// header, where three differently-styled buttons next to Connect read as
+// clutter. Wraps to two rows in narrow rails.
 export const ControlsStrip = () => (
   <div className="flex min-h-16 flex-wrap items-center gap-3 rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-4 py-2 text-nori-h14131a shadow-sm">
     <p className={EYEBROW}>// controls</p>
-    <div className="ml-auto"><ModePills /></div>
+    <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+      <ModePills />
+      <ArmControl compact />
+      <EStopButton compact />
+    </div>
   </div>
 );
 
@@ -636,33 +647,6 @@ export const LogBox = () => {
         <span className="text-muted-foreground">Connect to Nori to view logs</span>
       )}
     </div>
-  );
-};
-
-// One-line log ticker (Mission control): last line + click-to-expand.
-export const LogTicker = () => {
-  const { logLines } = useRemoteUi();
-  const [open, setOpen] = useState(false);
-  const last = logLines[logLines.length - 1] ?? "no log lines yet — connect to Nori";
-  if (open) {
-    return (
-      <div>
-        <LogBox />
-        <button type="button" className="mt-1 font-mono text-[11px] uppercase text-muted-foreground" onClick={() => setOpen(false)}>
-          ▲ collapse logs
-        </button>
-      </div>
-    );
-  }
-  return (
-    <button
-      type="button"
-      onClick={() => setOpen(true)}
-      className="w-full truncate rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb px-3 py-1.5 text-left font-mono text-[11px] text-nori-h6f6858"
-      title="Click to expand the full robot log"
-    >
-      {last}
-    </button>
   );
 };
 

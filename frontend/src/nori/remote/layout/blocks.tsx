@@ -201,6 +201,34 @@ export const PageHeader = ({ extra }: { extra?: ReactNode }) => {
   );
 };
 
+// Bench-grade arm/disarm (2026-08-25). Renders ONLY robot-reported state
+// (daemon_status.armed) — never the button press; hidden entirely on robots
+// whose gateway doesn't report `armed`. Confirm dialogs are deliberate:
+// arming energizes hardware, disarming lets gravity-loaded arms drop after
+// the robot's idle timer. Customer-grade needs role gating + a real dialog.
+export const ArmControl = () => {
+  const { teleop, running, daemonStatus } = useRemoteUi();
+  if (!running || !daemonStatus || daemonStatus.state !== "online"
+      || daemonStatus.armed === undefined) return null;
+  const armed = daemonStatus.armed;
+  const onClick = () => {
+    const ok = window.confirm(armed
+      ? "Disarm motors? The arms de-torque shortly after — support them so they don't drop."
+      : "Arm motors? The arms will take torque and hold position; keyboard/VR commands will move them.");
+    if (ok) teleop.setArmed(!armed);
+  };
+  return (
+    <div className="flex items-center gap-3 rounded-md border border-nori-h14131a/15 px-4 py-2">
+      <span className="font-mono text-[11px] uppercase tracking-[0.14em]">
+        motors: {armed ? "ARMED" : "disarmed"}
+      </span>
+      <Button size="sm" variant={armed ? "destructive" : "default"} onClick={onClick}>
+        {armed ? "Disarm" : "Arm"}
+      </Button>
+    </div>
+  );
+};
+
 // The three status banners. Rendered by every layout, above the fold.
 export const Banners = () => {
   const { connectStatus, running, daemonStatus, tel, servoThermal } = useRemoteUi();
@@ -209,6 +237,7 @@ export const Banners = () => {
       <ConnectionBanner status={connectStatus} />
       {running && <ControlOfflineBanner status={daemonStatus} />}
       {running && <OvertempBanner latchReason={tel.latchReason} cutC={servoThermal.cutC} />}
+      <ArmControl />
     </>
   );
 };
@@ -219,11 +248,14 @@ export const Banners = () => {
 export const VideoSurface = ({
   className = "", fill = false, overlay,
 }: { className?: string; fill?: boolean; overlay?: ReactNode }) => {
-  const { videoRef, selfViewRef, m6, call, cameraTiles, selectedCamera, setSelectedCamera } = useRemoteUi();
+  const { videoRef, selfViewRef, m6, call, cameraTiles, selectedCamera, setSelectedCamera, connected } = useRemoteUi();
   return (
     <div className={"relative " + className}>
+      {/* Native controls only while a stream is live: on an empty element the
+          browser still paints a greyed-out timestamp/fullscreen bar, which
+          reads as a broken player rather than "not connected". */}
       <video
-        ref={videoRef} autoPlay playsInline muted controls
+        ref={videoRef} autoPlay playsInline muted controls={connected}
         className={"w-full rounded-md bg-background " + (fill ? "h-full object-contain" : "")}
         style={fill ? undefined : { aspectRatio: "4 / 3" }}
       />
@@ -617,11 +649,24 @@ export const LogTicker = () => {
   );
 };
 
-// Record / deploy / cloud, unchanged — thin aliases so layouts read uniformly.
-export const RecordBlock = () => <DatasetCaptureCard />;
-export const DeployBlock = () => (
+// Record / deploy / cloud. `open` pre-expands the cards for layouts that put
+// them behind a drawer/tab of their own — a second collapsed header inside an
+// already-opened drawer reads as broken.
+export const RecordBlock = ({ open = false }: { open?: boolean }) => (
+  <DatasetCaptureCard defaultOpen={open} />
+);
+export const DeployBlock = ({ open = false }: { open?: boolean }) => (
   <>
-    <PolicyDeployCard />
+    <PolicyDeployCard
+      defaultOpen={open}
+      unavailableNote={
+        open ? (
+          <p className="text-sm text-nori-h6f6858">
+            Policy deploy needs the local lelab app — nothing answered on this machine.
+          </p>
+        ) : undefined
+      }
+    />
     {isCloudServeEnabled() && <RunOnRobotCloud />}
   </>
 );

@@ -201,6 +201,9 @@ export interface DaemonStatus {
   //   unreachable | connection_lost   daemon down or restarting (no more-specific reason)
   reason?: string;
   detail?: string; // operator-facing text; carries the daemon's own message when it sent one
+  // online only — whether the arm buses are armed (arbiter ownership held by the
+  // gateway). Absent on robots whose gateway predates arming support.
+  armed?: boolean;
 }
 
 // ---- connect diagnostics ---------------------------------------------------------------
@@ -1101,6 +1104,15 @@ export class RemoteTeleop {
   // NOTE: command("estop") THROWS when the control channel is known-dead — see sendCmd.
   command(cmd: "estop" | "reset_latch" | "reset") {
     this.sendCmd(cmd);
+  }
+
+  // Ask the robot to arm/disarm its motor buses (arbiter ownership on the robot side).
+  // Fire-and-forget like ordinary verbs; the truthful armed state comes BACK on
+  // daemon_status.armed — render that, never this call. Robots without arming support
+  // ignore the verb and never report `armed`.
+  setArmed(on: boolean) {
+    this.dcSend({ type: "command", [on ? "arm" : "disarm"]: true });
+    this.log(on ? "arm requested" : "disarm requested — support the arms; they de-torque");
   }
 
   // estopConfirmed(): resolvers waiting for the NEXT wire-reported "latched" safety state.
@@ -2077,9 +2089,11 @@ export class RemoteTeleop {
     const s: DaemonStatus = { state: String(m.state ?? "") };
     if (typeof m.reason === "string" && m.reason) s.reason = m.reason;
     if (typeof m.detail === "string" && m.detail) s.detail = m.detail;
+    if (typeof m.armed === "boolean") s.armed = m.armed;
     if (!s.state) return;
     const prev = this.daemonStat;
-    if (prev && prev.state === s.state && prev.reason === s.reason && prev.detail === s.detail) return;
+    if (prev && prev.state === s.state && prev.reason === s.reason && prev.detail === s.detail
+        && prev.armed === s.armed) return;
     this.daemonStat = s;
     // Operator-facing log line: no reason code, no raw detail — the on-screen banner carries the
     // plain-English remedy for the same event.

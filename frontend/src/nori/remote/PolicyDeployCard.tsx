@@ -7,7 +7,7 @@
 // Desktop-only: the local-policy cache and the rollout subprocess live in lelab,
 // so the card renders nothing on the hosted app (the list fetch is LeLab-only).
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,7 +45,13 @@ function shortRef(ref: string): string {
 // instruction (nori_rollout.py _LANGUAGE_POLICY_TYPES — keep in sync).
 const LANGUAGE_POLICY_CLASSES = new Set(["smolvla"]);
 
-export function PolicyDeployCard() {
+// defaultOpen: start expanded — for layouts that already put the card behind
+// their own drawer/tab. unavailableNote: what to render instead of nothing
+// when there's no local lelab (an empty drawer body reads as a bug).
+export function PolicyDeployCard({
+  defaultOpen = false,
+  unavailableNote,
+}: { defaultOpen?: boolean; unavailableNote?: ReactNode } = {}) {
   const { baseUrl, fetchWithHeaders } = useApi();
   const { teleop, running, tel } = useTeleopSession();
   const { toast } = useToast();
@@ -58,7 +64,7 @@ export function PolicyDeployCard() {
   const [classByRef, setClassByRef] = useState<Record<string, string>>({});
   // ref -> the operator's instruction for a language-conditioned bundle
   const [instrByRef, setInstrByRef] = useState<Record<string, string>>({});
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [mode, setMode] = useState<ExecutionMode>("smooth");
   const [runState, setRunState] = useState<{ ref: string | null; phase: PolicyRunPhase }>({
     ref: null,
@@ -170,7 +176,7 @@ export function PolicyDeployCard() {
     void runnerRef.current?.stop();
   }, []);
 
-  if (!available) return null;
+  if (!available) return unavailableNote ? <>{unavailableNote}</> : null;
 
   const runnable = policies.filter((p) => p.runnable);
 

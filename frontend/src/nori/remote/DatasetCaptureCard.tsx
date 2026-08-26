@@ -36,7 +36,9 @@ type Phase =
   | { kind: "recording" }                         // an episode is recording
   | { kind: "review"; url: string | null };       // just-stopped episode awaiting Keep/Reject
 
-export function DatasetCaptureCard() {
+// defaultOpen: start expanded — for layouts that already put the card behind
+// their own drawer/tab, where a second collapsed header inside reads as broken.
+export function DatasetCaptureCard({ defaultOpen = false }: { defaultOpen?: boolean } = {}) {
   const { teleop, running, connState, recordState } = useTeleopSession();
   const { baseUrl, fetchWithHeaders } = useApi();
   const connected = running && connState === "connected";
@@ -66,7 +68,7 @@ export function DatasetCaptureCard() {
   const [previewNote, setPreviewNote] = useState<string>("");   // why a preview was empty
   const [episodeCount, setEpisodeCount] = useState(0);   // kept episodes this session
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   // Record-time episode names. The recorder wire has no name field, so names
   // are held per kept episode and queued at Finish session; a background loop
   // applies them to the uploaded recording (pendingEpisodeNames.ts).

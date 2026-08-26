@@ -488,9 +488,14 @@ const Remote = () => {
         </p>
       )}
 
-      {/* Layout picker — a field-test affordance. Locked during a session so a
-          switch never has to carry live media/drivers across arrangements. */}
-      <div className="flex items-center justify-end gap-2">
+      <RemoteUiProvider value={ui}>
+        <LayoutComponent />
+      </RemoteUiProvider>
+
+      {/* Layout picker — a field-test affordance, parked at the page's tail so
+          it never competes with operating controls. Locked during a session so
+          a switch never has to carry live media/drivers across arrangements. */}
+      <div className="flex items-center justify-end gap-2 border-t border-nori-h14131a/10 pt-3">
         <label
           htmlFor="remote-layout"
           className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground"
@@ -514,10 +519,6 @@ const Remote = () => {
           ))}
         </select>
       </div>
-
-      <RemoteUiProvider value={ui}>
-        <LayoutComponent />
-      </RemoteUiProvider>
 
       {/* Robot inbound audio — always mounted at page level (layouts move the
           video around; the audio sink must never remount with them). */}

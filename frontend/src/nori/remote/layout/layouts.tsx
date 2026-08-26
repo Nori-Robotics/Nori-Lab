@@ -48,22 +48,21 @@ const CockpitLayout = () => {
       <div className="space-y-3 px-1">
         <PageHeader extra={<EStopButton />} />
         <Banners />
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <StageSwitcher
-            className="min-h-[420px] lg:min-h-[560px]"
-            video={
-              <VideoSurface
-                fill
-                className="h-full"
-                overlay={
-                  <div className="pointer-events-none absolute inset-x-3 bottom-3 [&_*]:pointer-events-auto">
-                    <VitalsChips />
-                  </div>
-                }
-              />
-            }
-            schematic={<SchematicCard bare heightClass="h-full" interactive />}
-          />
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+          <div className="min-w-0 space-y-3">
+            {/* Fixed aspect: the stage must not resize when the rail's mode card
+                changes height (grid children stretch to the tallest by default). */}
+            <StageSwitcher
+              className="aspect-[16/10]"
+              video={<VideoSurface fill className="h-full" />}
+              schematic={<SchematicCard bare heightClass="h-full" interactive />}
+            />
+            {/* Vitals as a strip UNDER the feed, not over it — chips are cream
+                panels and read as noise on top of dark video. */}
+            <div className={PANEL + " !py-2"}>
+              <VitalsChips />
+            </div>
+          </div>
           <div className="min-w-0 space-y-3">
             <ControlsStrip />
             {!leader && <ActiveModeCard />}
@@ -81,8 +80,8 @@ const CockpitLayout = () => {
         {leader && <ActiveModeCard />}
         <Drawers
           items={[
-            { id: "record", label: "record dataset", body: <RecordBlock /> },
-            { id: "deploy", label: "deploy policy", body: <DeployBlock /> },
+            { id: "record", label: "record dataset", body: <RecordBlock open /> },
+            { id: "deploy", label: "deploy policy", body: <DeployBlock open /> },
             {
               id: "telemetry", label: "full telemetry",
               body: <div className={PANEL}><TelemetryDetail /></div>,
@@ -122,8 +121,8 @@ const MissionControlLayout = () => (
           <AudioCard />
           <Drawers
             items={[
-              { id: "record", label: "record", body: <RecordBlock /> },
-              { id: "deploy", label: "deploy", body: <DeployBlock /> },
+              { id: "record", label: "record", body: <RecordBlock open /> },
+              { id: "deploy", label: "deploy", body: <DeployBlock open /> },
             ]}
           />
         </div>
@@ -139,18 +138,16 @@ const MissionControlLayout = () => (
 const SplitTabsLayout = () => (
   <Breakout>
     <div className="space-y-3 px-1">
-      <PageHeader
-        extra={
-          <div className="flex flex-wrap items-center gap-2">
-            <ModePills />
-            <EStopButton />
-          </div>
-        }
-      />
+      <PageHeader extra={<EStopButton />} />
       <Banners />
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start">
         <VideoSurface />
-        <SchematicCard heightClass="h-[420px]" interactive />
+        {/* The video's 4:3 height leaves this column headroom, so the mode
+            pills live here, above the schematic, instead of in the header. */}
+        <div className="min-w-0 space-y-3">
+          <ControlsStrip />
+          <SchematicCard heightClass="h-[420px]" interactive />
+        </div>
       </div>
       <div className={PANEL}>
         <div className="mb-3"><VitalsChips /></div>
@@ -159,8 +156,8 @@ const SplitTabsLayout = () => (
           items={[
             { id: "telemetry", label: "Telemetry", body: <TelemetryDetail /> },
             { id: "controls", label: "Controls", body: <ActiveModeCard /> },
-            { id: "record", label: "Record dataset", body: <RecordBlock /> },
-            { id: "deploy", label: "Deploy policy", body: <DeployBlock /> },
+            { id: "record", label: "Record dataset", body: <RecordBlock open /> },
+            { id: "deploy", label: "Deploy policy", body: <DeployBlock open /> },
             { id: "audio", label: "Audio", body: <AudioCard /> },
             { id: "logs", label: "Logs", body: <LogBox /> },
           ]}
@@ -193,9 +190,9 @@ const StageLayout = () => {
           <div className="min-w-0 flex-1"><VitalsChips /></div>
           <EStopButton />
         </div>
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_330px]">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
           <StageSwitcher
-            className="min-h-[420px] lg:min-h-[540px]"
+            className="aspect-[16/9]"
             video={<VideoSurface fill className="h-full" />}
             schematic={<SchematicCard bare heightClass="h-full" interactive />}
           />
@@ -215,8 +212,8 @@ const StageLayout = () => {
         {leader && <ActiveModeCard />}
         <Drawers
           items={[
-            { id: "record", label: "record dataset", body: <RecordBlock /> },
-            { id: "deploy", label: "deploy policy", body: <DeployBlock /> },
+            { id: "record", label: "record dataset", body: <RecordBlock open /> },
+            { id: "deploy", label: "deploy policy", body: <DeployBlock open /> },
             {
               id: "telemetry", label: "full telemetry",
               body: <div className={PANEL}><TelemetryDetail /></div>,

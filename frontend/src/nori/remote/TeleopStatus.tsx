@@ -96,6 +96,8 @@ const CONTROL_REMEDIES: Record<string, string> = {
     "A motor cable disconnected. The robot is restarting motor control — it should return in about 15 seconds. If it keeps happening, check the cable.",
   unauthorized:
     "The robot rejected the control token (provisioning problem). Contact support — this won't fix itself.",
+  motion_disabled:
+    "Remote motion isn't enabled on this robot. Video, episodes and calls all work; driving from this page requires enabling motion on the robot itself.",
   unreachable:
     "The robot's motor control is down or restarting. It should return shortly; video keeps working.",
   connection_lost:
@@ -107,7 +109,7 @@ const CONTROL_REMEDIES: Record<string, string> = {
 // Reasons where "reconnecting" is a LIE: the robot is not coming back on its own
 // timescale, and telling an operator to wait is the wrong instruction when the arm
 // may be about to sag. Keeps the headline honest without a second banner component.
-const NOT_RECONNECTING = new Set(["servo_overheat", "unauthorized"]);
+const NOT_RECONNECTING = new Set(["servo_overheat", "unauthorized", "motion_disabled"]);
 export function controlRemedy(reason?: string): string {
   return (reason && CONTROL_REMEDIES[reason]) || CONTROL_REMEDIES.unreachable;
 }
@@ -121,9 +123,11 @@ export function ControlOfflineBanner({ status }: { status: DaemonStatus | null }
   return (
     <div className="rounded-md border border-nori-hd24a3d/35 bg-nori-hfde7e4 px-4 py-3 text-nori-ha3271c">
       <p className="font-mono text-[11px] uppercase tracking-[0.14em]">
-        {status.reason && NOT_RECONNECTING.has(status.reason)
-          ? "Robot motor control stopped"
-          : "Robot motor control offline, reconnecting"}
+        {status.reason === "motion_disabled"
+          ? "Remote motion not enabled on this robot"
+          : status.reason && NOT_RECONNECTING.has(status.reason)
+            ? "Robot motor control stopped"
+            : "Robot motor control offline, reconnecting"}
       </p>
       <p className="mt-1 text-sm">{controlRemedy(status.reason)}</p>
     </div>

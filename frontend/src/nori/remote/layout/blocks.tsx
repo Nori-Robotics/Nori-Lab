@@ -208,21 +208,33 @@ export const PageHeader = ({ extra }: { extra?: ReactNode }) => {
 // the robot's idle timer. Customer-grade needs role gating + a real dialog.
 export const ArmControl = () => {
   const { teleop, running, daemonStatus } = useRemoteUi();
-  if (!running || !daemonStatus || daemonStatus.state !== "online"
-      || daemonStatus.armed === undefined) return null;
-  const armed = daemonStatus.armed;
+  // Always rendered; greyed out until the robot can actually take the verb.
+  // `armed` present in daemon_status is the capability signal — an older
+  // gateway never reports it, so the button stays disabled with the reason.
+  const online = running && daemonStatus?.state === "online";
+  const supported = daemonStatus?.armed !== undefined;
+  const enabled = online && supported && teleop !== null;
+  const armed = daemonStatus?.armed === true;
+  const why = !running ? "Connect to the robot first"
+    : !online ? "Robot motion control is offline"
+    : !supported ? "This robot's gateway doesn't support remote arming yet"
+    : armed ? "Robot arms are holding torque — disarm de-torques them (support the arms)"
+    : "Arm the motor buses so keyboard/VR commands move the robot";
   const onClick = () => {
+    if (!teleop) return;
     const ok = window.confirm(armed
       ? "Disarm motors? The arms de-torque shortly after — support them so they don't drop."
       : "Arm motors? The arms will take torque and hold position; keyboard/VR commands will move them.");
     if (ok) teleop.setArmed(!armed);
   };
   return (
-    <div className="flex items-center gap-3 rounded-md border border-nori-h14131a/15 px-4 py-2">
+    <div className={"flex items-center gap-3 rounded-md border border-nori-h14131a/15 px-4 py-2"
+        + (enabled ? "" : " opacity-50")}>
       <span className="font-mono text-[11px] uppercase tracking-[0.14em]">
-        motors: {armed ? "ARMED" : "disarmed"}
+        motors: {!enabled ? "—" : armed ? "ARMED" : "disarmed"}
       </span>
-      <Button size="sm" variant={armed ? "destructive" : "default"} onClick={onClick}>
+      <Button size="sm" variant={armed ? "destructive" : "default"}
+        disabled={!enabled} onClick={onClick} title={why}>
         {armed ? "Disarm" : "Arm"}
       </Button>
     </div>
@@ -237,7 +249,6 @@ export const Banners = () => {
       <ConnectionBanner status={connectStatus} />
       {running && <ControlOfflineBanner status={daemonStatus} />}
       {running && <OvertempBanner latchReason={tel.latchReason} cutC={servoThermal.cutC} />}
-      <ArmControl />
     </>
   );
 };
@@ -253,10 +264,16 @@ export const VideoSurface = ({
     <div className={"relative " + className}>
       {/* Native controls only while a stream is live: on an empty element the
           browser still paints a greyed-out timestamp/fullscreen bar, which
-          reads as a broken player rather than "not connected". */}
+          reads as a broken player rather than "not connected". Idle, the box
+          is a plain slab of the bars' unfilled-track grey (nori-he5e1d2) —
+          not the page background, which read as a broken white screen. */}
       <video
         ref={videoRef} autoPlay playsInline muted controls={connected}
-        className={"w-full rounded-md bg-background " + (fill ? "h-full object-contain" : "")}
+        className={
+          "w-full rounded-md " +
+          (fill ? "h-full object-contain " : "") +
+          (connected ? "bg-background" : "bg-nori-he5e1d2")
+        }
         style={fill ? undefined : { aspectRatio: "4 / 3" }}
       />
       {cameraTiles.length > 1 && (

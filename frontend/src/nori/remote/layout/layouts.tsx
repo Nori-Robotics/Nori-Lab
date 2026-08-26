@@ -10,7 +10,7 @@
 
 import { useRemoteUi, PANEL, EYEBROW, PageHeader, Banners, VideoSurface, VitalsChips,
   TelemetryDetail, TelemetryCard, AudioCard, ModePills, ControlsStrip, ActiveModeCard,
-  SchematicCard, LogsCard, LogBox, LogTicker, RecordBlock, DeployBlock, EStopButton,
+  SchematicCard, LogsCard, LogBox, LogTicker, RecordBlock, DeployBlock, EStopButton, ArmControl,
   Drawers, TabPanes, StageSwitcher, Breakout } from "./blocks";
 
 // ---------------------------------------------------------------------------
@@ -19,7 +19,7 @@ import { useRemoteUi, PANEL, EYEBROW, PageHeader, Banners, VideoSurface, VitalsC
 const ClassicLayout = () => (
   <div className="grid gap-4 lg:grid-cols-[1fr_400px]">
     <div className="min-w-0 space-y-3">
-      <PageHeader extra={<EStopButton compact />} />
+      <PageHeader extra={<><ArmControl /><EStopButton compact /></>} />
       <Banners />
       <VideoSurface />
       <RecordBlock />
@@ -46,7 +46,7 @@ const CockpitLayout = () => {
   return (
     <Breakout>
       <div className="space-y-3 px-1">
-        <PageHeader extra={<EStopButton />} />
+        <PageHeader extra={<><ArmControl /><EStopButton /></>} />
         <Banners />
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
           <div className="min-w-0 space-y-3">
@@ -100,7 +100,7 @@ const CockpitLayout = () => {
 const MissionControlLayout = () => (
   <Breakout>
     <div className="space-y-3 px-1">
-      <PageHeader extra={<EStopButton />} />
+      <PageHeader extra={<><ArmControl /><EStopButton /></>} />
       <Banners />
       <div className="grid gap-4 lg:grid-cols-[250px_minmax(0,1fr)_340px]">
         <div className="min-w-0 space-y-3">
@@ -138,7 +138,7 @@ const MissionControlLayout = () => (
 const SplitTabsLayout = () => (
   <Breakout>
     <div className="space-y-3 px-1">
-      <PageHeader extra={<EStopButton />} />
+      <PageHeader extra={<><ArmControl /><EStopButton /></>} />
       <Banners />
       <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start">
         <VideoSurface />
@@ -188,6 +188,7 @@ const StageLayout = () => {
             </span>
           )}
           <div className="min-w-0 flex-1"><VitalsChips /></div>
+          <ArmControl />
           <EStopButton />
         </div>
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">

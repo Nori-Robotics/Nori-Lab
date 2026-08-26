@@ -78,8 +78,9 @@ const CockpitLayout = () => {
           <div className="min-w-0 space-y-3">
             {/* Fixed aspect: the stage must not resize when the rail's mode card
                 changes height (grid children stretch to the tallest by default). */}
+            {/* 4:3 matches the real feed, so no pillar bars at all. */}
             <StageSwitcher
-              className="aspect-[16/10]"
+              className="aspect-[4/3]"
               video={<VideoSurface fill className="h-full" />}
               schematic={<SchematicCard bare heightClass="h-full" interactive />}
             />
@@ -104,7 +105,7 @@ const CockpitLayout = () => {
             )}
           </div>
         </div>
-        {leader && <ActiveModeCard />}
+        {leader && <ActiveModeCard wide />}
       </div>
     </Breakout>
   );
@@ -139,7 +140,9 @@ const StageLayout = () => {
   }, []);
 
   return (
-    <Breakout>
+    // Narrower than the other breakout layouts: the 4:3 feed in a wide 16:9
+    // stage stranded huge pillar bars. 3:2 stage + this width leaves slim ones.
+    <Breakout width="w-[min(92vw,1200px)]">
       <div className="space-y-3 px-1">
         <PageHeader extra={<ModePills />} />
         <Banners />
@@ -150,7 +153,7 @@ const StageLayout = () => {
               rec · {recordState?.episodesKept ?? 0} kept
             </span>
           )}
-          <div className="min-w-0 flex-1"><VitalsChips /></div>
+          <div className="min-w-0 flex-1"><VitalsChips dense /></div>
           <ArmControl compact />
           <EStopButton />
         </div>
@@ -158,7 +161,7 @@ const StageLayout = () => {
           <div className="min-w-0 space-y-3">
             <div ref={stageRef}>
               <StageSwitcher
-                className="aspect-[16/9]"
+                className="aspect-[3/2]"
                 video={<VideoSurface fill className="h-full" />}
                 schematic={<SchematicCard bare heightClass="h-full" interactive />}
               />
@@ -178,7 +181,7 @@ const StageLayout = () => {
           </div>
         </div>
         {!railTaller && <SecondaryDrawers />}
-        {leader && <ActiveModeCard />}
+        {leader && <ActiveModeCard wide />}
       </div>
     </Breakout>
   );

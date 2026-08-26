@@ -32,10 +32,13 @@ function Stat({
   label,
   value,
   tone = "default",
+  dense = false,
 }: {
   label: string;
   value: React.ReactNode;
   tone?: "default" | "good" | "warn" | "bad";
+  // dense: tighter chip for one-line status strips (Stage's top bar).
+  dense?: boolean;
 }) {
   // Tinted chips in the leader-setup palette: outlined neutral, green/amber/red badges.
   // Default tone (no data yet — path / watchdog / temp before a connect) is fill-less: the
@@ -53,9 +56,9 @@ function Stat({
     bad: "border-nori-hd24a3d/40 bg-nori-hd24a3d/15 text-nori-h8f2318",
   }[tone];
   return (
-    <div className={cn("flex flex-col gap-1 rounded-md border px-2.5 py-1.5", toneClass)}>
-      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-nori-h857b6b">{label}</span>
-      <span className="font-mono text-sm leading-none">{value}</span>
+    <div className={cn("flex flex-col rounded-md border", dense ? "gap-0.5 px-2 py-1" : "gap-1 px-2.5 py-1.5", toneClass)}>
+      <span className={cn("font-mono uppercase tracking-[0.14em] text-nori-h857b6b", dense ? "text-[9px]" : "text-[10px]")}>{label}</span>
+      <span className={cn("font-mono leading-none", dense ? "text-xs" : "text-sm")}>{value}</span>
     </div>
   );
 }
@@ -233,6 +236,7 @@ export function TelemetryPanel({
   inVr,
   daemonStatus,
   servoThermal = servoThermalThresholds(null),
+  dense = false,
 }: {
   connState: string;
   tel: TelemetryView;
@@ -243,6 +247,7 @@ export function TelemetryPanel({
   // Per-model servo cut point (L2 58 C, A3 60 C). Defaults to the unknown-serial
   // fallback, which is the LOWEST cut and therefore warns earliest.
   servoThermal?: ServoThermalThresholds;
+  dense?: boolean; // tighter chips + row gap, for one-line status strips
 }) {
   const connected = connState === "connected";
   // loop_hz should sit near 50; flag a sag so a struggling control loop is visible.
@@ -260,13 +265,13 @@ export function TelemetryPanel({
 
   // Bare chip row — the page composes this into its combined // telemetry card.
   return (
-    <div className="flex flex-wrap gap-2">
-      <Stat
+    <div className={dense ? "flex flex-wrap gap-1.5" : "flex flex-wrap gap-2"}>
+      <Stat dense={dense}
         label="link"
         value={connected ? connState : connState}
         tone={connected ? "good" : connState === "failed" ? "bad" : "warn"}
       />
-      <Stat
+      <Stat dense={dense}
         label="path"
         value={tel.linkMode ? tel.linkMode.toUpperCase() : "—"}
         tone={tel.linkMode === "lan" ? "good" : tel.linkMode === "wan" ? "warn" : "default"}
@@ -275,7 +280,7 @@ export function TelemetryPanel({
           starved by packet loss hid behind a green "connected" — 70% loss still read as fine.
           "degraded/bad" = the loop is actively cutting bitrate to keep frames flowing. */}
       {tel.videoNet && (
-        <Stat
+        <Stat dense={dense}
           label="net"
           value={tel.videoNet.quality === "good" ? "OK" : tel.videoNet.quality}
           tone={tel.videoNet.quality === "good" ? "good"
@@ -285,12 +290,12 @@ export function TelemetryPanel({
       {/* "offline", not "disconnected": this chip is false when ANY of the three signals above
           fails (channel closed, telemetry stale, motors unhealthy), and only the first of those
           is really a disconnection. The vaguer word is the more honest one here. */}
-      <Stat label="control" value={controlOk ? "online" : "offline"}
+      <Stat dense={dense} label="control" value={controlOk ? "online" : "offline"}
         tone={controlOk ? "good" : "bad"} />
-      <Stat label="loop" value={`${tel.loopHz.toFixed(1)} Hz`} tone={hzTone} />
-      <Stat label="safety" value={tel.safety} tone={safetyTone(tel.safety)} />
-      <Stat label="watchdog" value={tel.watchdog} tone={watchdogTone(tel.watchdog)} />
-      <Stat label="temp" value={tel.tempC > 0 ? `${tel.tempC.toFixed(0)}°C` : "—"}
+      <Stat dense={dense} label="loop" value={`${tel.loopHz.toFixed(1)} Hz`} tone={hzTone} />
+      <Stat dense={dense} label="safety" value={tel.safety} tone={safetyTone(tel.safety)} />
+      <Stat dense={dense} label="watchdog" value={tel.watchdog} tone={watchdogTone(tel.watchdog)} />
+      <Stat dense={dense} label="temp" value={tel.tempC > 0 ? `${tel.tempC.toFixed(0)}°C` : "—"}
         tone={tel.tempC >= 80 ? "bad" : tel.tempC >= 70 ? "warn" : "default"} />
       {/* Hottest SERVO case temp (telemetry servo_temps, new daemons; "—" on old ones).
           The joint loses torque at the model's cut point — tones track that, not the Pi's
@@ -299,7 +304,7 @@ export function TelemetryPanel({
         const hot = Object.entries(tel.servoTemps ?? {}).sort((a, b) => b[1] - a[1])[0];
         return (
           <span title={hot ? `hottest joint: ${shortMotor(hot[0])}` : undefined}>
-            <Stat label="servo" value={hot ? `${hot[1]}°C` : "—"}
+            <Stat dense={dense} label="servo" value={hot ? `${hot[1]}°C` : "—"}
               tone={!hot ? "default"
                 : hot[1] >= servoThermal.hotC ? "bad"
                 : hot[1] >= servoThermal.warnC ? "warn" : "good"} />
@@ -309,11 +314,11 @@ export function TelemetryPanel({
       {/* Pack state-of-charge from the robot bridge (battery_monitor_integration.md §5). null =
           no monitor / reader down / voltage unknown -> "—", never a scary 0%. Low thresholds
           mirror the kiosk gauge (≤15% ≈ where the 6S SoC table nears the 22V floor). */}
-      <Stat label="battery"
+      <Stat dense={dense} label="battery"
         value={tel.batteryPercent != null ? `${tel.batteryPercent}%` : "—"}
         tone={tel.batteryPercent == null ? "default"
           : tel.batteryPercent <= 15 ? "bad" : tel.batteryPercent <= 30 ? "warn" : "good"} />
-      {inVr && <Stat label="mode" value="VR" tone="good" />}
+      {inVr && <Stat dense={dense} label="mode" value="VR" tone="good" />}
     </div>
   );
 }

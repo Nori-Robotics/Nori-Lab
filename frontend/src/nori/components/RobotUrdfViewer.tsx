@@ -261,9 +261,10 @@ function styleAndFrame(
   camera.far = 20;
 
   // Distance that just contains the robot's largest dimension at this fov, plus
-  // headroom so it isn't wedged against the edges.
+  // a little headroom so it isn't wedged against the edges. (1.45 read as
+  // zoomed-out — the robot floated small in the frame; 2026-08-25.)
   const extent = Math.max(size.x, size.y, size.z);
-  const dist = (extent / 2 / Math.tan((camera.fov * Math.PI) / 180 / 2)) * 1.45;
+  const dist = (extent / 2 / Math.tan((camera.fov * Math.PI) / 180 / 2)) * 1.12;
 
   // Slightly off-axis and a touch below centre — the same gentle look-up as the
   // remote page, which reads better than a dead-on elevation.

@@ -254,6 +254,7 @@ function LeaderPane({
 // running).
 const LeaderSetup = ({
   embedded = false,
+  wide = false,
   titleExtra,
   headerExtra,
   headerBelow,
@@ -261,6 +262,9 @@ const LeaderSetup = ({
   onToggleCollapse,
 }: {
   embedded?: boolean;
+  // With embedded: the host is giving this block full page width (Cockpit/Stage
+  // render it below the video), so the left/right panes may sit side by side.
+  wide?: boolean;
   // Rendered inline next to the "Leader setup" title (embedded only) — the Remote page
   // puts the Engage button here. Clicks inside it don't toggle the collapse.
   titleExtra?: React.ReactNode;
@@ -921,8 +925,9 @@ const LeaderSetup = ({
 
       {/* Embedded lives in a ~400px sidebar: stack the panes (right below left) instead
           of squeezing two columns — the viewport-based md: breakpoint lies about the
-          actual card width. */}
-      <div className={embedded ? "grid gap-4" : "grid gap-4 xl:grid-cols-2"}>
+          actual card width. `wide` embeds (Cockpit/Stage render this full-width below
+          the video) get the two columns back. */}
+      <div className={embedded && !wide ? "grid gap-4" : "grid gap-4 xl:grid-cols-2"}>
         <LeaderPane
           side="left"
           frame={liveFrame}

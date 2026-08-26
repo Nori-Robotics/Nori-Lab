@@ -222,10 +222,11 @@ export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
     : "Arm the motor buses so keyboard/VR commands move the robot";
   const onClick = () => {
     if (!teleop) return;
-    const ok = window.confirm(armed
-      ? "Disarm motors? The arms de-torque shortly after — support them so they don't drop."
-      : "Arm motors? The arms will take torque and hold position; keyboard/VR commands will move them.");
-    if (ok) teleop.setArmed(!armed);
+    // Arming is unconfirmed — it holds the pose it's in, nothing can drop.
+    // Disarming keeps the confirm: the arms de-torque and gravity takes over.
+    if (armed && !window.confirm(
+      "Disarm motors? The arms de-torque shortly after — support them so they don't drop.")) return;
+    teleop.setArmed(!armed);
   };
   return (
     // compact drops the bordered wrapper — for hosts (the controls strip) that
@@ -304,10 +305,11 @@ export const VideoSurface = ({
 };
 
 // Vitals chips row (the TelemetryPanel), reusable bare — for HUDs and strips.
-export const VitalsChips = () => {
+export const VitalsChips = ({ dense = false }: { dense?: boolean }) => {
   const { running, connState, tel, controlActive, stale, inVr, daemonStatus, servoThermal } = useRemoteUi();
   return (
     <TelemetryPanel
+      dense={dense}
       connState={running ? connState : "idle"}
       tel={tel}
       controlActive={controlActive}
@@ -439,7 +441,10 @@ export const ControlsStrip = () => (
 
 // The active control-mode card (keyboard legend / leader setup / VR entry) —
 // content identical to the classic page, so behavior can't drift per layout.
-export const ActiveModeCard = () => {
+// `wide` marks a full-page-width placement (Cockpit/Stage put the leader card
+// below the video): the embedded leader setup then lays its left/right panes
+// side by side instead of the sidebar stack.
+export const ActiveModeCard = ({ wide = false }: { wide?: boolean }) => {
   const ui = useRemoteUi();
   const {
     controlMode, connected, inVr, xrSupported, enterVr, settings, set, teleop, mode,
@@ -518,6 +523,7 @@ export const ActiveModeCard = () => {
         )}
         <LeaderSetup
           embedded
+          wide={wide}
           collapsed={!showLeaderCard}
           onToggleCollapse={() => setShowLeaderCard((v) => !v)}
           titleExtra={
@@ -764,6 +770,8 @@ export const StageSwitcher = ({
 // Full-bleed breakout: the NoriLayout shell caps <main> at max-w-5xl; wide
 // layouts escape it with the center-translate trick rather than a shell change,
 // so every other page keeps its cap.
-export const Breakout = ({ children }: { children: ReactNode }) => (
-  <div className="relative left-1/2 w-[min(96vw,1480px)] -translate-x-1/2">{children}</div>
+// `width` lets a layout pick how far it escapes (Stage runs narrower so a 4:3
+// feed doesn't strand huge pillar bars in a 16:9 stage).
+export const Breakout = ({ children, width = "w-[min(96vw,1480px)]" }: { children: ReactNode; width?: string }) => (
+  <div className={"relative left-1/2 -translate-x-1/2 " + width}>{children}</div>
 );

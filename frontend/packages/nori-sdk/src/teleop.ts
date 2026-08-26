@@ -208,6 +208,10 @@ export interface DaemonStatus {
   // activation in progress, motors not commandable yet), "active" (ready),
   // "disarming", "inactive". Absent on older gateways.
   activation?: string;
+  // online only, non-active states — WHY activation is stuck, verbatim from the
+  // robot's activation gate (e.g. "blocked: right_bicep_yaw_joint 3 raw=221
+  // [229..3805] 8 STEPS BELOW MIN — nudge the joint"). Absent when healthy.
+  activation_detail?: string;
 }
 
 // ---- connect diagnostics ---------------------------------------------------------------
@@ -2127,10 +2131,12 @@ export class RemoteTeleop {
     if (typeof m.detail === "string" && m.detail) s.detail = m.detail;
     if (typeof m.armed === "boolean") s.armed = m.armed;
     if (typeof m.activation === "string" && m.activation) s.activation = m.activation;
+    if (typeof m.activation_detail === "string" && m.activation_detail) s.activation_detail = m.activation_detail;
     if (!s.state) return;
     const prev = this.daemonStat;
     if (prev && prev.state === s.state && prev.reason === s.reason && prev.detail === s.detail
-        && prev.armed === s.armed && prev.activation === s.activation) return;
+        && prev.armed === s.armed && prev.activation === s.activation
+        && prev.activation_detail === s.activation_detail) return;
     this.daemonStat = s;
     // Operator-facing log line: no reason code, no raw detail — the on-screen banner carries the
     // plain-English remedy for the same event.

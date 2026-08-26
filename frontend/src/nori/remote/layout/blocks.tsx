@@ -250,6 +250,14 @@ export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
       <span className="font-mono text-[11px] uppercase tracking-[0.14em]">
         motors: {preparing ? "preparing…" : !enabled ? "—" : armed ? "ARMED" : "disarmed"}
       </span>
+      {/* The robot names EXACTLY what is blocking activation (a joint past its
+          limit, E-stop engaged, silent bus). Rendering it verbatim ended the
+          "preparing… flashes forever with no reason" class (2026-08-26). */}
+      {preparing && daemonStatus?.activation_detail?.startsWith("blocked") && (
+        <span className="text-[11px] text-nori-ha3271c">
+          {daemonStatus.activation_detail}
+        </span>
+      )}
       {/* Same retro recipe as EStopButton — hard drop shadow, press-down on
           click — so the safety cluster reads as one family of controls. Green
           arms; ink disarms (amber/red stay reserved for warnings and E-STOP). */}

@@ -54,6 +54,19 @@ if (typeof window !== "undefined" && !customElements.get("urdf-viewer")) {
 
 const URDF_PATH = "/nori-urdf/nori.urdf";
 
+// Dark-mode scene backgrounds, both aiming at the CARD surface grey
+// (--nori-hf3f1e8's dark value) so the viewer reads as one of the cards:
+//  - uncomposed: the card colour verbatim, read from the live CSS var;
+//  - composed: a pre-grade value hand-solved so ACES @ exposure 0.8 lands on
+//    ~the same grey (the raw hex would render near-black after grading).
+function darkSceneBg(composed: boolean): string {
+  if (composed) return "#313136";
+  const v = typeof window !== "undefined"
+    ? getComputedStyle(document.documentElement).getPropertyValue("--nori-hf3f1e8").trim()
+    : "";
+  return v ? `hsl(${v.split(/\s+/).join(",")})` : "#1f1f21";
+}
+
 // `?nopost=1` renders straight to the canvas with no composer. Read in two
 // places (background choice and composer attach), which must agree.
 function hasNoPostFlag() {
@@ -637,16 +650,16 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       // clips to a maxed-out yellow. In that path, paint the POST-grade
       // colour directly instead.
       if (willCompose) {
-        const bg = new THREE.Color(isDark ? "#262320" : "#ffedcf");
+        const bg = new THREE.Color(isDark ? darkSceneBg(true) : "#ffedcf");
         const bgHex = new URLSearchParams(window.location.search).get("bg");
         if (bgHex && /^[0-9a-fA-F]{6}$/.test(bgHex)) bg.set(`#${bgHex}`);
         if (!isDark || bgHex) bg.multiplyScalar(1.35);
         viewer.scene.background = bg;
       } else {
-        // Near what the graded ffedcf / 262320 land at through ACES @ 0.8,
-        // desaturated a touch from the literal grade — judged by eye.
+        // Light: near what the graded ffedcf lands at through ACES @ 0.8,
+        // desaturated a touch. Dark: the card grey verbatim.
         viewer.scene.background = new THREE.Color(
-          isDark ? "#1a1918" : "#e9e5db"
+          isDark ? darkSceneBg(false) : "#e9e5db"
         );
       }
     }
@@ -905,10 +918,10 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     let bg: THREE.Color;
     if (composed) {
       // Pre-grade source — same recipe as mount (see the comment there).
-      bg = new THREE.Color(isDark ? "#262320" : "#ffedcf");
+      bg = new THREE.Color(isDark ? darkSceneBg(true) : "#ffedcf");
       if (!isDark) bg.multiplyScalar(1.35);
     } else {
-      bg = new THREE.Color(isDark ? "#1a1918" : "#e9e5db");
+      bg = new THREE.Color(isDark ? darkSceneBg(false) : "#e9e5db");
     }
     v.scene.background = bg;
     v.redraw();

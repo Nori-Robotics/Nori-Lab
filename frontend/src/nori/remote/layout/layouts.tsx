@@ -45,6 +45,28 @@ const ClassicLayout = () => (
   </div>
 );
 
+// Measures whether the right rail runs taller than the stage. Layouts use it
+// to decide where the secondary row (vitals/drawers) lives: beside a tall
+// rail, or stretched full-width below a short one.
+const useRailTaller = () => {
+  const stageRef = useRef<HTMLDivElement>(null);
+  const railRef = useRef<HTMLDivElement>(null);
+  const [railTaller, setRailTaller] = useState(false);
+  useEffect(() => {
+    const measure = () => {
+      const stage = stageRef.current?.offsetHeight ?? 0;
+      const rail = railRef.current?.offsetHeight ?? 0;
+      setRailTaller(rail > stage);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (stageRef.current) ro.observe(stageRef.current);
+    if (railRef.current) ro.observe(railRef.current);
+    return () => ro.disconnect();
+  }, []);
+  return { stageRef, railRef, railTaller };
+};
+
 // The one drawer set Cockpit and Stage share.
 const SecondaryDrawers = () => (
   <Drawers
@@ -69,6 +91,20 @@ const SecondaryDrawers = () => (
 const CockpitLayout = () => {
   const { controlMode } = useRemoteUi();
   const leader = controlMode === "leader";
+  // Vitals + drawers adapt: beside a tall rail they stay in the stage's
+  // column; once the rail is shorter than the stage they stretch full width
+  // below the grid instead of leaving a hole beside the rail.
+  const { stageRef, railRef, railTaller } = useRailTaller();
+  const secondary = (
+    <>
+      {/* Vitals as a strip UNDER the feed, not over it — chips are cream
+          panels and read as noise on top of dark video. */}
+      <div className={PANEL + " !py-2"}>
+        <VitalsChips />
+      </div>
+      <SecondaryDrawers />
+    </>
+  );
   return (
     <Breakout>
       <div className="space-y-3 px-1">
@@ -79,20 +115,16 @@ const CockpitLayout = () => {
             {/* Fixed aspect: the stage must not resize when the rail's mode card
                 changes height (grid children stretch to the tallest by default). */}
             {/* 4:3 matches the real feed, so no pillar bars at all. */}
-            <StageSwitcher
-              className="aspect-[4/3]"
-              video={<VideoSurface fill className="h-full" />}
-              schematic={<SchematicCard bare heightClass="h-full" interactive />}
-            />
-            {/* Vitals as a strip UNDER the feed, not over it — chips are cream
-                panels and read as noise on top of dark video. Drawers follow
-                immediately, same column, so vitals→drawers has no gap. */}
-            <div className={PANEL + " !py-2"}>
-              <VitalsChips />
+            <div ref={stageRef}>
+              <StageSwitcher
+                className="aspect-[4/3]"
+                video={<VideoSurface fill className="h-full" />}
+                schematic={<SchematicCard bare heightClass="h-full" interactive />}
+              />
             </div>
-            <SecondaryDrawers />
+            {railTaller && secondary}
           </div>
-          <div className="min-w-0 space-y-3">
+          <div ref={railRef} className="min-w-0 space-y-3">
             <ControlsStrip />
             {!leader && <ActiveModeCard />}
             {leader && (
@@ -105,6 +137,7 @@ const CockpitLayout = () => {
             )}
           </div>
         </div>
+        {!railTaller && secondary}
         {leader && <ActiveModeCard wide />}
       </div>
     </Breakout>
@@ -123,21 +156,7 @@ const StageLayout = () => {
   const leader = controlMode === "leader";
   const recording = recordState?.recording ?? false;
 
-  const stageRef = useRef<HTMLDivElement>(null);
-  const railRef = useRef<HTMLDivElement>(null);
-  const [railTaller, setRailTaller] = useState(false);
-  useEffect(() => {
-    const measure = () => {
-      const stage = stageRef.current?.offsetHeight ?? 0;
-      const rail = railRef.current?.offsetHeight ?? 0;
-      setRailTaller(rail > stage);
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    if (stageRef.current) ro.observe(stageRef.current);
-    if (railRef.current) ro.observe(railRef.current);
-    return () => ro.disconnect();
-  }, []);
+  const { stageRef, railRef, railTaller } = useRailTaller();
 
   return (
     // No Breakout: Stage sits at the shell's own width, same margins as
@@ -165,7 +184,7 @@ const StageLayout = () => {
           <div className="min-w-0 space-y-3">
             <div ref={stageRef}>
               <StageSwitcher
-                className="aspect-[3/2]"
+                className="aspect-[7/5]"
                 video={<VideoSurface fill className="h-full" />}
                 schematic={<SchematicCard bare heightClass="h-full" interactive />}
               />

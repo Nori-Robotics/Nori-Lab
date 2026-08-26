@@ -13,6 +13,7 @@ import { createContext, useContext, useState, type ReactNode, type RefObject } f
 import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ArmSide, ControlMode, RemoteTeleop, TelemetryView, CallState, DaemonStatus, ConnectStatus, RecordState } from "@nori/sdk";
 import type { ServoThermalThresholds } from "@/nori/robotModels";
 import { VrHandoff } from "@/nori/components/VrHandoff";
@@ -107,6 +108,13 @@ export function useRemoteUi(): RemoteUi {
 // The house panel recipe, verbatim from the page it came from.
 export const PANEL = "rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-4 text-nori-h14131a shadow-sm";
 export const EYEBROW = "font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c";
+// House dropdown recipe, matching leader-setup's FIELD/SELECT classes but
+// compact (these live in dense chrome, not forms).
+export const SELECT_TRIGGER_CLASS =
+  "h-8 w-auto gap-1.5 rounded-md border-nori-h14131a/12 bg-nori-hfffdf7 px-2.5 font-mono text-[11px] text-nori-h14131a focus:ring-nori-hd98b3d";
+export const SELECT_CONTENT_CLASS =
+  "border-nori-h14131a/12 bg-nori-hfffdf7 font-mono text-[12px] text-nori-h14131a";
+export const SELECT_ITEM_CLASS = "focus:bg-nori-hebe8db focus:text-nori-h14131a";
 
 // ---------------------------------------------------------------------------
 // small shared widgets
@@ -218,11 +226,16 @@ export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
   // gateway never reports it, so the button stays disabled with the reason.
   const online = running && daemonStatus?.state === "online";
   const supported = daemonStatus?.armed !== undefined;
-  const enabled = online && supported && teleop !== null;
   const armed = daemonStatus?.armed === true;
+  // Guarded activation in progress: motors exist but aren't commandable yet.
+  // Rendering this state was a direct operator request (2026-08-26) — before
+  // it, the window between Arm and motion was indistinguishable from broken.
+  const preparing = ["arming", "running", "disarming"].includes(daemonStatus?.activation ?? "");
+  const enabled = online && supported && teleop !== null && !preparing;
   const why = !running ? "Connect to the robot first"
     : !online ? "Robot motion control is offline"
     : !supported ? "This robot's gateway doesn't support remote arming yet"
+    : preparing ? "Motion stack is activating (safety gate, buses, controllers) — up to a minute"
     : armed ? "Robot arms are holding torque — disarm de-torques them (support the arms)"
     : "Arm the motor buses so keyboard/VR commands move the robot";
   // No confirms in either direction (bench decision, 2026-08-25): the button
@@ -235,7 +248,7 @@ export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
         (compact ? "" : " rounded-md border border-nori-h14131a/15 px-4 py-2")
         + (enabled ? "" : " opacity-50")}>
       <span className="font-mono text-[11px] uppercase tracking-[0.14em]">
-        motors: {!enabled ? "—" : armed ? "ARMED" : "disarmed"}
+        motors: {preparing ? "preparing…" : !enabled ? "—" : armed ? "ARMED" : "disarmed"}
       </span>
       {/* Same retro recipe as EStopButton — hard drop shadow, press-down on
           click — so the safety cluster reads as one family of controls. Green
@@ -286,20 +299,33 @@ export const VideoSurface = ({
         className={
           "w-full rounded-md " +
           (fill ? "h-full object-contain " : "") +
-          (connected ? "bg-background" : "bg-nori-he5e1d2")
+          // Dark override: the track token goes warm olive in dark mode,
+          // which reads as sickly at video-panel size. Neutral grey, a shade
+          // lighter than the cards (~13-15% L), keeps the slab quiet.
+          (connected ? "bg-background" : "bg-nori-he5e1d2 dark:bg-[hsl(240_4%_20%)]")
         }
         style={fill ? undefined : { aspectRatio: "4 / 3" }}
       />
       {cameraTiles.length > 1 && (
-        <select
-          value={cameraTiles.includes(selectedCamera) ? selectedCamera : "composite"}
-          onChange={(e) => setSelectedCamera(e.target.value)}
+        <div
+          className="absolute left-2 top-2 z-10"
           title="Choose which camera to view. The robot always sends the full composite; this crops one tile locally."
-          className="absolute left-2 top-2 rounded border border-background/40 bg-background/80 px-2 py-1 font-mono text-[11px] text-foreground shadow backdrop-blur"
         >
-          <option value="composite">all cameras (composite)</option>
-          {cameraTiles.map((role) => (<option key={role} value={role}>{role}</option>))}
-        </select>
+          <Select
+            value={cameraTiles.includes(selectedCamera) ? selectedCamera : "composite"}
+            onValueChange={setSelectedCamera}
+          >
+            <SelectTrigger className={SELECT_TRIGGER_CLASS + " border-background/40 bg-background/85 shadow backdrop-blur"}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className={SELECT_CONTENT_CLASS}>
+              <SelectItem value="composite" className={SELECT_ITEM_CLASS}>all cameras (composite)</SelectItem>
+              {cameraTiles.map((role) => (
+                <SelectItem key={role} value={role} className={SELECT_ITEM_CLASS}>{role}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       )}
       <video
         ref={selfViewRef} autoPlay playsInline muted
@@ -707,7 +733,10 @@ export const Drawers = ({ items }: { items: { id: string; label: ReactNode; body
             type="button"
             onClick={() => setOpenId((cur) => (cur === i.id ? null : i.id))}
             className={
-              "min-w-0 flex-1 rounded-md border px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] transition-colors " +
+              // min-w keeps a label from being crushed mid-word: in a narrow
+              // column the row wraps to a second line of centered headers
+              // instead of clipping.
+              "min-w-[8.5rem] flex-1 whitespace-nowrap rounded-md border px-3 py-2 text-center font-mono text-[11px] uppercase tracking-[0.08em] transition-colors " +
               (openId === i.id
                 ? "border-nori-h14131a/20 bg-nori-hf6f4eb text-nori-h14131a"
                 : "border-nori-h14131a/10 bg-nori-hf3f1e8 text-nori-h6f6858 hover:border-nori-h14131a/25")
@@ -742,7 +771,7 @@ export const StageSwitcher = ({
   // h-full, which would collapse in a width-only box. The 3D PIP is SQUARE
   // (like its expanded form — the robot is portrait); the camera PIP keeps
   // the feed's 4:3.
-  const pipBase = "group absolute bottom-3 right-3 z-10 cursor-pointer overflow-hidden rounded-md border-2 border-background/60 shadow-lg transition-transform hover:scale-[1.03] ";
+  const pipBase = "group absolute right-3 top-3 z-10 cursor-pointer overflow-hidden rounded-md border-2 border-background/60 shadow-lg transition-transform hover:scale-[1.03] ";
   const pipLabel = stageIs3d ? "camera" : "3d";
   const cls = (isStage: boolean, is3d: boolean) =>
     isStage ? (is3d ? stage3dCls : stageCls)
@@ -778,7 +807,7 @@ export const StageSwitcher = ({
           type="button"
           onClick={() => setPipHidden(false)}
           title={`Restore the ${pipLabel} view`}
-          className="absolute bottom-3 right-3 z-10 rounded-full border border-background/50 bg-nori-h14131a/75 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.08em] text-background shadow hover:bg-nori-h14131a/90"
+          className="absolute right-3 top-3 z-10 rounded-full border border-background/50 bg-nori-h14131a/75 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.08em] text-background shadow hover:bg-nori-h14131a/90"
         >
           ▸ {pipLabel}
         </button>

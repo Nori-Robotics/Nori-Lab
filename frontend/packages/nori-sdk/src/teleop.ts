@@ -204,6 +204,10 @@ export interface DaemonStatus {
   // online only — whether the arm buses are armed (arbiter ownership held by the
   // gateway). Absent on robots whose gateway predates arming support.
   armed?: boolean;
+  // online only — motion-stack activation state: "arming" | "running" (guarded
+  // activation in progress, motors not commandable yet), "active" (ready),
+  // "disarming", "inactive". Absent on older gateways.
+  activation?: string;
 }
 
 // ---- connect diagnostics ---------------------------------------------------------------
@@ -2090,10 +2094,11 @@ export class RemoteTeleop {
     if (typeof m.reason === "string" && m.reason) s.reason = m.reason;
     if (typeof m.detail === "string" && m.detail) s.detail = m.detail;
     if (typeof m.armed === "boolean") s.armed = m.armed;
+    if (typeof m.activation === "string" && m.activation) s.activation = m.activation;
     if (!s.state) return;
     const prev = this.daemonStat;
     if (prev && prev.state === s.state && prev.reason === s.reason && prev.detail === s.detail
-        && prev.armed === s.armed) return;
+        && prev.armed === s.armed && prev.activation === s.activation) return;
     this.daemonStat = s;
     // Operator-facing log line: no reason code, no raw detail — the on-screen banner carries the
     // plain-English remedy for the same event.

@@ -28,7 +28,8 @@ import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import { playAudioFile, type ClipHandle } from "@/nori/remote/audioClip";
 import { isM6VideoEnabled } from "@/nori/remote/flags";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
-import { RemoteUiProvider, type RemoteUi } from "@/nori/remote/layout/blocks";
+import { RemoteUiProvider, type RemoteUi, SELECT_TRIGGER_CLASS, SELECT_CONTENT_CLASS, SELECT_ITEM_CLASS } from "@/nori/remote/layout/blocks";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   REMOTE_LAYOUTS, loadRemoteLayout, saveRemoteLayout, type RemoteLayoutId,
 } from "@/nori/remote/layout/layouts";
@@ -502,22 +503,25 @@ const Remote = () => {
         >
           preferred layout:
         </label>
-        <select
-          id="remote-layout"
-          value={layoutId}
-          disabled={layoutLocked}
-          title={layoutLocked ? "Disconnect to change the page layout" : "Choose how this page is arranged"}
-          onChange={(e) => {
-            const id = e.target.value as RemoteLayoutId;
-            setLayoutId(id);
-            saveRemoteLayout(id);
-          }}
-          className="rounded border border-nori-h14131a/15 bg-background px-2 py-1 font-mono text-[11px] text-foreground disabled:opacity-50"
-        >
-          {REMOTE_LAYOUTS.map((l) => (
-            <option key={l.id} value={l.id}>{l.label}</option>
-          ))}
-        </select>
+        <div title={layoutLocked ? "Disconnect to change the page layout" : "Choose how this page is arranged"}>
+          <Select
+            value={layoutId}
+            disabled={layoutLocked}
+            onValueChange={(id) => {
+              setLayoutId(id as RemoteLayoutId);
+              saveRemoteLayout(id as RemoteLayoutId);
+            }}
+          >
+            <SelectTrigger id="remote-layout" className={SELECT_TRIGGER_CLASS}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className={SELECT_CONTENT_CLASS}>
+              {REMOTE_LAYOUTS.map((l) => (
+                <SelectItem key={l.id} value={l.id} className={SELECT_ITEM_CLASS}>{l.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Robot inbound audio — always mounted at page level (layouts move the

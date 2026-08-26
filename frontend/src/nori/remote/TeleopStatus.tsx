@@ -297,8 +297,11 @@ export function TelemetryPanel({
       <Stat dense={dense} label="loop" value={connected ? `${tel.loopHz.toFixed(1)} Hz` : "—"} tone={hzTone} />
       <Stat dense={dense} label="safety" value={tel.safety} tone={safetyTone(tel.safety)} />
       <Stat dense={dense} label="watchdog" value={tel.watchdog} tone={watchdogTone(tel.watchdog)} />
+      {/* Pi SoC temp: throttling starts at 80. Green below 70 so a healthy reading
+          reads as healthy (it was the one chip left uncolored while live); still
+          neutral with no reading (0/absent), so a dead sensor can't look "good". */}
       <Stat dense={dense} label="temp" value={tel.tempC > 0 ? `${tel.tempC.toFixed(0)}°C` : "—"}
-        tone={tel.tempC >= 80 ? "bad" : tel.tempC >= 70 ? "warn" : "default"} />
+        tone={tel.tempC <= 0 ? "default" : tel.tempC >= 80 ? "bad" : tel.tempC >= 70 ? "warn" : "good"} />
       {/* Hottest SERVO case temp (telemetry servo_temps, new daemons; "—" on old ones).
           The joint loses torque at the model's cut point — tones track that, not the Pi's
           SoC bands. Hover names the joint; the ServoTemps rows below list every warm one. */}

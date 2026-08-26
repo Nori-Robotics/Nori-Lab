@@ -39,12 +39,9 @@ function jointDeg(state: Record<string, number>, key: string): number {
 }
 const DEG = Math.PI / 180;
 
-// SO101 planar geometry, verbatim from the daemon's kinematics.cpp: link lengths and the two
-// link-bend offsets its angle convention bakes in.
-const L1_M = 0.1159; // shoulder_lift axis -> elbow axis (m)
-const L2_M = 0.135; // elbow axis -> wrist_flex axis (m)
-const T1O = Math.atan2(0.028, 0.11257);
-const T2O = Math.atan2(0.0052, 0.1349) + T1O;
+// SO101 planar geometry, from the daemon's kinematics.cpp — shared with the pure-math FK in
+// fk.ts (single source: the schematic and the agent's pose readout can never disagree).
+import { SO101_L1_M as L1_M, SO101_L2_M as L2_M, SO101_T1O as T1O, SO101_T2O as T2O } from "./fk";
 
 // Scene geometry. The travel band is chosen so the carriage starts just under the shoulder
 // plate (y 1.45) and at FULL descent its bottom edge (carriage is 0.08 tall) lands exactly on

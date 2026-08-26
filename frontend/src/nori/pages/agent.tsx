@@ -18,9 +18,11 @@ import { Play, Square, OctagonX, Check, X, Bot } from "lucide-react";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { useApi } from "@/contexts/ApiContext";
 import { isDirectBackend } from "@/nori/api/client";
-import { hostedAgentTurn } from "@/nori/llm/hostedLlm";
+import { hostedAgentTurn, hostedDepthGrid } from "@/nori/llm/hostedLlm";
+import { formatDepthGrid, isDepthGridResult } from "@/nori/remote/depthGrid";
 import type { RobotDescriptor } from "@nori/sdk";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
+import { createPoseSummarizer } from "@/nori/remote/poseSummary";
 import {
   AgentSession, AgentBudgetError,
   type AgentBlock, type AgentEvent, type AgentTurn, type FinishReason, type AgentMessage,
@@ -105,16 +107,16 @@ const Agent = () => {
   // since baseUrl points at a dead localhost there. Both raise AgentBudgetError on a 429.
   const postTurn = async (
     messages: AgentMessage[], robotState: Record<string, number> | undefined, cameraLayout: string | undefined,
-    descriptor?: RobotDescriptor | null,
+    descriptor?: RobotDescriptor | null, poseSummary?: string,
   ): Promise<AgentTurn> => {
     // Hosted path only: the LeLab server path below assembles its own tools server-side and
     // drives the L2-era stack, so the descriptor (which rebuilds move_to for THIS robot's
     // joints) stops here for it.
-    if (isDirectBackend()) return hostedAgentTurn(messages, robotState, cameraLayout, descriptor);
+    if (isDirectBackend()) return hostedAgentTurn(messages, robotState, cameraLayout, descriptor, poseSummary);
     const res = await fetchWithHeaders(`${baseUrl}/nori/llm/agent`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, robot_state: robotState, camera_layout: cameraLayout }),
+      body: JSON.stringify({ messages, robot_state: robotState, camera_layout: cameraLayout, pose_summary: poseSummary }),
     });
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}));
@@ -132,6 +134,27 @@ const Agent = () => {
       throw new Error(msg);
     }
     return (await res.json()) as AgentTurn;
+  };
+
+  // Depth grounding for `look`: same JPEG through the depth endpoint (desktop: LeLab's
+  // /nori/depth proxy; hosted: the backend directly), formatted to the compact text grid the
+  // tool_result carries. Null on ANY failure — depth never blocks or errors a look.
+  const fetchDepth = async (imageB64: string): Promise<string | null> => {
+    try {
+      const raw = isDirectBackend()
+        ? await hostedDepthGrid(imageB64)
+        : await (async () => {
+            const res = await fetchWithHeaders(`${baseUrl}/nori/depth`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ image_b64: imageB64 }),
+            });
+            return res.ok ? await res.json() : null;
+          })();
+      return isDepthGridResult(raw) ? formatDepthGrid(raw) : null;
+    } catch {
+      return null;
+    }
   };
 
   // The confirm-before-first-motion gate: show the pending motion and resolve when the operator
@@ -176,6 +199,11 @@ const Agent = () => {
     const session = new AgentSession({
       teleop,
       postTurn,
+      // FK gripper world-coordinate grounding (poseSummary.ts): one text line per turn + in
+      // get_state, so the model plans in millimetres instead of guessing from pixels.
+      describePose: createPoseSummarizer(teleop),
+      // Relative-depth grid appended to every look (depthGrid.ts) — best-effort.
+      fetchDepth,
       confirmFirstMotion,
       onConfirmMotion: confirmFirstMotion ? onConfirmMotion : undefined,
       onEvent,

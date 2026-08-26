@@ -997,6 +997,18 @@ class NoriClient:
         body["new_run"] = new_run
         return body
 
+    def depth(self, *, image_b64: str, grid_w: int = 8, grid_h: int = 6) -> dict[str, Any]:
+        """POST /agent/depth — relative-depth grid for one camera frame (Depth Anything V2 on
+        the backend's CPU). Customer-JWT authed like the LLM proxy, but not token-metered.
+        Returns {model, width, height, grid_w, grid_h, grid, ms}. Timeout sized for a cold
+        backend worker (first call downloads + loads the model)."""
+        return self._request(
+            "POST",
+            f"{API}/agent/depth",
+            json={"image_b64": image_b64, "grid_w": grid_w, "grid_h": grid_h},
+            timeout=httpx.Timeout(120.0, connect=10.0),
+        )
+
     def llm_messages(
         self,
         *,

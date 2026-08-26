@@ -79,6 +79,11 @@ export type PostTurn = (
   // joints rather than the generated prompt's L2 vocabulary. Optional — the LeLab
   // server-side path (which drives the L2-era stack) ignores it.
   descriptor?: RobotDescriptor | null,
+  // One line of world-coordinate grounding ("left gripper ≈ (x …, y …, z …) mm …"), computed
+  // client-side by FK from the same telemetry robot_state comes from. Folded into the system
+  // prompt next to robot_state so the model can plan in real units. Optional — absent when the
+  // page wired no summarizer or FK isn't ready yet.
+  poseSummary?: string,
 ) => Promise<AgentTurn>;
 
 export type AgentMessage = { role: "user" | "assistant"; content: AgentBlock[] };
@@ -130,6 +135,15 @@ export interface AgentSessionOptions {
   // which is wrong; the page always supplies this when the gate is on.
   confirmFirstMotion?: boolean; // default true
   onConfirmMotion?: (block: AgentBlock) => Promise<boolean>;
+  // FK pose grounding: turns a telemetry state dict into the one-line gripper world-coordinate
+  // summary (see poseSummary.ts). Injected (like postTurn) so this class stays testable without
+  // three.js/URDF; return null while unavailable. Its output rides every turn AND get_state.
+  describePose?: (state: Record<string, number>) => string | null;
+  // Depth grounding for `look` (see depthGrid.ts): given the captured frame's base64 JPEG,
+  // return the formatted relative-depth text to append to the tool_result, or null to skip.
+  // Injected like postTurn (the page owns transport + formatting). MUST be soft-fail — a
+  // throw/reject is swallowed here and the look returns image-only.
+  fetchDepth?: (imageB64: string) => Promise<string | null>;
   onEvent?: (ev: AgentEvent) => void; // structured transcript for the UI
   onLog?: (line: string) => void; // plain text log (mirrors ScriptSession.onLog)
   onDone?: (reason: FinishReason) => void; // run ended (any reason)
@@ -221,6 +235,7 @@ export class AgentSession {
       const turn = await this.o.postTurn(
         this.messages, this.robotState(), this.cameraLayout(),
         this.o.teleop.robotInfo()?.descriptor ?? null,
+        this.poseSummary(),
       );
       if (this.stopped) return; // an E-STOP during the request
       this.messages.push({ role: "assistant", content: turn.content });
@@ -298,8 +313,12 @@ export class AgentSession {
       switch (b.name) {
         case "look":
           return await this.doLook(b, input.camera as string | undefined);
-        case "get_state":
-          return this.textResult(b, JSON.stringify(this.lastTelemetry?.state ?? {}));
+        case "get_state": {
+          // Raw joints + (when FK is available) the gripper world-coordinate line, so the model
+          // gets metric proprioception from the same call it already knows to make.
+          const pose = this.poseSummary();
+          return this.textResult(b, JSON.stringify(this.lastTelemetry?.state ?? {}) + (pose ? "\n" + pose : ""));
+        }
         case "move_to": {
           const state = await this.driver.exec("moveTo", [input.side, input.targets, { slew: input.slew }]);
           return this.textResult(b, String(state));
@@ -360,10 +379,18 @@ export class AgentSession {
       kind: "tool_result", tool: "look", toolUseId: b.id ?? "", ok: true,
       imageDataUrl: "data:image/jpeg;base64," + data,
     });
-    return {
-      type: "tool_result", tool_use_id: b.id,
-      content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data } }],
-    };
+    // Depth grounding: same frame through the depth endpoint, appended as a text block after
+    // the image. Strictly best-effort — cold model, offline backend, or malformed reply all
+    // degrade to an image-only look (the loop's spatial reasoning worked before depth existed).
+    const content: AgentBlock[] = [
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data } },
+    ];
+    if (this.o.fetchDepth) {
+      const depthText = await this.o.fetchDepth(data).catch(() => null);
+      if (this.stopped) return this.errorResult(b, "stopped");
+      if (depthText) content.push({ type: "text", text: depthText });
+    }
+    return { type: "tool_result", tool_use_id: b.id, content };
   }
 
   private textResult(b: AgentBlock, text: string): AgentBlock {
@@ -380,6 +407,18 @@ export class AgentSession {
     const state = this.lastTelemetry?.state;
     if (!state) return undefined;
     return Object.fromEntries(Object.entries(state).map(([k, v]) => [k, Math.round(v * 10) / 10]));
+  }
+
+  // The FK gripper world-coordinate line for the CURRENT telemetry, or undefined when no
+  // summarizer is wired / FK isn't ready / it throws (grounding must never kill the loop).
+  private poseSummary(): string | undefined {
+    const state = this.lastTelemetry?.state;
+    if (!state || !this.o.describePose) return undefined;
+    try {
+      return this.o.describePose(state) ?? undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private cameraLayout(): string | undefined {

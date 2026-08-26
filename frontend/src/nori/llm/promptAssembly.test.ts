@@ -75,6 +75,15 @@ describe("buildAgentSystem", () => {
     expect(s).toContain('Current robot state (proprioceptive, normalized): {"x.pos":3}');
   });
 
+  it("folds the FK pose summary in with the server's exact line prefix", () => {
+    const s = buildAgentSystem(undefined, undefined, null, "left gripper ≈ (x 100, y 0, z -50) mm — frame…");
+    expect(s).toContain("CONTEXT FOR THIS RUN:");
+    // Prefix must stay byte-identical to lelab/server.py's pose_summary fold.
+    expect(s).toContain(
+      "Gripper position (world-frame FK from joint telemetry, refreshed every turn): left gripper ≈ (x 100, y 0, z -50) mm",
+    );
+  });
+
   it("only robot state (no layout) still appends context", () => {
     const s = buildAgentSystem({ "x.pos": 3 }, undefined);
     expect(s).toContain("CONTEXT FOR THIS RUN:");

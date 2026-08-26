@@ -45,10 +45,10 @@ const telWithState = (state: Record<string, number>) => ({ state } as unknown as
 
 // A scripted transport: returns queued turns in order, recording what it was called with.
 function scriptedPostTurn(turns: AgentTurn[]) {
-  const calls: Array<{ messages: unknown[]; robotState: unknown; cameraLayout: unknown }> = [];
+  const calls: Array<{ messages: unknown[]; robotState: unknown; cameraLayout: unknown; poseSummary?: string }> = [];
   let i = 0;
-  const postTurn: PostTurn = async (messages, robotState, cameraLayout) => {
-    calls.push({ messages: structuredClone(messages), robotState, cameraLayout });
+  const postTurn: PostTurn = async (messages, robotState, cameraLayout, _descriptor, poseSummary) => {
+    calls.push({ messages: structuredClone(messages), robotState, cameraLayout, poseSummary });
     return turns[Math.min(i++, turns.length - 1)];
   };
   return { postTurn, calls };
@@ -168,6 +168,25 @@ describe("tool dispatch", () => {
     expect((msgs.at(-1)!.content[0].content as AgentBlock[])[0].text).toContain("one camera");
   });
 
+  it("fetchDepth appends a text block after the look image; a rejecting fetch is image-only", async () => {
+    const { agent, calls } = setup([
+      turn([tool("look")]),
+      turn([tool("look")]),
+      turn([tool("done", { summary: "" })]),
+    ], {
+      fetchDepth: (() => {
+        let n = 0;
+        return async () => (n++ === 0 ? "Relative depth grid…\n0.90 0.10" : Promise.reject(new Error("cold")));
+      })(),
+    }, { layout: null });
+    await agent.run("look twice");
+    const firstLook = (calls[1].messages as Array<{ content: AgentBlock[] }>).at(-1)!.content[0];
+    expect((firstLook.content as AgentBlock[]).map((c) => c.type)).toEqual(["image", "text"]);
+    expect((firstLook.content as AgentBlock[])[1].text).toContain("Relative depth grid");
+    const secondLook = (calls[2].messages as Array<{ content: AgentBlock[] }>).at(-1)!.content[0];
+    expect((secondLook.content as AgentBlock[]).map((c) => c.type)).toEqual(["image"]); // soft-fail
+  });
+
   it("get_state returns the cached telemetry state as JSON", async () => {
     const { agent, calls } = setup([
       turn([tool("get_state")]),
@@ -177,6 +196,35 @@ describe("tool dispatch", () => {
     const msgs = calls[1].messages as Array<{ content: AgentBlock[] }>;
     const text = (msgs.at(-1)!.content[0].content as AgentBlock[])[0].text as string;
     expect(JSON.parse(text)["right_arm_shoulder_pan.pos"]).toBe(12.4);
+  });
+
+  it("describePose grounding rides every turn and get_state; a throwing summarizer is silent", async () => {
+    const { agent, calls } = setup([
+      turn([tool("get_state")]),
+      turn([tool("done", { summary: "" })]),
+    ], {
+      confirmFirstMotion: false,
+      describePose: (state) => `right gripper ≈ (x 1, y 2, z 3) mm [pan ${state["right_arm_shoulder_pan.pos"]}]`,
+    });
+    await agent.run("check state");
+    // Every postTurn carries the FK line…
+    expect(calls[0].poseSummary).toContain("right gripper ≈ (x 1, y 2, z 3) mm");
+    // …and get_state's tool_result appends it after the raw JSON.
+    const msgs = calls[1].messages as Array<{ content: AgentBlock[] }>;
+    const text = (msgs.at(-1)!.content[0].content as AgentBlock[])[0].text as string;
+    const [json, pose] = text.split("\n");
+    expect(JSON.parse(json)["right_arm_shoulder_pan.pos"]).toBe(12.4);
+    expect(pose).toContain("gripper ≈");
+  });
+
+  it("a throwing/null describePose never kills the loop — grounding is just absent", async () => {
+    const { agent, calls, events } = setup([
+      turn([tool("get_state")]),
+      turn([tool("done", { summary: "ok" })]),
+    ], { confirmFirstMotion: false, describePose: () => { throw new Error("URDF not loaded"); } });
+    await agent.run("check state");
+    expect(calls[0].poseSummary).toBeUndefined();
+    expect(finished(events)?.reason).toBe("done");
   });
 
   it("move_to returns the driver's status string as the tool_result", async () => {

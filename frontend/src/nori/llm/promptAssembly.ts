@@ -76,11 +76,14 @@ export function buildCodegenContent(body: CodegenRequest): ContentBlock[] {
 // `nori_llm_agent`. Returns the base prompt unchanged when there's nothing to ground.
 export function buildAgentSystem(
   robotState: Record<string, number> | undefined, cameraLayout: string | undefined,
-  descriptor?: RobotDescriptor | null,
+  descriptor?: RobotDescriptor | null, poseSummary?: string,
 ): string {
   const grounding: string[] = [];
   if (cameraLayout) grounding.push(`Camera layout (which composite tile is which): ${cameraLayout}`);
   if (robotState) grounding.push("Current robot state (proprioceptive, normalized): " + JSON.stringify(robotState));
+  // Browser-side FK (poseSummary.ts): the gripper's world coordinates in mm, refreshed every
+  // turn. Same fold as lelab/server.py's pose_summary — keep the line text identical.
+  if (poseSummary) grounding.push("Gripper position (world-frame FK from joint telemetry, refreshed every turn): " + poseSummary);
   if (descriptor) {
     // The generated base prompt narrates the L2 anatomy (shoulder_pan, shoulder_lift, …).
     // A connected robot's ack descriptor is the truth; without this override an A3 agent is

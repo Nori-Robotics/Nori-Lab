@@ -54,6 +54,15 @@ if (typeof window !== "undefined" && !customElements.get("urdf-viewer")) {
 
 const URDF_PATH = "/nori-urdf/nori.urdf";
 
+// `?nopost=1` renders straight to the canvas with no composer. Read in two
+// places (background choice and composer attach), which must agree.
+function hasNoPostFlag() {
+  return (
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).has("nopost")
+  );
+}
+
 /**
  * Live lighting overrides from the URL, e.g.
  *   ?exposure=2.4&env=1.6&key=0.8
@@ -597,6 +606,9 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       // the earlier over-brightness is what made the model look grey — the fix
       // for "too bright" was removing the six redundant LIGHTS, not muting this.
       viewer.scene.environmentIntensity = L.env;
+      // Whether this instance will render through the EffectComposer (see the
+      // post-processing block below) decides which background colour is right.
+      const willCompose = Boolean(renderer) && !hasNoPostFlag() && interactive;
       // `environment` lights the scene; `background` is what you SEE.
       //
       // The background is painted EXPLICITLY rather than left transparent for
@@ -616,11 +628,26 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       // backdrop. The 1.35 factor is exposure headroom (fine in a HalfFloat
       // chain); ffedcf is the tuned hex. Change it via `?bg=<hex>`, judge by
       // eye, then bake the winner here.
-      const bg = new THREE.Color(isDark ? "#262320" : "#ffedcf");
-      const bgHex = new URLSearchParams(window.location.search).get("bg");
-      if (bgHex && /^[0-9a-fA-F]{6}$/.test(bgHex)) bg.set(`#${bgHex}`);
-      if (!isDark || bgHex) bg.multiplyScalar(1.35);
-      viewer.scene.background = bg;
+      //
+      // ONLY valid with the composer attached, though. Without it (a
+      // non-interactive viewer, or `?nopost=1`) a Color background never
+      // passes through tone mapping at all — three routes it to the GL clear
+      // color — so the pre-grade source would hit the screen raw: ×1.35
+      // clips to a maxed-out yellow. In that path, paint the POST-grade
+      // colour directly instead.
+      if (willCompose) {
+        const bg = new THREE.Color(isDark ? "#262320" : "#ffedcf");
+        const bgHex = new URLSearchParams(window.location.search).get("bg");
+        if (bgHex && /^[0-9a-fA-F]{6}$/.test(bgHex)) bg.set(`#${bgHex}`);
+        if (!isDark || bgHex) bg.multiplyScalar(1.35);
+        viewer.scene.background = bg;
+      } else {
+        // What the graded ffedcf / 262320 land at through ACES @ 0.8 —
+        // matches the pairing page by eye.
+        viewer.scene.background = new THREE.Color(
+          isDark ? "#1b1917" : "#eae3d1"
+        );
+      }
     }
 
     // Post-processing. Attached after the lights and environment so the passes
@@ -631,11 +658,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     // lighting rig, or the passes subtracting from it — and they are impossible
     // to tell apart by eye when both are on. Compare the two and you know which
     // half to tune.
-    const noPost =
-      typeof window !== "undefined" &&
-      new URLSearchParams(window.location.search).has("nopost");
-
-    if (renderer && !noPost && interactive) {
+    if (renderer && !hasNoPostFlag() && interactive) {
       const rect = container.getBoundingClientRect();
       postRef.current = attachPostProcessing(
         renderer,

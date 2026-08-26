@@ -83,12 +83,16 @@ export function AuthShell({
             <div className="relative rounded-[24px] border border-ink/10 bg-card/85 shadow-soft backdrop-blur">
               {/* Colour along the top edge. The clip lives on this wrapper, not
                   on the card: the card must NOT be overflow-hidden or it would
-                  crop the decal, which is positioned to float outside it. */}
+                  crop the decal, which is positioned to float outside it. The
+                  wrapper spans the whole card: a wrapper only as tall as the
+                  band forces the browser to scale its 23px corner radius down
+                  to the band height, letting the gradient poke past the
+                  card's larger curve at the top corners. */}
               <div
-                className="pointer-events-none absolute inset-x-0 top-0 h-1.5 overflow-hidden rounded-t-[23px]"
+                className="pointer-events-none absolute inset-0 overflow-hidden rounded-[23px]"
                 aria-hidden
               >
-                <div className="h-full w-full bg-gradient-to-r from-leaf via-sticker to-sticker-2" />
+                <div className="h-1.5 w-full bg-gradient-to-r from-leaf via-sticker to-sticker-2" />
               </div>
               {decal && (
                 <div

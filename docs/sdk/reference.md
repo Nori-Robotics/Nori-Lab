@@ -2,7 +2,7 @@
 
 | Import | Contains | Extra dep |
 |---|---|---|
-| `@nori/sdk` | `RemoteTeleop`, telemetry/jog/keybind types, `SignalingTransport` contract, `NORI_PROTOCOL_VERSION`, `supportsCapability`, `parseAck`, `serialModelCode` | none |
+| `@nori/sdk` | `RemoteTeleop`, telemetry/jog/keybind types, `SignalingTransport` contract, `NORI_PROTOCOL_VERSION`, `supportsCapability`, `parseAck`, `serialModelCode`, `taskKeymapFor`, `CARTESIAN_TASK_KEYS` | none |
 | `@nori/sdk/vr` | `VrJogMapper`, `VrSession`, `DEFAULT_BINDINGS`, VR types | `three` |
 | `@nori/sdk/supabase` | `SupabaseSignaling` (reference transport) | `@supabase/supabase-js` |
 | `@nori/sdk/mock` | `createMockRobot`, `MockDaemonSim`, `createLoopbackSignaling` — the dev/CI fake robot ([quick start](/sdk/quickstart#develop-without-a-robot)) | none |

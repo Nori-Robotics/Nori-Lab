@@ -4,7 +4,7 @@ The Python operator client. It speaks the same **nori-protocol** over a WebRTC d
 `@nori/sdk`, and exists for the clients a browser can't serve: headless scripts, policy and agent
 drivers, dataset tooling, and CI.
 
-::: tip v1.0.0
+::: tip v1 — on PyPI as `nori-sdk`
 The full surface — protocol, types, motion helpers, the mock, and the live `RemoteTeleop`
 session — is tested, and the live session has driven real hardware (the mock's
 `A3_DESCRIPTOR` is transcribed from a live A3's wire descriptor). The package `README.md`'s

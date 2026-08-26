@@ -57,7 +57,14 @@ Omitting the `base` group in a jog means **stop**, never "hold the last velocity
 ```ts
 teleop.command("estop");        // also: "reset_latch" | "reset"
 teleop.setArm("left");          // switch which arm is driven
-teleop.toggleMode();            // cylindrical <-> per-joint
+teleop.toggleMode();            // task-space <-> per-joint (label reads "cartesian" on
+                                // robots advertising jog_scale.task, "cylindrical" otherwise)
+
+Robots that advertise `descriptor.jog_scale.task` get a cartesian task keymap
+(`taskKeymapFor(descriptor)` returns `CARTESIAN_TASK_KEYS`: x/y/z translation, pitch, `yaw`
+— the canonical angular-z verb; `shoulder_pan` is its deprecated alias — plus wrist roll and
+gripper). Robots without it keep the legacy keymap byte-for-byte, so older units behave
+identically.
 ```
 
 ## Absolute moves

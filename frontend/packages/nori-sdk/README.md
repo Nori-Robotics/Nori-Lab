@@ -131,6 +131,11 @@ What the mock gives you:
 
 The mock speaks the same room handshake as the real robot (`robot_here` -> `ready` -> offer, with rate-limited nack/announce). Room-token HMAC auth is retired — the real robot gates private-room access via Supabase RLS — so the operator just handshakes and no token is sent.
 
+**Planned next** (committed direction, no dates): auto-reconnecting sessions that ride out
+robot restarts and network blips, with link-quality metrics exposed on the session. The
+headless/ML tooling (env wrapper, policy runner, CLI diagnostics) lands Python-first in
+`nori-sdk` on PyPI.
+
 Honest limits (v1): no audio tracks (`joinCall()` degrades to local-only), no perception frames (use `injectPerception()`), motion is *plausible, not kinematically true* — cylindrical dofs nudge a fixed joint mapping so telemetry visibly responds. Never use mock trajectories to validate motion or train anything. `createMockRobot()` needs a browser (WebRTC + canvas); `MockDaemonSim` alone runs anywhere.
 
 One gotcha worth knowing (it applies to real robots too, so the mock reproduces it):
@@ -197,7 +202,7 @@ What's in a `RobotInfo`:
 | `protocolVersion` | The daemon's nori-protocol major. Compared against this SDK's `NORI_PROTOCOL_VERSION`; a difference sets `versionMismatch`. |
 | `normMode` | Units of every `.pos` value in state/action: `"range_m100_100"` (normalized) or `"degrees"`. |
 | `watchdogProfile` | `{ t_warn_ms, t_stop_ms }` — control-frame silence beyond these slows, then stops, the robot. **Disclosure, not negotiation**: the daemon picks it from the measured link; you can't change it. |
-| `descriptor` | What the robot is: `joints` (every drivable `<motor>.pos` key), `base`, `aux` (e.g. lifts), `cameras` (roles, matching the composite layout tiles), `ranges` — the authoritative `[min, max]` per key (out-of-range values are **clamped robot-side, never rejected**, so use `ranges` to scale your inputs, not to pre-validate) — and optional `jog_scale`, the nominal commanded scale of a full-deflection jog per namespace (never achieved velocity; absent on the frozen L2 fleet forever). |
+| `descriptor` | What the robot is: `joints` (every drivable `<motor>.pos` key), `base`, `aux` (e.g. lifts), `cameras` (roles, matching the composite layout tiles), `ranges` — the authoritative `[min, max]` per key (out-of-range values are **clamped robot-side, never rejected**, so use `ranges` to scale your inputs, not to pre-validate) — and two optional maps: `jog_scale`, the nominal commanded scale of a full-deflection jog per namespace (never achieved velocity; absent on the frozen L2 fleet forever — its `task` table now names `yaw` as the canonical angular-z verb, with `shoulder_pan` kept as a deprecated alias), and `ranges_si`, the calibrated SI bounds per normalized key (radians/metres; bounds may be inverted where calibration reverses an axis — interpolate as written, never sort; absent means unknown, don't substitute a guess). |
 | `initialState` | The joint pose at session start. |
 | `versionMismatch` | **Advisory.** Mixed daemon versions exist across the fleet, so the SDK warns and proceeds — unknown frame types are ignored by both sides, so a mismatch means vocabulary gaps, never unsafe behavior. |
 | `model` | **Advisory label** ("L2", "A3") for logs and dataset provenance. Don't branch on it — branch on `descriptor` and `capabilities` (nori-protocol MODELS.md) — with ONE sanctioned exception the SDK already handles internally: the frozen L2 fleet's base-angular wire sign (see "Driving the robot → Base"). Deployed L2 daemons predate this field and never send it, so absence is not evidence of a non-L2 robot. |
@@ -256,7 +261,8 @@ the quirk by omission.
 ```ts
 teleop.command("estop");        // also: "reset_latch" | "reset"
 teleop.setArm("left");          // switch which arm is driven
-teleop.toggleMode();            // cylindrical <-> per-joint
+teleop.toggleMode();            // task-space <-> per-joint (label reads "cartesian" on
+                                // robots advertising jog_scale.task, "cylindrical" otherwise)
 ```
 
 **Teardown:**
@@ -702,7 +708,7 @@ are Nori-original additions, marked with `// NORI:` header comments.
 
 ## Status
 
-`v1.0.0`. The core teleop + VR surface is stable and the wire base-sign convention is pinned to
+v1 (see `package.json` for the exact release). The core teleop + VR surface is stable and the wire base-sign convention is pinned to
 the nori-protocol fixture (spec REP-103 everywhere; the L2 legacy flip lives behind a positive
 model match — see "Driving the robot → Base"). The two-way **call** API
 (`joinCall`/`leaveCall`/mic/camera on `RemoteTeleop`) is present but **experimental** and may

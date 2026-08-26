@@ -376,6 +376,10 @@ interface RobotUrdfViewerProps {
    * which the panel it replaces there could do too.
    */
   interactive?: boolean;
+  // Drop the container's own rounded border — for hosts (the remote page's
+  // stage/PIP) that draw their own frame around the viewer; a second inner
+  // border reads as a misaligned double edge at the corners.
+  frameless?: boolean;
 }
 
 /** One-finger behaviour on touch screens. */
@@ -394,6 +398,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   onSimState,
   onSimCameraViewChange,
   interactive = true,
+  frameless = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<URDFViewerElement | null>(null);
@@ -1052,7 +1057,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     <div className={cn("relative", className)}>
       <div
         ref={containerRef}
-        className="h-full w-full overflow-hidden rounded-md border bg-nori-hfffdf7"
+        className={cn("h-full w-full overflow-hidden bg-nori-hfffdf7", !frameless && "rounded-md border")}
       />
 
       {/* The bezel around the robot's-eye inset. Drawn in HTML rather than

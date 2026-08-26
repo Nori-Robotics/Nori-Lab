@@ -146,21 +146,18 @@ const CockpitLayout = () => {
 
 // ---------------------------------------------------------------------------
 // Stage — one big canvas that swaps video <-> 3D, with an always-visible
-// status strip (vitals + arm + E-STOP). The drawers ADAPT: while the rail's
-// mode card runs taller than the stage, they stay in the stage's column and
-// fill the space beside it; once the rail is the shorter one, they stretch
-// across the full width below the grid instead of leaving a hole beside the
-// rail. Leader mode drops below the grid, as in Cockpit.
+// status strip (vitals + arm + E-STOP). The stage STRETCHES to the rail's
+// height (the mode card sets the row), so the two columns always end level
+// and the drawers below are always full width; the 4:3 feed letterboxes
+// inside whatever box that gives. Leader mode drops below the grid.
 const StageLayout = () => {
   const { controlMode, recordState } = useRemoteUi();
   const leader = controlMode === "leader";
   const recording = recordState?.recording ?? false;
 
-  const { stageRef, railRef, railTaller } = useRailTaller();
-
   return (
     // No Breakout: Stage sits at the shell's own width, same margins as
-    // Classic. The 3:2 stage keeps the 4:3 feed's pillar bars slim here.
+    // Classic.
     <div className="space-y-3">
       <PageHeader extra={<ModePills />} showStatus={false} />
         <Banners />
@@ -175,23 +172,17 @@ const StageLayout = () => {
           <ArmControl compact />
           <EStopButton />
         </div>
-        {/* The stage column is 1fr, so the rail's width is the only knob: taking
-            330px -> 380px widens the controls and narrows the video in one move.
-            Safe against the Breakout note above, which is about ASPECT (a 4:3
-            feed's pillar bars are a ratio, unchanged by absolute width) rather
-            than about how wide the column is. */}
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start">
-          <div className="min-w-0 space-y-3">
-            <div ref={stageRef}>
-              <StageSwitcher
-                className="aspect-[7/5]"
-                video={<VideoSurface fill className="h-full" />}
-                schematic={<SchematicCard bare heightClass="h-full" interactive />}
-              />
-            </div>
-            {railTaller && <SecondaryDrawers />}
+        {/* The stage column is 1fr, so the rail's width is the only knob:
+            widening the rail narrows the video in one move. */}
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+          <div className="min-w-0">
+            <StageSwitcher
+              className="h-full min-h-[420px]"
+              video={<VideoSurface fill className="h-full" />}
+              schematic={<SchematicCard bare heightClass="h-full" interactive />}
+            />
           </div>
-          <div ref={railRef} className="min-w-0 space-y-3">
+          <div className="min-w-0 space-y-3">
             {!leader && <ActiveModeCard />}
             {leader && (
               <div className={PANEL}>
@@ -203,7 +194,7 @@ const StageLayout = () => {
             )}
           </div>
         </div>
-      {!railTaller && <SecondaryDrawers />}
+      <SecondaryDrawers />
       {leader && <ActiveModeCard wide />}
     </div>
   );

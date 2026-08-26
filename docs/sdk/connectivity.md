@@ -23,6 +23,20 @@ wrong with your code.
 
 This is the one case that needs a **TURN relay** (`turnUrls` / `turnUser` / `turnCred`).
 
+## VPNs and overlay networks on the operator machine
+
+If your machine runs a VPN or overlay network (Tailscale, WireGuard, a corporate VPN),
+**disable it — or exclude its interface — while driving robots.** ICE can nominate the
+tunnel path even when you and the robot share a desk on the same LAN, and the tunnel's
+small MTU silently drops the protocol's larger messages.
+
+The symptom is distinctive and easy to misread as an SDK bug: the session **connects and
+shows video, but the handshake never completes** — no robot descriptor arrives, telemetry
+is absent or sparse, and commands appear ignored. Nothing is wrong with your code.
+
+The SDK defends the other direction (it will not report a tunnel path as `lan`, so the
+robot keeps the forgiving WAN watchdog profile), but it cannot re-route ICE for you.
+
 ## TURN credentials are minted per session
 
 The Nori backend runs a coturn relay on a shared secret and **mints short-lived credentials at

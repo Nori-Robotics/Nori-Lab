@@ -156,6 +156,12 @@ How the media/control connection is established, and what you need for each situ
   credentials for you**; they slot into the three options above with no other change.
   (`forceRelay: true` then forces all traffic through the relay — useful to *verify* the TURN
   path, not something to leave on.)
+- **A VPN or overlay network on YOUR machine** (Tailscale, WireGuard, corporate VPN): disable
+  it — or exclude its interface — while driving robots. ICE can pick the tunnel path even when
+  robot and laptop share a desk, and the tunnel's small MTU silently drops the protocol's
+  larger messages. The symptom is distinctive: the session **connects and shows video, but the
+  handshake never completes** (no robot descriptor, commands ignored) — nothing is wrong with
+  your code.
 
 Note the relay never sees your media in the clear — WebRTC is DTLS-SRTP end-to-end encrypted;
 a TURN server only ever observes IPs and traffic volume.
@@ -468,8 +474,8 @@ for logging. The executor's `nori.moveTo(...)` uses all of this internally and r
 
 `sendPose(side, positionM, orientationXyzw?, actionId?)` commands an absolute gripper-TCP pose
 and the **robot solves the IK on-board** — the wire never carries joint solutions, so every
-client shares one IK implementation instead of each shipping its own (the architecture `vr.ts`
-records the rpi4 era moving away from). Metres in `base_footprint` (fixed to the robot, stable
+client shares one IK implementation instead of each shipping its own. Metres in
+`base_footprint` (fixed to the robot, stable
 across lift travel), REP-103 axes (+x forward, +y left, +z up), optional ROS-order quaternion
 `[x, y, z, w]` — omit it for "get the gripper to this point, any wrist angle" (v1 solves at the
 robot's current wrist, so a position-only failure is worth retrying with an explicit
@@ -505,8 +511,9 @@ Three contracts worth knowing:
   lift height is a refusal, never a surprise lift move.
 
 > **Status:** SDK side implemented and unit-tested against the spec fixtures; the A3 gateway
-> is bench-verified through the full lifecycle. The browser-SDK path has **not yet run
-> end-to-end against a live robot** (see nori_ws docs/runbooks/pose-targets-sdk-hardware-test.md).
+> is bench-verified through the full lifecycle, and the Python SDK's identical pose path has
+> run end-to-end over a live WebRTC session. This browser-SDK path itself has **not yet run
+> end-to-end against a live robot**.
 
 ## Recording training data (on-robot episodes)
 

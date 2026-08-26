@@ -11,7 +11,7 @@
 //     robot the wire key is the bare "lift", and the unresolved per-hand names were ignored
 //     in silence (the operator pressed lift and nothing moved).
 import { describe, expect, it } from "vitest";
-import { RemoteTeleop, parseAck } from "@nori/sdk";
+import { RemoteTeleop, parseAck, tunnelAddress } from "@nori/sdk";
 
 // Private-reach idiom, as in sendPose.test.ts / baseSigns.test.ts.
 type Raw = {
@@ -167,5 +167,55 @@ describe("external (VR) lift intent resolves against the descriptor", () => {
     expect("lift" in jog).toBe(false);
     expect("left_lift" in jog).toBe(false);
     expect(jog.base).toEqual({ linear: 0.2, angular: 0 });
+  });
+});
+
+describe("link-mode lan verdict refuses VPN/overlay paths", () => {
+  // Tunnel candidates are ICE-type "host" on CGNAT/ULA addresses; calling that "lan"
+  // hands the robot the tight watchdog profile on a 1280-MTU path that silently drops
+  // fragmented SCTP messages (2026-08-26 bench, NORI-A3-0003: the multi-KB ack died
+  // deterministically; an ordered channel head-of-line blocked behind it).
+  const statsFor = (localAddr: string, remoteAddr: string, type = "host") => {
+    const m = new Map<string, Record<string, unknown>>();
+    m.set("pair", {
+      type: "candidate-pair", selected: true,
+      localCandidateId: "L", remoteCandidateId: "R",
+    });
+    m.set("L", { type: "local-candidate", candidateType: type, address: localAddr });
+    m.set("R", { type: "remote-candidate", candidateType: type, address: remoteAddr });
+    return m;
+  };
+
+  const verdict = async (local: string, remote: string, type = "host") => {
+    const { t, raw } = bare();
+    (raw as unknown as { pc: unknown }).pc = { getStats: async () => statsFor(local, remote, type) };
+    await (t as unknown as { logSelectedPath: () => Promise<void> }).logSelectedPath();
+    return (t as unknown as { linkMode: string | null }).linkMode;
+  };
+
+  it("host/host on ordinary private addresses is lan (pinned)", async () => {
+    expect(await verdict("192.168.68.72", "192.168.68.89")).toBe("lan");
+  });
+
+  it("host/host on Tailscale CGNAT addresses is wan", async () => {
+    expect(await verdict("100.93.106.93", "100.112.189.107")).toBe("wan");
+  });
+
+  it("host/host on the Tailscale IPv6 ULA is wan", async () => {
+    expect(await verdict("fd7a:115c:a1e0::812d:bd6c", "192.168.68.89")).toBe("wan");
+  });
+
+  it("reflexive pairs stay wan", async () => {
+    expect(await verdict("8.8.4.4", "192.168.68.89", "srflx")).toBe("wan");
+  });
+
+  it("tunnelAddress pins the exact ranges, not all of 100.x or fd..", () => {
+    expect(tunnelAddress("100.64.0.1")).toBe(true);
+    expect(tunnelAddress("100.127.255.254")).toBe(true);
+    expect(tunnelAddress("100.63.255.254")).toBe(false);  // below CGNAT
+    expect(tunnelAddress("100.128.0.1")).toBe(false);     // above CGNAT
+    expect(tunnelAddress("FD7A:115C:A1E0:0000::1")).toBe(true);  // uncompressed + upper
+    expect(tunnelAddress("fd7b:115c:a1e0::1")).toBe(false);
+    expect(tunnelAddress("robot.local")).toBe(false);     // mDNS-obfuscated: can't tell
   });
 });

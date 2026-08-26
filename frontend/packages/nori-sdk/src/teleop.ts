@@ -389,6 +389,26 @@ export function serialModelCode(serial: string): string | null {
   return m ? m[1].toUpperCase() : null;
 }
 
+// True for addresses that mean a VPN/overlay carried the candidate even though its ICE
+// type is "host". A "lan" verdict over a tunnel hands the robot the tight watchdog
+// profile on a path with tunnel latency and a 1280-byte MTU — the exact pairing that
+// silently ate every fragmented frame on the 2026-08-26 bench (Tailscale: its CGNAT
+// IPv4 range and IPv6 ULA prefix; the multi-KB ack died deterministically and an ordered
+// channel head-of-line blocked behind it). Not a general tunnel detector — it names the
+// overlay networks we have actually been bitten by. Mirrors nori-sdk-py _tunnel_address.
+export function tunnelAddress(host: string): boolean {
+  // RFC 6598 CGNAT 100.64.0.0/10 (Tailscale's IPv4 range): 100.64.x.x .. 100.127.x.x.
+  const v4 = /^100\.(\d{1,3})\./.exec(host);
+  if (v4) {
+    const octet = Number(v4[1]);
+    return octet >= 64 && octet <= 127;
+  }
+  // Tailscale's IPv6 ULA fd7a:115c:a1e0::/48. The first three hextets have no leading
+  // zeros, so every textual form — compressed or not — starts with this prefix; only
+  // case varies.
+  return host.toLowerCase().startsWith("fd7a:115c:a1e0:");
+}
+
 // Coerce a wire `ack` frame into a RobotInfo. Tolerant of old daemons that send a bare
 // {type:"ack"} (absent `accepted` counts as accepted; everything else optional). Pure +
 // exported so the handshake parse is unit-testable without a live peer.
@@ -1129,8 +1149,10 @@ export class RemoteTeleop {
   // the cached telemetry view is deliberately not consulted, because a stale "latched"
   // from minutes ago would confirm an estop that went nowhere. Rejects on a dead channel
   // (via command) and on timeout; the only safe reading of either is "the robot is NOT
-  // stopped". Mirrors nori-sdk-py's estop_confirmed().
-  async estopConfirmed(timeoutMs = 2000): Promise<void> {
+  // stopped". Mirrors nori-sdk-py's estop_confirmed(). Default is 5 s, not 2: the latch
+  // report crosses gateway -> safety node -> telemetry, and 2 s proved tight on a busy
+  // stack (2026-08-26 bench).
+  async estopConfirmed(timeoutMs = 5000): Promise<void> {
     let onLatched!: () => void;
     const latched = new Promise<void>((res) => { onLatched = res; });
     // Subscribed BEFORE the send, so a fast robot cannot report into the gap.
@@ -1852,9 +1874,12 @@ export class RemoteTeleop {
       }
       if (!pair) return;
       const p = pair as RTCStats & { localCandidateId: string; remoteCandidateId: string };
-      const local = stats.get(p.localCandidateId) as (RTCStats & { candidateType?: string }) | undefined;
-      const remote = stats.get(p.remoteCandidateId) as (RTCStats & { candidateType?: string }) | undefined;
+      const local = stats.get(p.localCandidateId) as
+        (RTCStats & { candidateType?: string; address?: string; ip?: string }) | undefined;
+      const remote = stats.get(p.remoteCandidateId) as
+        (RTCStats & { candidateType?: string; address?: string; ip?: string }) | undefined;
       const t = (c?: { candidateType?: string }) => (c ? c.candidateType : "?");
+      const addr = (c?: { address?: string; ip?: string }) => c?.address ?? c?.ip ?? "";
       const relayed = t(local) === "relay" || t(remote) === "relay";
       this.log(
         `ICE path: local=${t(local)} remote=${t(remote)}` +
@@ -1863,7 +1888,14 @@ export class RemoteTeleop {
       // Both candidates 'host' => direct same-subnet LAN; anything else (srflx via
       // STUN, relay via TURN) is WAN. Tell the daemon so it uses the matching watchdog
       // profile (LAN 150/500 vs WAN 300/1000) instead of always assuming WAN.
-      this.linkMode = t(local) === "host" && t(remote) === "host" ? "lan" : "wan";
+      // EXCEPT: a VPN/overlay candidate is ICE-type "host" too, and calling that "lan"
+      // hands the robot the tight profile on a 1280-MTU tunnel — see tunnelAddress().
+      // (An absent/mDNS-obfuscated address can't rule the tunnel out; the historical
+      // host/host verdict stands there.)
+      this.linkMode =
+        t(local) === "host" && t(remote) === "host" &&
+        !tunnelAddress(addr(local)) && !tunnelAddress(addr(remote))
+          ? "lan" : "wan";
       this.tel.linkMode = this.linkMode;
       this.o.onTelemetry({ ...this.tel }); // surface the link chip as soon as the path resolves
       this.sendLink();

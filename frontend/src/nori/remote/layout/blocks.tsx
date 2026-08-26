@@ -644,7 +644,7 @@ export const SchematicCard = ({
   const body = usesStylisedSchematic(settings.room) ? (
     <Robot3D state={tel.state} activeArm={settings.arm} />
   ) : (
-    <RobotUrdfViewer className={`${heightClass} w-full`} interactive={interactive} />
+    <RobotUrdfViewer className={`${heightClass} w-full`} interactive={interactive} frameless={bare} />
   );
   if (bare) return body;
   return (
@@ -771,7 +771,7 @@ export const StageSwitcher = ({
   // h-full, which would collapse in a width-only box. The 3D PIP is SQUARE
   // (like its expanded form — the robot is portrait); the camera PIP keeps
   // the feed's 4:3.
-  const pipBase = "group absolute right-3 top-3 z-10 cursor-pointer overflow-hidden rounded-md border-2 border-background/60 shadow-lg transition-transform hover:scale-[1.03] ";
+  const pipBase = "group absolute right-3 top-3 z-10 cursor-pointer overflow-hidden rounded-md border-2 border-background/60 shadow-lg transition-transform hover:scale-[1.03] [&_video]:!rounded-none ";
   const pipLabel = stageIs3d ? "camera" : "3d";
   const cls = (isStage: boolean, is3d: boolean) =>
     isStage ? (is3d ? stage3dCls : stageCls)

@@ -100,18 +100,20 @@ export const ROBOT_OPS: RobotOp[] = [
       tool: "look",
       motion: false,
       summary:
-        "Capture a fresh still from the robot camera. Use before and after acting to verify the " +
-        "effect. Your only visual input. With no arguments you get the full COMPOSITE (all camera " +
-        "tiles) — best for scene-level judgement (robot left vs right, where things are). Pass " +
-        '`camera` (a role name from the "Camera layout" context, e.g. "overhead" or "left_wrist") ' +
-        "to get just that camera's tile — best for a close look at one arm/view. An unknown role " +
-        "returns an error naming the valid roles, not an image. Arms can be easily moved to get different view angles of the scene.",
+        "Capture a fresh still from one robot camera. Use before and after acting to verify the " +
+        "effect. Your only visual input. When the \"Camera layout\" context lists multiple roles, " +
+        "you MUST pass `camera` with one of those role names (for example, \"overhead\" or " +
+        "\"left_wrist\"); bare `look` returns an error naming the valid roles. On a single-camera " +
+        "robot, omit `camera`. An unknown role returns an error, not an image. Arms can be easily " +
+        "moved to get different view angles of the scene.",
       input_schema: {
         type: "object",
         properties: {
           camera: {
             type: "string",
-            description: "optional camera role from the layout; omit for the full composite",
+            description:
+              "camera role from the layout; required when the layout lists multiple roles, " +
+              "otherwise omit it for a single-camera robot",
           },
         },
         additionalProperties: false,

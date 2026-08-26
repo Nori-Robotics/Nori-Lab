@@ -29,7 +29,7 @@ WANT = {"NORI_CODEGEN_SYSTEM", "NORI_AGENT_SYSTEM"}
 
 def extract_str_consts(py_path: Path, names: set[str]) -> dict[str, str]:
     """Return {name: value} for each module-level `NAME = "<str literal>"` assignment."""
-    tree = ast.parse(py_path.read_text())
+    tree = ast.parse(py_path.read_text(encoding="utf-8"))
     found: dict[str, str] = {}
     for node in tree.body:
         if not isinstance(node, ast.Assign):
@@ -47,7 +47,7 @@ def extract_str_consts(py_path: Path, names: set[str]) -> dict[str, str]:
 
 def main() -> None:
     consts = extract_str_consts(SERVER_PY, WANT)
-    tools = json.loads(TOOLS_JSON.read_text())["tools"]
+    tools = json.loads(TOOLS_JSON.read_text(encoding="utf-8"))["tools"]
 
     def emit(name: str, value) -> str:
         # JSON.stringify-compatible: json.dumps produces a valid TS string/array literal
@@ -64,7 +64,7 @@ def main() -> None:
         + emit("AGENT_TOOLS", tools)
     )
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(body)
+    OUT.write_text(body, encoding="utf-8")
     print(f"wrote {OUT.relative_to(REPO)} "
           f"(codegen {len(consts['NORI_CODEGEN_SYSTEM'])} chars, "
           f"agent {len(consts['NORI_AGENT_SYSTEM'])} chars, {len(tools)} tools)")

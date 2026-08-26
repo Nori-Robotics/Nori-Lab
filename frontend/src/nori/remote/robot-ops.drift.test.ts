@@ -125,4 +125,12 @@ describe("descriptor-driven joint vocabulary", () => {
       })),
     );
   });
+
+  it("describes the runtime's multi-camera look requirement", () => {
+    const look = buildAgentTools().find((tool) => tool.name === "look")!;
+    expect(look.description).toContain("multiple roles");
+    expect(look.description).toContain("MUST pass `camera`");
+    const camera = (look.input_schema.properties as Record<string, { description: string }>).camera;
+    expect(camera.description).toContain("required when the layout lists multiple roles");
+  });
 });

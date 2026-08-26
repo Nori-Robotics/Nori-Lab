@@ -113,8 +113,8 @@ export const EYEBROW = "font-mono text-[11px] uppercase tracking-[0.18em] text-n
 export const SELECT_TRIGGER_CLASS =
   "h-8 w-auto gap-1.5 rounded-md border-nori-h14131a/12 bg-nori-hfffdf7 px-2.5 font-mono text-[11px] text-nori-h14131a focus:ring-nori-hd98b3d";
 export const SELECT_CONTENT_CLASS =
-  "border-nori-h14131a/12 bg-nori-hfffdf7 font-mono text-[12px] text-nori-h14131a";
-export const SELECT_ITEM_CLASS = "focus:bg-nori-hebe8db focus:text-nori-h14131a";
+  "border-nori-h14131a/12 bg-nori-hfffdf7 font-mono text-[11px] text-nori-h14131a";
+export const SELECT_ITEM_CLASS = "text-[11px] focus:bg-nori-hebe8db focus:text-nori-h14131a";
 
 // ---------------------------------------------------------------------------
 // small shared widgets
@@ -648,11 +648,17 @@ export const ActiveModeCard = ({ wide = false }: { wide?: boolean }) => {
 export const SchematicCard = ({
   heightClass = "h-64", interactive = false, bare = false,
 }: { heightClass?: string; interactive?: boolean; bare?: boolean }) => {
-  const { tel, settings } = useRemoteUi();
+  const { tel, settings, teleop } = useRemoteUi();
   const body = usesStylisedSchematic(settings.room) ? (
     <Robot3D state={tel.state} activeArm={settings.arm} />
   ) : (
-    <RobotUrdfViewer className={`${heightClass} w-full`} interactive={interactive} frameless={bare} />
+    <RobotUrdfViewer
+      className={`${heightClass} w-full`}
+      interactive={interactive}
+      frameless={bare}
+      liveState={tel.state}
+      descriptor={teleop?.robotInfo()?.descriptor}
+    />
   );
   if (bare) return body;
   return (

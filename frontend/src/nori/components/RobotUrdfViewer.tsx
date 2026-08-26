@@ -29,6 +29,11 @@ import {
   type SimHandle,
   type SimState,
 } from "@/nori/sim/simRuntime";
+import {
+  liveStateToJointRadians,
+  type UrdfJointInfo,
+} from "@/nori/components/liveJointPose";
+import type { RobotDescriptor } from "@nori/sdk";
 import { ThemeProviderContext } from "@/contexts/ThemeContext";
 import { cn } from "@/lib/utils";
 
@@ -380,6 +385,15 @@ interface RobotUrdfViewerProps {
   // stage/PIP) that draw their own frame around the viewer; a second inner
   // border reads as a misaligned double edge at the corners.
   frameless?: boolean;
+  /**
+   * Live joint telemetry (the teleop `state` dict, ~15 Hz). When present, the
+   * model is posed from it on every frame; when absent the viewer stays a
+   * static (draggable) model exactly as before. See liveJointPose.ts for the
+   * key → joint mapping and denormalization.
+   */
+  liveState?: Record<string, number>;
+  /** The robot's handshake descriptor, for future radian ranges (ranges_rad). */
+  descriptor?: RobotDescriptor;
 }
 
 /** One-finger behaviour on touch screens. */
@@ -399,6 +413,8 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   onSimCameraViewChange,
   interactive = true,
   frameless = false,
+  liveState,
+  descriptor,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<URDFViewerElement | null>(null);
@@ -429,6 +445,34 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   const [touchMode, setTouchMode] = useState<TouchMode>("pose");
   const touchModeRef = useRef(touchMode);
   touchModeRef.current = touchMode;
+
+  // Live telemetry → model pose. Mutates the loaded robot in place (mirrors
+  // Robot3D's pattern): no scene rebuild at the 15 Hz telemetry rate. Gated on
+  // `prepared` so a frame that arrives before the model loads is dropped — and
+  // because the effect ALSO re-runs when `prepared` flips true, the latest
+  // frame is applied the moment a late-loading model is ready.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!prepared || !liveState || !viewer?.robot) return;
+    const joints = (viewer.robot as unknown as { joints?: Record<string, UrdfJointInfo> })
+      .joints;
+    if (!joints) return;
+    const pose = liveStateToJointRadians(liveState, joints, descriptor);
+    // Batch through the element's setJointValues (present at runtime, not in
+    // our helper's interface type) so mimics and angle-change events fire as
+    // usual. Each changed joint marks the element dirty; the element's render
+    // loop draws dirty frames even with auto-redraw removed (the interactive
+    // path), so one redraw per telemetry frame — and none when nothing moved.
+    const batch = (viewer as unknown as {
+      setJointValues?: (values: Record<string, number>) => void;
+    }).setJointValues;
+    if (typeof batch === "function") {
+      batch.call(viewer, pose);
+    } else {
+      for (const [name, rad] of Object.entries(pose)) viewer.setJointValue(name, rad);
+      viewer.redraw();
+    }
+  }, [liveState, descriptor, prepared]);
 
   // Held in a ref so the mount effect can call the latest callback without
   // listing it as a dependency — depending on it would rebuild the viewer (and

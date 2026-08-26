@@ -142,7 +142,7 @@ const StageLayout = () => {
   return (
     // Narrower than the other breakout layouts: the 4:3 feed in a wide 16:9
     // stage stranded huge pillar bars. 3:2 stage + this width leaves slim ones.
-    <Breakout width="w-[min(92vw,1200px)]">
+    <Breakout width="w-[min(90vw,1120px)]">
       <div className="space-y-3 px-1">
         <PageHeader extra={<ModePills />} />
         <Banners />

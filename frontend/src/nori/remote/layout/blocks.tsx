@@ -220,14 +220,9 @@ export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
     : !supported ? "This robot's gateway doesn't support remote arming yet"
     : armed ? "Robot arms are holding torque — disarm de-torques them (support the arms)"
     : "Arm the motor buses so keyboard/VR commands move the robot";
-  const onClick = () => {
-    if (!teleop) return;
-    // Arming is unconfirmed — it holds the pose it's in, nothing can drop.
-    // Disarming keeps the confirm: the arms de-torque and gravity takes over.
-    if (armed && !window.confirm(
-      "Disarm motors? The arms de-torque shortly after — support them so they don't drop.")) return;
-    teleop.setArmed(!armed);
-  };
+  // No confirms in either direction (bench decision, 2026-08-25): the button
+  // tooltip carries the support-the-arms warning for disarm.
+  const onClick = () => teleop?.setArmed(!armed);
   return (
     // compact drops the bordered wrapper — for hosts (the controls strip) that
     // already provide a panel around it.

@@ -927,7 +927,14 @@ const LeaderSetup = ({
           of squeezing two columns — the viewport-based md: breakpoint lies about the
           actual card width. `wide` embeds (Cockpit/Stage render this full-width below
           the video) get the two columns back. */}
-      <div className={embedded && !wide ? "grid gap-4" : "grid gap-4 xl:grid-cols-2"}>
+      <div className={
+        embedded
+          // A wide embed is guaranteed ~full page width by its host, so the
+          // viewport-based xl: gate (1280px — taller than Stage's whole page)
+          // would keep the panes stacked forever; md: is the honest floor.
+          ? (wide ? "grid gap-4 md:grid-cols-2" : "grid gap-4")
+          : "grid gap-4 xl:grid-cols-2"
+      }>
         <LeaderPane
           side="left"
           frame={liveFrame}

@@ -458,6 +458,20 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       .joints;
     if (!joints) return;
     const pose = liveStateToJointRadians(liveState, joints, descriptor);
+    // TEMP diagnostics (remove once live-pose is verified on hardware): one line
+    // per second — how many state keys arrived, how many mapped, and a sample.
+    const now = Date.now();
+    const w = window as unknown as { __livePoseLogT?: number };
+    if (!w.__livePoseLogT || now - w.__livePoseLogT > 1000) {
+      w.__livePoseLogT = now;
+      const sample = Object.entries(pose)[0];
+      console.info(
+        `liveJointPose: state keys=${Object.keys(liveState).length} ` +
+        `mapped=${Object.keys(pose).length} ` +
+        (sample ? `sample ${sample[0]}=${sample[1].toFixed(3)}rad ` : "") +
+        `ranges_si=${descriptor?.ranges_si ? "yes" : "no (URDF-limit fallback)"}`
+      );
+    }
     // Batch through the element's setJointValues (present at runtime, not in
     // our helper's interface type) so mimics and angle-change events fire as
     // usual. Each changed joint marks the element dirty; the element's render
@@ -1152,7 +1166,9 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
         </button>
       )}
 
-      {isCoarse && status === "ready" && (
+      {/* Touch-mode toggle only makes sense when the viewer takes input at all —
+          a display-only schematic (remote page) must not offer pose/camera modes. */}
+      {interactive && isCoarse && status === "ready" && (
         <div className="absolute bottom-3 left-3 z-10 flex overflow-hidden rounded-full border bg-background/90 text-sm font-medium shadow-sm backdrop-blur">
           {(
             [

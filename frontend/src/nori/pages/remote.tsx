@@ -3,14 +3,17 @@
 // data channel, brokered by Supabase signaling. The heavy lifting lives in
 // nori/remote/teleop.ts (the RemoteTeleop class); this page is settings + video + status.
 //
+// LAYOUTS: the page's state, effects and drivers all live HERE; what gets drawn is a
+// selectable arrangement from remote/layout/layouts.tsx built out of the blocks in
+// remote/layout/blocks.tsx (field-test set — expected to narrow to 1-2). The picker is
+// locked while a session is live, so a layout never has to survive an active stream,
+// and the choice persists per browser.
+//
 // The Supabase project (URL/anon key) is the one already initialized by NoriContext from
 // /nori/config, so there are no paste boxes for it here — only the remote-session
 // settings (room, ICE/TURN) which must match the Pi's .env.
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Pill } from "@/components/ui/pill";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -19,75 +22,16 @@ import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
 import { type ArmSide, type CameraViewHandle } from "@nori/sdk";
 import { VrSession } from "@nori/sdk/vr";
-import { VrHandoff } from "@/nori/components/VrHandoff";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
-import { TelemetryPanel, GripForce, MotorFaults, ServoTemps, OvertempBanner, ControlLegend, BaseCommandLegend, CallBar, ConnectionBanner, ControlOfflineBanner, RailHeight, RailHeightHelp } from "@/nori/remote/TeleopStatus";
-import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
-import RobotUrdfViewer from "@/nori/components/RobotUrdfViewer";
-import { servoThermalThresholds, usesStylisedSchematic } from "@/nori/robotModels";
+import { servoThermalThresholds } from "@/nori/robotModels";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
-import LeaderSetup from "@/nori/pages/leader-setup";
 import { playAudioFile, type ClipHandle } from "@/nori/remote/audioClip";
-import { DatasetCaptureCard } from "@/nori/remote/DatasetCaptureCard";
-import { PolicyDeployCard } from "@/nori/remote/PolicyDeployCard";
-import { RunOnRobotCloud } from "@/nori/remote/RunOnRobotCloud";
-import { isCloudServeEnabled, isM6VideoEnabled } from "@/nori/remote/flags";
+import { isM6VideoEnabled } from "@/nori/remote/flags";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
-
-// Small left/right arm toggle rendered in the header of whichever control card is
-// active (keyboard legend, leader setup) — the arm choice belongs to the control
-// method, not the // controls mode strip.
-const ArmPills = ({
-  value,
-  onChange,
-}: {
-  value: ArmSide;
-  onChange: (arm: ArmSide) => void;
-}) => (
-  // The ENTER binding that switches arms is advertised as a keycap in the Commands row of
-  // BaseCommandLegend (next to SPACE / E-STOP), which renders in both cards this appears in —
-  // so it isn't repeated here.
-  <div className="flex items-center gap-1.5">
-    <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-      arm
-    </span>
-    {(["left", "right"] as ArmSide[]).map((arm) => (
-      <Pill key={arm} size="sm" active={value === arm} onClick={() => onChange(arm)}>
-        {arm}
-      </Pill>
-    ))}
-  </div>
-);
-
-// One labeled sensitivity slider (keyboard speed / VR tuning). Values are fractions of the
-// hardware-tuned rate; the readout shows percent, so 100% always means "the default feel".
-// The track flexes to the card's right edge — the row takes that height regardless, so the
-// extra width is free slider precision.
-const TuneSlider = ({
-  label, value, min, max, title, onChange,
-}: {
-  label: string; value: number; min: number; max: number; title: string;
-  onChange: (v: number) => void;
-}) => (
-  <label className="flex w-full items-center gap-2" title={title}>
-    {/* Fixed label column so stacked sliders' tracks start flush (fits "sensitivity"). */}
-    <span className="w-24 shrink-0 font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-      {label}
-    </span>
-    <input
-      type="range"
-      min={min}
-      max={max}
-      step={0.05}
-      value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
-      className="h-1 min-w-0 flex-1 cursor-pointer accent-nori-h14131a"
-    />
-    <span className="w-10 shrink-0 text-right font-mono text-[11px] text-muted-foreground">
-      {Math.round(value * 100)}%
-    </span>
-  </label>
-);
+import { RemoteUiProvider, type RemoteUi } from "@/nori/remote/layout/blocks";
+import {
+  REMOTE_LAYOUTS, loadRemoteLayout, saveRemoteLayout, type RemoteLayoutId,
+} from "@/nori/remote/layout/layouts";
 
 const Remote = () => {
   const { ready, error: noriError } = useNori();
@@ -111,13 +55,19 @@ const Remote = () => {
   const logRef = useRef<HTMLDivElement>(null);
   const m6 = isM6VideoEnabled();
 
+  // Which arrangement draws the page. Persisted per browser; switchable only
+  // while no session is running (see the picker below), so layouts never have
+  // to keep a live stream alive across a re-arrangement.
+  const [layoutId, setLayoutId] = useState<RemoteLayoutId>(loadRemoteLayout);
+  const layout = REMOTE_LAYOUTS.find((l) => l.id === layoutId) ?? REMOTE_LAYOUTS[0];
+
   const [showLog, setShowLog] = useState(false);
   // Servo cut point differs by generation (L2 58 C, A3 60 C) and the ack carries no
   // model field, so it comes from the serial -- and the session's room IS the active
-  // robot's serial (same reasoning as the 3D schematic below).
+  // robot's serial (same reasoning as the 3D schematic).
   const servoThermal = servoThermalThresholds(settings.room);
-  // Each control-mode card (keyboard / leader / VR) collapses like Robot logs and
-  // Session settings; expanded by default, remembered per mode while on the page.
+  // Each control-mode card (keyboard / leader / VR) collapses like Robot logs;
+  // expanded by default, remembered per mode while on the page.
   const [showKeyboardCard, setShowKeyboardCard] = useState(true);
   const [showLeaderCard, setShowLeaderCard] = useState(true);
   const [showVrCard, setShowVrCard] = useState(true);
@@ -152,20 +102,23 @@ const Remote = () => {
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [logLines]);
+  }, [logLines, showLog]);
 
   // Attach THIS page's media elements to the persistent session, and detach (not stop) on leave.
   // The SDK remembers the inbound stream and re-points these elements, so video survives a
   // round-trip to another page. Also RESUME the robot video encoder while Remote is showing video,
   // and PAUSE it on leave — the encoder is idle (and the Pi draws less power) whenever no page is
   // watching. The session default is paused (set in the provider), so other pages get no video.
+  // layoutId is a dep: a layout switch remounts the <video> element, so re-point the
+  // session at the NEW element (the switch is gated to no-session, but teleop can
+  // outlive a disconnect and would otherwise hold the old element on reconnect).
   useEffect(() => {
     if (!teleop) return;
     teleop.setVideoEl(videoRef.current);
     teleop.setAudioEl(audioRef.current);
     teleop.resumeVideo();
     return () => { teleop.setVideoEl(null); teleop.setAudioEl(null); teleop.pauseVideo(); };
-  }, [teleop]);
+  }, [teleop, layoutId]);
 
   // Track which camera tiles the composite carries (the bridge sends the layout ~2 s after connect,
   // re-sent a few times). Poll rather than subscribe — the provider owns onCameraLayout — and reset
@@ -221,7 +174,6 @@ const Remote = () => {
   useEffect(() => {
     vrRef.current?.setMotorsOnline(!daemonStatus || daemonStatus.state === "online");
   }, [daemonStatus]);
-
 
   // VR is an optional mode on top of the same session: detect headset support, and on any
   // link drop require a fresh squeeze before VR drive resumes (re-clutch-on-resume).
@@ -467,8 +419,6 @@ const Remote = () => {
   useEffect(() => () => { clipRef.current?.stop(); leaderRef.current?.stop(); vrRef.current?.stop(); }, []);
 
   const connected = running && connState === "connected";
-  // Keep the pill terse — just the connection state. Loop rate / VR / control-active
-  // detail lives in the telemetry card, not up here.
   // The pill speaks the connect PHASE, not the raw WebRTC state: `connState` is "idle" for the
   // whole waiting-for-the-robot window, so the old pill read "conn: idle" while the real answer
   // was "waiting for your robot" (or, after the deadline, "couldn't connect").
@@ -482,8 +432,6 @@ const Remote = () => {
   const status = connected
     ? "connected"
     : running || connecting ? (PHASE_PILL[connectStatus.phase] ?? "connecting…") : "not connected";
-  // Which control method is selected (keyboard is the passive default — base + lift always
-  // stay on the keyboard regardless). Each mode shows its own card below // controls.
   const controlMode = selectedMode;
   const selectKeyboard = useCallback(async () => {
     setSelectedMode("keyboard");
@@ -502,6 +450,35 @@ const Remote = () => {
     // whether the session is live now or connects later. Offline the card is setup-only.
   }, []);
 
+  // Everything the layout blocks read. Deliberately not memo-tuned per field —
+  // the page re-renders on telemetry anyway; useMemo just keeps the object
+  // identity stable within a render pass.
+  const ui: RemoteUi = useMemo(() => ({
+    teleop, running, connecting, connected, connState, tel, stale, controlActive, mode, call,
+    daemonStatus, connectStatus, recordState, logLines, settings,
+    set: set as RemoteUi["set"],
+    connect, requestDisconnect, connectBlocked, toggleControlMode, servoThermal, status,
+    videoRef, selfViewRef, logRef, m6,
+    cameraTiles, selectedCamera, setSelectedCamera,
+    volume, setVolume, clipName, stopClip, playClipFile,
+    joinCall, leaveCall, toggleMute, toggleCamera,
+    controlMode, selectKeyboard, selectVr, selectLeader, inVr, xrSupported, enterVr,
+    leaderRef, leaderActive, leaderCount, leaderSides, leaderEngaged, leaderWarnings, leaderCalibrating,
+    showKeyboardCard, setShowKeyboardCard, showLeaderCard, setShowLeaderCard,
+    showVrCard, setShowVrCard, showLog, setShowLog,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [
+    teleop, running, connecting, connected, connState, tel, stale, controlActive, mode, call,
+    daemonStatus, connectStatus, recordState, logLines, settings, connectBlocked, servoThermal,
+    status, m6, cameraTiles, selectedCamera, volume, clipName, controlMode, inVr, xrSupported,
+    leaderActive, leaderCount, leaderSides, leaderEngaged, leaderWarnings, leaderCalibrating,
+    showKeyboardCard, showLeaderCard, showVrCard, showLog,
+    requestDisconnect, selectKeyboard, selectVr, selectLeader, stopClip,
+  ]);
+
+  const LayoutComponent = layout.Component;
+  const layoutLocked = running || connecting;
+
   return (
     <section className="space-y-4">
       {!ready && (
@@ -511,525 +488,60 @@ const Remote = () => {
         </p>
       )}
 
-      {/* One grid holds header + video (left) and the side panels (right), so the right
-          column starts at the very top, level with the page title. */}
-      <div className="grid gap-4 lg:grid-cols-[1fr_400px]">
-        {/* min-w-0: grid items default to min-width:auto, so without this the column refuses to
-            shrink below its content's intrinsic width and the whole grid overflows the viewport
-            on narrow screens (the w-full video then balloons against the over-wide track). */}
-        <div className="min-w-0 space-y-3">
-          {/* Header: connection status + Connect/Disconnect. The session itself lives in
-              TeleopSessionProvider, so connecting from here is the same action as connecting on
-              Home — it just saves the round trip. */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h1 className="text-3xl font-bold">Remote Operation</h1>
-            <div className="flex items-center gap-3">
-              <span
-                className={
-                  "inline-flex h-9 items-center rounded-full px-3 font-mono text-xs " +
-                  (connected ? "bg-nori-h8ab135/25 text-nori-h4d6a1e" : "bg-nori-h14131a/8 text-nori-h857b6b")
-                }
-              >
-                ● {status}
-              </span>
-              {running ? (
-                <Button size="sm" variant="destructive" onClick={requestDisconnect}>Disconnect</Button>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={connect}
-                  disabled={connecting || !!connectBlocked}
-                  title={connectBlocked ?? undefined}
-                >
-                  {connecting ? "Connecting…" : "Connect"}
-                </Button>
-              )}
-            </div>
-          </div>
-
-          <AlertDialog open={confirmFinish} onOpenChange={setConfirmFinish}>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Finished recording dataset?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  You still have a training session open{
-                    recordState?.episodesKept
-                      ? ` with ${recordState.episodesKept} episode${recordState.episodesKept === 1 ? "" : "s"} saved`
-                      : ""
-                  }. Finish it before you disconnect — your episodes upload to My Stuff once
-                  the robot is idle. Keep Nori powered on until they land.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Return</AlertDialogCancel>
-                <AlertDialogAction onClick={finishAndDisconnect}>Finish and save</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-          {/* Connection banner: what the connect attempt is doing, or why it failed + the remedy.
-              Every connect failure used to land ONLY in the collapsed "Robot logs" box. */}
-          <ConnectionBanner status={connectStatus} />
-          {/* Motor-control outage banner: video/link can be perfectly healthy while the robot's
-              controller is down or refusing sessions (dead arm) — say so, with the remedy,
-              instead of letting it read as random dead control. */}
-          {running && <ControlOfflineBanner status={daemonStatus} />}
-          {/* Persistent while an over-temp latch holds: cooling takes minutes and reset is
-              refused until the joint is back under threshold — say so, or the refused reset
-              reads as a bug. */}
-          {running && <OvertempBanner latchReason={tel.latchReason} cutC={servoThermal.cutC} />}
-          <div className="relative">
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              controls
-              className="w-full rounded-md bg-background"
-              style={{ aspectRatio: "4 / 3" }}
-            />
-            {/* Camera picker — only when the composite carries more than one tile. Crops client-side;
-                the Pi keeps sending the single composite track regardless of the selection. */}
-            {cameraTiles.length > 1 && (
-              <select
-                value={cameraTiles.includes(selectedCamera) ? selectedCamera : "composite"}
-                onChange={(e) => setSelectedCamera(e.target.value)}
-                title="Choose which camera to view. The robot always sends the full composite; this crops one tile locally."
-                className="absolute left-2 top-2 rounded border border-background/40 bg-background/80 px-2 py-1 font-mono text-[11px] text-foreground shadow backdrop-blur"
-              >
-                <option value="composite">all cameras (composite)</option>
-                {cameraTiles.map((role) => (
-                  <option key={role} value={role}>{role}</option>
-                ))}
-              </select>
-            )}
-            {/* Reserved operator self-view slot (M6). Hidden until the camera is on. */}
-            <video
-              ref={selfViewRef}
-              autoPlay
-              playsInline
-              muted
-              className={
-                "absolute bottom-2 right-2 w-32 rounded border-2 border-background bg-background shadow " +
-                (m6 && call.cameraOn ? "" : "hidden")
-              }
-              style={{ aspectRatio: "4 / 3" }}
-            />
-          </div>
-          {/* Robot inbound audio — unmuted sink, no video element can play it (video is muted). */}
-          <audio ref={audioRef} autoPlay className="hidden" />
-
-          {/* Dataset capture (browser catcher) — records this session into a LeRobot dataset.
-              Sits under the video, where the operator is already looking while recording, rather
-              than in the right rail among the control-mode cards. Renders only when a local lelab
-              spool answers (hidden on the hosted app). */}
-          <DatasetCaptureCard />
-
-          {/* Deploy a trained policy on the robot — runs on this computer, streams
-              only motor instructions to the arm. Sits under the record card.
-              (Desktop-only: hidden on the hosted app, which has no local lelab.) */}
-          <PolicyDeployCard />
-
-          {/* Run a cloud policy ROBOT-DIRECT (no laptop in the loop) — the backend
-              spawns the Modal serve container and the robot's own agent connects.
-              This is the deploy card the HOSTED app can show. Gated dark
-              (isCloudServeEnabled) while the serving lanes are rebuilt. */}
-          {isCloudServeEnabled() && <RunOnRobotCloud />}
-
-          {/* Single combined telemetry card: link/loop chips, then rail height, then grip force. */}
-          <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-4 text-nori-h14131a shadow-sm">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// telemetry</p>
-            <div className="mt-3">
-              <TelemetryPanel
-                connState={running ? connState : "idle"}
-                tel={tel}
-                controlActive={controlActive}
-                stale={stale}
-                inVr={inVr}
-                daemonStatus={running ? daemonStatus : null}
-                servoThermal={servoThermal}
-              />
-            </div>
-            <h2 className="mt-4 flex items-center gap-1.5 text-sm font-semibold">
-              Rail height <RailHeightHelp />
-            </h2>
-            <div className="mt-2">
-              <RailHeight state={tel.state} descriptor={teleop?.robotInfo()?.descriptor} />
-            </div>
-            <h2 className="mt-4 text-sm font-semibold">Grip force / motor current</h2>
-            <div className="mt-2">
-              <GripForce currents={tel.currents} />
-            </div>
-            {/* Per-motor hardware faults — renders nothing unless a motor is actually erroring. */}
-            <div className="mt-2">
-              <MotorFaults faults={tel.motorFaults} />
-            </div>
-            {/* Servo temps — silent until a joint reaches 50°C, then lists it warming toward
-                the 58°C torque-cut latch (amber) / imminent (red). */}
-            <div className="mt-2">
-              <ServoTemps temps={tel.servoTemps} thresholds={servoThermal} />
-            </div>
-          </div>
-
-          {/* The script console now lives on the Coding page (/nori/coding), driving the same
-              persistent session. */}
-        </div>
-
-        <div className="h-fit min-w-0 space-y-4">
-        {/* Audio: two-way call plus clip-to-robot-speaker (reuses the M3b downlink; needs the
-            robot's voice downlink on — --voice / NORI_SPEAKER). Always shown; disabled offline.
-            Kept tight: in this 400px rail an active call fits on two rows, so joining doesn't
-            shove the control cards down the page. */}
-        <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-4 text-nori-h14131a shadow-sm">
-          {/* Clip-to-speaker rides on the "// audio" eyebrow line — it's a one-off action, not
-              part of the call, and parking it here keeps the call controls and the you/nori
-              indicators together on the rows below. */}
-          <div className="flex min-h-5 flex-wrap items-center gap-2">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// audio</p>
-            <div className="ml-auto flex min-w-0 flex-nowrap items-center gap-2">
-              {clipName ? (
-                <>
-                  {/* While a clip streams, the play controls give way to the playing indicator +
-                      Stop button in the same spot, so the whole row stays on one line. The name is
-                      truncated (full name on hover) so a long filename can't push Stop off the row. */}
-                  <span
-                    className="flex min-w-0 items-center gap-1 text-xs text-nori-h4d6a1e"
-                    title={clipName}
-                  >
-                    <span className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-nori-h8ab135" />
-                    Clip <span className="max-w-[7rem] truncate font-medium">{clipName}</span> playing
-                  </span>
-                  <Button size="sm" variant="secondary" onClick={stopClip}>
-                    Stop clip
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <span className="text-xs text-nori-h857b6b">Play clip</span>
-                  <label
-                    className={
-                      "rounded border border-nori-h14131a/20 px-2 py-0.5 text-xs " +
-                      (connected ? "cursor-pointer hover:bg-nori-h14131a/5" : "pointer-events-none opacity-50")
-                    }
-                    title="Play an audio file out of the robot's speaker"
-                  >
-                    Choose file…
-                    <input
-                      type="file"
-                      accept="audio/*"
-                      className="hidden"
-                      disabled={!connected}
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        e.target.value = ""; // allow re-picking the same file
-                        if (f) void playClipFile(f);
-                      }}
-                    />
-                  </label>
-                </>
-              )}
-            </div>
-          </div>
-          <div className="mt-3">
-            <CallBar
-              call={call}
-              running={running}
-              connected={connState === "connected"}
-              m6={m6}
-              recording={recordState?.recording ?? false}
-              onJoin={joinCall}
-              onLeave={leaveCall}
-              onToggleMute={toggleMute}
-              onToggleCamera={toggleCamera}
-              volume={volume}
-              onVolumeChange={setVolume}
-            />
-          </div>
-        </div>
-
-        {/* Control-mode picker: which method drives the arms. All options are always shown
-            (even when a headset / the leader arms aren't present); keyboard is the default. */}
-        {/* min-h-16 = the collapsed control cards' 64px, so this strip lines up with them. */}
-        <div className="flex min-h-16 flex-wrap items-center gap-3 rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-4 py-2 text-nori-h14131a shadow-sm">
-          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// controls</p>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <Pill
-              active={controlMode === "keyboard"}
-              onClick={selectKeyboard}
-              title="Drive with the keyboard (default)"
-            >
-              Keyboard
-            </Pill>
-            <Pill
-              active={controlMode === "leader"}
-              onClick={selectLeader}
-              title="Drive the robot's arms from the physical dual leader arms (base + lift stay on the keyboard). Selectable offline for hardware setup."
-            >
-              Leader arm
-            </Pill>
-            <Pill
-              active={controlMode === "vr"}
-              onClick={selectVr}
-              title="Drive with a VR headset (AR passthrough) on this same session"
-            >
-              {inVr ? "In VR" : "VR"}
-            </Pill>
-          </div>
-        </div>
-
-        {/* VR mode card: the headset entry point on supported devices, a plain hint otherwise. */}
-        {controlMode === "vr" && (
-          <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-4 pb-4 pt-3 text-nori-h14131a shadow-sm">
-            <div
-              className="flex min-h-9 cursor-pointer items-center justify-between"
-              onClick={() => setShowVrCard((v) => !v)}
-            >
-              <h3 className="text-base font-semibold leading-none tracking-tight">VR control</h3>
-              <span className="text-sm text-muted-foreground">{showVrCard ? "▲ hide" : "▼ show"}</span>
-            </div>
-            {showVrCard && (
-              <div className="mt-3 space-y-3">
-                {/* On a headset browser: enter VR directly on this same session. */}
-                {xrSupported && (
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Button
-                      onClick={enterVr}
-                      disabled={!connected || inVr}
-                      title="Open the headset (AR passthrough) on this same session"
-                    >
-                      {inVr ? "In VR" : "Enter VR"}
-                    </Button>
-                    {!connected && (
-                      <span className="text-sm text-nori-h6f6858">connect to the robot first</span>
-                    )}
-                  </div>
-                )}
-                {/* Sensitivity sliders — persisted per browser, applied live while in VR.
-                    Stacked full-width rows (the sliders flex to the card edge). */}
-                <div className="space-y-2">
-                  <TuneSlider
-                    label="motion"
-                    value={settings.vrSensitivity}
-                    min={0.25}
-                    max={2}
-                    title="How much the robot moves per hand movement (100% = hardware-tuned default)"
-                    onChange={(v) => set("vrSensitivity", v)}
-                  />
-                  <TuneSlider
-                    label="grip open"
-                    value={settings.vrGripperOpen}
-                    min={0.05}
-                    max={1}
-                    title="How fast the gripper opens (closing always runs 1.5× this speed)"
-                    onChange={(v) => set("vrGripperOpen", v)}
-                  />
-                </div>
-                {/* On a laptop: hand off a link to the hosted VR page to open on the headset. */}
-                <VrHandoff />
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Leader-arm hardware setup — the full leader-setup surface, embedded. Shown while
-            leader mode is selected; usable offline (calibration doesn't need the session). */}
-        {controlMode === "leader" && (
-          <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 px-4 pb-4 pt-3 shadow-sm">
-            {/* Routing status: with ONE leader arm connected the driver solo-routes it to the
-                selected follower arm (the pills in the header) — say so, since otherwise a
-                left leader silently driving the right arm reads as a wiring bug. Also flag
-                the silent-failure state: driver running but no usable targets (arms unplugged
-                or calibration missing/stale), where nothing is sent to the robot at all. */}
-            {/* Live joint count + engagement — moved off the mode pill (which stays a plain
-                "Leader arm" label) into the card's status area, right below the pills. */}
-            {leaderActive && (
-              <p className="mb-2 rounded bg-nori-h14131a/5 px-2 py-1 text-xs font-medium text-nori-h4d463a">
-                {leaderCount}/{leaderSides.length === 1 ? 6 : 12} leader joints readable ·{" "}
-                {leaderEngaged
-                  ? leaderSides.length === 1 ? `engaged → ${settings.arm} arm` : "engaged"
-                  : "standby (monitor-only)"}
-              </p>
-            )}
-            {/* Calibration health, summary only — the embedded Leader setup below lists the
-                per-joint details, so repeating them here just doubles the wall of text. */}
-            {leaderActive && leaderWarnings.length > 0 && (
-              <p className="mb-2 rounded bg-nori-hd24a3d/10 px-2 py-1 text-xs font-semibold text-nori-h8f2318">
-                Calibration problems — recalibrate before engaging. Details in Leader setup below.
-              </p>
-            )}
-            {leaderActive && leaderSides.length === 1 && (
-              <p className="mb-2 rounded bg-nori-h8ab135/15 px-2 py-1 text-xs text-nori-h4d6a1e">
-                One leader arm connected ({leaderSides[0]}) — {leaderEngaged ? "driving" : "will drive"} the{" "}
-                <strong>{settings.arm}</strong> follower arm. Use the arm pills to switch sides.
-              </p>
-            )}
-            {leaderActive && leaderSides.length === 0 && (
-              <p className="mb-2 rounded bg-nori-hb06a1c/15 px-2 py-1 text-xs text-nori-h7a4a13">
-                Leader mode is on but no leader joints are readable — nothing is being sent to
-                the robot. Check the USB connection and that this machine has a leader
-                calibration for the configured ID.
-              </p>
-            )}
-            <LeaderSetup
-              embedded
-              collapsed={!showLeaderCard}
-              onToggleCollapse={() => setShowLeaderCard((v) => !v)}
-              titleExtra={
-                /* ENGAGE gate lives next to the title: the driver auto-starts in standby
-                   (monitor-only); the robot only follows the leaders after this explicit
-                   engage. Always visible in leader mode (disabled with a reason) so it never
-                   seems to vanish — locked while disconnected, no joints readable, or
-                   calibration is running. */
-                <Button
-                  size="sm"
-                  variant={leaderEngaged ? "destructive" : "default"}
-                  onClick={() => leaderRef.current?.setEngaged(!leaderEngaged)}
-                  disabled={!leaderActive || (!leaderEngaged && (leaderCount === 0 || leaderCalibrating))}
-                  className={
-                    leaderEngaged
-                      ? "rounded-md"
-                      : "rounded-md bg-nori-h8ab135 text-foreground hover:bg-nori-h799c2a"
-                  }
-                  title={
-                    !leaderActive
-                      ? "Connect to the robot first — engage sends leader poses to the arms"
-                      : leaderEngaged
-                        ? "Robot arms are following the leaders — disengage before letting go of them"
-                        : leaderCalibrating
-                          ? "Calibration in progress — engagement is locked until it finishes"
-                          : leaderCount === 0
-                            ? "Waiting for readable leader joints"
-                            : "Hold the leaders near the robot's current pose, then engage; the arms will move to match"
-                  }
-                >
-                  {leaderEngaged ? "Disengage" : "Engage"}
-                </Button>
-              }
-              headerExtra={<ArmPills value={settings.arm} onChange={(arm) => set("arm", arm)} />}
-              headerBelow={
-                /* Base + lift + commands stay on the keyboard while the leaders drive the
-                   arms — keep those bindings visible right where leader driving happens. */
-                <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-3">
-                  <BaseCommandLegend
-                    wasd
-                    hint="Base + lift stay on the keyboard while the leaders drive the arms; once engaged, WASD drives the base too (until then it still jogs the arm). Click the video first so keys register."
-                  />
-                </div>
-              }
-            />
-          </div>
-        )}
-
-        {/* Keyboard legend only shows for its own mode, like the VR and leader cards. */}
-        {controlMode === "keyboard" && (
-        <Card className="border-nori-h14131a/10 bg-nori-hf3f1e8 text-nori-h14131a">
-          <CardHeader
-            className={`cursor-pointer px-4 pt-3 ${showKeyboardCard ? "pb-0" : "pb-4"}`}
-            onClick={() => setShowKeyboardCard((v) => !v)}
-          >
-            {/* min-h-9 lives on the unpadded title row (not the padded header) so the
-                collapsed height matches the VR / leader / logs / settings cards exactly. */}
-            <CardTitle className="flex min-h-9 items-center justify-between text-base font-semibold">
-              Keyboard controls
-              <span className="text-sm font-normal text-muted-foreground">
-                {showKeyboardCard ? "▲ hide" : "▼ show"}
-              </span>
-            </CardTitle>
-          </CardHeader>
-          {showKeyboardCard && (
-          <CardContent className="p-4 pt-3">
-            {/* Arm + drive mode live on their own row between the title and the legend. */}
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <ArmPills value={settings.arm} onChange={(arm) => set("arm", arm)} />
-              {/* Cylindrical vs per-motor only affects keyboard driving, so it lives here. */}
-              {/* Toggleable offline too: the choice is held in the session context and passed
-                  to the next RemoteTeleop at connect, so pre-connect selection sticks. */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={toggleControlMode}
-                title="Switch between cylindrical (rpi4 feel) and per-motor control"
-              >
-                Mode: {mode === "joint" ? "per-motor" : "cylindrical"}
-              </Button>
-            </div>
-            {/* Jog speed — persisted per browser, applied live to the running session. */}
-            <div className="mb-3">
-              <TuneSlider
-                label="sensitivity"
-                value={settings.kbSpeed}
-                min={0.1}
-                max={1}
-                title="How fast held keys jog the robot (arm, base and lift), as a fraction of full speed"
-                onChange={(v) => set("kbSpeed", v)}
-              />
-            </div>
-            {/* teleop is nulled by TeleopSessionContext during disconnect teardown; this render
-                can still fire in that window — optional-chain or the whole page tree crashes
-                ("Cannot read properties of null (reading 'armJointShorts')"). */}
-            <ControlLegend mode={mode} jointShorts={teleop?.armJointShorts() ?? null} />
-          </CardContent>
-          )}
-        </Card>
-        )}
-
-        {/* 3D schematic. The A3's published description by default; the older
-            stylised model only for a robot that is explicitly an L2.
-
-            The session's room IS the active robot's serial (see the effect in
-            TeleopSessionContext that keeps them in step), so no extra lookup is
-            needed to tell which is connected.
-
-            The URDF render is display-only and NOT yet driven by telemetry — it
-            stands in its default pose. Wiring `tel.state` into it is the next
-            step; the joint names in the description are the same ones the
-            telemetry stream carries. */}
-        <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-4 text-nori-h14131a shadow-sm">
-          <div className="flex items-baseline justify-between gap-3">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// 3d schematic</p>
-            {!hasJointTelemetry(tel.state) && (
-              <span className="text-[11px] text-muted-foreground">waiting for joint telemetry…</span>
-            )}
-          </div>
-          <div className="mt-3">
-            {usesStylisedSchematic(settings.room) ? (
-              <Robot3D state={tel.state} activeArm={settings.arm} />
-            ) : (
-              <RobotUrdfViewer
-                className="h-64 w-full"
-                interactive={false}
-              />
-            )}
-          </div>
-        </div>
-
-        <Card className="border-nori-h14131a/10 bg-nori-hf3f1e8 text-nori-h14131a">
-          <CardHeader
-            className={`cursor-pointer px-4 pt-3 ${showLog ? "pb-0" : "pb-4"}`}
-            onClick={() => setShowLog((v) => !v)}
-          >
-            <CardTitle className="flex min-h-9 items-center justify-between text-base font-semibold">
-              Robot logs
-              <span className="text-sm font-normal text-muted-foreground">{showLog ? "▲ hide" : "▼ show"}</span>
-            </CardTitle>
-          </CardHeader>
-          {showLog && (
-          <CardContent className="p-4 pt-3">
-            <div
-              ref={logRef}
-              className="max-h-96 min-h-44 overflow-auto whitespace-pre-wrap rounded border border-nori-h14131a/10 bg-nori-hf3f1e8 p-2 font-mono text-xs"
-            >
-              {logLines.length > 0 ? (
-                logLines.join("\n")
-              ) : (
-                <span className="text-muted-foreground">Connect to Nori to view logs</span>
-              )}
-            </div>
-          </CardContent>
-          )}
-        </Card>
-        </div>
+      {/* Layout picker — a field-test affordance. Locked during a session so a
+          switch never has to carry live media/drivers across arrangements. */}
+      <div className="flex items-center justify-end gap-2">
+        <label
+          htmlFor="remote-layout"
+          className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground"
+        >
+          layout
+        </label>
+        <select
+          id="remote-layout"
+          value={layoutId}
+          disabled={layoutLocked}
+          title={layoutLocked ? "Disconnect to change the page layout" : "Choose how this page is arranged"}
+          onChange={(e) => {
+            const id = e.target.value as RemoteLayoutId;
+            setLayoutId(id);
+            saveRemoteLayout(id);
+          }}
+          className="rounded border border-nori-h14131a/15 bg-background px-2 py-1 font-mono text-[11px] text-foreground disabled:opacity-50"
+        >
+          {REMOTE_LAYOUTS.map((l) => (
+            <option key={l.id} value={l.id}>{l.label}</option>
+          ))}
+        </select>
       </div>
+
+      <RemoteUiProvider value={ui}>
+        <LayoutComponent />
+      </RemoteUiProvider>
+
+      {/* Robot inbound audio — always mounted at page level (layouts move the
+          video around; the audio sink must never remount with them). */}
+      <audio ref={audioRef} autoPlay className="hidden" />
+
+      <AlertDialog open={confirmFinish} onOpenChange={setConfirmFinish}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Finished recording dataset?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You still have a training session open{
+                recordState?.episodesKept
+                  ? ` with ${recordState.episodesKept} episode${recordState.episodesKept === 1 ? "" : "s"} saved`
+                  : ""
+              }. Finish it before you disconnect — your episodes upload to My Stuff once
+              the robot is idle. Keep Nori powered on until they land.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Return</AlertDialogCancel>
+            <AlertDialogAction onClick={finishAndDisconnect}>Finish and save</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 };

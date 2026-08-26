@@ -1,0 +1,611 @@
+<!doctype html>
+<!--
+  Remote Operation page — layout proposals, interactive edition. Static
+  mockups only, no code shared with the app, but the chrome behaves:
+    · tabs flip proposals
+    · mode pills swap the active control card
+    · bottom drawers expand/collapse with dummy content
+    · the stage/PIP (proposals A & D) swap on click
+    · Connect/Disconnect toggles a fake link state
+    · E-STOP latches (banner + red pill); press P or click again to reset
+    · proposal C's section tabs actually switch panes
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remote Operation — layout proposals</title>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Bagel+Fat+One&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #fffdf7; --paper: #f6f4eb; --paper2: #f3f1e8;
+    --ink: #14131a; --mute: #857b6b; --mute2: #6f6858;
+    --orange: #b06a1c;
+    --green: #8ab135; --green-ink: #4d6a1e;
+    --amber: #db9346; --amber-fill: #fdf1de; --amber-ink: #8a5a12;
+    --red: #d24a3d; --red-fill: #fde7e4; --red-ink: #a3271c;
+    --track: #e5e1d2; --hair: rgba(20, 19, 26, 0.10);
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Fredoka", sans-serif; font-size: 15px; line-height: 1.5; }
+  .wrap { max-width: 1480px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  h1 { font-family: "Bagel Fat One", "Fredoka"; font-weight: 400; font-size: 34px; margin: 0 0 4px; }
+  .sub { color: var(--mute2); margin: 0 0 20px; max-width: 74ch; }
+
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; position: sticky; top: 0;
+    background: var(--bg); padding: 12px 0; z-index: 5; border-bottom: 1px solid var(--hair); }
+  .tab { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    border: 1px solid var(--hair); border-radius: 999px; background: transparent; color: var(--mute2);
+    padding: 8px 16px; cursor: pointer; }
+  .tab[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+  .proposal { display: none; }
+  .proposal.on { display: block; }
+
+  .blurb { border: 1px solid var(--hair); background: var(--paper); border-radius: 16px;
+    padding: 16px 20px; margin-bottom: 20px; }
+  .blurb h2 { margin: 0 0 6px; font-size: 19px; }
+  .blurb p { margin: 4px 0; color: var(--mute2); }
+  .blurb b { color: var(--ink); }
+
+  /* ---- mockup vocabulary -------------------------------------------- */
+  .frame { border: 1px solid var(--hair); border-radius: 16px; background: var(--bg);
+    padding: 18px; box-shadow: 0 6px 24px rgba(20,19,26,.06); }
+  .panel { border: 1px solid var(--hair); border-radius: 14px; background: var(--paper2); padding: 12px 14px; }
+  .eyebrow { font-family: var(--mono); font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--orange); margin-bottom: 6px; }
+  .video, .schem { border-radius: 14px; display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; position: relative; }
+  .video { background: linear-gradient(140deg, #23222b, #14131a 60%, #1d2a1a); color: rgba(255,255,255,.4); }
+  .schem { background: #eae6da; color: var(--mute); }
+  .schem::after { content: "🤖"; position: absolute; font-size: 56px; opacity: .35; pointer-events: none;
+    transition: transform .3s; }
+  .schem:hover::after { transform: rotate(-8deg) scale(1.06); }
+  .offline .video { color: rgba(255,255,255,.25); }
+  .offline .video::before { content: "no feed — disconnected"; position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center; background: rgba(10,10,14,.55);
+    border-radius: 14px; letter-spacing: .12em; }
+
+  .chip { display: inline-flex; flex-direction: column; gap: 1px; border: 1px solid var(--hair);
+    border-radius: 10px; padding: 5px 10px; background: var(--bg); }
+  .chip small { font-family: var(--mono); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--mute); }
+  .chip span  { font-family: var(--mono); font-size: 12px; }
+  .chip.good { border-color: rgba(138,177,53,.5); background: rgba(138,177,53,.12); }
+  .chip.good span { color: var(--green-ink); }
+  .chip.warn { border-color: rgba(219,147,70,.4); background: var(--amber-fill); }
+  .chip.warn span { color: var(--amber-ink); }
+  .chip.bad { border-color: rgba(210,74,61,.45); background: var(--red-fill); }
+  .chip.bad span { color: var(--red-ink); }
+  .offline .chip.good, .offline .chip.warn { border-color: var(--hair); background: var(--bg); }
+  .offline .chip.good span, .offline .chip.warn span { color: var(--mute); }
+
+  .pill { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+    border: 1px solid var(--hair); border-radius: 999px; padding: 5px 12px; background: var(--bg);
+    color: var(--mute2); cursor: pointer; }
+  .pill.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .pill.green { background: rgba(138,177,53,.2); color: var(--green-ink); border-color: rgba(138,177,53,.5); cursor: default; }
+  .pill.red { background: var(--red-fill); color: var(--red-ink); border-color: rgba(210,74,61,.45); cursor: default; }
+  .pill.gray { cursor: default; }
+
+  .estop { font-family: var(--mono); font-weight: 600; font-size: 12px; letter-spacing: .1em;
+    background: var(--red); color: #fff; border: 0; border-radius: 12px; padding: 10px 18px;
+    box-shadow: 0 3px 0 var(--red-ink); cursor: pointer; }
+  .estop:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--red-ink); }
+  .estop.latched { background: var(--ink); box-shadow: 0 3px 0 #000; animation: none; }
+
+  .latchbanner { border: 1px solid rgba(210,74,61,.4); background: var(--red-fill); color: var(--red-ink);
+    border-radius: 12px; padding: 8px 14px; margin-bottom: 12px; font-family: var(--mono);
+    font-size: 11px; letter-spacing: .08em; text-transform: uppercase; display: none; }
+  .latchbanner.on { display: block; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .65; } }
+
+  .btn { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+    border: 1px solid var(--hair); border-radius: 10px; padding: 6px 12px; background: var(--bg);
+    color: var(--ink); cursor: pointer; }
+  .btn:hover { border-color: var(--mute); }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .spread { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .bar { height: 8px; border-radius: 4px; background: var(--track); position: relative; overflow: hidden; }
+  .bar i { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--amber);
+    transition: width .8s ease; }
+  .note { font-size: 12.5px; color: var(--mute2); margin-top: 14px; }
+  .note b { color: var(--ink); }
+  .tag { font-family: var(--mono); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--mute); }
+  .logbar { font-family: var(--mono); font-size: 11px; color: var(--mute2); background: var(--paper);
+    border: 1px solid var(--hair); border-radius: 10px; padding: 6px 12px; cursor: pointer; }
+  .logbar.expanded { white-space: pre-wrap; max-height: 160px; overflow: auto; }
+  .logbar:not(.expanded) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .drawer { display: flex; gap: 8px; }
+  .drawer > .panel { flex: 1; text-align: center; color: var(--mute2); font-family: var(--mono);
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em; cursor: pointer; user-select: none; }
+  .drawer > .panel:hover { border-color: var(--mute); }
+  .drawer > .panel.open { background: var(--paper); color: var(--ink); }
+  .drawerbody { margin-top: 8px; display: none; }
+  .drawerbody.on { display: block; }
+
+  .statgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .modecard { border: 1px dashed rgba(20,19,26,.2); border-radius: 12px; padding: 12px;
+    color: var(--mute2); font-size: 13px; }
+  .modecard .keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+  .key { font-family: var(--mono); font-size: 10px; text-align: center; border: 1px solid var(--hair);
+    border-radius: 8px; background: var(--bg); padding: 6px 4px; }
+  input[type="range"] { width: 100%; accent-color: var(--orange); }
+  input[type="text"] { font-family: var(--mono); font-size: 12px; border: 1px solid var(--hair);
+    border-radius: 8px; padding: 6px 10px; background: var(--bg); width: 100%; }
+  .swapwrap { position: relative; }
+  .swapwrap .pipslot { position: absolute; cursor: pointer; border: 2px solid rgba(255,255,255,.35);
+    transition: transform .15s; }
+  .swapwrap .pipslot:hover { transform: scale(1.03); }
+  .logbox { font-family: var(--mono); font-size: 11px; background: var(--paper); border: 1px solid var(--hair);
+    border-radius: 10px; padding: 10px 12px; white-space: pre-wrap; color: var(--mute2); max-height: 170px; overflow: auto; }
+  .cpane { display: none; }
+  .cpane.on { display: block; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Remote Operation — layout proposals</h1>
+    <p class="sub">Interactive mockups. Everything with a cursor does something: mode pills swap the control card,
+    drawers open, the stage/PIP swaps on click (A &amp; D), Connect toggles the fake link, section tabs switch (C),
+    and <b>E-STOP latches</b> — press <b>P</b> (or click it again) to reset, just like the real keybinding.</p>
+  </header>
+
+  <div class="tabs" id="tabs"></div>
+
+  <!-- ================= A: COCKPIT ================= -->
+  <section class="proposal" data-name="A · Cockpit">
+    <div class="blurb">
+      <h2>A — Cockpit: video-first with an overlay HUD</h2>
+      <p>Full-bleed width. Video stays the hero: status, vitals and E-STOP <b>float over the feed</b> as a HUD,
+      one right rail holds controls, and dataset/policy/telemetry/logs are a bottom drawer bar. <b>Click the PIP</b> to swap video ⇄ 3D.</p>
+    </div>
+    <div class="frame" data-frame>
+      <div class="latchbanner">■ E-STOP LATCHED — motors halted. Press P to reset the latch.</div>
+      <div class="spread" style="margin-bottom:12px;">
+        <div class="row"><strong style="font-size:20px;">Remote Operation</strong><span class="pill green" data-status>● connected</span></div>
+        <div class="row"><button class="btn" data-conn>Disconnect</button><button class="estop" data-estop>E-STOP&nbsp;⎵</button></div>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 360px; gap: 14px;">
+        <div class="swapwrap" data-swap style="aspect-ratio: 16/10;">
+          <div class="video" data-a style="position:absolute; inset:0;">main camera · 4:3 crop picker top-left
+            <div style="position:absolute; left:12px; bottom:12px;" class="row">
+              <span class="chip good"><small>link</small><span>good</span></span>
+              <span class="chip good"><small>loop</small><span>248 hz</span></span>
+              <span class="chip"><small>battery</small><span>81%</span></span>
+              <span class="chip warn"><small>servo</small><span>52°C</span></span>
+              <span class="chip"><small>latency</small><span>38 ms</span></span>
+            </div>
+          </div>
+          <div class="schem pipslot" data-b style="right:12px; bottom:12px; width:150px; height:100px;">3d</div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <div class="panel"><div class="eyebrow">// controls</div>
+            <div class="row" data-modegroup>
+              <span class="pill on" data-mode="kb">Keyboard</span>
+              <span class="pill" data-mode="leader">Leader arm</span>
+              <span class="pill" data-mode="vr">VR</span>
+            </div>
+            <div class="modecard" data-modecard style="margin-top:8px;"></div>
+          </div>
+          <div class="panel"><div class="eyebrow">// audio</div>
+            <div class="spread"><span class="tag">you ● &nbsp; nori ●</span><button class="pill" data-call>Join call</button></div>
+          </div>
+          <div class="panel"><div class="eyebrow">// rail + grip</div>
+            <div class="bar" style="margin-bottom:6px;"><i style="width:62%"></i></div>
+            <div class="bar"><i style="width:34%"></i></div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:12px;">
+        <div class="drawer" data-drawergroup>
+          <div class="panel" data-drawer="record">▸ record dataset</div>
+          <div class="panel" data-drawer="deploy">▸ deploy policy</div>
+          <div class="panel" data-drawer="telemetry">▸ full telemetry</div>
+          <div class="panel" data-drawer="logs">▸ robot logs</div>
+        </div>
+        <div class="drawerbody" data-drawerbody></div>
+      </div>
+    </div>
+    <p class="note"><b>Notes:</b> the HUD shows five vitals; the full set lives in the telemetry drawer. Swap the stage
+    when pose matters more than the scene.</p>
+  </section>
+
+  <!-- ================= B: MISSION CONTROL ================= -->
+  <section class="proposal" data-name="B · Mission control">
+    <div class="blurb">
+      <h2>B — Mission control: three columns, everything visible</h2>
+      <p>No overlays, no hidden state: telemetry column left, video center with a <b>log ticker</b> (click it),
+      controls + orbitable 3D right. Record/deploy are small drawers in the rail.</p>
+    </div>
+    <div class="frame" data-frame>
+      <div class="latchbanner">■ E-STOP LATCHED — motors halted. Press P to reset the latch.</div>
+      <div class="spread" style="margin-bottom:12px;">
+        <div class="row"><strong style="font-size:20px;">Remote Operation</strong><span class="pill green" data-status>● connected</span><button class="btn" data-conn>Disconnect</button></div>
+        <button class="estop" data-estop>E-STOP&nbsp;⎵</button>
+      </div>
+      <div style="display:grid; grid-template-columns: 230px 1fr 330px; gap: 14px;">
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <div class="panel"><div class="eyebrow">// vitals</div>
+            <div class="statgrid">
+              <span class="chip good"><small>link</small><span>good</span></span>
+              <span class="chip good"><small>control</small><span>live</span></span>
+              <span class="chip"><small>loop</small><span>248hz</span></span>
+              <span class="chip"><small>path</small><span>LAN</span></span>
+              <span class="chip warn"><small>servo</small><span>52°C</span></span>
+              <span class="chip"><small>battery</small><span>81%</span></span>
+            </div>
+          </div>
+          <div class="panel"><div class="eyebrow">// rail height</div>
+            <div class="bar" style="margin-bottom:6px;"><i style="width:62%"></i></div>
+            <span class="tag">↓ 214 mm</span>
+          </div>
+          <div class="panel" style="flex:1;"><div class="eyebrow">// grip / current</div>
+            <div class="bar" style="margin-bottom:6px;"><i style="width:30%"></i></div>
+            <div class="bar" style="margin-bottom:6px;"><i style="width:55%"></i></div>
+            <div class="bar" style="margin-bottom:6px;"><i style="width:22%"></i></div>
+            <div class="bar"><i style="width:14%"></i></div>
+            <span class="tag">faults + temps appear here</span>
+          </div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <div class="video" style="flex:1; min-height:420px;">main camera</div>
+          <div class="logbar" data-logbar>14:32:07 controller engaged · 14:32:11 episode 3 kept · 14:33:02 servo temps nominal · click to expand…</div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <div class="panel"><div class="eyebrow">// controls</div>
+            <div class="row" data-modegroup>
+              <span class="pill on" data-mode="kb">Keyboard</span>
+              <span class="pill" data-mode="leader">Leader</span>
+              <span class="pill" data-mode="vr">VR</span>
+            </div>
+            <div class="modecard" data-modecard style="margin-top:8px;"></div>
+          </div>
+          <div class="schem" style="height:210px;">3d schematic · orbitable</div>
+          <div class="panel"><div class="eyebrow">// audio</div>
+            <div class="spread"><span class="tag">you ● &nbsp; nori ●</span><button class="pill" data-call>Join call</button></div>
+          </div>
+          <div>
+            <div class="drawer" data-drawergroup>
+              <div class="panel" data-drawer="record">▸ record</div>
+              <div class="panel" data-drawer="deploy">▸ deploy</div>
+            </div>
+            <div class="drawerbody" data-drawerbody></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="note"><b>Notes:</b> the left column is the "never surprises you" zone — fault and temperature rows
+    materialize there in amber/red, where your eye already rests.</p>
+  </section>
+
+  <!-- ================= C: SPLIT + TABS ================= -->
+  <section class="proposal" data-name="C · Split + tabs">
+    <div class="blurb">
+      <h2>C — Pairing-style split: video and 3D as equals, tabs below</h2>
+      <p>Pairing's proven 2:1 split, applied here: video and a <b>tall 3D viewer side by side</b>. Everything secondary
+      is one tabbed panel below — click through them. A warn/bad chip <b>stays pinned</b> above the tabs whichever tab is open.</p>
+    </div>
+    <div class="frame" data-frame>
+      <div class="latchbanner">■ E-STOP LATCHED — motors halted. Press P to reset the latch.</div>
+      <div class="spread" style="margin-bottom:12px;">
+        <div class="row"><strong style="font-size:20px;">Remote Operation</strong><span class="pill green" data-status>● connected</span><button class="btn" data-conn>Disconnect</button></div>
+        <div class="row" data-modegroup>
+          <span class="pill on" data-mode="kb">Keyboard</span>
+          <span class="pill" data-mode="leader">Leader</span>
+          <span class="pill" data-mode="vr">VR</span>
+          <button class="estop" data-estop>E-STOP&nbsp;⎵</button>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns: 2fr 1fr; gap: 14px;">
+        <div class="video" style="height:430px;">main camera</div>
+        <div class="schem" style="height:430px;">3d schematic · joint hover</div>
+      </div>
+      <div class="row" style="margin:12px 0 4px;">
+        <span class="chip warn"><small>servo</small><span>52°C</span></span>
+        <span class="tag">← pinned while any chip warns</span>
+      </div>
+      <div class="row" style="margin:6px 0 10px;" data-cgroup>
+        <span class="pill on" data-cpane="telemetry">Telemetry</span>
+        <span class="pill" data-cpane="controls">Controls</span>
+        <span class="pill" data-cpane="record">Record dataset</span>
+        <span class="pill" data-cpane="deploy">Deploy policy</span>
+        <span class="pill" data-cpane="audio">Audio</span>
+        <span class="pill" data-cpane="logs">Logs</span>
+      </div>
+      <div class="panel">
+        <div class="cpane on" data-cpanename="telemetry">
+          <div class="row" style="margin-bottom:10px;">
+            <span class="chip good"><small>link</small><span>good</span></span>
+            <span class="chip good"><small>control</small><span>live</span></span>
+            <span class="chip"><small>loop</small><span>248hz</span></span>
+            <span class="chip"><small>battery</small><span>81%</span></span>
+            <span class="chip warn"><small>servo</small><span>52°C</span></span>
+            <span class="chip"><small>temp</small><span>44°C</span></span>
+            <span class="chip"><small>watchdog</small><span>ok</span></span>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+            <div><span class="tag">rail height</span><div class="bar" style="margin-top:4px;"><i style="width:62%"></i></div></div>
+            <div><span class="tag">grip current (per motor)</span><div class="bar" style="margin-top:4px;"><i style="width:34%"></i></div></div>
+          </div>
+        </div>
+        <div class="cpane" data-cpanename="controls"><div class="modecard" data-modecard></div></div>
+        <div class="cpane" data-cpanename="record"></div>
+        <div class="cpane" data-cpanename="deploy"></div>
+        <div class="cpane" data-cpanename="audio">
+          <div class="spread"><span class="tag">you ● &nbsp; nori ●</span><button class="pill" data-call>Join call</button></div>
+        </div>
+        <div class="cpane" data-cpanename="logs"></div>
+      </div>
+    </div>
+    <p class="note"><b>Notes:</b> mode picker lives in the header next to E-STOP; the active mode card is the Controls tab.
+    Smallest structural change of the four — mostly re-parenting what exists.</p>
+  </section>
+
+  <!-- ================= D: STAGE SWITCHER ================= -->
+  <section class="proposal" data-name="D · Stage switcher">
+    <div class="blurb">
+      <h2>D — Stage: one big canvas, video ⇄ 3D swap, status strip always on</h2>
+      <p>One <b>stage</b> shows video or 3D; the other rides as a big PIP — <b>click the PIP</b> (or press <b>TAB</b> while this
+      proposal is open) to swap. A slim status strip (chips + rail bar + E-STOP) never scrolls away and never covers the feed.</p>
+    </div>
+    <div class="frame" data-frame>
+      <div class="latchbanner">■ E-STOP LATCHED — motors halted. Press P to reset the latch.</div>
+      <div class="spread" style="margin-bottom:10px;">
+        <div class="row"><strong style="font-size:20px;">Remote Operation</strong><span class="pill green" data-status>● connected</span></div>
+        <div class="row" data-modegroup>
+          <span class="pill on" data-mode="kb">Keyboard</span>
+          <span class="pill" data-mode="leader">Leader</span>
+          <span class="pill" data-mode="vr">VR</span>
+          <button class="btn" data-conn>Disconnect</button>
+        </div>
+      </div>
+      <div class="panel" style="display:flex; align-items:center; gap:10px; margin-bottom:12px; padding:8px 12px;">
+        <span class="chip good"><small>link</small><span>good</span></span>
+        <span class="chip good"><small>control</small><span>live</span></span>
+        <span class="chip"><small>loop</small><span>248hz</span></span>
+        <span class="chip"><small>battery</small><span>81%</span></span>
+        <span class="chip warn"><small>servo</small><span>52°C</span></span>
+        <div style="flex:1;"><div class="bar"><i style="width:62%"></i></div></div>
+        <button class="estop" data-estop>E-STOP&nbsp;⎵</button>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 320px; gap: 14px;">
+        <div class="swapwrap" data-swap data-tabswap style="aspect-ratio: 16/9;">
+          <div class="video" data-a style="position:absolute; inset:0;">stage · video (TAB swaps)</div>
+          <div class="schem pipslot" data-b style="right:14px; bottom:14px; width:220px; height:150px;">3d · click to swap</div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <div class="panel" style="flex:1;"><div class="eyebrow">// controls</div>
+            <div class="modecard" data-modecard style="min-height:190px;"></div>
+          </div>
+          <div class="panel"><div class="eyebrow">// audio</div>
+            <div class="spread"><span class="tag">you ● &nbsp; nori ●</span><button class="pill" data-call>Join call</button></div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:12px;">
+        <div class="drawer" data-drawergroup>
+          <div class="panel" data-drawer="record">▸ record dataset</div>
+          <div class="panel" data-drawer="deploy">▸ deploy policy</div>
+          <div class="panel" data-drawer="telemetry">▸ full telemetry</div>
+          <div class="panel" data-drawer="logs">▸ robot logs</div>
+        </div>
+        <div class="drawerbody" data-drawerbody></div>
+      </div>
+    </div>
+    <p class="note"><b>Notes:</b> while recording, the status strip gains a pulsing red dot + episode counter, so
+    recording state is impossible to miss.</p>
+  </section>
+
+<script>
+(function () {
+  // ---- proposal tabs -------------------------------------------------
+  var tabs = document.getElementById("tabs");
+  var proposals = Array.prototype.slice.call(document.querySelectorAll(".proposal"));
+  proposals.forEach(function (p, i) {
+    var b = document.createElement("button");
+    b.className = "tab"; b.textContent = p.dataset.name;
+    b.setAttribute("aria-pressed", i === 0 ? "true" : "false");
+    b.onclick = function () {
+      proposals.forEach(function (q) { q.classList.toggle("on", q === p); });
+      tabs.querySelectorAll(".tab").forEach(function (t) {
+        t.setAttribute("aria-pressed", t === b ? "true" : "false");
+      });
+    };
+    tabs.appendChild(b);
+  });
+  proposals[0].classList.add("on");
+
+  // ---- dummy content templates ---------------------------------------
+  var MODE_CARDS = {
+    kb: '<div><b>Keyboard control</b> · arms: <span class="pill on">Left</span> <span class="pill">Right</span></div>'
+      + '<div class="tag" style="margin:8px 0 2px;">sensitivity</div><input type="range" min="0" max="100" value="60">'
+      + '<div class="keys"><span class="key">W ↑</span><span class="key">S ↓</span><span class="key">A ←</span>'
+      + '<span class="key">D →</span><span class="key">Q grip</span><span class="key">E grip</span>'
+      + '<span class="key">⎵ E-STOP</span><span class="key">P reset</span><span class="key">M mode</span></div>',
+    leader: '<div><b>Leader arm</b> · <span class="pill green">joints readable</span> <button class="pill">Engage</button></div>'
+      + '<div class="tag" style="margin:8px 0 4px;">left leader</div><div class="bar"><i style="width:48%"></i></div>'
+      + '<div class="tag" style="margin:8px 0 4px;">right leader</div><div class="bar"><i style="width:71%"></i></div>'
+      + '<div class="tag" style="margin-top:8px;">embedded setup expands here</div>',
+    vr: '<div><b>VR control</b> · <button class="pill on">Enter VR</button></div>'
+      + '<div class="tag" style="margin:8px 0 2px;">motion sensitivity</div><input type="range" min="25" max="200" value="100">'
+      + '<div class="tag" style="margin:8px 0 2px;">grip open</div><input type="range" min="5" max="100" value="40">'
+      + '<div class="tag" style="margin-top:8px;">headset handoff link appears here</div>'
+  };
+  var DRAWERS = {
+    record: '<div class="panel"><div class="eyebrow">// record training dataset</div>'
+      + '<div class="row"><input type="text" placeholder="task description — e.g. fold the towel" style="max-width:420px;">'
+      + '<button class="btn">Start session</button></div>'
+      + '<div class="tag" style="margin-top:8px;">0 episodes kept · recorder idle</div></div>',
+    deploy: '<div class="panel"><div class="eyebrow">// deploy a policy</div>'
+      + '<div class="spread"><span>pick-place-v3 <span class="tag">cached · language-conditioned</span></span>'
+      + '<span class="row"><button class="btn">Run</button><button class="btn">🗑</button></span></div>'
+      + '<div class="spread" style="margin-top:6px;"><span>towel-fold-v1 <span class="tag">cached</span></span>'
+      + '<span class="row"><button class="btn">Run</button><button class="btn">🗑</button></span></div></div>',
+    telemetry: '<div class="panel"><div class="eyebrow">// full telemetry</div>'
+      + '<div class="row" style="margin-bottom:10px;">'
+      + '<span class="chip good"><small>link</small><span>good</span></span>'
+      + '<span class="chip good"><small>control</small><span>live</span></span>'
+      + '<span class="chip"><small>loop</small><span>248hz</span></span>'
+      + '<span class="chip"><small>path</small><span>LAN</span></span>'
+      + '<span class="chip"><small>watchdog</small><span>ok</span></span>'
+      + '<span class="chip"><small>temp</small><span>44°C</span></span>'
+      + '<span class="chip warn"><small>servo</small><span>52°C</span></span>'
+      + '<span class="chip"><small>battery</small><span>81%</span></span></div>'
+      + '<div class="tag">grip current · left arm (2.31 A total)</div>'
+      + '<div class="bar" style="margin:4px 0 8px;"><i style="width:34%"></i></div>'
+      + '<div class="tag">grip current · right arm (1.02 A total)</div>'
+      + '<div class="bar" style="margin-top:4px;"><i style="width:18%"></i></div></div>',
+    logs: '<div class="logbox">14:31:58 [teleop] session opened (LAN, 4 tiles)\n'
+      + '14:32:07 [control] controller engaged — keyboard mode\n'
+      + '14:32:11 [dataset] episode 3 kept — "fold_towel_003"\n'
+      + '14:33:02 [thermal] servo temps nominal (peak 52°C @ wrist_r)\n'
+      + '14:33:40 [control] cylindrical mode toggled</div>'
+  };
+
+  // ---- per-frame wiring ------------------------------------------------
+  document.querySelectorAll("[data-frame]").forEach(function (frame) {
+    // mode pills -> mode card
+    frame.querySelectorAll("[data-modegroup]").forEach(function (group) {
+      var pills = group.querySelectorAll("[data-mode]");
+      pills.forEach(function (pill) {
+        pill.addEventListener("click", function () {
+          pills.forEach(function (p) { p.classList.toggle("on", p === pill); });
+          frame.querySelectorAll("[data-modecard]").forEach(function (card) {
+            card.innerHTML = MODE_CARDS[pill.dataset.mode];
+          });
+        });
+      });
+    });
+    frame.querySelectorAll("[data-modecard]").forEach(function (card) {
+      card.innerHTML = MODE_CARDS.kb;
+    });
+
+    // drawers
+    frame.querySelectorAll("[data-drawergroup]").forEach(function (group) {
+      var body = group.parentNode.querySelector("[data-drawerbody]");
+      group.querySelectorAll("[data-drawer]").forEach(function (head) {
+        head.addEventListener("click", function () {
+          var open = head.classList.contains("open");
+          group.querySelectorAll("[data-drawer]").forEach(function (h) { h.classList.remove("open"); });
+          if (open) { body.classList.remove("on"); body.innerHTML = ""; return; }
+          head.classList.add("open");
+          body.innerHTML = DRAWERS[head.dataset.drawer];
+          body.classList.add("on");
+        });
+      });
+    });
+
+    // stage/PIP swap
+    frame.querySelectorAll("[data-swap]").forEach(function (wrap) {
+      var a = wrap.querySelector("[data-a]"), b = wrap.querySelector("[data-b]");
+      function swap() {
+        var aStyle = a.getAttribute("style"), bStyle = b.getAttribute("style");
+        a.setAttribute("style", bStyle); b.setAttribute("style", aStyle);
+        a.classList.toggle("pipslot"); b.classList.toggle("pipslot");
+        // keep the small one on top + clickable
+        var small = a.classList.contains("pipslot") ? a : b;
+        wrap.appendChild(small);
+      }
+      wrap.addEventListener("click", function (e) {
+        var t = e.target.closest(".pipslot");
+        if (t && wrap.contains(t)) swap();
+      });
+      if (wrap.hasAttribute("data-tabswap")) {
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "Tab" && wrap.closest(".proposal").classList.contains("on")) {
+            e.preventDefault(); swap();
+          }
+        });
+      }
+    });
+
+    // connect / disconnect
+    frame.querySelectorAll("[data-conn]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var off = frame.classList.toggle("offline");
+        btn.textContent = off ? "Connect" : "Disconnect";
+        frame.querySelectorAll("[data-status]").forEach(function (s) {
+          s.className = "pill " + (off ? "gray" : "green");
+          s.setAttribute("data-status", "");
+          s.textContent = off ? "● not connected" : "● connected";
+        });
+      });
+    });
+
+    // E-STOP latch: click latches, P (or click again) resets
+    var banner = frame.querySelector(".latchbanner");
+    frame.querySelectorAll("[data-estop]").forEach(function (btn) {
+      function setLatched(on) {
+        btn.classList.toggle("latched", on);
+        btn.innerHTML = on ? "LATCHED — P resets" : "E-STOP&nbsp;⎵";
+        if (banner) banner.classList.toggle("on", on);
+        frame.querySelectorAll("[data-status]").forEach(function (s) {
+          if (frame.classList.contains("offline")) return;
+          s.className = "pill " + (on ? "red" : "green");
+          s.setAttribute("data-status", "");
+          s.textContent = on ? "● latched" : "● connected";
+        });
+      }
+      btn.addEventListener("click", function () {
+        setLatched(!btn.classList.contains("latched"));
+      });
+      document.addEventListener("keydown", function (e) {
+        if ((e.key === "p" || e.key === "P") &&
+            frame.closest(".proposal").classList.contains("on") &&
+            btn.classList.contains("latched")) {
+          setLatched(false);
+        }
+      });
+    });
+
+    // join call toggle
+    frame.querySelectorAll("[data-call]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var joined = btn.classList.toggle("on");
+        btn.textContent = joined ? "Leave call" : "Join call";
+      });
+    });
+
+    // log ticker expand
+    frame.querySelectorAll("[data-logbar]").forEach(function (bar) {
+      var short = bar.textContent;
+      var full = "14:31:58 [teleop] session opened (LAN, 4 tiles)\n"
+        + "14:32:07 [control] controller engaged — keyboard mode\n"
+        + "14:32:11 [dataset] episode 3 kept — \"fold_towel_003\"\n"
+        + "14:33:02 [thermal] servo temps nominal (peak 52°C @ wrist_r)\n"
+        + "14:33:40 [control] cylindrical mode toggled\n(click to collapse)";
+      bar.addEventListener("click", function () {
+        var expanded = bar.classList.toggle("expanded");
+        bar.textContent = expanded ? full : short;
+      });
+    });
+  });
+
+  // C: section tabs
+  document.querySelectorAll("[data-cgroup]").forEach(function (group) {
+    var frame = group.closest("[data-frame]");
+    var pills = group.querySelectorAll("[data-cpane]");
+    var CPANES = { record: DRAWERS.record, deploy: DRAWERS.deploy, logs: DRAWERS.logs };
+    pills.forEach(function (pill) {
+      pill.addEventListener("click", function () {
+        pills.forEach(function (p) { p.classList.toggle("on", p === pill); });
+        frame.querySelectorAll("[data-cpanename]").forEach(function (pane) {
+          var on = pane.dataset.cpanename === pill.dataset.cpane;
+          pane.classList.toggle("on", on);
+          if (on && CPANES[pane.dataset.cpanename] && !pane.innerHTML.trim()) {
+            pane.innerHTML = CPANES[pane.dataset.cpanename];
+          }
+        });
+      });
+    });
+  });
+})();
+</script>
+</div>
+</body>
+</html>

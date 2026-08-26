@@ -642,10 +642,10 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
         if (!isDark || bgHex) bg.multiplyScalar(1.35);
         viewer.scene.background = bg;
       } else {
-        // What the graded ffedcf / 262320 land at through ACES @ 0.8 —
-        // matches the pairing page by eye.
+        // Near what the graded ffedcf / 262320 land at through ACES @ 0.8,
+        // desaturated a touch from the literal grade — judged by eye.
         viewer.scene.background = new THREE.Color(
-          isDark ? "#1b1917" : "#eae3d1"
+          isDark ? "#1a1918" : "#e9e5db"
         );
       }
     }

@@ -465,11 +465,18 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     if (!w.__livePoseLogT || now - w.__livePoseLogT > 1000) {
       w.__livePoseLogT = now;
       const sample = Object.entries(pose)[0];
+      // shoulder_roll bounds on both sides: mirror-asymmetric or ~π/2-shifted
+      // bounds here = that arm's calibration zero disagrees with the URDF zero.
+      const sr = (side: string) => {
+        const b = descriptor?.ranges_si?.[`${side}_arm_shoulder_roll.pos`];
+        return b ? `${side}SR=[${b[0].toFixed(2)},${b[1].toFixed(2)}]` : "";
+      };
       console.info(
         `liveJointPose: state keys=${Object.keys(liveState).length} ` +
         `mapped=${Object.keys(pose).length} ` +
         (sample ? `sample ${sample[0]}=${sample[1].toFixed(3)}rad ` : "") +
-        `ranges_si=${descriptor?.ranges_si ? "yes" : "no (URDF-limit fallback)"}`
+        `ranges_si=${descriptor?.ranges_si ? "yes" : "no (URDF-limit fallback)"} ` +
+        `${sr("left")} ${sr("right")}`
       );
     }
     // Batch through the element's setJointValues (present at runtime, not in

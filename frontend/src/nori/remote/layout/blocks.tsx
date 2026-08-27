@@ -222,6 +222,12 @@ export const PageHeader = ({ extra, showStatus = true }: { extra?: ReactNode; sh
 // the robot's idle timer. Customer-grade needs role gating + a real dialog.
 export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
   const { teleop, running, daemonStatus } = useRemoteUi();
+  // Truth-lag pending lock (2026-08-27): the robot's armed state reaches us
+  // with cadence + pipe delay, and a free-running toggle sent the WRONG verb
+  // off a stale label (operator's disarm clicks arrived as arm — observed
+  // live on 0003). After a click, lock the button until the robot's armed
+  // actually changes; a 12 s timeout unlocks it so a lost verb can't brick it.
+  const [pendingTarget, setPendingTarget] = useState<boolean | null>(null);
   // Always rendered; greyed out until the robot can actually take the verb.
   // `armed` present in daemon_status is the capability signal — an older
   // gateway never reports it, so the button stays disabled with the reason.
@@ -232,7 +238,9 @@ export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
   // Rendering this state was a direct operator request (2026-08-26) — before
   // it, the window between Arm and motion was indistinguishable from broken.
   const preparing = ["arming", "running", "disarming"].includes(daemonStatus?.activation ?? "");
-  const enabled = online && supported && teleop !== null && !preparing;
+  const pending = pendingTarget !== null && armed !== pendingTarget;
+  if (pendingTarget !== null && armed === pendingTarget) setPendingTarget(null);
+  const enabled = online && supported && teleop !== null && !preparing && !pending;
   const why = !running ? "Connect to the robot first"
     : !online ? "Robot motion control is offline"
     : !supported ? "This robot's gateway doesn't support remote arming yet"
@@ -241,7 +249,13 @@ export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
     : "Arm the motor buses so keyboard/VR commands move the robot";
   // No confirms in either direction (bench decision, 2026-08-25): the button
   // tooltip carries the support-the-arms warning for disarm.
-  const onClick = () => teleop?.setArmed(!armed);
+  const onClick = () => {
+    if (!teleop) return;
+    const target = !armed;
+    teleop.setArmed(target);
+    setPendingTarget(target);
+    setTimeout(() => setPendingTarget((cur) => (cur === target ? null : cur)), 12000);
+  };
   return (
     // compact drops the bordered wrapper — for hosts (the controls strip) that
     // already provide a panel around it.
@@ -249,7 +263,8 @@ export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
         (compact ? "" : " rounded-md border border-nori-h14131a/15 px-4 py-2")
         + (enabled ? "" : " opacity-50")}>
       <span className="font-mono text-[11px] uppercase tracking-[0.14em]">
-        motors: {preparing ? "preparing…" : !enabled ? "—" : armed ? "ARMED" : "disarmed"}
+        motors: {pending ? (pendingTarget ? "arming…" : "disarming…")
+          : preparing ? "preparing…" : !enabled ? "—" : armed ? "ARMED" : "disarmed"}
       </span>
       {/* The robot names EXACTLY what is blocking activation (a joint past its
           limit, E-stop engaged, silent bus). Rendering it verbatim ended the

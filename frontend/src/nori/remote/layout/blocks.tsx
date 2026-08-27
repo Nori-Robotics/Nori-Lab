@@ -19,7 +19,7 @@ import { taskModeLabel, l3JointShorts } from "@nori/sdk";
 import type { ServoThermalThresholds } from "@/nori/robotModels";
 import { VrHandoff } from "@/nori/components/VrHandoff";
 import {
-  TelemetryPanel, GripForce, MotorFaults, ServoTemps, OvertempBanner, ControlLegend,
+  TelemetryPanel, GripForce, MotorFaultsBanner, ServoTemps, OvertempBanner, ControlLegend,
   BaseCommandLegend, CallBar, ConnectionBanner, ControlOfflineBanner, RailHeight, RailHeightHelp,
 } from "@/nori/remote/TeleopStatus";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
@@ -272,6 +272,7 @@ export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
         + (enabled ? "" : " opacity-50")}>
       <span className="font-mono text-[11px] uppercase tracking-[0.14em]">
         motors: {pending ? (pendingTarget ? "arming…" : "disarming…")
+          : activation === "disarming" ? "disarming…"
           : preparing ? "preparing…" : stuck ? "blocked" : !enabled ? "—" : armed ? "ARMED" : "disarmed"}
       </span>
       {/* The robot names EXACTLY what is blocking activation (a joint past its
@@ -308,6 +309,7 @@ export const Banners = () => {
       <ConnectionBanner status={connectStatus} />
       {running && <ControlOfflineBanner status={daemonStatus} />}
       {running && <OvertempBanner latchReason={tel.latchReason} cutC={servoThermal.cutC} />}
+      {running && <MotorFaultsBanner faults={tel.motorFaults} />}
     </>
   );
 };
@@ -401,7 +403,8 @@ export const TelemetryDetail = () => {
       <div className="mt-2"><RailHeight state={tel.state} descriptor={displayDescriptor(teleop?.robotInfo()?.descriptor, settings.room) ?? undefined} /></div>
       <h2 className="mt-4 text-sm font-semibold">Grip force / motor current</h2>
       <div className="mt-2"><GripForce currents={tel.currents} /></div>
-      <div className="mt-2"><MotorFaults faults={tel.motorFaults} /></div>
+      {/* Motor faults moved to the banner row (MotorFaultsBanner in Banners) —
+          incident-grade info was easy to miss squeezed into this card. */}
       <div className="mt-2"><ServoTemps temps={tel.servoTemps} thresholds={servoThermal} /></div>
     </>
   );

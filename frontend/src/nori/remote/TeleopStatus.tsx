@@ -477,6 +477,37 @@ export function ServoTemps(
   );
 }
 
+// Full-width motor-fault banner, rendered with the other status banners above the
+// fold. Faults used to live only as rows inside the telemetry card, where a
+// stalled/dropped motor was easy to miss squeezed between the rail gauge and the
+// temp list — a hardware fault is incident-grade information, same tier as
+// "control offline" / "over temperature". amber = not responding (absent motor),
+// red = servo-reported hardware fault (matches the row colors in MotorFaults).
+export function MotorFaultsBanner({ faults }: { faults: Record<string, string> }) {
+  const keys = faults ? Object.keys(faults).sort() : [];
+  if (keys.length === 0) return null;
+  const anyHardFault = keys.some((k) => faults[k] !== MOTOR_NO_RESPONSE);
+  return (
+    <div className={cn(
+      "rounded-md border px-4 py-3",
+      anyHardFault
+        ? "border-nori-hd24a3d/35 bg-nori-hfde7e4 text-nori-ha3271c"
+        : "border-nori-hdb9346/40 bg-nori-hfdf1de text-nori-h8a5a12",
+    )}>
+      <p className="font-mono text-[11px] uppercase tracking-[0.14em]">
+        {anyHardFault ? "Motor fault" : "Motor not responding"}
+      </p>
+      <p className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-sm">
+        {keys.map((k) => (
+          <span key={k} className="font-mono">
+            {shortMotor(k)}: {faults[k] === MOTOR_NO_RESPONSE ? "not responding" : faults[k]}
+          </span>
+        ))}
+      </p>
+    </div>
+  );
+}
+
 export function MotorFaults({ faults }: { faults: Record<string, string> }) {
   // Defensive: an older SDK/daemon (or a pre-telemetry initial state) may not populate this;
   // never let a missing map crash the whole page.

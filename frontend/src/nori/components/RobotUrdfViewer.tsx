@@ -445,6 +445,9 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   const [touchMode, setTouchMode] = useState<TouchMode>("pose");
   const touchModeRef = useRef(touchMode);
   touchModeRef.current = touchMode;
+  // A viewer fed live telemetry is a display: the robot owns the pose, so touch
+  // joint-posing (and its mode toggle) are off; touch is camera-only.
+  const liveDisplay = liveState != null;
 
   // Live telemetry → model pose. Mutates the loaded robot in place (mirrors
   // Robot3D's pattern): no scene rebuild at the 15 Hz telemetry rate. Gated on
@@ -1010,8 +1013,9 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     const v = viewerRef.current;
     if (!v || !isCoarse) return;
     const touches = (v.controls as unknown as { touches?: { ONE: number } }).touches;
-    if (touches) touches.ONE = touchMode === "camera" ? THREE.TOUCH.ROTATE : -1;
-  }, [touchMode, isCoarse, status]);
+    // A live-telemetry display has no pose mode: one finger always orbits.
+    if (touches) touches.ONE = touchMode === "camera" || liveDisplay ? THREE.TOUCH.ROTATE : -1;
+  }, [touchMode, isCoarse, status, liveDisplay]);
 
   // Freeing the finger from OrbitControls is only half of it: urdf-loader's
   // PointerURDFDragControls listens for mousedown/mousemove/mouseup ONLY, and a
@@ -1031,7 +1035,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
           };
         })
       | null;
-    if (!v || !isCoarse || status !== "ready") return;
+    if (!v || !isCoarse || status !== "ready" || liveDisplay) return;
     const drag = v.dragControls;
     const el = v.renderer?.domElement;
     if (!drag || !el) return;
@@ -1074,7 +1078,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       el.removeEventListener("touchend", onTouchEnd);
       el.removeEventListener("touchcancel", onTouchEnd);
     };
-  }, [isCoarse, status]);
+  }, [isCoarse, status, liveDisplay]);
 
   // Flipping the toggle re-evaluates the current pose rather than waiting for
   // the next drag, so switching it on tells you about the pose you are looking
@@ -1173,9 +1177,11 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
         </button>
       )}
 
-      {/* Touch-mode toggle only makes sense when the viewer takes input at all —
-          a display-only schematic (remote page) must not offer pose/camera modes. */}
-      {interactive && isCoarse && status === "ready" && (
+      {/* Touch-mode toggle only makes sense when joints are yours to pose: not on
+          a non-interactive viewer, and not on a live-telemetry display (remote
+          page) — there the robot owns the pose and touch is camera-only, even in
+          the tall layouts that pass `interactive` for orbit controls. */}
+      {interactive && !liveDisplay && isCoarse && status === "ready" && (
         <div className="absolute bottom-3 left-3 z-10 flex overflow-hidden rounded-full border bg-background/90 text-sm font-medium shadow-sm backdrop-blur">
           {(
             [

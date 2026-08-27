@@ -237,7 +237,14 @@ export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
   // Guarded activation in progress: motors exist but aren't commandable yet.
   // Rendering this state was a direct operator request (2026-08-26) — before
   // it, the window between Arm and motion was indistinguishable from broken.
-  const preparing = ["arming", "running", "disarming"].includes(daemonStatus?.activation ?? "");
+  const activation = daemonStatus?.activation ?? "";
+  const preparing = ["arming", "running", "disarming"].includes(activation);
+  // Stuck activation (2026-08-27): physical_blocked / configuration_fault /
+  // failed — or any other non-nominal state we don't know yet — means the
+  // motion stack can't proceed on its own. Only "active"/"inactive" are
+  // nominal. The button stays ENABLED here: re-clicking arm is harmless and
+  // is the retry path once the operator clears the physical cause.
+  const stuck = activation !== "" && !["active", "inactive"].includes(activation) && !preparing;
   const pending = pendingTarget !== null && armed !== pendingTarget;
   if (pendingTarget !== null && armed === pendingTarget) setPendingTarget(null);
   const enabled = online && supported && teleop !== null && !preparing && !pending;
@@ -245,6 +252,7 @@ export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
     : !online ? "Robot motion control is offline"
     : !supported ? "This robot's gateway doesn't support remote arming yet"
     : preparing ? "Motion stack is activating (safety gate, buses, controllers) — up to a minute"
+    : stuck ? "Motion activation is blocked — clear the reported cause, then click arm to retry"
     : armed ? "Robot arms are holding torque — disarm de-torques them (support the arms)"
     : "Arm the motor buses so keyboard/VR commands move the robot";
   // No confirms in either direction (bench decision, 2026-08-25): the button
@@ -264,12 +272,12 @@ export const ArmControl = ({ compact = false }: { compact?: boolean }) => {
         + (enabled ? "" : " opacity-50")}>
       <span className="font-mono text-[11px] uppercase tracking-[0.14em]">
         motors: {pending ? (pendingTarget ? "arming…" : "disarming…")
-          : preparing ? "preparing…" : !enabled ? "—" : armed ? "ARMED" : "disarmed"}
+          : preparing ? "preparing…" : stuck ? "blocked" : !enabled ? "—" : armed ? "ARMED" : "disarmed"}
       </span>
       {/* The robot names EXACTLY what is blocking activation (a joint past its
           limit, E-stop engaged, silent bus). Rendering it verbatim ended the
           "preparing… flashes forever with no reason" class (2026-08-26). */}
-      {preparing && daemonStatus?.activation_detail?.startsWith("blocked") && (
+      {(preparing || stuck) && !!daemonStatus?.activation_detail && (
         <span className="text-[11px] text-nori-ha3271c">
           {daemonStatus.activation_detail}
         </span>

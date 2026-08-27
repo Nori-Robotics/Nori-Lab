@@ -94,9 +94,20 @@ export function servoThermalThresholds(
  * the A3 gateway advertises in jog_scale.task; nothing here drives the wire —
  * the SDK's armKeymap() only ever uses the REAL ack descriptor.
  */
+const A3_ARM_SHORTS = [
+  "shoulder_pitch", "shoulder_roll", "bicep_yaw", "elbow_pitch",
+  "forearm_yaw", "wrist_pitch", "wrist_roll", "gripper",
+] as const;
 const A3_TASK_DISPLAY_DESCRIPTOR = {
   jog_scale: { task: { x: 0.08, y: 0.08, z: 0.08, pitch: 0.5, yaw: 0.5 } },
-} as RobotDescriptor;
+  // Enough shape for every descriptor-keyed display: the per-motor legend
+  // (l3JointShorts), the rail gauge (liftAxes: ONE central column, not the
+  // L-series pair), and the lift legend label.
+  joints: (["left", "right"] as const).flatMap((side) =>
+    A3_ARM_SHORTS.map((s) => `${side}_arm_${s}.pos`)),
+  aux: ["lift"],
+  ranges: { "lift.pos": [0, 720] as [number, number] },
+} as unknown as RobotDescriptor;
 
 /**
  * The descriptor UI surfaces should render from: the live ack descriptor when

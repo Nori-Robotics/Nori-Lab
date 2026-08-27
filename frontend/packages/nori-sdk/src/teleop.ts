@@ -17,7 +17,7 @@ import type { SignalingTransport } from "./signaling";
 import { AudioLatencyProbe, audioLatencyEnabled } from "./audioLatency";
 import { VideoQualityLoop, type VideoNetState } from "./videoQuality";
 import { NORI_PROTOCOL_VERSION } from "./version";
-import { liftJogKey } from "./rail";
+import { liftJogKey, liftAxes } from "./rail";
 
 export type ControlMode = "cylindrical" | "joint";
 export type ArmSide = "left" | "right";
@@ -795,13 +795,19 @@ export function keybindLegend(
   commands: { key: string; label: string }[];
 } {
   const [u, o] = Object.entries(ZLIFT_KEYS).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  // "(selected arm)" is an L-series fact: one rail per arm, u/o drive whichever
+  // arm is selected. An A-series robot has ONE central column (descriptor aux
+  // "lift"), where the qualifier is wrong — both arms ride the same lift.
+  const axes = liftAxes(descriptor ?? undefined);
+  const liftDof = axes.length > 0 && axes.every((a) => a.side === null)
+    ? "lift" : "lift (selected arm)";
   return {
     arm: rowsFromAxisMap(
       mode === "joint"
         ? (jointShorts ? jointKeymapForShorts(jointShorts) : JOINT_KEYS)
         : taskKeymapFor(descriptor)),
     base: rowsFromAxisMap(BASE_KEYS),
-    lift: { dof: "lift (selected arm)", posKey: u, negKey: o },
+    lift: { dof: liftDof, posKey: u, negKey: o },
     commands: [
       { key: "SPACE", label: "E-STOP" },
       { key: "P", label: "reset latch" },

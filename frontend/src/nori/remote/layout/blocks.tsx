@@ -15,7 +15,7 @@ import { Pill } from "@/components/ui/pill";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ArmSide, ControlMode, RemoteTeleop, TelemetryView, CallState, DaemonStatus, ConnectStatus, RecordState } from "@nori/sdk";
-import { taskModeLabel } from "@nori/sdk";
+import { taskModeLabel, l3JointShorts } from "@nori/sdk";
 import type { ServoThermalThresholds } from "@/nori/robotModels";
 import { VrHandoff } from "@/nori/components/VrHandoff";
 import {
@@ -392,11 +392,13 @@ export const VitalsChips = ({ dense = false }: { dense?: boolean }) => {
 // Rail height + grip force + faults + temps — telemetry minus the chip row,
 // for layouts that split vitals from the deep numbers.
 export const TelemetryDetail = () => {
-  const { tel, teleop, servoThermal } = useRemoteUi();
+  const { tel, teleop, settings, servoThermal } = useRemoteUi();
   return (
     <>
       <h2 className="flex items-center gap-1.5 text-sm font-semibold">Rail height <RailHeightHelp /></h2>
-      <div className="mt-2"><RailHeight state={tel.state} descriptor={teleop?.robotInfo()?.descriptor} /></div>
+      {/* displayDescriptor: before the ack arrives an A3 room must show its ONE
+          central column, not the L-series L/R rail pair fallback. */}
+      <div className="mt-2"><RailHeight state={tel.state} descriptor={displayDescriptor(teleop?.robotInfo()?.descriptor, settings.room) ?? undefined} /></div>
       <h2 className="mt-4 text-sm font-semibold">Grip force / motor current</h2>
       <div className="mt-2"><GripForce currents={tel.currents} /></div>
       <div className="mt-2"><MotorFaults faults={tel.motorFaults} /></div>
@@ -663,7 +665,8 @@ export const ActiveModeCard = ({ wide = false }: { wide?: boolean }) => {
           </div>
           <ControlLegend
             mode={mode}
-            jointShorts={teleop?.armJointShorts() ?? null}
+            jointShorts={teleop?.armJointShorts()
+              ?? l3JointShorts(displayDescriptor(null, settings.room), settings.arm)}
             descriptor={displayDescriptor(teleop?.robotInfo()?.descriptor, settings.room)}
           />
         </CardContent>

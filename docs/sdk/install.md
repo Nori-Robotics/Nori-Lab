@@ -1,7 +1,8 @@
 # Install
 
-Not on public npm yet — that lands with the open-source release. Until then, install from the
-release tarball we send you, or from the GitHub release URL:
+Not on public npm yet — that lands with the open-source release. The source is public at
+[Nori-Robotics/Nori-SDK](https://github.com/Nori-Robotics/Nori-SDK); until the npm release,
+install from the release tarball we send you, or from the GitHub release URL:
 
 ```bash
 npm i ./nori-sdk-<version>.tgz

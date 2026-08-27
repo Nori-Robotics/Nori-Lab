@@ -16,8 +16,8 @@ a robot.
 
 ## Install
 
-Not on PyPI yet — that lands with the open-source release. Until then, install from the repo or
-the wheel we send you:
+Published on [PyPI as `nori-sdk`](https://pypi.org/project/nori-sdk/); source lives at
+[Nori-Robotics/nori-sdk-py](https://github.com/Nori-Robotics/nori-sdk-py):
 
 ```bash
 pip install "nori-sdk[all]"   # the live session + Supabase signaling

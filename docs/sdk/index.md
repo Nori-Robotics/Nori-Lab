@@ -27,9 +27,13 @@ If you have an A3, see [Nori A3](/guide/a3) — including a published robot desc
 load into a simulator today.
 
 Two clients speak the protocol: **`@nori/sdk`** (TypeScript — the browser client these pages
-document) and [**`nori-sdk` for Python**](/sdk/python) — headless scripts, policy and agent
-drivers, dataset tooling, CI. Neither is on a public registry yet; both go public with the
-open-source release.
+document, source at [Nori-Robotics/Nori-SDK](https://github.com/Nori-Robotics/Nori-SDK)) and
+[**`nori-sdk` for Python**](/sdk/python) — headless scripts, policy and agent drivers, dataset
+tooling, CI. The Python client is on [PyPI](https://pypi.org/project/nori-sdk/)
+([source](https://github.com/Nori-Robotics/nori-sdk-py)); the TypeScript package is not on npm
+yet. The wire dialect both implement is specified in
+[Nori-Robotics/Nori-Protocol](https://github.com/Nori-Robotics/Nori-Protocol) — JSON Schemas
+plus validated fixtures for every message.
 
 Need lower-level than an operator SDK — your own control loops on the robot itself, nothing
 through Nori's cloud? That's the planned [developer posture](/guide/dev-posture).

@@ -36,6 +36,15 @@ export default defineConfig({
     nav: [
       { text: "Guide", link: "/guide/", activeMatch: "/guide/" },
       { text: "SDK", link: "/sdk/", activeMatch: "/sdk/" },
+      {
+        text: "Source",
+        items: [
+          { text: "nori-sdk (Python) — GitHub", link: "https://github.com/Nori-Robotics/nori-sdk-py" },
+          { text: "nori-sdk (Python) — PyPI", link: "https://pypi.org/project/nori-sdk/" },
+          { text: "@nori/sdk (TypeScript)", link: "https://github.com/Nori-Robotics/Nori-SDK" },
+          { text: "nori-protocol (spec)", link: "https://github.com/Nori-Robotics/Nori-Protocol" },
+        ],
+      },
     ],
 
     sidebar: {

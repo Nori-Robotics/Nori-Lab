@@ -12,8 +12,9 @@ own subpath imports so you never pull them unless you ask for them.
 
 ## Protocol version
 
-The SDK targets **nori-protocol v1**, exported as `NORI_PROTOCOL_VERSION`. A daemon on a different
-**major** rejects the connection outright.
+The SDK targets **nori-protocol v1** (spec:
+[Nori-Robotics/Nori-Protocol](https://github.com/Nori-Robotics/Nori-Protocol)), exported as
+`NORI_PROTOCOL_VERSION`. A daemon on a different **major** rejects the connection outright.
 
 A *minor* difference is advisory: the handshake sets `versionMismatch`, the SDK warns and proceeds.
 Mixed daemon versions exist across the fleet, and unknown frame types are ignored by both sides —

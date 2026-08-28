@@ -20,7 +20,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRemoteUi, PANEL, EYEBROW, PageHeader, Banners, VideoSurface, VitalsChips,
   TelemetryDetail, TelemetryCard, AudioCard, ModePills, ControlsStrip, ActiveModeCard,
   SchematicCard, LogsCard, LogBox, RecordBlock, DeployBlock, EStopButton, ArmControl,
-  Drawers, StageSwitcher, Breakout } from "./blocks";
+  JointTelemetryCard, Drawers, StageSwitcher, Breakout } from "./blocks";
 
 // ---------------------------------------------------------------------------
 // Classic — the page as it shipped: video column + 400px rail. The safe
@@ -34,6 +34,10 @@ const ClassicLayout = () => (
       <RecordBlock />
       <DeployBlock />
       <TelemetryCard />
+      {/* Its own card rather than a section of TelemetryCard: it is dense
+          enough that folding it into an always-open card would push the rest
+          of the column off screen. */}
+      <JointTelemetryCard />
     </div>
     <div className="h-fit min-w-0 space-y-4">
       <AudioCard />
@@ -77,6 +81,10 @@ const SecondaryDrawers = () => (
         id: "telemetry", label: "full telemetry",
         body: <div className={PANEL}><TelemetryDetail /></div>,
       },
+      // Opened by the drawer, so the card starts expanded — a collapsed card
+      // inside a drawer you just opened reads as broken (same rule as
+      // RecordBlock/DeployBlock above).
+      { id: "joints", label: "joint telemetry", body: <JointTelemetryCard defaultOpen /> },
       { id: "audio", label: "audio", body: <AudioCard /> },
       { id: "logs", label: "robot logs", body: <LogBox /> },
     ]}

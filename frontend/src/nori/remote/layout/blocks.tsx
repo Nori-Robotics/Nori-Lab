@@ -9,7 +9,7 @@
 // running (see the picker in remote.tsx), so a block remounting between layouts
 // never has a live stream to lose.
 
-import { createContext, useContext, useState, type ReactNode, type RefObject } from "react";
+import { createContext, memo, useContext, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,8 +21,9 @@ import { VrHandoff } from "@/nori/components/VrHandoff";
 import {
   TelemetryPanel, GripForce, MotorFaultsBanner, ServoTemps, OvertempBanner, ControlLegend,
   BaseCommandLegend, CallBar, ConnectionBanner, ControlOfflineBanner, ActivationBanner,
-  RailHeight, RailHeightHelp,
+  RailHeight, RailHeightHelp, JointTelemetry,
 } from "@/nori/remote/TeleopStatus";
+import { TelemetryFlowTracker, type TelemetryFlowSample } from "@/nori/remote/jointTelemetry";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";
 import RobotUrdfViewer from "@/nori/components/RobotUrdfViewer";
 import { usesStylisedSchematic, displayDescriptor } from "@/nori/robotModels";
@@ -427,6 +428,98 @@ export const TelemetryDetail = () => {
           incident-grade info was easy to miss squeezed into this card. */}
       <div className="mt-2"><ServoTemps temps={tel.servoTemps} thresholds={servoThermal} /></div>
     </>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// per-joint telemetry
+
+// How often the joint table actually re-renders. Telemetry lands at ~15 Hz and
+// the table is ~17 rows x 7 cells; re-rendering it per frame is pure churn on
+// the page that also has to keep a WebRTC feed smooth. 250 ms is well past the
+// rate at which a human can read a changing number, and it is the same
+// build-once / mutate / render-slowly shape used elsewhere in this codebase.
+const JOINT_SAMPLE_MS = 250;
+
+// Feeds every telemetry frame into a ref-held tracker and returns a snapshot on
+// a slow interval.
+//
+// Ingest is an effect keyed on `tel.state` IDENTITY: the SDK re-parses that dict
+// per frame (teleop.ts), and a telemetry frame carrying no `state` leaves the
+// old object in place — so identity change is exactly "a new joint-state frame
+// arrived", which is what the measured frame rate should count. The effect
+// writes no React state, so the 15 Hz path costs no renders.
+//
+// `enabled` is false whenever the card is collapsed or no session is running:
+// nothing is tracked, no interval runs, and the tracker is dropped so a
+// reconnect starts from a clean window rather than inheriting a dead one.
+function useJointFlowSample(enabled: boolean): TelemetryFlowSample | null {
+  const { tel } = useRemoteUi();
+  const trackerRef = useRef<TelemetryFlowTracker | null>(null);
+  const lastStateRef = useRef<Record<string, number> | null>(null);
+  const [sample, setSample] = useState<TelemetryFlowSample | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    // Guard the identity we already ingested: React 18 StrictMode re-runs mount
+    // effects in dev, which would otherwise double-count the first frame.
+    if (lastStateRef.current === tel.state) return;
+    lastStateRef.current = tel.state;
+    if (!trackerRef.current) trackerRef.current = new TelemetryFlowTracker();
+    trackerRef.current.observe(tel.state, Date.now());
+  }, [enabled, tel.state]);
+
+  useEffect(() => {
+    if (!enabled) {
+      trackerRef.current = null;
+      lastStateRef.current = null;
+      setSample(null);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setSample(trackerRef.current ? trackerRef.current.sample(Date.now()) : null);
+    }, JOINT_SAMPLE_MS);
+    return () => window.clearInterval(id);
+  }, [enabled]);
+
+  return sample;
+}
+
+// memo so the table only re-renders when the throttled snapshot changes. The
+// surrounding block re-renders at the telemetry rate like every other consumer
+// of the session context; the expensive child does not, because `sample` is a
+// new object only every JOINT_SAMPLE_MS and `descriptor` is a stable reference
+// (the ack object, or the module-level display stand-in).
+const MemoJointTelemetry = memo(JointTelemetry);
+
+// Per-joint telemetry, as a collapsible card — the numeric counterpart to the
+// 3D schematic. Collapsed by default: it is by far the densest surface on the
+// page and belongs behind a click for everyone except whoever is currently
+// debugging a joint.
+export const JointTelemetryCard = ({ defaultOpen = false }: { defaultOpen?: boolean }) => {
+  const { teleop, settings, running } = useRemoteUi();
+  const [open, setOpen] = useState(defaultOpen);
+  const sample = useJointFlowSample(open && running);
+  // displayDescriptor: gives the table its shape (which joints to expect) before
+  // the ack lands, and returns null for an L2 — which correctly leaves the table
+  // driven purely by whatever keys actually arrive, with no advertised list and
+  // therefore no missing-key claims we cannot substantiate.
+  const descriptor = displayDescriptor(teleop?.robotInfo()?.descriptor, settings.room);
+  return (
+    <div className={PANEL}>
+      <div
+        className="flex min-h-5 cursor-pointer items-center justify-between gap-3"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <p className={EYEBROW}>// joint telemetry</p>
+        <span className="text-sm text-muted-foreground">{open ? "▲ hide" : "▼ show"}</span>
+      </div>
+      {open && (
+        <div className="mt-3">
+          <MemoJointTelemetry sample={sample} descriptor={descriptor} active={running} />
+        </div>
+      )}
+    </div>
   );
 };
 

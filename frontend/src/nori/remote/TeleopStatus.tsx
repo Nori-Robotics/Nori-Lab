@@ -648,6 +648,235 @@ export function RailHeight({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Per-joint telemetry readout.
+//
+// The numeric surface for `tel.state` — until this existed, that dict fed the 3D
+// viewer and a boolean ("has any joint telemetry") and nothing else, so "is this
+// joint's key still arriving, and what does it actually read in radians?" was
+// unanswerable from the UI. All derivation lives in jointTelemetry.ts; this is
+// formatting only, in keeping with this file's props-driven rule.
+//
+// The three columns are three DIFFERENT facts and the labels say so:
+//   seen   how recently the key was PRESENT in a frame  -> the flow signal
+//   moved  how recently its value CHANGED               -> never an alarm; a
+//          parked joint legitimately never changes
+//   si     the robot's own calibrated conversion, or "—" when it publishes none
+// Nothing here invents a conversion or a tone: with no session, or no data, every
+// cell is a neutral dash.
+import {
+  advertisedStateKeys, buildJointRows, flowTone, groupJointRows, hasSiCalibration, keyCoverage,
+  type FlowTone, type JointRow, type TelemetryFlowSample,
+} from "@/nori/remote/jointTelemetry";
+
+// Column grid, shared by the caption row and every data row so they line up. The
+// table is wider than a 380px rail, so the card scrolls it horizontally rather
+// than crushing the numbers (min-w below).
+const JOINT_COLS =
+  "grid grid-cols-[minmax(6rem,1.3fr)_3.75rem_minmax(2.5rem,1fr)_6.5rem_4.5rem_4rem_4.25rem] items-center gap-2";
+
+const FLOW_TEXT: Record<FlowTone, string> = {
+  default: "text-nori-h857b6b",
+  good: "text-nori-h4d6a1e",
+  warn: "text-nori-h8a5a12",
+  bad: "text-nori-h8f2318",
+};
+
+// Ages are read at a glance, so sub-second resolution near zero and whole
+// seconds once it stops mattering exactly.
+function fmtAge(ms: number | null): string {
+  if (ms === null) return "—";
+  if (ms < 1000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  return `${Math.floor(ms / 60_000)}m`;
+}
+
+const SI_WHY: Record<string, string> = {
+  no_value: "no value for this key yet",
+  no_ranges_si: "this robot publishes no calibrated SI bounds (ranges_si) for this key — no conversion is possible, and guessing one would be worse than none",
+  bad_bounds: "this robot advertises unusable SI bounds for this key (degenerate or non-finite)",
+};
+
+function JointRowView({ row, active }: { row: JointRow; active: boolean }) {
+  const tone = flowTone(row.flow?.sinceSeenMs ?? null, active);
+  const hz = row.flow?.hz ?? 0;
+  // Fresh keys show their RATE (the useful number while it's flowing); stale
+  // ones show how long they've been gone (the useful number once it isn't).
+  const seenText = tone === "default" ? "—" : tone === "good" ? `${hz.toFixed(0)} Hz` : fmtAge(row.flow?.sinceSeenMs ?? null);
+  const si = row.si;
+  return (
+    <div
+      className={cn(
+        JOINT_COLS,
+        "rounded-md border px-3 py-1.5",
+        row.outOfRange
+          ? "border-nori-hd24a3d/35 bg-nori-hd24a3d/10"
+          : "border-nori-h14131a/10 bg-nori-hf3f1e8",
+      )}
+      title={
+        `${row.key}` +
+        (row.range ? ` · normalized ${row.range.lo}…${row.range.hi} (${row.range.source})` : " · no known normalized range") +
+        (row.flow?.sinceSeenMs != null ? ` · last seen ${fmtAge(row.flow.sinceSeenMs)} ago at ${hz.toFixed(1)} Hz` : " · never seen") +
+        (row.flow?.sinceChangedMs != null ? ` · last changed ${fmtAge(row.flow.sinceChangedMs)} ago` : " · no change observed") +
+        (row.advertised ? "" : " · NOT advertised by the descriptor")
+      }
+    >
+      <span className="truncate font-mono text-xs text-nori-h14131a">{row.label}</span>
+      <span className="text-right font-mono text-xs tabular-nums text-nori-h5c564b">
+        {row.value === null ? "—" : row.value.toFixed(1)}
+      </span>
+      <div className="h-1.5 overflow-hidden rounded-full bg-nori-he5e1d2">
+        {row.barFrac !== null && (
+          <div
+            className={cn(
+              "h-full rounded-full transition-[width] duration-150",
+              row.outOfRange ? "bg-nori-hd24a3d" : "bg-nori-hd98b3d",
+            )}
+            style={{ width: `${row.barFrac * 100}%` }}
+          />
+        )}
+      </div>
+      <span
+        className="text-right font-mono text-xs tabular-nums text-nori-h5c564b"
+        title={si.known ? undefined : SI_WHY[si.reason]}
+      >
+        {/* Unit on every row: the lift is millimetres and everything else is
+            radians, so a bare number would be two different quantities in one
+            column. */}
+        {!si.known ? "—" : si.unit === "mm" ? `${si.value.toFixed(0)} mm` : `${si.value.toFixed(3)} rad`}
+      </span>
+      <span className="text-right font-mono text-xs tabular-nums text-nori-h5c564b">
+        {si.known && si.deg !== null ? `${si.deg.toFixed(1)}°` : "—"}
+      </span>
+      <span className={cn("text-right font-mono text-xs tabular-nums", FLOW_TEXT[tone])}>{seenText}</span>
+      <span className="text-right font-mono text-xs tabular-nums text-nori-h857b6b">
+        {fmtAge(row.flow?.sinceChangedMs ?? null)}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Per-joint telemetry table: value, physical value, position in range, and
+ * whether the key is still FLOWING.
+ *
+ * `sample` is a THROTTLED snapshot (see the sampler in layout/blocks.tsx) — this
+ * component must never be handed the raw 15 Hz stream. `active` = a session is
+ * live; with it false every flow tone stays neutral, because "not arriving" is
+ * not a fault when nobody is sending.
+ */
+export function JointTelemetry({
+  sample, descriptor, active,
+}: {
+  sample: TelemetryFlowSample | null;
+  descriptor?: RobotDescriptor | null;
+  active: boolean;
+}) {
+  const rows = buildJointRows(sample, descriptor);
+  const advertised = advertisedStateKeys(descriptor);
+  const coverage = keyCoverage(sample, advertised);
+  const groups = groupJointRows(rows);
+  // "Nothing ever arrived" and "nothing arrived lately" are different states and
+  // only the second one is a fault.
+  const everArrived = (sample?.totalFrames ?? 0) > 0;
+  const siCalibrated = hasSiCalibration(descriptor);
+  const frameHz = sample?.frameHz ?? 0;
+
+  if (rows.length === 0) {
+    return (
+      <p className="font-mono text-xs text-nori-h857b6b">
+        no joint telemetry, and no descriptor describing which joints to expect
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        {/* Measured HERE, on frames that actually reached this browser — not the
+            robot's own loop_hz claim, which the vitals chips already show. */}
+        <Stat
+          dense
+          label="frames"
+          value={everArrived ? `${frameHz.toFixed(1)} Hz` : "—"}
+          tone={!active || !everArrived ? "default" : frameHz >= 10 ? "good" : frameHz >= 4 ? "warn" : "bad"}
+        />
+        <Stat
+          dense
+          label="keys"
+          value={
+            everArrived
+              ? `${coverage.arriving.length}${advertised.length > 0 ? ` / ${advertised.length}` : ""}`
+              : advertised.length > 0 ? `— / ${advertised.length}` : "—"
+          }
+          tone={
+            !active || !everArrived ? "default"
+              : coverage.missing.length > 0 ? "bad"
+              : advertised.length > 0 ? "good" : "default"
+          }
+        />
+        {/* Not a fault tone in either direction: the frozen L-series fleet never
+            ships ranges_si, and that is a fact about the robot, not a problem.
+            Blank with no session — pre-connect the descriptor is a serial-derived
+            stand-in, which carries no calibration and must not be read as the
+            robot having declined to send one. */}
+        <Stat dense label="si units" value={!active ? "—" : siCalibrated ? "calibrated" : "not advertised"} />
+      </div>
+
+      {!everArrived && (
+        <p className="font-mono text-xs text-nori-h857b6b">
+          {active
+            ? "no telemetry frames received yet — the rows below are the joints this robot advertises"
+            : "not connected — the rows below are the joints this robot advertises, with no readings"}
+        </p>
+      )}
+
+      {/* The failure this panel exists for: a joint the robot promised whose key
+          has stopped arriving. Named explicitly, never just counted. */}
+      {active && everArrived && coverage.missing.length > 0 && (
+        <p className="rounded-md border border-nori-hd24a3d/35 bg-nori-hd24a3d/15 px-3 py-2 font-mono text-xs text-nori-h8f2318">
+          not arriving: {coverage.missing.join(", ")}
+        </p>
+      )}
+      {coverage.unadvertised.length > 0 && (
+        <p className="font-mono text-[11px] text-nori-h857b6b">
+          arriving but not advertised: {coverage.unadvertised.join(", ")}
+        </p>
+      )}
+      {active && !siCalibrated && (
+        <p className="font-mono text-[11px] text-nori-h857b6b">
+          this robot publishes no calibrated SI bounds (ranges_si) — normalized values only, no
+          radians. Nothing is substituted for them.
+        </p>
+      )}
+
+      <div className="overflow-x-auto">
+        <div className="min-w-[36rem] space-y-3">
+          <div className={cn(JOINT_COLS, "px-3 font-mono text-[10px] uppercase tracking-[0.14em] text-nori-h857b6b")}>
+            <span>joint</span>
+            <span className="text-right">norm</span>
+            <span>range</span>
+            <span className="text-right">si</span>
+            <span className="text-right">deg</span>
+            <span className="text-right" title="how recently this key was PRESENT in a frame — the flow signal">seen</span>
+            <span className="text-right" title="how recently this key's VALUE changed. A joint held still legitimately never changes; this is never treated as a fault.">moved</span>
+          </div>
+          {groups.map((g) => (
+            <div key={g.side} className="space-y-1.5">
+              <span className="px-1 font-mono text-[10px] uppercase tracking-[0.14em] text-nori-h857b6b">
+                {g.label}
+              </span>
+              {g.rows.map((r) => (
+                <JointRowView key={r.key} row={r} active={active} />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Hover question mark carrying the rail-gauge explainer — rendered next to the card
 // heading (pages/remote.tsx) so the card itself stays compact.
 export function RailHeightHelp() {

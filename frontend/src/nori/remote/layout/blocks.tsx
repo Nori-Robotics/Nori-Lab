@@ -21,7 +21,7 @@ import { VrHandoff } from "@/nori/components/VrHandoff";
 import {
   TelemetryPanel, GripForce, MotorFaultsBanner, ServoTemps, OvertempBanner, ControlLegend,
   BaseCommandLegend, CallBar, ConnectionBanner, ControlOfflineBanner, ActivationBanner,
-  RailHeight, RailHeightHelp, JointTelemetry,
+  EstopBanner, RailHeight, RailHeightHelp, JointTelemetry,
 } from "@/nori/remote/TeleopStatus";
 import { TelemetryFlowTracker, type TelemetryFlowSample } from "@/nori/remote/jointTelemetry";
 import { Robot3D, hasJointTelemetry } from "@/nori/remote/Robot3D";

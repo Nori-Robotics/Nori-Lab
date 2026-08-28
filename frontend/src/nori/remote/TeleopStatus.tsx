@@ -182,6 +182,27 @@ export function OvertempBanner(
 // doesn't know) is a warning. Nominal ("active"/"inactive"/absent) renders
 // nothing, and so does a state with no detail — a headline with no sentence
 // under it tells the operator less than the chip already does.
+// Hardware E-STOP / physical fault, from the supervisor via daemon_status.
+// FIRST in the banner stack: it is the cause of everything else the operator
+// is about to read (dead arms, blocked activation, "disarmed" motors). Before
+// this existed the physical E-stop was invisible in the app — the arms simply
+// stopped and the session looked hung (bench 2026-08-28).
+export function EstopBanner({ status }: { status: DaemonStatus | null }) {
+  if (!status?.estop) return null;
+  return (
+    <div className="rounded-md border border-nori-hd24a3d/35 bg-nori-hfde7e4 px-4 py-3 text-nori-ha3271c">
+      <p className="font-mono text-[11px] uppercase tracking-[0.14em]">
+        Hardware E-STOP engaged — motion stopped
+      </p>
+      <p className="mt-1 text-sm">
+        The robot has dropped arm torque. Release the physical E-STOP, then
+        press Arm to bring motion back.
+        {status.estop_detail ? ` (${status.estop_detail})` : ""}
+      </p>
+    </div>
+  );
+}
+
 export function ActivationBanner({ status }: { status: DaemonStatus | null }) {
   const activation = status?.activation ?? "";
   const detail = status?.activation_detail;

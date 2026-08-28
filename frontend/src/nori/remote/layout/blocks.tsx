@@ -324,6 +324,7 @@ export const Banners = () => {
   const { connectStatus, running, daemonStatus, tel, servoThermal } = useRemoteUi();
   return (
     <>
+      <EstopBanner status={daemonStatus} />
       <ConnectionBanner status={connectStatus} />
       {running && <ControlOfflineBanner status={daemonStatus} />}
       {running && <OvertempBanner latchReason={tel.latchReason} cutC={servoThermal.cutC} />}

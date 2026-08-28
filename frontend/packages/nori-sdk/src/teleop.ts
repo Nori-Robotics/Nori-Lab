@@ -208,6 +208,13 @@ export interface DaemonStatus {
   // activation in progress, motors not commandable yet), "active" (ready),
   // "disarming", "inactive". Absent on older gateways.
   activation?: string;
+  // online only — set while a HARDWARE E-STOP / physical fault has dropped the
+  // arm components ("hardware"). The robot reports armed:false alongside it:
+  // torque is gone with the components, so "armed" would be a lie. Absent when
+  // healthy, and absent entirely on gateways predating the field.
+  estop?: string;
+  // online only — the robot's own words for the physical fault above.
+  estop_detail?: string;
   // online only, non-active states — WHY activation is stuck, verbatim from the
   // robot's activation gate (e.g. "blocked: right_bicep_yaw_joint 3 raw=221
   // [229..3805] 8 STEPS BELOW MIN — nudge the joint"). Absent when healthy.
@@ -2189,11 +2196,14 @@ export class RemoteTeleop {
     if (typeof m.armed === "boolean") s.armed = m.armed;
     if (typeof m.activation === "string" && m.activation) s.activation = m.activation;
     if (typeof m.activation_detail === "string" && m.activation_detail) s.activation_detail = m.activation_detail;
+    if (typeof m.estop === "string" && m.estop) s.estop = m.estop;
+    if (typeof m.estop_detail === "string" && m.estop_detail) s.estop_detail = m.estop_detail;
     if (!s.state) return;
     const prev = this.daemonStat;
     if (prev && prev.state === s.state && prev.reason === s.reason && prev.detail === s.detail
         && prev.armed === s.armed && prev.activation === s.activation
-        && prev.activation_detail === s.activation_detail) return;
+        && prev.activation_detail === s.activation_detail
+        && prev.estop === s.estop && prev.estop_detail === s.estop_detail) return;
     this.daemonStat = s;
     // Operator-facing log line: no reason code, no raw detail — the on-screen banner carries the
     // plain-English remedy for the same event.

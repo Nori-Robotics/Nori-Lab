@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { servoThermalThresholds, type ServoThermalThresholds } from "@/nori/robotModels";
+import { isPreparing, isStuck } from "@/nori/remote/armPhase";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
@@ -163,6 +164,42 @@ export function OvertempBanner(
         {cutC ? ` ${cutC}°C` : ""} temperature limit. Support or lower the arm — it may go
         slack. Cooling takes several minutes, and motion will not unlatch till then.
       </p>
+    </div>
+  );
+}
+
+// Motion-stack activation banner. The robot names EXACTLY what is blocking (or
+// occupying) activation — a joint past its limit, E-stop engaged, silent bus —
+// and rendering it verbatim ended the "preparing… flashes forever with no
+// reason" class (2026-08-26). It lived inline in ArmControl until 2026-08-27,
+// where a full "blocked: right_shoulder_roll_joint 2 raw=2151 [32..2111] 8
+// STEPS ABOVE MAX" wrecked the telemetry/controls strip it sat in; a banner is
+// the only surface wide enough for the robot's own sentence.
+//
+// Gating reuses armPhase.ts so the tone can never disagree with the `motors: …`
+// chip: transitional (arming/running/disarming) is informational, stuck
+// (physical_blocked / configuration_fault / failed / anything this build
+// doesn't know) is a warning. Nominal ("active"/"inactive"/absent) renders
+// nothing, and so does a state with no detail — a headline with no sentence
+// under it tells the operator less than the chip already does.
+export function ActivationBanner({ status }: { status: DaemonStatus | null }) {
+  const activation = status?.activation ?? "";
+  const detail = status?.activation_detail;
+  const preparing = isPreparing(activation);
+  const stuck = isStuck(activation);
+  if (!detail || (!preparing && !stuck)) return null;
+  return (
+    <div className={cn(
+      "rounded-md border px-4 py-3",
+      stuck
+        ? "border-nori-hd24a3d/35 bg-nori-hfde7e4 text-nori-ha3271c"
+        : "border-nori-h14131a/12 bg-nori-hf3f1e8 text-nori-h14131a",
+    )}>
+      <p className="font-mono text-[11px] uppercase tracking-[0.14em]">
+        {stuck ? "Motion activation blocked" : "Motion stack activating"}
+      </p>
+      {/* Verbatim, always: operators depend on it naming the offending joint. */}
+      <p className="mt-1 text-sm">{detail}</p>
     </div>
   );
 }

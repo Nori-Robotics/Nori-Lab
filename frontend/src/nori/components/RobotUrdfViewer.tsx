@@ -197,7 +197,10 @@ const rewriteMeshUrl = (url: string): string => {
  */
 function styleAndFrame(
   viewer: URDFViewerElement,
-  finishFor: (link: string, material: string) => Finish
+  finishFor: (link: string, material: string) => Finish,
+  // The remote page's schematic panel frames differently from the pairing
+  // page's hero render — see the camera block below.
+  opts?: { schematic?: boolean }
 ) {
   const eyeIntensity = lightingOverrides().eye;
   const robot = viewer.robot;
@@ -284,13 +287,30 @@ function styleAndFrame(
   const extent = Math.max(size.x, size.y, size.z);
   const dist = (extent / 2 / Math.tan((camera.fov * Math.PI) / 180 / 2)) * 1.0;
 
-  // Slightly off-axis and a touch below centre — the same gentle look-up as the
-  // remote page, which reads better than a dead-on elevation.
-  camera.position.set(
-    center.x + dist * 0.62,
-    center.y + size.y * 0.18,
-    center.z + dist * 0.78
-  );
+  // Azimuth is the same in both framings — slightly off-axis reads better than
+  // dead-on. Only elevation and radius differ.
+  if (opts?.schematic) {
+    // The remote panel is a live status read: a higher, pulled-back view shows
+    // where the arms are in plan (which side, how far forward), which beats the
+    // near-eye-level hero angle when you are checking a pose rather than
+    // admiring the robot. Azimuth normalized from the default's 0.62/0.78.
+    const elevation = (32 * Math.PI) / 180;
+    const radius = dist * 1.18;
+    const horiz = radius * Math.cos(elevation);
+    camera.position.set(
+      center.x + horiz * 0.6225,
+      center.y + radius * Math.sin(elevation),
+      center.z + horiz * 0.783
+    );
+  } else {
+    // Slightly off-axis and a touch below centre — a gentle look-up, which
+    // reads better than a dead-on elevation for the pairing-page render.
+    camera.position.set(
+      center.x + dist * 0.62,
+      center.y + size.y * 0.18,
+      center.z + dist * 0.78
+    );
+  }
   camera.updateProjectionMatrix();
 
   viewer.controls.target.copy(center);
@@ -788,7 +808,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
           /* fall back to DEFAULT_FINISH */
         }
         try {
-          styleAndFrame(viewer, buildFinishLookup(doc));
+          styleAndFrame(viewer, buildFinishLookup(doc), { schematic: liveDisplay });
           // styleAndFrame is what finally sets the camera's near and far, and
           // ambient occlusion is scaled against that range — so its metres have
           // to be converted again now, not at the moment the pass was built.

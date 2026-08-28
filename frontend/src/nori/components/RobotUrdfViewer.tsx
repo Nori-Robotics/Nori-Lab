@@ -535,12 +535,16 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
     viewerRef.current = viewer;
     setupMeshLoader(viewer, rewriteMeshUrl);
 
-    if (!interactive) {
-      // The element wires pointer handlers for joint picking the moment it is
-      // connected. dispose() only unbinds them, and is safe to call again when
-      // the element tears itself down.
+    if (!interactive || liveDisplay) {
+      // The element wires pointer handlers for joint picking (drag + hover
+      // highlight) the moment it is connected. dispose() only unbinds them, and
+      // is safe to call again when the element tears itself down. On a
+      // live-telemetry display the robot owns the pose, so joint picking is off
+      // even in the tall layouts that pass `interactive` for orbit controls.
       (viewer as unknown as { dragControls?: { dispose: () => void } })
         .dragControls?.dispose();
+    }
+    if (!interactive) {
       // A non-interactive viewer is a display, not a control: freeze the camera
       // too, or pointer drags still orbit it (and drag-selection highlights the
       // surrounding page while they do).

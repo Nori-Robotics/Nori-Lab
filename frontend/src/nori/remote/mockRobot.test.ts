@@ -61,6 +61,34 @@ describe("MockDaemonSim ack", () => {
   });
 });
 
+describe("MockDaemonSim sensors", () => {
+  it("advertises, configures, and rate-limits deterministic LiDAR/IMU frames", () => {
+    const sim = new MockDaemonSim();
+    expect(sim.ackFrame().capabilities).toContain("sensor_streams");
+    const reply = sim.handleFrame({
+      type: "sensor_stream",
+      request_id: "f4283fa1-5a3b-4295-99d5-3f6baf87b04d",
+      action: "configure",
+      lidar_hz: 5,
+      imu_hz: 20,
+      lidar_max_points: 32,
+    }, 0)[0];
+    expect(reply).toMatchObject({
+      type: "sensor_stream_status", ok: true,
+      lidar_hz: 5, imu_hz: 20, lidar_max_points: 32,
+    });
+    const first = sim.tick(0);
+    expect(first.find((frame) => frame.type === "lidar_scan")?.ranges_m)
+      .toHaveLength(32);
+    expect(first.find((frame) => frame.type === "imu"))
+      .toMatchObject({ frame_id: "imu_link", linear_acceleration_m_s2: [0, 0, 9.81] });
+    expect(sim.tick(20).some((frame) => frame.type === "imu")).toBe(false);
+    expect(sim.tick(50).some((frame) => frame.type === "imu")).toBe(true);
+    expect(sim.tick(100).some((frame) => frame.type === "lidar_scan")).toBe(false);
+    expect(sim.tick(200).some((frame) => frame.type === "lidar_scan")).toBe(true);
+  });
+});
+
 describe("MockDaemonSim motion", () => {
   it("integrates a joint-mode jog at the configured rate and reports it in telemetry", () => {
     const sim = new MockDaemonSim({ jogUnitsPerS: 60 });
@@ -271,7 +299,13 @@ describe("MockDaemonSim pose (capability pose_targets)", () => {
 
   it("advertises pose_targets by default (what the A3 gateway sends) and serves the verb", () => {
     const sim = new MockDaemonSim();
-    expect(sim.ackFrame().capabilities as string[]).toEqual(["task_jog", "pose_targets", "record"]);
+    expect(sim.ackFrame().capabilities as string[]).toEqual([
+      "task_jog",
+      "pose_targets",
+      "record",
+      "named_navigation",
+      "sensor_streams",
+    ]);
     sim.tick(0);
     const replies = sim.handleFrame(
       { type: "control", pose: { right_arm: POSE }, action_id: "pp1" }, 10,

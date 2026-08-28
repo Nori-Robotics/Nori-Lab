@@ -156,12 +156,10 @@ export function createMockRobot(opts?: MockRobotOptions): MockRobotHandle {
       for (const track of stream.getVideoTracks()) pc.addTrack(track, stream);
     }
 
-    // Robot opens 'control' (teleop.ts), with the REAL bridge's reliability flags
-    // (rpi5 webrtc_robot: ordered=false, max-retransmits=0). An in-page loopback will
-    // rarely drop or reorder anything in practice — loss itself is NOT simulated — but a
-    // default reliable+ordered channel silently promised delivery guarantees no real
-    // session has, hiding the whole lost/reordered-frame failure class from dev code.
-    const channel = pc.createDataChannel("control", { ordered: false, maxRetransmits: 0 });
+    // Match the current A3 gateway's reliable control channel. Correlated
+    // navigation remains duplicate/reorder tolerant because older/fleet
+    // bridges and a future split-channel jog path may provide weaker delivery.
+    const channel = pc.createDataChannel("control", { ordered: true });
     dc = channel;
     channel.onopen = () => {
       if (gen !== generation) return;

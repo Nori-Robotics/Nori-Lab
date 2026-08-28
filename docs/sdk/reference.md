@@ -2,7 +2,7 @@
 
 | Import | Contains | Extra dep |
 |---|---|---|
-| `@nori/sdk` | `RemoteTeleop`, telemetry/jog/keybind types, `SignalingTransport` contract, `NORI_PROTOCOL_VERSION`, `supportsCapability`, `parseAck`, `serialModelCode`, `taskKeymapFor`, `CARTESIAN_TASK_KEYS` | none |
+| `@nori/sdk` | `RemoteTeleop`, navigation/sensor/telemetry/jog/keybind types, `SignalingTransport` contract, `NORI_PROTOCOL_VERSION`, `supportsCapability`, `parseAck`, `serialModelCode`, `taskKeymapFor`, `CARTESIAN_TASK_KEYS` | none |
 | `@nori/sdk/vr` | `VrJogMapper`, `VrSession`, `DEFAULT_BINDINGS`, VR types | `three` |
 | `@nori/sdk/supabase` | `SupabaseSignaling` (reference transport) | `@supabase/supabase-js` |
 | `@nori/sdk/mock` | `createMockRobot`, `MockDaemonSim`, `createLoopbackSignaling` — the dev/CI fake robot ([quick start](/sdk/quickstart#develop-without-a-robot)) | none |
@@ -31,6 +31,7 @@ These ship in the package today. The TypeScript definitions are the reference fo
 | `setPolicyDriving(on)` | Hand the arms to a running policy — suppresses the jog/leader heartbeat so the two don't fight. |
 | `setLeaderAction(deg)` | Drive from physical leader arms (absolute joint angles in degrees). |
 | `connectStatus()` | Finer-grained connect progress than `onConnState` — which phase a stuck session is stuck in. |
+| `configureSensorStreams()` / `onLidarScan` / `onImu` | Opt-in, bounded filtered LiDAR and IMU delivery — see [LiDAR and IMU](/sdk/sensors). |
 | `setKeyboardSpeed(s)` | Scale keyboard jog rates. |
 | `currentMa()`, `CURRENT_MA_PER_LSB`, `CURRENT_FULL_LSB` | Motor-current unit conversion — see [Telemetry](/sdk/telemetry#currents). |
 | `@nori/sdk` rail + robot-ops exports | Rail-height reading helpers, and the generated robot command vocabulary the LLM/agent surfaces are built from. |

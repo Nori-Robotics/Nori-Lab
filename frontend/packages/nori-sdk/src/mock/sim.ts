@@ -27,8 +27,8 @@ export interface MockSimOptions {
   actionUnitsPerS?: number;
   // The optional verbs this double honours — and it honours exactly these: pose is served
   // only when "pose_targets" is advertised, so the ack can never over- or under-claim.
-  // Default matches what a healthy A3 gateway sends with motion + the recorder up
-  // (nori_ws protocol.py on_channel_open: task_jog, pose_targets, record). Trim it to
+  // Default matches what a healthy A3 gateway sends with motion, recorder and
+  // the named-navigation adapter up. Trim it to
   // rehearse the capability gate: new MockDaemonSim({ capabilities: ["task_jog","record"] })
   // makes the SDK's sendPose gate throw pre-flight, exactly as a capability-less robot would.
   capabilities?: string[];
@@ -109,7 +109,9 @@ export class MockDaemonSim {
     this.rng = (opts?.seed ?? 42) >>> 0 || 42;
     this.jogRate = opts?.jogUnitsPerS ?? 60;
     this.actionRate = opts?.actionUnitsPerS ?? 120;
-    this.capabilities = opts?.capabilities ?? ["task_jog", "pose_targets", "record"];
+    this.capabilities = opts?.capabilities ?? [
+      "task_jog", "pose_targets", "record", "named_navigation", "sensor_streams",
+    ];
 
     const joints = this.descriptor.joints ?? [];
     this.idleCurrentMotor = joints.length ? joints[joints.length - 1].replace(/\.pos$/, "") : null;
@@ -162,8 +164,168 @@ export class MockDaemonSim {
     if (t === "control") return this.handleControl(frame, nowMs);
     if (t === "command") return this.handleCommand(frame);
     if (t === "record") return this.handleRecord(frame);
+    if (t === "navigation") return this.handleNavigation(frame, nowMs);
+    if (t === "sensor_stream") return this.handleSensorStream(frame);
     // call / video / link / unknown: a real robot ignores unknown vocabulary too.
     return [];
+  }
+
+  private navWaypoints = new Map<string, { name: string; savedAt: number }>();
+  private navActive: { goalId: string; name: string; startedMs: number } | null = null;
+  private navCache = new Map<string, Frame>();
+  private readonly navMapSha = "a".repeat(64);
+  private sensorLidarHz = 0;
+  private sensorImuHz = 0;
+  private sensorLidarMaxPoints = 360;
+  private sensorLastLidarMs: number | null = null;
+  private sensorLastImuMs: number | null = null;
+  private sensorCache = new Map<string, Frame>();
+
+  private handleNavigation(frame: Frame, nowMs: number): Frame[] {
+    if (!this.capabilities.includes("named_navigation")) return [];
+    const requestId = typeof frame.request_id === "string" ? frame.request_id : "";
+    if (!requestId) return [];
+    const cached = this.navCache.get(requestId);
+    if (cached) return [{ ...cached }];
+    const base = (): Frame => ({
+      type: "navigation_status",
+      request_id: requestId,
+      ok: true,
+      state: this.navActive ? "navigating" : "idle",
+      active: this.navActive !== null,
+      ...(this.navActive
+        ? { goal_id: this.navActive.goalId, name: this.navActive.name }
+        : {}),
+      map_sha256: this.navMapSha,
+    });
+    const action = frame.action;
+    let result = base();
+    if (action === "list_waypoints") {
+      result.waypoints = [...this.navWaypoints.values()]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((waypoint) => ({
+          name: waypoint.name,
+          saved_at_unix: waypoint.savedAt,
+        }));
+    } else if (action === "remember_waypoint") {
+      const name = String(frame.name ?? "").trim();
+      if (!name || this.navActive) {
+        result = { ...base(), ok: false,
+          error: !name ? "waypoint name must not be empty" : "navigation is active" };
+      } else {
+        const key = name.toLocaleLowerCase();
+        const replaced = this.navWaypoints.has(key);
+        this.navWaypoints.set(key, { name, savedAt: nowMs / 1000 });
+        result = { ...base(), name, replaced };
+      }
+    } else if (action === "delete_waypoint") {
+      const name = String(frame.name ?? "").trim();
+      const deleted = !this.navActive && this.navWaypoints.delete(name.toLocaleLowerCase());
+      result = { ...base(), ok: deleted, name, deleted,
+        ...(!deleted ? { error: this.navActive ? "navigation is active" : "waypoint not found" } : {}) };
+    } else if (action === "start") {
+      const name = String(frame.name ?? "").trim();
+      const goalId = String(frame.goal_id ?? "");
+      const waypoint = this.navWaypoints.get(name.toLocaleLowerCase());
+      if (!waypoint || this.navActive || !goalId) {
+        result = { ...base(), ok: false,
+          error: !waypoint ? "waypoint not found" : this.navActive ? "navigation is active" : "goal_id missing" };
+      } else {
+        this.navActive = { goalId, name: waypoint.name, startedMs: nowMs };
+        result = { ...base(), state: "navigating", active: true,
+          goal_id: goalId, name: waypoint.name };
+      }
+    } else if (action === "cancel") {
+      const requestedGoal = String(frame.goal_id ?? "");
+      if (this.navActive && (!requestedGoal || requestedGoal === this.navActive.goalId)) {
+        result = { ...base(), state: "canceled", active: false,
+          goal_id: this.navActive.goalId, name: this.navActive.name };
+        this.navActive = null;
+      } else {
+        result = { ...base(), ok: false, error: "navigation goal_id does not match" };
+      }
+    } else if (action !== "status") {
+      result = { ...base(), ok: false, error: `unknown navigation action ${String(action)}` };
+    }
+    this.navCache.set(requestId, result);
+    return [{ ...result }];
+  }
+
+  private sensorStatus(requestId: string, ok = true, error?: string): Frame {
+    return {
+      type: "sensor_stream_status",
+      request_id: requestId,
+      ok,
+      lidar_hz: this.sensorLidarHz,
+      imu_hz: this.sensorImuHz,
+      lidar_max_points: this.sensorLidarMaxPoints,
+      lidar_available: true,
+      imu_available: true,
+      ...(error ? { error } : {}),
+    };
+  }
+
+  private handleSensorStream(frame: Frame): Frame[] {
+    if (!this.capabilities.includes("sensor_streams")) return [];
+    const requestId = typeof frame.request_id === "string" ? frame.request_id : "";
+    if (!requestId) return [];
+    const cached = this.sensorCache.get(requestId);
+    if (cached) return [{ ...cached }];
+    let result: Frame;
+    if (frame.action === "configure") {
+      if (typeof frame.lidar_hz === "number") this.sensorLidarHz = frame.lidar_hz;
+      if (typeof frame.imu_hz === "number") this.sensorImuHz = frame.imu_hz;
+      if (typeof frame.lidar_max_points === "number")
+        this.sensorLidarMaxPoints = frame.lidar_max_points;
+      result = this.sensorStatus(requestId);
+    } else if (frame.action === "status") {
+      result = this.sensorStatus(requestId);
+    } else {
+      result = this.sensorStatus(
+        requestId, false, `unknown sensor stream action ${String(frame.action)}`);
+    }
+    this.sensorCache.set(requestId, result);
+    return [{ ...result }];
+  }
+
+  private sensorStamp(nowMs: number): {sec: number; nanosec: number} {
+    const sec = Math.floor(nowMs / 1000);
+    return { sec, nanosec: Math.floor((nowMs - sec * 1000) * 1_000_000) };
+  }
+
+  private lidarFrame(nowMs: number): Frame {
+    const points = Math.min(360, this.sensorLidarMaxPoints);
+    const increment = 2 * Math.PI / Math.max(1, points);
+    return {
+      type: "lidar_scan",
+      stamp: this.sensorStamp(nowMs),
+      frame_id: "laser",
+      angle_min_rad: -Math.PI,
+      angle_max_rad: -Math.PI + increment * Math.max(0, points - 1),
+      angle_increment_rad: increment,
+      time_increment_s: 0.1 / Math.max(1, points),
+      scan_time_s: 0.1,
+      range_min_m: 0.05,
+      range_max_m: 12,
+      source_points: 360,
+      ranges_m: Array.from({ length: points }, (_, index) =>
+        Number((2 + 0.25 * Math.sin(index * increment)).toFixed(4))),
+      intensities: Array.from({ length: points }, () => 10),
+    };
+  }
+
+  private imuFrame(nowMs: number): Frame {
+    return {
+      type: "imu",
+      stamp: this.sensorStamp(nowMs),
+      frame_id: "imu_link",
+      orientation_xyzw: [0, 0, 0, 1],
+      orientation_covariance: Array.from({ length: 9 }, () => 0.01),
+      angular_velocity_rad_s: [0, 0, 0],
+      angular_velocity_covariance: Array.from({ length: 9 }, () => 0.01),
+      linear_acceleration_m_s2: [0, 0, 9.81],
+      linear_acceleration_covariance: Array.from({ length: 9 }, () => 0.04),
+    };
   }
 
   // W2.11 on-robot recorder emulation: the bridge relays {type:"record"} to the
@@ -391,6 +553,40 @@ export class MockDaemonSim {
     this.lastTickMs = nowMs;
     const out: Frame[] = [];
     this.moved.clear();
+
+    if (this.sensorLidarHz > 0 &&
+        (this.sensorLastLidarMs === null ||
+         nowMs - this.sensorLastLidarMs >= 1000 / this.sensorLidarHz)) {
+      this.sensorLastLidarMs = nowMs;
+      out.push(this.lidarFrame(nowMs));
+    }
+    if (this.sensorImuHz > 0 &&
+        (this.sensorLastImuMs === null ||
+         nowMs - this.sensorLastImuMs >= 1000 / this.sensorImuHz)) {
+      this.sensorLastImuMs = nowMs;
+      out.push(this.imuFrame(nowMs));
+    }
+
+    if (this.navActive) {
+      const elapsed = Math.max(0, nowMs - this.navActive.startedMs);
+      const remaining = Math.max(0, 1.5 - elapsed / 1000);
+      if (remaining === 0) {
+        out.push({
+          type: "navigation_status", ok: true, state: "succeeded", active: false,
+          goal_id: this.navActive.goalId, name: this.navActive.name,
+          map_sha256: this.navMapSha, distance_remaining_m: 0,
+          estimated_time_remaining_s: 0, number_of_recoveries: 0,
+        });
+        this.navActive = null;
+      } else {
+        out.push({
+          type: "navigation_status", ok: true, state: "navigating", active: true,
+          goal_id: this.navActive.goalId, name: this.navActive.name,
+          map_sha256: this.navMapSha, distance_remaining_m: remaining * 0.4,
+          estimated_time_remaining_s: remaining, number_of_recoveries: 0,
+        });
+      }
+    }
 
     // Watchdog: arrival-keyed like the real one — armed by the first control frame, trips on
     // silence. On the TRANSITION to stop the gateway drops ALL intent and fails every open

@@ -112,6 +112,7 @@ export default defineConfig({
             { text: "Connectivity: LAN, STUN, TURN", link: "/sdk/connectivity" },
             { text: "The handshake", link: "/sdk/handshake" },
             { text: "Driving the robot", link: "/sdk/driving" },
+            { text: "Named navigation", link: "/sdk/navigation" },
             { text: "Telemetry", link: "/sdk/telemetry" },
             { text: "The safety contract", link: "/sdk/safety" },
           ],
@@ -121,6 +122,7 @@ export default defineConfig({
           items: [
             { text: "Video", link: "/sdk/video" },
             { text: "Audio", link: "/sdk/audio" },
+            { text: "LiDAR and IMU", link: "/sdk/sensors" },
             { text: "Perception", link: "/sdk/perception" },
           ],
         },

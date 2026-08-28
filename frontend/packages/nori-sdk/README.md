@@ -129,6 +129,42 @@ What the mock gives you:
   `Date.now`/`Math.random` — and can be driven tick-by-tick in Node unit tests without any
   browser at all (`sim.handleFrame(...)` / `sim.tick(ms)`).
 
+## Named navigation
+
+Robots advertising `named_navigation` expose map-bound destinations through `RemoteTeleop`:
+
+```ts
+await teleop.rememberWaypoint("charging station");
+const started = await teleop.navigateToWaypoint("charging station");
+if (!started.ok || !started.goalId) throw new Error(started.error);
+const result = await teleop.awaitNavigation(started.goalId, { timeoutMs: 120_000 });
+```
+
+The remaining methods are `listWaypoints()`, `deleteWaypoint()`,
+`cancelNavigation(goalId?)`, `getNavigationStatus()`, and
+`latestNavigationStatus()`. `onNavigationStatus` receives unsolicited progress and terminal
+snapshots. Waypoints are tied to the active saved map; Nav2, localization, software E-stop
+checks, and single-goal ownership stay on the robot. A session disconnect cancels only that
+session's goal.
+
+## LiDAR and IMU
+
+Robots advertising `sensor_streams` expose opt-in, rate-limited sensor data:
+
+```ts
+const status = await teleop.configureSensorStreams({
+  lidarHz: 5,
+  imuHz: 20,
+  lidarMaxPoints: 360,
+});
+```
+
+Receive typed samples with `onLidarScan` and `onImu`, or read the caches with
+`latestLidarScan()` and `latestImuSample()`. `getSensorStreamStatus()` reports effective
+settings and current ROS publisher presence. Set a rate to zero to stop it. LiDAR is capped
+at 10 Hz and 1,440 readings; IMU is capped at 50 Hz. Non-finite ROS readings become `null`.
+The mock produces deterministic scans and stationary IMU samples after the same configuration.
+
 The mock speaks the same room handshake as the real robot (`robot_here` -> `ready` -> offer, with rate-limited nack/announce). Room-token HMAC auth is retired — the real robot gates private-room access via Supabase RLS — so the operator just handshakes and no token is sent.
 
 **Planned next** (committed direction, no dates): auto-reconnecting sessions that ride out
@@ -695,7 +731,7 @@ The robot side (`webrtc_robot.py`) must exchange the same named events (`sdp`, `
 
 | Import | Contains | Extra dep |
 |---|---|---|
-| `@nori/sdk` | `RemoteTeleop`, telemetry/jog/keybind types, `SignalingTransport` contract, `NORI_PROTOCOL_VERSION` | none |
+| `@nori/sdk` | `RemoteTeleop`, navigation/telemetry/jog/keybind types, `SignalingTransport` contract, `NORI_PROTOCOL_VERSION` | none |
 | `@nori/sdk/vr` | `VrJogMapper`, `VrSession`, `DEFAULT_BINDINGS`, VR types | `three` |
 | `@nori/sdk/supabase` | `SupabaseSignaling` (reference transport) | `@supabase/supabase-js` |
 | `@nori/sdk/mock` | `createMockRobot`, `MockDaemonSim`, `createLoopbackSignaling` (dev/CI fake robot) | none |

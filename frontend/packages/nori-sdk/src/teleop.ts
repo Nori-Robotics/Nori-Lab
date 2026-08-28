@@ -519,6 +519,91 @@ export interface RecordState {
   error?: string;
 }
 
+export type NavigationState =
+  | "idle" | "starting" | "navigating" | "canceling"
+  | "succeeded" | "canceled" | "aborted" | "failed" | "unavailable";
+
+export interface WaypointSummary {
+  name: string;
+  savedAtUnix: number;
+}
+
+/** Self-contained named-navigation reply or lifecycle snapshot. */
+export interface NavigationStatus {
+  ok: boolean;
+  state: NavigationState;
+  active: boolean;
+  requestId?: string;
+  goalId?: string;
+  name?: string;
+  mapSha256?: string;
+  distanceRemainingM?: number;
+  estimatedTimeRemainingS?: number;
+  numberOfRecoveries?: number;
+  errorCode?: number;
+  error?: string;
+  replaced?: boolean;
+  deleted?: boolean;
+  waypoints?: WaypointSummary[];
+}
+
+export interface RosStamp {
+  sec: number;
+  nanosec: number;
+}
+
+export interface SensorStreamConfig {
+  /** Maximum LiDAR frames/s; zero disables LiDAR delivery. */
+  lidarHz?: number;
+  /** Maximum IMU samples/s; zero disables IMU delivery. */
+  imuHz?: number;
+  /** Maximum ranges per LiDAR frame; the robot uniformly samples if needed. */
+  lidarMaxPoints?: number;
+}
+
+export interface SensorStreamStatus {
+  ok: boolean;
+  requestId: string;
+  lidarHz: number;
+  imuHz: number;
+  lidarMaxPoints: number;
+  lidarAvailable: boolean;
+  imuAvailable: boolean;
+  error?: string;
+}
+
+export interface LidarScan {
+  stamp: RosStamp;
+  frameId: string;
+  angleMinRad: number;
+  angleMaxRad: number;
+  angleIncrementRad: number;
+  timeIncrementS: number;
+  scanTimeS: number;
+  rangeMinM: number;
+  rangeMaxM: number;
+  /** Number of readings on the source ROS scan, before optional sampling. */
+  sourcePoints: number;
+  /** `null` is a ROS NaN/Infinity reading, not a measured distance. */
+  rangesM: Array<number | null>;
+  intensities?: Array<number | null>;
+}
+
+export interface ImuSample {
+  stamp: RosStamp;
+  frameId: string;
+  orientationXyzw: [number | null, number | null, number | null, number | null];
+  orientationCovariance: Array<number | null>;
+  angularVelocityRadS: [number | null, number | null, number | null];
+  angularVelocityCovariance: Array<number | null>;
+  linearAccelerationMS2: [number | null, number | null, number | null];
+  linearAccelerationCovariance: Array<number | null>;
+}
+
+const TERMINAL_NAVIGATION_STATES = new Set<NavigationState>([
+  "succeeded", "canceled", "aborted", "failed", "unavailable",
+]);
+
 export interface RemoteTeleopOptions {
   // Out-of-band signaling transport (SDP/ICE + room handshake). The fork injects a
   // SupabaseSignaling; an external SDK consumer supplies their own. See signaling.ts.
@@ -601,6 +686,15 @@ export interface RemoteTeleopOptions {
   // policyStream() command (incl. the mid-run death statuses). Poll
   // policyStreamStatus() for the latest value at use-time.
   onPolicyStream?: (s: PolicyStreamStatus) => void;
+  // Named waypoint lifecycle. Direct replies and unsolicited Nav2 feedback
+  // both arrive here; use goalId to correlate concurrent application work.
+  onNavigationStatus?: (s: NavigationStatus) => void;
+  /** Effective stream settings and current /scan and /imu/data publisher presence. */
+  onSensorStreamStatus?: (s: SensorStreamStatus) => void;
+  /** Rate-limited filtered `/scan` samples; enabled with configureSensorStreams(). */
+  onLidarScan?: (scan: LidarScan) => void;
+  /** Rate-limited `/imu/data` samples; enabled with configureSensorStreams(). */
+  onImu?: (sample: ImuSample) => void;
 }
 
 // Two schemes; 'm' toggles. Default = CYLINDRICAL (the rpi4 feel).
@@ -899,6 +993,24 @@ export class RemoteTeleop {
   private recStat: RecordState | null = null;       // latest record_status (W2.11 recorder reply)
   private psStat: PolicyStreamStatus | null = null; // latest policy_stream_status
   private psWaiters: Array<(s: PolicyStreamStatus) => void> = []; // FIFO, one per in-flight policyStream()
+  private navigationStat: NavigationStatus | null = null;
+  private navigationWaiters = new Map<string, {
+    resolve: (s: NavigationStatus) => void;
+    timer: ReturnType<typeof setTimeout>;
+    retry: ReturnType<typeof setInterval>;
+  }>();
+  private navigationGoalWaiters = new Map<string, {
+    resolve: (s: NavigationStatus) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+  private sensorStat: SensorStreamStatus | null = null;
+  private lidarStat: LidarScan | null = null;
+  private imuStat: ImuSample | null = null;
+  private sensorWaiters = new Map<string, {
+    resolve: (s: SensorStreamStatus) => void;
+    timer: ReturnType<typeof setTimeout>;
+    retry: ReturnType<typeof setInterval>;
+  }>();
   // The parsed handshake ack (P4.1). null until the daemon's ack arrives; refreshed on every
   // daemon (re)connect (a fresh offer means a fresh session, and the daemon re-acks).
   private ackInfo: RobotInfo | null = null;
@@ -1126,6 +1238,216 @@ export class RemoteTeleop {
     if (actionId) frame.action_id = actionId;
     this.dcSend(frame);
   }
+
+  private requestUuid(): string {
+    const randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto);
+    if (randomUUID) return randomUUID();
+    // RFC 4122 v4 fallback for older WebViews; correlation, not a secret.
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = Math.floor(Math.random() * 16);
+      return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+    });
+  }
+
+  private navigationRequest(
+    action: "list_waypoints" | "remember_waypoint" | "delete_waypoint"
+      | "start" | "cancel" | "status",
+    fields: { name?: string; goal_id?: string } = {},
+    timeoutMs = 5000,
+  ): Promise<NavigationStatus> {
+    if (supportsCapability(this.ackInfo, "named_navigation") === false) {
+      return Promise.reject(new Error(
+        "this robot does not advertise the named_navigation capability"));
+    }
+    const requestId = this.requestUuid();
+    return new Promise<NavigationStatus>((resolve) => {
+      const frame = {
+        type: "navigation",
+        request_id: requestId,
+        action,
+        ...fields,
+      };
+      const timer = setTimeout(() => {
+        const waiter = this.navigationWaiters.get(requestId);
+        if (waiter) clearInterval(waiter.retry);
+        this.navigationWaiters.delete(requestId);
+        resolve({
+          ok: false,
+          state: "unavailable",
+          active: false,
+          requestId,
+          goalId: fields.goal_id,
+          name: fields.name,
+          error: `navigation ${action}: no reply in ${timeoutMs}ms`,
+        });
+      }, timeoutMs);
+      // Retrying the SAME request_id is safe by contract and recovers a lost
+      // one-shot command or reply without ever starting a duplicate goal.
+      const retry = setInterval(() => { this.dcSend(frame); }, 750);
+      this.navigationWaiters.set(requestId, { resolve, timer, retry });
+      const sent = this.dcSend(frame);
+      if (!sent) {
+        clearTimeout(timer);
+        clearInterval(retry);
+        this.navigationWaiters.delete(requestId);
+        resolve({
+          ok: false,
+          state: "unavailable",
+          active: false,
+          requestId,
+          goalId: fields.goal_id,
+          name: fields.name,
+          error: "navigation control channel is not open",
+        });
+      }
+    });
+  }
+
+  listWaypoints(opts?: { timeoutMs?: number }): Promise<NavigationStatus> {
+    return this.navigationRequest("list_waypoints", {}, opts?.timeoutMs);
+  }
+
+  rememberWaypoint(name: string, opts?: { timeoutMs?: number }): Promise<NavigationStatus> {
+    return this.navigationRequest("remember_waypoint", { name }, opts?.timeoutMs);
+  }
+
+  deleteWaypoint(name: string, opts?: { timeoutMs?: number }): Promise<NavigationStatus> {
+    return this.navigationRequest("delete_waypoint", { name }, opts?.timeoutMs);
+  }
+
+  navigateToWaypoint(name: string, opts?: { timeoutMs?: number }): Promise<NavigationStatus> {
+    return this.navigationRequest(
+      "start", { name, goal_id: this.requestUuid() }, opts?.timeoutMs);
+  }
+
+  cancelNavigation(
+    goalId?: string,
+    opts?: { timeoutMs?: number },
+  ): Promise<NavigationStatus> {
+    return this.navigationRequest(
+      "cancel", goalId ? { goal_id: goalId } : {}, opts?.timeoutMs);
+  }
+
+  getNavigationStatus(opts?: { timeoutMs?: number }): Promise<NavigationStatus> {
+    return this.navigationRequest("status", {}, opts?.timeoutMs);
+  }
+
+  latestNavigationStatus(): NavigationStatus | null {
+    return this.navigationStat;
+  }
+
+  awaitNavigation(
+    goalId: string,
+    opts?: { timeoutMs?: number },
+  ): Promise<NavigationStatus> {
+    const current = this.navigationStat;
+    if (current?.goalId === goalId && TERMINAL_NAVIGATION_STATES.has(current.state)) {
+      return Promise.resolve(current);
+    }
+    const timeoutMs = opts?.timeoutMs ?? 120_000;
+    return new Promise<NavigationStatus>((resolve) => {
+      const previous = this.navigationGoalWaiters.get(goalId);
+      if (previous) {
+        clearTimeout(previous.timer);
+        previous.resolve({
+          ok: false, state: "failed", active: false, goalId,
+          error: "awaitNavigation replaced by a newer waiter for this goal",
+        });
+      }
+      const timer = setTimeout(() => {
+        this.navigationGoalWaiters.delete(goalId);
+        resolve({
+          ok: false, state: "failed", active: false, goalId,
+          error: `navigation goal did not finish in ${timeoutMs}ms`,
+        });
+      }, timeoutMs);
+      this.navigationGoalWaiters.set(goalId, { resolve, timer });
+    });
+  }
+
+  private sensorRequest(
+    action: "configure" | "status",
+    config: SensorStreamConfig = {},
+    timeoutMs = 5000,
+  ): Promise<SensorStreamStatus> {
+    if (supportsCapability(this.ackInfo, "sensor_streams") === false) {
+      return Promise.reject(new Error(
+        "this robot does not advertise the sensor_streams capability"));
+    }
+    const fields: Record<string, number> = {};
+    const invalid = (value: number | undefined, min: number, max: number) =>
+      value !== undefined && (!Number.isFinite(value) || value < min || value > max);
+    if (invalid(config.lidarHz, 0, 10)) {
+      return Promise.reject(new Error("lidarHz must be between 0 and 10"));
+    }
+    if (invalid(config.imuHz, 0, 50)) {
+      return Promise.reject(new Error("imuHz must be between 0 and 50"));
+    }
+    if (config.lidarMaxPoints !== undefined &&
+        (!Number.isInteger(config.lidarMaxPoints) ||
+         config.lidarMaxPoints < 16 || config.lidarMaxPoints > 1440)) {
+      return Promise.reject(new Error(
+        "lidarMaxPoints must be an integer between 16 and 1440"));
+    }
+    if (config.lidarHz !== undefined) fields.lidar_hz = config.lidarHz;
+    if (config.imuHz !== undefined) fields.imu_hz = config.imuHz;
+    if (config.lidarMaxPoints !== undefined)
+      fields.lidar_max_points = config.lidarMaxPoints;
+    if (action === "configure" && Object.keys(fields).length === 0) {
+      return Promise.reject(new Error(
+        "configureSensorStreams requires at least one setting"));
+    }
+
+    const requestId = this.requestUuid();
+    const frame = {
+      type: "sensor_stream", request_id: requestId, action, ...fields,
+    };
+    return new Promise<SensorStreamStatus>((resolve) => {
+      const timer = setTimeout(() => {
+        const waiter = this.sensorWaiters.get(requestId);
+        if (waiter) clearInterval(waiter.retry);
+        this.sensorWaiters.delete(requestId);
+        resolve({
+          ok: false,
+          requestId,
+          lidarHz: this.sensorStat?.lidarHz ?? 0,
+          imuHz: this.sensorStat?.imuHz ?? 0,
+          lidarMaxPoints: this.sensorStat?.lidarMaxPoints ?? 360,
+          lidarAvailable: this.sensorStat?.lidarAvailable ?? false,
+          imuAvailable: this.sensorStat?.imuAvailable ?? false,
+          error: `sensor_stream ${action}: no reply in ${timeoutMs}ms`,
+        });
+      }, timeoutMs);
+      const retry = setInterval(() => { this.dcSend(frame); }, 750);
+      this.sensorWaiters.set(requestId, { resolve, timer, retry });
+      if (!this.dcSend(frame)) {
+        clearTimeout(timer);
+        clearInterval(retry);
+        this.sensorWaiters.delete(requestId);
+        resolve({
+          ok: false, requestId, lidarHz: 0, imuHz: 0, lidarMaxPoints: 360,
+          lidarAvailable: false, imuAvailable: false,
+          error: "sensor stream control channel is not open",
+        });
+      }
+    });
+  }
+
+  /** Configure either stream. Omitted settings retain their current robot-side value. */
+  configureSensorStreams(
+    config: SensorStreamConfig,
+    opts?: { timeoutMs?: number },
+  ): Promise<SensorStreamStatus> {
+    return this.sensorRequest("configure", config, opts?.timeoutMs);
+  }
+
+  getSensorStreamStatus(opts?: { timeoutMs?: number }): Promise<SensorStreamStatus> {
+    return this.sensorRequest("status", {}, opts?.timeoutMs);
+  }
+
+  latestSensorStreamStatus(): SensorStreamStatus | null { return this.sensorStat; }
+  latestLidarScan(): LidarScan | null { return this.lidarStat; }
+  latestImuSample(): ImuSample | null { return this.imuStat; }
 
   // Drive the robot's policy streamer (STREAM_INTEGRATION_PLAN §3): the observation
   // leg of remote inference. `start` makes the ROBOT dial out to `target` (the
@@ -1770,6 +2092,37 @@ export class RemoteTeleop {
     // Recorder knowledge is stale once disconnected (auto mode stops on camera
     // silence anyway) — a fresh session re-probes with record("status").
     this.recStat = null;
+    this.navigationStat = null;
+    this.sensorStat = null;
+    this.lidarStat = null;
+    this.imuStat = null;
+    for (const [requestId, waiter] of this.navigationWaiters) {
+      clearTimeout(waiter.timer);
+      clearInterval(waiter.retry);
+      waiter.resolve({
+        ok: false, state: "unavailable", active: false, requestId,
+        error: "navigation session closed",
+      });
+    }
+    this.navigationWaiters.clear();
+    for (const [goalId, waiter] of this.navigationGoalWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.resolve({
+        ok: false, state: "failed", active: false, goalId,
+        error: "navigation session closed",
+      });
+    }
+    this.navigationGoalWaiters.clear();
+    for (const [requestId, waiter] of this.sensorWaiters) {
+      clearTimeout(waiter.timer);
+      clearInterval(waiter.retry);
+      waiter.resolve({
+        ok: false, requestId, lidarHz: 0, imuHz: 0, lidarMaxPoints: 360,
+        lidarAvailable: false, imuAvailable: false,
+        error: "sensor stream session closed",
+      });
+    }
+    this.sensorWaiters.clear();
     if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
     if (this.jogTimer) { clearInterval(this.jogTimer); this.jogTimer = null; }
     this.clearWaitDeadline();
@@ -2076,6 +2429,14 @@ export class RemoteTeleop {
       this.ingestRecordStatus(m);
     } else if (m.type === "policy_stream_status") {
       this.ingestPolicyStream(m);
+    } else if (m.type === "navigation_status") {
+      this.ingestNavigationStatus(m);
+    } else if (m.type === "sensor_stream_status") {
+      this.ingestSensorStreamStatus(m);
+    } else if (m.type === "lidar_scan") {
+      this.ingestLidarScan(m);
+    } else if (m.type === "imu") {
+      this.ingestImu(m);
     } else if (m.type === "ack") {
       this.ingestAck(m);
     } else if (m.type === "error") {
@@ -2239,6 +2600,150 @@ export class RemoteTeleop {
       : "policy stream idle");
     this.psWaiters.shift()?.(s);
     this.o.onPolicyStream?.(s);
+  }
+
+  private ingestNavigationStatus(m: Record<string, unknown>) {
+    const rawState = String(m.state ?? "unavailable") as NavigationState;
+    const state: NavigationState = [
+      "idle", "starting", "navigating", "canceling", "succeeded",
+      "canceled", "aborted", "failed", "unavailable",
+    ].includes(rawState) ? rawState : "failed";
+    const status: NavigationStatus = {
+      ok: m.ok === true,
+      state,
+      active: m.active === true,
+    };
+    if (typeof m.request_id === "string") status.requestId = m.request_id;
+    if (typeof m.goal_id === "string") status.goalId = m.goal_id;
+    if (typeof m.name === "string" && m.name) status.name = m.name;
+    if (typeof m.map_sha256 === "string" && m.map_sha256) status.mapSha256 = m.map_sha256;
+    if (typeof m.distance_remaining_m === "number")
+      status.distanceRemainingM = m.distance_remaining_m;
+    if (typeof m.estimated_time_remaining_s === "number")
+      status.estimatedTimeRemainingS = m.estimated_time_remaining_s;
+    if (typeof m.number_of_recoveries === "number")
+      status.numberOfRecoveries = m.number_of_recoveries;
+    if (typeof m.error_code === "number") status.errorCode = m.error_code;
+    if (typeof m.error === "string" && m.error) status.error = m.error;
+    if (typeof m.replaced === "boolean") status.replaced = m.replaced;
+    if (typeof m.deleted === "boolean") status.deleted = m.deleted;
+    if (Array.isArray(m.waypoints)) {
+      status.waypoints = m.waypoints.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const waypoint = item as Record<string, unknown>;
+        return typeof waypoint.name === "string" &&
+          typeof waypoint.saved_at_unix === "number"
+          ? [{ name: waypoint.name, savedAtUnix: waypoint.saved_at_unix }]
+          : [];
+      });
+    }
+
+    if (status.requestId) {
+      const waiter = this.navigationWaiters.get(status.requestId);
+      if (waiter) {
+        clearTimeout(waiter.timer);
+        clearInterval(waiter.retry);
+        this.navigationWaiters.delete(status.requestId);
+        waiter.resolve(status);
+      }
+    }
+    const previous = this.navigationStat;
+    const staleRegression = Boolean(
+      previous?.goalId && previous.goalId === status.goalId &&
+      TERMINAL_NAVIGATION_STATES.has(previous.state) &&
+      !TERMINAL_NAVIGATION_STATES.has(status.state));
+    if (!staleRegression) {
+      this.navigationStat = status;
+      this.o.onNavigationStatus?.(status);
+    }
+    if (status.goalId && TERMINAL_NAVIGATION_STATES.has(status.state)) {
+      const waiter = this.navigationGoalWaiters.get(status.goalId);
+      if (waiter) {
+        clearTimeout(waiter.timer);
+        this.navigationGoalWaiters.delete(status.goalId);
+        waiter.resolve(status);
+      }
+    }
+  }
+
+  private ingestSensorStreamStatus(m: Record<string, unknown>) {
+    const status: SensorStreamStatus = {
+      ok: m.ok === true,
+      requestId: typeof m.request_id === "string" ? m.request_id : "",
+      lidarHz: typeof m.lidar_hz === "number" ? m.lidar_hz : 0,
+      imuHz: typeof m.imu_hz === "number" ? m.imu_hz : 0,
+      lidarMaxPoints: typeof m.lidar_max_points === "number" ? m.lidar_max_points : 360,
+      lidarAvailable: m.lidar_available === true,
+      imuAvailable: m.imu_available === true,
+    };
+    if (typeof m.error === "string" && m.error) status.error = m.error;
+    this.sensorStat = status;
+    const waiter = this.sensorWaiters.get(status.requestId);
+    if (waiter) {
+      clearTimeout(waiter.timer);
+      clearInterval(waiter.retry);
+      this.sensorWaiters.delete(status.requestId);
+      waiter.resolve(status);
+    }
+    this.o.onSensorStreamStatus?.(status);
+  }
+
+  private sensorStamp(value: unknown): RosStamp {
+    const stamp = value && typeof value === "object"
+      ? value as Record<string, unknown> : {};
+    return {
+      sec: typeof stamp.sec === "number" ? stamp.sec : 0,
+      nanosec: typeof stamp.nanosec === "number" ? stamp.nanosec : 0,
+    };
+  }
+
+  private sensorNumbers(value: unknown, length?: number): Array<number | null> {
+    const result = Array.isArray(value)
+      ? value.map((item) => typeof item === "number" && Number.isFinite(item) ? item : null)
+      : [];
+    if (length !== undefined) {
+      result.length = Math.min(result.length, length);
+      while (result.length < length) result.push(null);
+    }
+    return result;
+  }
+
+  private ingestLidarScan(m: Record<string, unknown>) {
+    const ranges = this.sensorNumbers(m.ranges_m);
+    const scan: LidarScan = {
+      stamp: this.sensorStamp(m.stamp),
+      frameId: typeof m.frame_id === "string" ? m.frame_id : "",
+      angleMinRad: typeof m.angle_min_rad === "number" ? m.angle_min_rad : 0,
+      angleMaxRad: typeof m.angle_max_rad === "number" ? m.angle_max_rad : 0,
+      angleIncrementRad: typeof m.angle_increment_rad === "number" ? m.angle_increment_rad : 0,
+      timeIncrementS: typeof m.time_increment_s === "number" ? m.time_increment_s : 0,
+      scanTimeS: typeof m.scan_time_s === "number" ? m.scan_time_s : 0,
+      rangeMinM: typeof m.range_min_m === "number" ? m.range_min_m : 0,
+      rangeMaxM: typeof m.range_max_m === "number" ? m.range_max_m : 0,
+      sourcePoints: typeof m.source_points === "number" ? m.source_points : ranges.length,
+      rangesM: ranges,
+    };
+    if (Array.isArray(m.intensities)) scan.intensities = this.sensorNumbers(m.intensities);
+    this.lidarStat = scan;
+    this.o.onLidarScan?.(scan);
+  }
+
+  private ingestImu(m: Record<string, unknown>) {
+    const orientation = this.sensorNumbers(m.orientation_xyzw, 4);
+    const angular = this.sensorNumbers(m.angular_velocity_rad_s, 3);
+    const acceleration = this.sensorNumbers(m.linear_acceleration_m_s2, 3);
+    const sample: ImuSample = {
+      stamp: this.sensorStamp(m.stamp),
+      frameId: typeof m.frame_id === "string" ? m.frame_id : "",
+      orientationXyzw: orientation as ImuSample["orientationXyzw"],
+      orientationCovariance: this.sensorNumbers(m.orientation_covariance, 9),
+      angularVelocityRadS: angular as ImuSample["angularVelocityRadS"],
+      angularVelocityCovariance: this.sensorNumbers(m.angular_velocity_covariance, 9),
+      linearAccelerationMS2: acceleration as ImuSample["linearAccelerationMS2"],
+      linearAccelerationCovariance: this.sensorNumbers(m.linear_acceleration_covariance, 9),
+    };
+    this.imuStat = sample;
+    this.o.onImu?.(sample);
   }
 
   // W2.11: coerce a record_status reply (fields per rpi5/media/recorder.py _status),

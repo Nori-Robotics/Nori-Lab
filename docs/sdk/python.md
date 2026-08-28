@@ -72,6 +72,11 @@ command** — `jog(payload, duration=...)` handles the repetition; if you drive 
 resend inside `info.watchdog_profile.t_warn_ms`. [The safety contract](/sdk/safety) applies
 unchanged — it lives on the robot, not in either SDK.
 
+Named waypoint navigation is also shared across the two clients. Use
+`remember_waypoint()`, `list_waypoints()`, `navigate_to_waypoint()`,
+`await_navigation()`, and `cancel_navigation()`; see the complete
+[named navigation contract](/sdk/navigation), including map binding and session ownership.
+
 One place the Python SDK is deliberately stricter than the browser client: `estop()` **raises
 `TeleopError`** when the control channel is known-dead, because a silently dropped E-STOP must
 never read as success — and `estop_confirmed(timeout=...)` goes further, awaiting the robot

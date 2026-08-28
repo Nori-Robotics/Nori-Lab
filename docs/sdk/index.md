@@ -43,7 +43,10 @@ through Nori's cloud? That's the planned [developer posture](/guide/dev-posture)
 - [**Install**](/sdk/install) — from the release tarball we send you.
 - [**Quick start**](/sdk/quickstart) — a connected, driving robot in one code block, and a
   [mock robot](/sdk/quickstart#develop-without-a-robot) for building with zero hardware.
+- [**Named navigation**](/sdk/navigation) — save map-bound destinations, start Nav2 goals,
+  observe progress, and cancel them safely.
 - [**Telemetry**](/sdk/telemetry) — every field the robot streams back, and what `null` means in each.
+- [**LiDAR and IMU**](/sdk/sensors) — opt-in filtered scans and inertial samples with bounded rates.
 - [**The safety contract**](/sdk/safety) — the part you must read.
 
 ## Status

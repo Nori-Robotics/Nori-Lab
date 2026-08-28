@@ -85,6 +85,47 @@ export function jointLabel(key: string): string {
     .replace(/_/g, " ");
 }
 
+/** Joint shorts PROXIMAL -> DISTAL, the order an operator reads the arm in.
+ *
+ * One list covers both fleet vocabularies, interleaved so each yields its own
+ * anatomical order: A-series takes shoulder_pitch, shoulder_roll, bicep_yaw,
+ * elbow_pitch, forearm_yaw, wrist_pitch, wrist_roll, gripper (matching
+ * ARM_JOINT_ORDER in the gateway's calibration.py, which is itself the
+ * controller's declared order); L-series takes shoulder_pan, shoulder_lift,
+ * elbow_flex, wrist_flex, wrist_roll, gripper. The gripper sorts last on both
+ * because it is the most distal thing on the chain.
+ *
+ * Rows used to inherit whatever order the descriptor listed. That is usually
+ * anatomical, but it silently degraded to ALPHABETICAL for any key the
+ * descriptor did not advertise, and for the whole table before the ack lands —
+ * "bicep yaw, elbow pitch, forearm yaw, gripper, shoulder pitch..." reads as
+ * an arbitrary list, and cross-checking it against the keyboard legend (which
+ * ranks explicitly) meant hopping between two different orders. Ranking here
+ * makes the table's order a property of the ROBOT, not of who filled the
+ * descriptor in. */
+const ANATOMICAL_ORDER = [
+  "shoulder_pan", "shoulder_pitch", "shoulder_roll", "shoulder_lift",
+  "bicep_yaw", "elbow_pitch", "elbow_flex", "forearm_yaw",
+  "wrist_pitch", "wrist_flex", "wrist_roll", "gripper",
+];
+
+/** The joint short inside a telemetry key, or null when there isn't one
+ * ("lift.pos", "x.vel"). "left_arm_shoulder_roll.pos" -> "shoulder_roll". */
+export function jointShort(key: string): string | null {
+  const m = /^(?:left|right)_arm_([a-z0-9_]+)\.pos$/.exec(key);
+  return m ? m[1] : null;
+}
+
+/** Sort rank for a telemetry key: arm joints proximal->distal, then everything
+ * else (lift, base, unknown) after them. Unrecognized joints sort at the end of
+ * the arm block rather than vanishing or jumping to the front. */
+export function anatomicalRank(key: string): number {
+  const short = jointShort(key);
+  if (short === null) return ANATOMICAL_ORDER.length + 1;
+  const i = ANATOMICAL_ORDER.indexOf(short);
+  return i < 0 ? ANATOMICAL_ORDER.length : i;
+}
+
 /** Every `state` key the descriptor says this robot HAS, in descriptor order
  * (joints first, then aux/lift) — the list an arriving-key count is measured
  * against. `aux` entries are actuator names without the ".pos" suffix telemetry
@@ -437,9 +478,11 @@ export interface JointRow {
 const clamp01 = (f: number) => (f < 0 ? 0 : f > 1 ? 1 : f);
 
 /**
- * Build the panel's rows: every advertised key in DESCRIPTOR ORDER (which is
- * physical order — shoulder outward to wrist — and far more readable than
- * alphabetical), then any unadvertised key that actually arrived, sorted.
+ * Build the panel's rows: every advertised key plus any unadvertised key that
+ * actually arrived, ordered ANATOMICALLY — shoulder outward to wrist, gripper
+ * last, then the lift and anything else. See ANATOMICAL_ORDER: the order is a
+ * property of the arm, so it holds before the ack lands and for keys the
+ * descriptor never mentioned, and it matches the keyboard legend's order.
  *
  * Advertised keys with no data still get a row, with null values: the whole
  * point is that an absent joint is visible, and a key that vanishes from the
@@ -454,9 +497,22 @@ export function buildJointRows(
   const flows = new Map((sample?.keys ?? []).map((k) => [k.key, k]));
   const extras = (sample?.keys ?? [])
     .map((k) => k.key)
-    .filter((k) => !advertisedSet.has(k))
-    .sort();
-  const order = [...advertised, ...extras];
+    .filter((k) => !advertisedSet.has(k));
+  // Side first (so the flat list reads as whole arms, not interleaved pairs —
+  // left and right share every anatomical rank), then proximal->distal, then
+  // alphabetical only to break ties among equally-ranked keys (two unknown
+  // joints, or the lift against a base velocity) so the order is stable frame
+  // to frame. groupJointRows filters by side and inherits this order.
+  const sideRank = (k: string) => {
+    const s = keySide(k);
+    return s === "left" ? 0 : s === "right" ? 1 : 2;
+  };
+  const order = [...advertised, ...extras].sort(
+    (a, b) =>
+      sideRank(a) - sideRank(b) ||
+      anatomicalRank(a) - anatomicalRank(b) ||
+      (a < b ? -1 : a > b ? 1 : 0),
+  );
 
   return order.map((key) => {
     const flow = flows.get(key) ?? null;

@@ -5,6 +5,8 @@ import {
   FLOW_WINDOW_MS,
   TelemetryFlowTracker,
   advertisedStateKeys,
+  anatomicalRank,
+  jointShort,
   buildJointRows,
   flowTone,
   groupJointRows,
@@ -410,13 +412,17 @@ describe("buildJointRows / groupJointRows", () => {
     expect(rows.every((r) => r.barFrac === null)).toBe(true);
   });
 
-  it("keeps descriptor (physical) order, then appends unadvertised keys sorted", () => {
+  it("orders whole arms proximal->distal, then the lift and base keys", () => {
     const tr = new TelemetryFlowTracker();
     tr.observe({ "x.vel": 0.1, "theta.vel": 0.2, "lift.pos": 10 }, 1000);
     const rows = buildJointRows(tr.sample(1000), d);
     expect(rows.slice(0, 3).map((r) => r.key)).toEqual([
       "left_arm_shoulder_pitch.pos", "left_arm_shoulder_roll.pos", "left_arm_bicep_yaw.pos",
     ]);
+    // Sides stay whole: the left arm finishes before the right one starts,
+    // rather than interleaving the two shoulder_pitches.
+    expect(rows[7].key).toBe("left_arm_gripper.pos");
+    expect(rows[8].key).toBe("right_arm_shoulder_pitch.pos");
     expect(rows.slice(-2).map((r) => r.key)).toEqual(["theta.vel", "x.vel"]);
     expect(rows.find((r) => r.key === "x.vel")?.advertised).toBe(false);
     // No scale is known for a base velocity, so no bar is drawn for it.
@@ -476,5 +482,83 @@ describe("buildJointRows / groupJointRows", () => {
       joints: ["left_arm_gripper.pos"],
     }));
     expect(oneArm.map((g) => g.side)).toEqual(["left"]);
+  });
+});
+
+describe("anatomical ordering", () => {
+  const A3_SHORTS = [
+    "shoulder_pitch", "shoulder_roll", "bicep_yaw", "elbow_pitch",
+    "forearm_yaw", "wrist_pitch", "wrist_roll", "gripper",
+  ];
+
+  it("extracts the joint short, and nothing for lift/base keys", () => {
+    expect(jointShort("left_arm_shoulder_roll.pos")).toBe("shoulder_roll");
+    expect(jointShort("right_arm_gripper.pos")).toBe("gripper");
+    expect(jointShort("lift.pos")).toBeNull();
+    expect(jointShort("x.vel")).toBeNull();
+  });
+
+  it("ranks an A3 arm proximal to distal, gripper last", () => {
+    const keys = A3_SHORTS.map((s) => `left_arm_${s}.pos`);
+    const shuffled = [...keys].sort();          // alphabetical, the old order
+    shuffled.sort((a, b) => anatomicalRank(a) - anatomicalRank(b));
+    expect(shuffled).toEqual(keys);
+  });
+
+  it("ranks an L2 arm proximal to distal too", () => {
+    const l2 = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex",
+                "wrist_roll", "gripper"].map((s) => `right_arm_${s}.pos`);
+    const shuffled = [...l2].sort();
+    shuffled.sort((a, b) => anatomicalRank(a) - anatomicalRank(b));
+    expect(shuffled).toEqual(l2);
+  });
+
+  it("sorts lift and base after every arm joint", () => {
+    expect(anatomicalRank("lift.pos")).toBeGreaterThan(
+      anatomicalRank("left_arm_gripper.pos"));
+    expect(anatomicalRank("x.vel")).toBeGreaterThan(
+      anatomicalRank("left_arm_wrist_roll.pos"));
+  });
+
+  it("puts an unrecognized joint after the known ones, not first", () => {
+    expect(anatomicalRank("left_arm_wrist_yaw.pos")).toBeGreaterThan(
+      anatomicalRank("left_arm_gripper.pos") - 1);
+    expect(anatomicalRank("left_arm_wrist_yaw.pos")).toBeLessThan(
+      anatomicalRank("lift.pos"));
+  });
+
+  it("orders rows anatomically even with NO descriptor", () => {
+    // The regression: with no ack yet every key fell through to the
+    // alphabetical extras path, so the table opened in a nonsense order.
+    const tracker = new TelemetryFlowTracker();
+    const state: Record<string, number> = {};
+    for (const s of A3_SHORTS) state[`left_arm_${s}.pos`] = 0;
+    state["lift.pos"] = 200;
+    tracker.observe(state, 0);
+    const rows = buildJointRows(tracker.sample(0), null);
+    expect(rows.map((r) => r.key)).toEqual([
+      ...A3_SHORTS.map((s) => `left_arm_${s}.pos`),
+      "lift.pos",
+    ]);
+  });
+
+  it("places an unadvertised key in anatomical position, not at the end", () => {
+    const descriptor = {
+      joints: ["left_arm_shoulder_pitch.pos", "left_arm_gripper.pos"],
+    } as unknown as RobotDescriptor;
+    const tracker = new TelemetryFlowTracker();
+    tracker.observe({
+      "left_arm_shoulder_pitch.pos": 0,
+      "left_arm_elbow_pitch.pos": 0,   // arriving but never advertised
+      "left_arm_gripper.pos": 0,
+    }, 0);
+    const rows = buildJointRows(tracker.sample(0), descriptor);
+    expect(rows.map((r) => r.key)).toEqual([
+      "left_arm_shoulder_pitch.pos",
+      "left_arm_elbow_pitch.pos",
+      "left_arm_gripper.pos",
+    ]);
+    // It still reads as unadvertised — ordering must not hide the anomaly.
+    expect(rows[1].advertised).toBe(false);
   });
 });

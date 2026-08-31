@@ -30,7 +30,12 @@ if (!started.ok || !started.goalId) {
 }
 
 const result = await teleop.awaitNavigation(started.goalId, { timeoutMs: 120_000 });
-console.log(result.state, result.distanceRemainingM, result.error);
+if (result.unreachable) {
+  // The robot never answered. It may still be driving — see "Unreachable" below.
+  console.warn("lost contact while navigating:", result.error);
+} else {
+  console.log(result.state, result.distanceRemainingM, result.error);
+}
 ```
 
 The methods return `Promise<NavigationStatus>`:
@@ -44,12 +49,33 @@ The methods return `Promise<NavigationStatus>`:
 | `cancelNavigation(goalId?)` | Cancel this SDK session's active goal, optionally matching its ID. |
 | `getNavigationStatus()` | Request the current robot-side snapshot. |
 | `latestNavigationStatus()` | Read the latest cached reply or unsolicited update. |
-| `awaitNavigation(goalId, options?)` | Wait for a terminal update without polling. |
+| `awaitNavigation(goalId, options?)` | Wait for a terminal update without polling. Resolves `unreachable` if the timeout expires first. |
 
 Set `onNavigationStatus` in `RemoteTeleopOptions` to receive progress snapshots. The useful
 feedback fields are `distanceRemainingM`, `estimatedTimeRemainingS`, and
 `numberOfRecoveries`. Terminal states are `succeeded`, `canceled`, `aborted`, `failed`, and
 `unavailable`; always render `error` for non-success outcomes.
+
+### Unreachable: the robot did not answer
+
+Every method above can also resolve with **`unreachable: true`**. That status was synthesized
+by the client, not sent by the robot: the reply never arrived within the timeout, the control
+channel was closed, or the session was torn down.
+
+`unreachable` is not a robot state. It means the robot's state is **unknown**, and a lost reply
+is not a lost command — a `navigateToWaypoint()` that resolves `unreachable` may be driving
+right now. On such a status `state` and `active` are the last values the *robot* reported,
+carried forward and therefore stale; when the client has heard nothing at all they fall back to
+`unavailable` / `false`, which is an absence of information rather than an observation.
+
+::: warning
+Never treat `active: false` on an unreachable status as confirmation that the robot has
+stopped. Branch on `unreachable` before you read `state`, `active`, or `ok`. If you need the
+robot stopped and cannot confirm delivery, use the physical E-stop.
+:::
+
+Statuses the robot actually sent never carry the field, so `if (result.unreachable)` cleanly
+separates "the robot told me it failed" from "I could not reach the robot".
 
 ## Python
 

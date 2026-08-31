@@ -147,6 +147,10 @@ snapshots. Waypoints are tied to the active saved map; Nav2, localization, softw
 checks, and single-goal ownership stay on the robot. A session disconnect cancels only that
 session's goal.
 
+Any of these can resolve with `unreachable: true`, meaning the client never got a reply and the
+robot's state is **unknown** — not that it stopped. A `navigateToWaypoint()` that resolves
+unreachable may still be driving. Branch on `unreachable` before reading `state` or `active`.
+
 ## LiDAR and IMU
 
 Robots advertising `sensor_streams` expose opt-in, rate-limited sensor data:

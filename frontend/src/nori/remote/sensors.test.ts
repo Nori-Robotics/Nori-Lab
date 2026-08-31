@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RemoteTeleop, parseAck } from "@nori/sdk";
 import type { ImuSample, LidarScan, SensorStreamStatus } from "@nori/sdk";
 
@@ -13,19 +13,26 @@ function harness(capabilities = ["sensor_streams"]) {
   const lidar: LidarScan[] = [];
   const imu: ImuSample[] = [];
   const statuses: SensorStreamStatus[] = [];
+  // `link.open` models the control channel going away under an in-flight request.
+  const link = { open: true };
   const teleop = new RemoteTeleop({
     arm: "right",
     onLidarScan: (value: LidarScan) => lidar.push(value),
     onImu: (value: ImuSample) => imu.push(value),
     onSensorStreamStatus: (value: SensorStreamStatus) => statuses.push(value),
+    // Just enough option surface for the real stop() teardown to run in-process.
+    signaling: { sendBye: () => {}, close: async () => {} },
+    onTelemetry: () => {},
+    onControlActive: () => {},
+    onConnState: () => {},
   } as never);
   const raw = teleop as unknown as Raw;
   raw.ackInfo = parseAck({
     type: "ack", accepted: true, protocol_version: 1, capabilities,
   });
   const sent: Record<string, unknown>[] = [];
-  raw.dcSend = (frame) => { sent.push(frame); return true; };
-  return { teleop, raw, sent, lidar, imu, statuses };
+  raw.dcSend = (frame) => { sent.push(frame); return link.open; };
+  return { teleop, raw, sent, lidar, imu, statuses, link };
 }
 
 describe("LiDAR and IMU streams", () => {
@@ -108,5 +115,48 @@ describe("LiDAR and IMU streams", () => {
     const { teleop, sent } = harness(["record"]);
     await expect(teleop.getSensorStreamStatus()).rejects.toThrow(/sensor_streams/);
     expect(sent).toHaveLength(0);
+  });
+});
+
+describe("sensor stream failure paths", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("marks a reply timeout unreachable and keeps the last effective settings", async () => {
+    const { teleop, raw, sent } = harness();
+    const configured = teleop.configureSensorStreams({ lidarHz: 5, imuHz: 20 });
+    raw.handleTelemetry(JSON.stringify({
+      type: "sensor_stream_status", request_id: sent[0].request_id, ok: true,
+      lidar_hz: 5, imu_hz: 20, lidar_max_points: 180,
+      lidar_available: true, imu_available: true,
+    }));
+    await configured;
+
+    const pending = teleop.getSensorStreamStatus({ timeoutMs: 5000 });
+    await vi.advanceTimersByTimeAsync(5000);
+    // Unreachable reports the last values the ROBOT gave, not fabricated zeroes that
+    // would read as "the sensors turned themselves off".
+    await expect(pending).resolves.toMatchObject({
+      ok: false, unreachable: true,
+      lidarHz: 5, imuHz: 20, lidarMaxPoints: 180, lidarAvailable: true,
+    });
+  });
+
+  it("resolves unreachable and arms no retry when the channel is closed", async () => {
+    const { teleop, sent, link } = harness();
+    link.open = false;
+    const status = await teleop.getSensorStreamStatus();
+    expect(status).toMatchObject({ ok: false, unreachable: true });
+    expect(status.error).toMatch(/not open/);
+    expect(sent).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("drains an in-flight sensor waiter when the session stops", async () => {
+    const { teleop } = harness();
+    const pending = teleop.getSensorStreamStatus({ timeoutMs: 60_000 });
+    await teleop.stop();
+    await expect(pending).resolves.toMatchObject({ ok: false, unreachable: true });
   });
 });

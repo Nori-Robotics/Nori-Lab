@@ -30,6 +30,14 @@ console.log(status.lidarAvailable, status.imuAvailable);
 `getSensorStreamStatus()` reads the effective rates and whether ROS currently sees a publisher
 for each topic. Set a rate to `0` to stop that feed; omitted fields keep their current value.
 
+`configureSensorStreams()` and `getSensorStreamStatus()` can also resolve with
+**`unreachable: true`** — the client synthesized that status because the robot's reply never
+arrived (timeout, closed channel, or session teardown). The robot never sends the field. Every
+other field on such a status is the last value the robot reported, so a configuration you
+cannot confirm does not read as "the sensors turned themselves off". Check `unreachable` before
+trusting `lidarAvailable` / `imuAvailable`; the same rule as
+[navigation](/sdk/navigation#unreachable-the-robot-did-not-answer).
+
 ## Python
 
 ```python

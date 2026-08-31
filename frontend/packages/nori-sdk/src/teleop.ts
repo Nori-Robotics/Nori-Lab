@@ -545,6 +545,19 @@ export interface NavigationStatus {
   replaced?: boolean;
   deleted?: boolean;
   waypoints?: WaypointSummary[];
+  /**
+   * Set ONLY on a status this client synthesized because the robot's reply never
+   * arrived (reply timeout, closed control channel, or session teardown). The
+   * robot never sends it.
+   *
+   * The robot's real state is UNKNOWN on such a status: a lost reply is not a lost
+   * command, so a `start` that times out may well be driving right now. `state` and
+   * `active` here are the last values the ROBOT reported, carried forward and
+   * therefore stale — never fresh observations. Do not read `active: false` on an
+   * unreachable status as confirmation that the robot has stopped; if you need it
+   * stopped and cannot confirm delivery, use the physical E-stop.
+   */
+  unreachable?: boolean;
 }
 
 export interface RosStamp {
@@ -570,6 +583,12 @@ export interface SensorStreamStatus {
   lidarAvailable: boolean;
   imuAvailable: boolean;
   error?: string;
+  /**
+   * Set ONLY on a status this client synthesized because the robot's reply never
+   * arrived. Every other field is the last value the robot reported (or the
+   * documented default when it has reported nothing yet), not a fresh observation.
+   */
+  unreachable?: boolean;
 }
 
 export interface LidarScan {
@@ -1249,6 +1268,47 @@ export class RemoteTeleop {
     });
   }
 
+  // A status the CLIENT invents when the robot's reply never arrives. It carries the
+  // robot's own last words forward instead of asserting the robot stopped: synthesizing
+  // `active: false` here would let a caller read a lost reply as a halted robot. See
+  // NavigationStatus.unreachable.
+  private unreachableNavigation(
+    error: string,
+    fields: { requestId?: string; goalId?: string; name?: string } = {},
+  ): NavigationStatus {
+    // Only carry the cache forward when it describes the goal being asked about — a
+    // snapshot of a DIFFERENT goal says nothing about this one.
+    const last = this.navigationStat;
+    const carry = last && (fields.goalId === undefined || last.goalId === fields.goalId)
+      ? last : null;
+    const status: NavigationStatus = {
+      ok: false,
+      state: carry?.state ?? "unavailable",
+      active: carry?.active ?? false,
+      unreachable: true,
+      error,
+    };
+    if (fields.requestId !== undefined) status.requestId = fields.requestId;
+    if (fields.goalId !== undefined) status.goalId = fields.goalId;
+    if (fields.name !== undefined) status.name = fields.name;
+    return status;
+  }
+
+  private unreachableSensorStream(requestId: string, error: string): SensorStreamStatus {
+    const last = this.sensorStat;
+    return {
+      ok: false,
+      requestId,
+      lidarHz: last?.lidarHz ?? 0,
+      imuHz: last?.imuHz ?? 0,
+      lidarMaxPoints: last?.lidarMaxPoints ?? 360,
+      lidarAvailable: last?.lidarAvailable ?? false,
+      imuAvailable: last?.imuAvailable ?? false,
+      unreachable: true,
+      error,
+    };
+  }
+
   private navigationRequest(
     action: "list_waypoints" | "remember_waypoint" | "delete_waypoint"
       | "start" | "cancel" | "status",
@@ -1271,15 +1331,10 @@ export class RemoteTeleop {
         const waiter = this.navigationWaiters.get(requestId);
         if (waiter) clearInterval(waiter.retry);
         this.navigationWaiters.delete(requestId);
-        resolve({
-          ok: false,
-          state: "unavailable",
-          active: false,
-          requestId,
-          goalId: fields.goal_id,
-          name: fields.name,
-          error: `navigation ${action}: no reply in ${timeoutMs}ms`,
-        });
+        resolve(this.unreachableNavigation(
+          `navigation ${action}: no reply in ${timeoutMs}ms`,
+          { requestId, goalId: fields.goal_id, name: fields.name },
+        ));
       }, timeoutMs);
       // Retrying the SAME request_id is safe by contract and recovers a lost
       // one-shot command or reply without ever starting a duplicate goal.
@@ -1290,15 +1345,10 @@ export class RemoteTeleop {
         clearTimeout(timer);
         clearInterval(retry);
         this.navigationWaiters.delete(requestId);
-        resolve({
-          ok: false,
-          state: "unavailable",
-          active: false,
-          requestId,
-          goalId: fields.goal_id,
-          name: fields.name,
-          error: "navigation control channel is not open",
-        });
+        resolve(this.unreachableNavigation(
+          "navigation control channel is not open",
+          { requestId, goalId: fields.goal_id, name: fields.name },
+        ));
       }
     });
   }
@@ -1349,17 +1399,13 @@ export class RemoteTeleop {
       const previous = this.navigationGoalWaiters.get(goalId);
       if (previous) {
         clearTimeout(previous.timer);
-        previous.resolve({
-          ok: false, state: "failed", active: false, goalId,
-          error: "awaitNavigation replaced by a newer waiter for this goal",
-        });
+        previous.resolve(this.unreachableNavigation(
+          "awaitNavigation replaced by a newer waiter for this goal", { goalId }));
       }
       const timer = setTimeout(() => {
         this.navigationGoalWaiters.delete(goalId);
-        resolve({
-          ok: false, state: "failed", active: false, goalId,
-          error: `navigation goal did not finish in ${timeoutMs}ms`,
-        });
+        resolve(this.unreachableNavigation(
+          `navigation goal did not finish in ${timeoutMs}ms`, { goalId }));
       }, timeoutMs);
       this.navigationGoalWaiters.set(goalId, { resolve, timer });
     });
@@ -1407,16 +1453,8 @@ export class RemoteTeleop {
         const waiter = this.sensorWaiters.get(requestId);
         if (waiter) clearInterval(waiter.retry);
         this.sensorWaiters.delete(requestId);
-        resolve({
-          ok: false,
-          requestId,
-          lidarHz: this.sensorStat?.lidarHz ?? 0,
-          imuHz: this.sensorStat?.imuHz ?? 0,
-          lidarMaxPoints: this.sensorStat?.lidarMaxPoints ?? 360,
-          lidarAvailable: this.sensorStat?.lidarAvailable ?? false,
-          imuAvailable: this.sensorStat?.imuAvailable ?? false,
-          error: `sensor_stream ${action}: no reply in ${timeoutMs}ms`,
-        });
+        resolve(this.unreachableSensorStream(
+          requestId, `sensor_stream ${action}: no reply in ${timeoutMs}ms`));
       }, timeoutMs);
       const retry = setInterval(() => { this.dcSend(frame); }, 750);
       this.sensorWaiters.set(requestId, { resolve, timer, retry });
@@ -1424,11 +1462,8 @@ export class RemoteTeleop {
         clearTimeout(timer);
         clearInterval(retry);
         this.sensorWaiters.delete(requestId);
-        resolve({
-          ok: false, requestId, lidarHz: 0, imuHz: 0, lidarMaxPoints: 360,
-          lidarAvailable: false, imuAvailable: false,
-          error: "sensor stream control channel is not open",
-        });
+        resolve(this.unreachableSensorStream(
+          requestId, "sensor stream control channel is not open"));
       }
     });
   }
@@ -2092,37 +2127,34 @@ export class RemoteTeleop {
     // Recorder knowledge is stale once disconnected (auto mode stops on camera
     // silence anyway) — a fresh session re-probes with record("status").
     this.recStat = null;
-    this.navigationStat = null;
-    this.sensorStat = null;
-    this.lidarStat = null;
-    this.imuStat = null;
+    // Drain the waiters BEFORE clearing the caches: the robot's last reported state is
+    // exactly what an unreachable status carries forward, and it is most worth having
+    // here. The gateway cancels this session's goal on disconnect, but that is
+    // best-effort and unconfirmable from here, so none of these claim the robot stopped.
     for (const [requestId, waiter] of this.navigationWaiters) {
       clearTimeout(waiter.timer);
       clearInterval(waiter.retry);
-      waiter.resolve({
-        ok: false, state: "unavailable", active: false, requestId,
-        error: "navigation session closed",
-      });
+      waiter.resolve(this.unreachableNavigation(
+        "navigation session closed", { requestId }));
     }
     this.navigationWaiters.clear();
     for (const [goalId, waiter] of this.navigationGoalWaiters) {
       clearTimeout(waiter.timer);
-      waiter.resolve({
-        ok: false, state: "failed", active: false, goalId,
-        error: "navigation session closed",
-      });
+      waiter.resolve(this.unreachableNavigation(
+        "navigation session closed", { goalId }));
     }
     this.navigationGoalWaiters.clear();
     for (const [requestId, waiter] of this.sensorWaiters) {
       clearTimeout(waiter.timer);
       clearInterval(waiter.retry);
-      waiter.resolve({
-        ok: false, requestId, lidarHz: 0, imuHz: 0, lidarMaxPoints: 360,
-        lidarAvailable: false, imuAvailable: false,
-        error: "sensor stream session closed",
-      });
+      waiter.resolve(this.unreachableSensorStream(
+        requestId, "sensor stream session closed"));
     }
     this.sensorWaiters.clear();
+    this.navigationStat = null;
+    this.sensorStat = null;
+    this.lidarStat = null;
+    this.imuStat = null;
     if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
     if (this.jogTimer) { clearInterval(this.jogTimer); this.jogTimer = null; }
     this.clearWaitDeadline();

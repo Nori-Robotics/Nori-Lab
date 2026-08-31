@@ -98,6 +98,26 @@ print(result.state, result.distance_remaining_m, result.error)
 `get_navigation_status()` mirror the TypeScript methods. `robot.navigation_status` is the
 latest cached `NavigationStatus`.
 
+::: warning The Python client raises where TypeScript returns
+There is no `unreachable` field in Python. When the robot does not answer, the call **raises
+`RobotUnreachable`** (a `TeleopError`) rather than returning a status, because returning one
+would mean inventing `state` and `active`. The exception carries the robot's last real
+snapshot on `.last_known` — stale by definition, never evidence of the present.
+
+```python
+from nori_sdk import RobotUnreachable
+
+try:
+    result = await robot.await_navigation(started.goal_id, timeout=120.0)
+except RobotUnreachable as lost:
+    # The goal did not report finishing. The robot may still be driving.
+    print("lost contact; last seen:", lost.last_known)
+```
+
+This matches `record()` and `policy_stream()`, which already raise on a reply timeout. A
+*refusal* (`ok=False`) is still returned, not raised.
+:::
+
 ## Delivery and ownership
 
 Navigation commands are one-shot messages rather than a jog stream. The SDK retries a command

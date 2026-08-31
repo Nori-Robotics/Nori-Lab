@@ -53,7 +53,9 @@ async for scan in robot.stream("lidar_scan"):
 
 Use `robot.stream("imu")` for `ImuSample` objects. The latest values are also available as
 `robot.lidar_scan` and `robot.imu_sample`; `get_sensor_stream_status()` refreshes
-`robot.sensor_stream_status`.
+`robot.sensor_stream_status`. Out-of-range rates raise `ValueError` before anything is sent,
+and an unanswered request raises `RobotUnreachable` rather than returning a status — see
+[the Python note on navigation](/sdk/navigation#python).
 
 ## Limits and data shape
 

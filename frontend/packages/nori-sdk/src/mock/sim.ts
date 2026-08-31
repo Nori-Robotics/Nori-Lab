@@ -177,6 +177,13 @@ export class MockDaemonSim {
   // evicted (a re-sent delete_waypoint then genuinely re-runs and answers "not found").
   private static readonly REQUEST_HISTORY = 256;
 
+  // The gateway DROPS a request whose id is not a UUID — silently, no reply. Enforced here
+  // so code that mints its own ids fails against the double rather than on hardware.
+  private static isUuid(value: unknown): value is string {
+    return typeof value === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  }
+
   private rememberReply(cache: Map<string, Frame>, requestId: string, reply: Frame): void {
     cache.delete(requestId);          // re-insert so Map order stays least-recent-first
     cache.set(requestId, reply);
@@ -200,8 +207,8 @@ export class MockDaemonSim {
 
   private handleNavigation(frame: Frame, nowMs: number): Frame[] {
     if (!this.capabilities.includes("named_navigation")) return [];
-    const requestId = typeof frame.request_id === "string" ? frame.request_id : "";
-    if (!requestId) return [];
+    const requestId = frame.request_id;
+    if (!MockDaemonSim.isUuid(requestId)) return [];
     const cached = this.navCache.get(requestId);
     if (cached) return [{ ...cached }];
     const base = (): Frame => ({
@@ -284,8 +291,8 @@ export class MockDaemonSim {
 
   private handleSensorStream(frame: Frame): Frame[] {
     if (!this.capabilities.includes("sensor_streams")) return [];
-    const requestId = typeof frame.request_id === "string" ? frame.request_id : "";
-    if (!requestId) return [];
+    const requestId = frame.request_id;
+    if (!MockDaemonSim.isUuid(requestId)) return [];
     const cached = this.sensorCache.get(requestId);
     if (cached) return [{ ...cached }];
     let result: Frame;

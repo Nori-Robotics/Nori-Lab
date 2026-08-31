@@ -95,6 +95,13 @@ describe("MockDaemonSim navigation request history", () => {
   // UUID-shaped, because the real gateway drops a request_id that is not a UUID.
   const uuid = (n: number) => `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`;
 
+  it("drops a request_id that is not a UUID, as the gateway does", () => {
+    const sim = new MockDaemonSim();
+    expect(nav(sim, "not-a-uuid", { action: "status" })).toBeUndefined();
+    expect(sim.handleFrame(
+      { type: "sensor_stream", request_id: "nope", action: "status" }, 0)).toEqual([]);
+  });
+
   it("replays a cached reply, then re-runs once the gateway would have evicted it", () => {
     const sim = new MockDaemonSim();
     const id = uuid(1);

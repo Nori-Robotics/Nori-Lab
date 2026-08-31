@@ -128,6 +128,24 @@ describe("navigation failure paths", () => {
     });
   });
 
+  it("does not treat an unknown lifecycle state as a finished goal", async () => {
+    const { teleop, raw } = harness();
+    const goalId = "44444444-4444-4444-8444-444444444444";
+    const pending = teleop.awaitNavigation(goalId, { timeoutMs: 1000 });
+    // A newer robot reports a state this build has never heard of, mid-drive.
+    raw.handleTelemetry(JSON.stringify({
+      type: "navigation_status", ok: true, state: "docking", active: true,
+      goal_id: goalId, name: "Dock",
+    }));
+    expect(teleop.latestNavigationStatus()?.state).toBe("docking");
+    // It must NOT have resolved: coercing the unknown state onto "failed" would report a
+    // finished goal while the robot is still driving.
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(pending).resolves.toMatchObject({
+      unreachable: true, state: "docking", active: true,
+    });
+  });
+
   it("never carries a different goal's snapshot into an unreachable status", async () => {
     const { teleop, raw } = harness();
     raw.handleTelemetry(NAVIGATING("11111111-1111-4111-8111-111111111111"));

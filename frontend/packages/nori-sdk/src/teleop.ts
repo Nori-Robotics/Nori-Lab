@@ -519,9 +519,13 @@ export interface RecordState {
   error?: string;
 }
 
+// `(string & {})` for the same reason as SafetyState above: a newer robot's unfamiliar
+// lifecycle state must survive as itself. Ask TERMINAL_NAVIGATION_STATES whether a goal is
+// over — never compare for equality against the names you know.
 export type NavigationState =
   | "idle" | "starting" | "navigating" | "canceling"
-  | "succeeded" | "canceled" | "aborted" | "failed" | "unavailable";
+  | "succeeded" | "canceled" | "aborted" | "failed" | "unavailable"
+  | (string & {});
 
 export interface WaypointSummary {
   name: string;
@@ -2635,11 +2639,12 @@ export class RemoteTeleop {
   }
 
   private ingestNavigationStatus(m: Record<string, unknown>) {
-    const rawState = String(m.state ?? "unavailable") as NavigationState;
-    const state: NavigationState = [
-      "idle", "starting", "navigating", "canceling", "succeeded",
-      "canceled", "aborted", "failed", "unavailable",
-    ].includes(rawState) ? rawState : "failed";
+    // Keep an unrecognized state VERBATIM. Coercing it to "failed" would make it terminal,
+    // and awaitNavigation() would resolve reporting a finished goal while the robot drove on
+    // — the unknown state is precisely where we must not claim the robot stopped. Unknown is
+    // then simply not in TERMINAL_NAVIGATION_STATES, which is the safe default.
+    const state: NavigationState =
+      typeof m.state === "string" && m.state ? m.state : "unavailable";
     const status: NavigationStatus = {
       ok: m.ok === true,
       state,

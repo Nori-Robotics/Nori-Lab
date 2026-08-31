@@ -170,6 +170,23 @@ export class MockDaemonSim {
     return [];
   }
 
+  // The gateway remembers only the last REQUEST_HISTORY replies per session and evicts
+  // oldest-first (nori_gateway protocol.py NAVIGATION_REQUEST_HISTORY / SENSOR_REQUEST_HISTORY).
+  // Match it exactly: an unbounded cache here would make every retry look idempotent
+  // forever, hiding the real robot's behaviour when a retry lands after its reply was
+  // evicted (a re-sent delete_waypoint then genuinely re-runs and answers "not found").
+  private static readonly REQUEST_HISTORY = 256;
+
+  private rememberReply(cache: Map<string, Frame>, requestId: string, reply: Frame): void {
+    cache.delete(requestId);          // re-insert so Map order stays least-recent-first
+    cache.set(requestId, reply);
+    while (cache.size > MockDaemonSim.REQUEST_HISTORY) {
+      const oldest = cache.keys().next();
+      if (oldest.done) break;
+      cache.delete(oldest.value);
+    }
+  }
+
   private navWaypoints = new Map<string, { name: string; savedAt: number }>();
   private navActive: { goalId: string; name: string; startedMs: number } | null = null;
   private navCache = new Map<string, Frame>();
@@ -247,7 +264,7 @@ export class MockDaemonSim {
     } else if (action !== "status") {
       result = { ...base(), ok: false, error: `unknown navigation action ${String(action)}` };
     }
-    this.navCache.set(requestId, result);
+    this.rememberReply(this.navCache, requestId, result);
     return [{ ...result }];
   }
 
@@ -284,7 +301,7 @@ export class MockDaemonSim {
       result = this.sensorStatus(
         requestId, false, `unknown sensor stream action ${String(frame.action)}`);
     }
-    this.sensorCache.set(requestId, result);
+    this.rememberReply(this.sensorCache, requestId, result);
     return [{ ...result }];
   }
 

@@ -89,6 +89,33 @@ describe("MockDaemonSim sensors", () => {
   });
 });
 
+describe("MockDaemonSim navigation request history", () => {
+  const nav = (sim: MockDaemonSim, requestId: string, extra: Record<string, unknown>) =>
+    sim.handleFrame({ type: "navigation", request_id: requestId, ...extra }, 0)[0];
+  // UUID-shaped, because the real gateway drops a request_id that is not a UUID.
+  const uuid = (n: number) => `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`;
+
+  it("replays a cached reply, then re-runs once the gateway would have evicted it", () => {
+    const sim = new MockDaemonSim();
+    const id = uuid(1);
+
+    expect(nav(sim, id, { action: "remember_waypoint", name: "Dock" }))
+      .toMatchObject({ ok: true, name: "Dock", replaced: false });
+    // A retry inside the history window is idempotent — the same reply, not a re-run.
+    expect(nav(sim, id, { action: "remember_waypoint", name: "Dock" }))
+      .toMatchObject({ ok: true, replaced: false });
+
+    // Push that reply out of the 256-entry window the gateway actually keeps.
+    for (let i = 0; i < 256; i++) nav(sim, uuid(100 + i), { action: "status" });
+
+    // Same request_id, but the robot no longer remembers answering it, so it runs
+    // again — and the waypoint exists now. This is the real retry edge the mock used
+    // to hide behind an unbounded cache.
+    expect(nav(sim, id, { action: "remember_waypoint", name: "Dock" }))
+      .toMatchObject({ ok: true, replaced: true });
+  });
+});
+
 describe("MockDaemonSim motion", () => {
   it("integrates a joint-mode jog at the configured rate and reports it in telemetry", () => {
     const sim = new MockDaemonSim({ jogUnitsPerS: 60 });

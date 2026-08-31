@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useApi } from "@/contexts/ApiContext";
+import { SoundsPanel } from "@/nori/components/SoundsPanel";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { PolicyRunner, EXECUTION_PRESETS, type PolicyRunPhase } from "@/nori/remote/policyRun";
 import {
@@ -36,6 +37,8 @@ import {
   getActiveProcessing,
   type ProcessingJob,
   getLibrary,
+  listSounds,
+  type SoundClip,
   getRobotRecordings,
   getTrainingEstimateParams,
   listLocalPolicies,
@@ -548,7 +551,10 @@ const MyStuff = () => {
   const [error, setError] = useState<string | null>(null);
   const [activeRef, setActiveRef] = useState<string | null>(null); // hovered policy's source
   const [reviewing, setReviewing] = useState<ReviewSource | null>(null); // dataset under review
-  const [view, setView] = useState<"recordings" | "datasets" | "policies">("recordings"); // column view picker
+  const [view, setView] = useState<"recordings" | "datasets" | "policies" | "sounds">("recordings"); // column view picker
+  // Sound clips (soundboard phase 1). Best-effort like the other side-loads: a
+  // backend without /sounds yet just shows an empty tab, never an error banner.
+  const [sounds, setSounds] = useState<SoundClip[]>([]);
   const [policyFilter, setPolicyFilter] = useState<"all" | LibraryPolicy["state"]>("all");
   const [datasetFilter, setDatasetFilter] = useState<"all" | "own" | "community" | "published">("all");
   const [deletingRecording, setDeletingRecording] = useState<RawBundleEntry | null>(null); // pending delete
@@ -611,6 +617,11 @@ const MyStuff = () => {
       setProcessing((await getActiveProcessing(baseUrl, fetchWithHeaders)).processing);
     } catch {
       setProcessing([]); // absent on an older backend — panel just stays hidden
+    }
+    try {
+      setSounds((await listSounds(baseUrl, fetchWithHeaders)).sounds);
+    } catch {
+      setSounds([]); // absent on an older backend — the tab shows its empty state
     }
     setLoading(false);
   }, [baseUrl, fetchWithHeaders]);
@@ -1268,6 +1279,7 @@ const MyStuff = () => {
                 ["recordings", "Recordings", robot?.bundles?.length ?? 0],
                 ["datasets", "Datasets", datasets.length],
                 ["policies", "Policies", allPolicies.length],
+                ["sounds", "Sounds", sounds.length],
               ] as const).map(([key, label, count]) => (
                 <button
                   key={key}
@@ -1327,7 +1339,7 @@ const MyStuff = () => {
                     <SelectItem value="published">Published</SelectItem>
                   </SelectContent>
                 </Select>
-              ) : (
+              ) : view === "policies" ? (
                 <Select
                   value={policyFilter}
                   onValueChange={(v) => setPolicyFilter(v as typeof policyFilter)}
@@ -1346,7 +1358,7 @@ const MyStuff = () => {
                     <SelectItem value="failed">Failed</SelectItem>
                   </SelectContent>
                 </Select>
-              )}
+              ) : null}
           </div>
 
           {view === "recordings" && (
@@ -1705,6 +1717,10 @@ const MyStuff = () => {
           )}
 
           {/* -------- Policies (third view) -------- */}
+          {view === "sounds" && (
+            <SoundsPanel sounds={sounds} loading={loading} onChanged={() => void load()} />
+          )}
+
           {view === "policies" && (
             <>
           <div className="flex justify-end">

@@ -180,11 +180,11 @@ const Home = () => {
     <div className="relative overflow-hidden rounded-[24px] border border-nori-h14131a/10 bg-background px-5 py-6 md:px-8 md:py-7">
       <div className="dot-grid pointer-events-none absolute inset-0 opacity-60" aria-hidden />
       <div
-        className="pointer-events-none absolute -left-16 -top-16 h-48 w-48 rounded-full bg-leaf opacity-70 blur-3xl dark:opacity-75"
+        className="pointer-events-none absolute -left-16 -top-16 h-48 w-48 rounded-full bg-leaf opacity-70 blur-3xl"
         aria-hidden
       />
       <div
-        className="pointer-events-none absolute -right-12 top-10 h-40 w-40 rounded-full bg-sticker opacity-60 blur-3xl dark:opacity-70"
+        className="pointer-events-none absolute -right-12 top-10 h-40 w-40 rounded-full bg-sticker opacity-60 blur-3xl"
         aria-hidden
       />
 

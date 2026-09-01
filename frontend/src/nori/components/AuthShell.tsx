@@ -45,15 +45,15 @@ export function AuthShell({
         aria-hidden
       />
       <div
-        className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-leaf opacity-70 blur-3xl dark:opacity-75"
+        className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-leaf opacity-70 blur-3xl"
         aria-hidden
       />
       <div
-        className="pointer-events-none absolute -right-24 top-24 h-64 w-64 rounded-full bg-sticker opacity-60 blur-3xl dark:opacity-70"
+        className="pointer-events-none absolute -right-24 top-24 h-64 w-64 rounded-full bg-sticker opacity-60 blur-3xl"
         aria-hidden
       />
       <div
-        className="pointer-events-none absolute -bottom-24 left-1/3 h-72 w-72 rounded-full bg-sticker-2 opacity-50 blur-3xl dark:opacity-60"
+        className="pointer-events-none absolute -bottom-24 left-1/3 h-72 w-72 rounded-full bg-sticker-2 opacity-50 blur-3xl"
         aria-hidden
       />
 

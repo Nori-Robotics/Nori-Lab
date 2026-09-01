@@ -634,6 +634,102 @@ export function renameTrainingJob(
 }
 
 /** GET /nori/library — the My Stuff aggregate (datasets ↔ policies, joined by lineage). */
+// ---- Sound clips: the soundboard library -------------------------------------
+
+/** One clip in the customer's library. `duration_ms`/`bytes` describe the CANONICAL
+ *  (converted) audio, not the uploaded file, and are null until it is READY. */
+export interface SoundClip {
+  id: string;
+  name: string;
+  status: "PENDING_UPLOAD" | "READY" | "FAILED";
+  duration_ms: number | null;
+  bytes: number | null;
+  created_at: string | null;
+  /** Why a FAILED clip failed, in words meant for the person who uploaded it. */
+  failure_reason: string | null;
+}
+
+export function listSounds(baseUrl: string, fetcher: Fetcher): Promise<{ sounds: SoundClip[] }> {
+  return noriRequest(baseUrl, fetcher, "/nori/sounds", { action: "Load your sounds" });
+}
+
+export function startSoundUpload(
+  baseUrl: string, fetcher: Fetcher, filename: string, name?: string,
+): Promise<{ sound_id: string; put_url: string; expires_in: number; max_bytes: number }> {
+  return noriRequest(baseUrl, fetcher, "/nori/sounds/upload/start", {
+    method: "POST", body: { filename, name: name ?? null }, action: "Start the upload",
+  });
+}
+
+export function finalizeSoundUpload(
+  baseUrl: string, fetcher: Fetcher, soundId: string,
+): Promise<{ sound_id: string; status: string; duration_ms?: number; bytes?: number }> {
+  return noriRequest(baseUrl, fetcher, `/nori/sounds/upload/${soundId}/finalize`, {
+    method: "POST", action: "Finish the upload",
+  });
+}
+
+export function getSoundUrl(
+  baseUrl: string, fetcher: Fetcher, soundId: string, original = false,
+): Promise<{ url: string; expires_in: number; name: string }> {
+  const query = original ? "?original=true" : "";
+  return noriRequest(baseUrl, fetcher, `/nori/sounds/${soundId}/url${query}`, {
+    action: "Get the sound",
+  });
+}
+
+export function renameSound(
+  baseUrl: string, fetcher: Fetcher, soundId: string, name: string,
+): Promise<{ id: string; name: string }> {
+  return noriRequest(baseUrl, fetcher, `/nori/sounds/${soundId}`, {
+    method: "PATCH", body: { name }, action: "Rename the sound",
+  });
+}
+
+export function deleteSound(
+  baseUrl: string, fetcher: Fetcher, soundId: string,
+): Promise<{ deleted: boolean; id: string }> {
+  return noriRequest(baseUrl, fetcher, `/nori/sounds/${soundId}`, {
+    method: "DELETE", action: "Delete the sound",
+  });
+}
+
+/**
+ * Upload one file end to end: open the session, PUT the bytes STRAIGHT TO S3, then
+ * finalize. The PUT bypasses both LeLab and the backend — presigned URLs exist so
+ * user bytes never transit our servers — which is also why the SSE header below is
+ * mandatory: it is baked into the URL's signature and the bucket denies unencrypted
+ * PUTs, so omitting it fails with SignatureDoesNotMatch rather than anything helpful.
+ */
+export async function uploadSound(
+  baseUrl: string, fetcher: Fetcher, file: File, name?: string,
+): Promise<SoundClip> {
+  const started = await startSoundUpload(baseUrl, fetcher, file.name, name);
+  if (file.size > started.max_bytes) {
+    throw new Error(
+      `That file is ${(file.size / (1024 * 1024)).toFixed(1)} MB — the limit is ` +
+      `${Math.round(started.max_bytes / (1024 * 1024))} MB.`
+    );
+  }
+  const put = await fetch(started.put_url, {
+    method: "PUT",
+    headers: { "x-amz-server-side-encryption": "AES256" },
+    body: file,
+  });
+  if (!put.ok) throw new Error(`Upload failed (${put.status}). Try again.`);
+
+  const done = await finalizeSoundUpload(baseUrl, fetcher, started.sound_id);
+  return {
+    id: started.sound_id,
+    name: name ?? file.name.replace(/\.[^.]+$/, ""),
+    status: (done.status as SoundClip["status"]) ?? "READY",
+    duration_ms: done.duration_ms ?? null,
+    bytes: done.bytes ?? null,
+    created_at: new Date().toISOString(),
+    failure_reason: null,
+  };
+}
+
 export function getLibrary(baseUrl: string, fetcher: Fetcher): Promise<Library> {
   return noriRequest<Library>(baseUrl, fetcher, "/nori/library", { action: "Load your library" });
 }

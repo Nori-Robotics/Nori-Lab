@@ -500,6 +500,46 @@ class NoriClient:
             "POST", f"{API}/library/policies/{job_id}/lock", json={"locked": locked}
         )
 
+    # ---- Sound clips (the soundboard library) ----------------------------
+    # Upload is two-step like datasets/policies: the BROWSER PUTs its file straight
+    # to the presigned S3 URL (never through LeLab — a sound is small, but proxying
+    # user bytes would put them in this process's memory for no reason), then calls
+    # finalize, which is where the backend validates and converts them.
+
+    def list_sounds(self) -> dict[str, Any]:
+        """GET /sounds — this customer's clips, newest first."""
+        return self._request("GET", f"{API}/sounds")
+
+    def start_sound_upload(self, filename: str, name: str | None = None) -> dict[str, Any]:
+        """POST /sounds/upload/start — returns {sound_id, put_url, max_bytes}."""
+        return self._request(
+            "POST", f"{API}/sounds/upload/start",
+            json={"filename": filename, "name": name},
+        )
+
+    def finalize_sound_upload(self, sound_id: str) -> dict[str, Any]:
+        """POST /sounds/upload/{id}/finalize — convert + measure the uploaded bytes.
+        Slower than a normal call (it transcodes), so it gets a longer timeout."""
+        import httpx as _httpx
+        return self._request(
+            "POST", f"{API}/sounds/upload/{sound_id}/finalize",
+            timeout=_httpx.Timeout(120.0),
+        )
+
+    def get_sound_url(self, sound_id: str, original: bool = False) -> dict[str, Any]:
+        """GET /sounds/{id}/url — short-TTL link for preview or download."""
+        return self._request(
+            "GET", f"{API}/sounds/{sound_id}/url", params={"original": original},
+        )
+
+    def rename_sound(self, sound_id: str, name: str) -> dict[str, Any]:
+        """PATCH /sounds/{id} — rename."""
+        return self._request("PATCH", f"{API}/sounds/{sound_id}", json={"name": name})
+
+    def delete_sound(self, sound_id: str) -> dict[str, Any]:
+        """DELETE /sounds/{id} — removes the row and both stored objects."""
+        return self._request("DELETE", f"{API}/sounds/{sound_id}")
+
     def get_library(self) -> dict[str, Any]:
         """GET /library — the My Stuff aggregate: promoted datasets joined to
         the policies trained from each, plus source-unknown policies."""

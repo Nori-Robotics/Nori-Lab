@@ -1789,6 +1789,63 @@ def nori_rename_dataset_upload(session_id: str, body: NoriRenameUploadBody, requ
     return _nori_proxy(lambda: client.rename_dataset_upload(session_id, body.label))
 
 
+# ---- Sound clips: the soundboard library -------------------------------------
+# The file bytes never pass through here. start_upload hands the browser a presigned
+# S3 PUT it uses directly, and finalize is what validates/converts server-side — so
+# LeLab proxies control messages only, and a 8 MB upload never lands in this process.
+
+
+class NoriSoundStartBody(BaseModel):
+    filename: str = ""
+    name: str | None = None
+
+
+class NoriSoundRenameBody(BaseModel):
+    name: str
+
+
+@app.get("/nori/sounds")
+def nori_list_sounds(request: Request):
+    """This customer's sound clips, newest first."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.list_sounds())
+
+
+@app.post("/nori/sounds/upload/start")
+def nori_start_sound_upload(body: NoriSoundStartBody, request: Request):
+    """Open an upload; returns a presigned PUT the browser uses directly."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.start_sound_upload(body.filename, body.name))
+
+
+@app.post("/nori/sounds/upload/{sound_id}/finalize")
+def nori_finalize_sound_upload(sound_id: str, request: Request):
+    """Validate + convert the uploaded bytes into the robot's playback format."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.finalize_sound_upload(sound_id))
+
+
+@app.get("/nori/sounds/{sound_id}/url")
+def nori_sound_url(sound_id: str, request: Request, original: bool = False):
+    """Short-TTL link for browser preview (or the original, for download)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.get_sound_url(sound_id, original))
+
+
+@app.patch("/nori/sounds/{sound_id}")
+def nori_rename_sound(sound_id: str, body: NoriSoundRenameBody, request: Request):
+    """Rename a sound."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.rename_sound(sound_id, body.name))
+
+
+@app.delete("/nori/sounds/{sound_id}")
+def nori_delete_sound(sound_id: str, request: Request):
+    """Delete a sound and both of its stored objects."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.delete_sound(sound_id))
+
+
 @app.get("/nori/library")
 def nori_library(request: Request):
     """My Stuff: datasets + policies + lineage in one call."""

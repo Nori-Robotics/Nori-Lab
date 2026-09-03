@@ -15,6 +15,10 @@ export * from "./videoQuality";
 // The robot command vocabulary (executor/codegen/agent surfaces) — the single source the LLM tool
 // schemas + API-reference prose are generated from. See robot-ops.ts / robot-tools.json.
 export * from "./robot-ops";
+// Arm/disarm sequencing: the two robot-reported fields (`armed`, `activation`) disagree in
+// TIME, and rendering that raw is a safety-relevant lie about live torque. Shared by the 2D
+// ArmControl and the in-VR motors panel so they can never disagree.
+export * from "./armPhase";
 // Z-lift (rail) telemetry reading — pure, shared by the 2D gauge and the 3D robot model.
 export * from "./rail";
 // Pure-math L-series forward kinematics (gripper position in mm) — no three.js.

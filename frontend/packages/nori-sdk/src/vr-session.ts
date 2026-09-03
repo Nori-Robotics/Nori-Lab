@@ -31,6 +31,9 @@ import { VrJogMapper, resolveTuning, type VrControllerFrame, type VrFrame, type 
 import { buildRobotModel, type ArmHighlight, type RobotModel } from "./robot-model";
 import type { RemoteTeleop, TelemetryView } from "./teleop";
 import { CURRENT_FULL_LSB } from "./teleop";
+// The ONE arm/disarm sequencing implementation, shared with the 2D ArmControl so the two
+// renders can never disagree about live torque.
+import { isPreparing, isStuck, isSettled, motorsLabel } from "./armPhase";
 
 const RESET_HOLD_MS = 1500;
 // Recenter is triggered by an in-VR button anchored above the LEFT controller, poked with
@@ -136,13 +139,44 @@ const TUNE_ZONES = [
 // control, so it deliberately spends NO trigger/grip/face button — every one of those is a
 // real robot DOF. State + count come straight from RemoteTeleop.recordState(); a poke calls
 // RemoteTeleop.record(...). See docs/offline_recorder_design.md for the session/episode model.
-const REC_UP = 0.30;   // metres above the right controller (stacked clear of TUNE_UP=0.17)
-const REC_W = 0.18;
-const REC_H = 0.12;    // 1.5:1, matches the 480x320 canvas
+// Sized down 20% and lifted 2 cm on 2026-09-03: at the old 0.18x0.12 the panel rendered
+// large enough to visually collide with the tune panel below it. The offsets here are RAW
+// metres but the meshes carry scale UI_SCALE (0.8), so the drawn extent is 0.8x these — the
+// old panel spanned 0.252..0.348 against tune's 0.138..0.202, close enough that billboarding
+// (each panel lookAt()s the head about its OWN centre) swung them across each other at
+// off-axis viewing angles. Every recZones() rect below was scaled by the same 0.8 so the art
+// and the hit-test stay locked; the canvas is unchanged because the aspect is preserved.
+const REC_UP = 0.32;   // metres above the right controller (stacked clear of TUNE_UP=0.17)
+const REC_W = 0.144;
+const REC_H = 0.096;   // 1.5:1, matches the 480x320 canvas
 const REC_POKE_DEPTH = 0.035;   // left tip within this of the panel plane (local m) = a poke
-const REC_POKE_MARGIN = 0.012;  // slack added around each button's rect for the hit-test
+// Scaled with the panel. Left at 0.012 the Finish/Discard hit rects would meet exactly at
+// x=0 (they sit 0.012 apart now), turning the dead zone between them into a shared edge that
+// the zone loop resolves by declaration order rather than by where the operator poked.
+const REC_POKE_MARGIN = 0.010;  // slack added around each button's rect for the hit-test
 const REC_REARM_DEPTH = 0.07;   // tip must pull this far off the plane before it can fire again
 const REC_RECONCILE_MS = 1200;  // ignore robot state this long after a local poke (optimistic UI)
+// In-VR "motors" (arm/disarm) poke panel — the record panel's LEFT-wrist mirror: glance at
+// the left controller, poke with the RIGHT tip. It lives here and not on a controller button
+// because arming energizes hardware and every face button on a Quest controller is reachable
+// mid-drive; it lives in VR at all because /nori/vr is the headset-only surface, and until
+// now an operator there could not arm the robot without taking the headset off. Pre-arming
+// from the Remote page does NOT carry over — the gateway is one session per process
+// (gateway_node._on_session_closed exits for a clean respawn), so closing that session kills
+// its arming-keeper child and the arbiter's liveness release de-torques the arms.
+const ARM_UP = 0.32;   // metres above the LEFT controller (mirrors REC_UP; card sits at 0.17)
+const ARM_W = 0.144;
+const ARM_H = 0.072;   // 2:1, matches the 480x240 canvas
+const ARM_POKE_DEPTH = 0.035;   // right tip within this of the panel plane (local m) = a poke
+const ARM_POKE_MARGIN = 0.010;
+const ARM_REARM_DEPTH = 0.07;   // tip must pull this far off before it can fire again
+// Longest the truth-lag lock may hold before the panel falls back to rendering whatever the
+// robot last reported. Matches ArmControlView's SETTLE_TIMEOUT_MS and for the same reason: it
+// has to OUTLAST the slowest real transition (20-45 s of torque release on the bench, "up to
+// a minute" cold), not race it — a timeout shorter than the transition would make every
+// normal disarm look like a lost command.
+const ARM_SETTLE_TIMEOUT_MS = 90000;
+
 // gripper Present_Current -> rumble. Raw sign-magnitude ints; tune on hardware.
 // Tuned stronger 2026-07-02 (was hard to feel): lower the contact threshold, reach full
 // rumble much sooner, and floor any real contact at HAPTIC_MIN so light grips still register.
@@ -329,6 +363,30 @@ export class VrSession {
   private recTask = "";        // this session's grouping label (option C: "VR session <stamp>")
   private recActedAt = 0;      // performance.now() of the last local poke (reconcile grace)
   private recDrawSig = "";     // last-painted signature (phase|kept|hot) — repaint only on change
+
+  // In-VR motors (arm/disarm) panel — left-wrist mirror of the record panel (ARM_* consts).
+  private armBtn: THREE.Mesh | null = null;
+  private armMat: THREE.MeshBasicMaterial | null = null;
+  private armCanvas: HTMLCanvasElement | null = null;
+  private armCtx: CanvasRenderingContext2D | null = null;
+  private armTexture: THREE.CanvasTexture | null = null;
+  private armShown = false;
+  private armOpacity = 0;
+  private armPoked = false;    // between fire and re-arm (mirrors recPoked)
+  private armHot = false;      // right tip inside the button rect (redraw only on change)
+  private armDrawSig = "";
+  // Robot-reported arm state, fed by the page from daemon_status (setArmState). `undefined`
+  // armed = this gateway predates remote arming, which is a DIFFERENT thing from disarmed and
+  // must render as such — offering an arm button that silently does nothing is worse in a
+  // headset than on a laptop, where at least the tooltip explains it.
+  private armArmed: boolean | undefined = undefined;
+  private armActivation = "";
+  private armOnline = true;
+  // Truth-lag lock, same contract as ArmControlView: after a poke the panel renders the state
+  // the robot is LEAVING until isSettled() says the motion stack caught up. Cleared by the
+  // timeout so a lost verb cannot wedge the panel.
+  private armPendingTarget: boolean | null = null;
+  private armActedAt = 0;
   private running = false;
 
   constructor(opts: VrSessionOptions) {
@@ -375,6 +433,15 @@ export class VrSession {
   // that never reports health isn't shown as offline — telemetry staleness still catches that.
   setMotorsOnline(ok: boolean) {
     this.motorsOnline = ok;
+    this.armOnline = ok;
+  }
+
+  // Robot-reported arm state for the in-VR motors panel (the page wires daemon_status here).
+  // Both fields are needed, not just `armed`: they disagree in time by design — on disarm
+  // `armed:false` arrives while torque is still on — and armPhase.ts is what reconciles them.
+  setArmState(armed: boolean | undefined, activation: string) {
+    this.armArmed = armed;
+    this.armActivation = activation;
   }
 
   // Mirror the app's idle "Are you still there?" countdown into the headset. The 2D dialog is
@@ -561,6 +628,27 @@ export class VrSession {
     scene.add(recBtn);
     this.recBtn = recBtn;
     this.drawRecordPanel();
+
+    // Motors (arm/disarm) panel — the record panel's LEFT-wrist mirror (ARM_* consts).
+    const armCanvas = document.createElement("canvas");
+    armCanvas.width = 480;
+    armCanvas.height = 240;
+    this.armCanvas = armCanvas;
+    this.armCtx = armCanvas.getContext("2d");
+    const armTex = new THREE.CanvasTexture(armCanvas);
+    armTex.colorSpace = THREE.SRGBColorSpace;
+    this.armTexture = armTex;
+    const armMat = new THREE.MeshBasicMaterial({
+      map: armTex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthTest: false,
+    });
+    this.armMat = armMat;
+    const armBtn = new THREE.Mesh(new THREE.PlaneGeometry(ARM_W, ARM_H), armMat);
+    armBtn.renderOrder = 998; // same layer as the controls card / tune / record panels
+    armBtn.visible = false;
+    armBtn.scale.setScalar(UI_SCALE);
+    scene.add(armBtn);
+    this.armBtn = armBtn;
+    this.drawArmPanel();
 
     const session = await xr.requestSession(mode, {
       optionalFeatures: ["local-floor", "bounded-floor"],
@@ -768,6 +856,7 @@ export class VrSession {
         this.updateControlsCard(vrFrame, dt); // wrist-glance controls cheat-sheet
         this.updateTunePanel(vrFrame, dt); // right-wrist glance sensitivity panel
         this.updateRecordPanel(vrFrame, dt); // right-wrist glance record-dataset panel
+        this.updateArmPanel(vrFrame, dt);  // left-wrist glance motors (arm/disarm) panel
         if (this.recenterPending) this.serviceRecenter(frame, refSpace);
         this.applyHaptics(session);
         this.detectActivity(vrFrame, nowMs);
@@ -1141,23 +1230,24 @@ export class VrSession {
   // so they can't drift. Kept deliberately small — this is a between-driving surface, not a
   // control the operator hunts through mid-task.
   private recZones(): { id: string; x: number; y: number; w: number; h: number; label: string; tone: string }[] {
+    // Rects are 0.8x their pre-2026-09-03 values, matching the REC_W/REC_H shrink above.
     if (this.recPhase === "recording") {
-      return [{ id: "episode_stop", x: 0, y: -0.01, w: 0.12, h: 0.05, label: "■ Stop episode", tone: "red" }];
+      return [{ id: "episode_stop", x: 0, y: -0.008, w: 0.096, h: 0.04, label: "■ Stop episode", tone: "red" }];
     }
     if (this.recPhase === "session") {
-      // Rows sit fully below the title/status text (text bottom ≈ local y 0.034).
-      const z = [{ id: "episode_start", x: 0, y: 0.006, w: 0.12, h: 0.044, label: "● Record", tone: "red" }];
+      // Rows sit fully below the title/status text (text bottom ≈ local y 0.027).
+      const z = [{ id: "episode_start", x: 0, y: 0.005, w: 0.096, h: 0.035, label: "● Record", tone: "red" }];
       if (this.recKept > 0) {
         // A take is bankable, so offer Discard-last beside Finish (keep-by-default in VR; no
         // in-headset video review — that's a laptop affordance).
-        z.push({ id: "session_end", x: -0.045, y: -0.039, w: 0.075, h: 0.036, label: "Finish", tone: "slate" });
-        z.push({ id: "episode_discard", x: 0.045, y: -0.039, w: 0.075, h: 0.036, label: "Discard", tone: "darkred" });
+        z.push({ id: "session_end", x: -0.036, y: -0.031, w: 0.06, h: 0.029, label: "Finish", tone: "slate" });
+        z.push({ id: "episode_discard", x: 0.036, y: -0.031, w: 0.06, h: 0.029, label: "Discard", tone: "darkred" });
       } else {
-        z.push({ id: "session_end", x: 0, y: -0.039, w: 0.105, h: 0.036, label: "Finish session", tone: "slate" });
+        z.push({ id: "session_end", x: 0, y: -0.031, w: 0.084, h: 0.029, label: "Finish session", tone: "slate" });
       }
       return z;
     }
-    return [{ id: "session_start", x: 0, y: -0.01, w: 0.12, h: 0.05, label: "Start session", tone: "blue" }];
+    return [{ id: "session_start", x: 0, y: -0.008, w: 0.096, h: 0.04, label: "Start session", tone: "blue" }];
   }
 
   // A poke fired on zone `id`: send the record() command AND advance the local phase
@@ -1301,6 +1391,198 @@ export class VrSession {
     }
   }
 
+  // --- in-VR motors (arm/disarm) panel ---------------------------------------
+
+  // Is the arm verb actually available right now? Mirrors ArmControlView.enabled: the robot
+  // has to be online, report `armed` at all, and not be mid-transition or mid-poke.
+  private armEnabled(): boolean {
+    const pending = this.armPendingTarget !== null
+      && !isSettled(this.armPendingTarget, this.armArmed === true, this.armActivation);
+    return this.armOnline
+      && this.armArmed !== undefined
+      && !isPreparing(this.armActivation)
+      && !pending;
+  }
+
+  // Anchor + reveal the motors panel above the LEFT controller and fire arm/disarm when the
+  // RIGHT tip pokes it. Mirrors updateRecordPanel with the hands swapped; there is one button,
+  // so the hit-test is a single rect rather than a zone loop.
+  private updateArmPanel(f: VrFrame, dt: number) {
+    const btn = this.armBtn;
+    const mat = this.armMat;
+    if (!btn || !mat) return;
+
+    // Drop the truth-lag lock once the robot has actually settled, or once the grace expires —
+    // whichever comes first. On expiry the panel goes back to rendering whatever the robot last
+    // reported, however unfinished that looks (same fallback as the 2D control).
+    if (this.armPendingTarget !== null) {
+      const settled = isSettled(
+        this.armPendingTarget, this.armArmed === true, this.armActivation);
+      if (settled || performance.now() - this.armActedAt > ARM_SETTLE_TIMEOUT_MS) {
+        this.armPendingTarget = null;
+      }
+    }
+
+    const lp = f.left?.position;
+    const lq = f.left?.orientation;
+    if (!lp) {
+      this.armShown = false; // left hand not tracked: fade out
+    } else {
+      const off = new THREE.Vector3(0, ARM_UP, 0);
+      const q = lq ? new THREE.Quaternion(lq[0], lq[1], lq[2], lq[3]) : null;
+      if (q) off.applyQuaternion(q);
+      btn.position.set(lp[0] + off.x, lp[1] + off.y, lp[2] + off.z);
+
+      const head = new THREE.Vector3();
+      this.renderer?.xr.getCamera().getWorldPosition(head);
+
+      // Hidden while the LEFT clutch is engaged — driving rolls that wrist straight through
+      // the glance pose, and a panel that can arm the robot must not appear under a hand that
+      // is busy commanding an arm.
+      if (this.mapper.engagedArms().left) {
+        this.armShown = false;
+      } else if (q) {
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+        const toHead = head.clone().sub(btn.position).normalize();
+        const facing = up.dot(toHead);
+        if (!this.armShown && facing > CARD_SHOW_DOT) this.armShown = true;
+        else if (this.armShown && facing < CARD_HIDE_DOT) this.armShown = false;
+      }
+      btn.lookAt(head); // billboard, same as the other hand-anchored UI
+    }
+
+    const target = this.armShown ? 1 : 0;
+    const step = CARD_FADE_PER_S * dt;
+    this.armOpacity = this.armOpacity < target
+      ? Math.min(target, this.armOpacity + step)
+      : Math.max(target, this.armOpacity - step);
+    mat.opacity = this.armOpacity;
+    btn.visible = this.armOpacity > 0.01;
+
+    // Poke test only while (nearly) fully shown — no blind fires mid-fade.
+    let hot = false;
+    const rp = f.right?.position;
+    if (btn.visible && this.armOpacity > 0.8 && rp) {
+      btn.updateMatrixWorld();
+      const tip = btn.worldToLocal(new THREE.Vector3(rp[0], rp[1], rp[2]));
+      const z = this.armZone();
+      const inZone = Math.abs(tip.z) < ARM_POKE_DEPTH
+        && Math.abs(tip.x - z.x) <= z.w / 2 + ARM_POKE_MARGIN
+        && Math.abs(tip.y - z.y) <= z.h / 2 + ARM_POKE_MARGIN;
+      hot = inZone;
+      if (!this.armPoked && inZone) {
+        this.armPoked = true;
+        this.fireArmPoke();
+      } else if (this.armPoked && Math.abs(tip.z) > ARM_REARM_DEPTH) {
+        this.armPoked = false;
+      }
+    } else if (this.armPoked) {
+      this.armPoked = false; // hand left the panel entirely -> re-arm
+    }
+
+    const sig = `${this.armArmed}|${this.armActivation}|${this.armOnline}`
+      + `|${this.armPendingTarget}|${hot}`;
+    if (sig !== this.armDrawSig) {
+      this.armHot = hot;
+      this.armDrawSig = sig;
+      this.drawArmPanel();
+    }
+  }
+
+  // The single button's rect, in the panel plane's LOCAL metres (see recZones()).
+  private armZone(): { x: number; y: number; w: number; h: number } {
+    return { x: 0, y: -0.014, w: 0.09, h: 0.03 };
+  }
+
+  // A poke landed. Refuses while the verb is unavailable so a poke during the 20-45 s
+  // activation window can't queue a second verb behind the first.
+  private fireArmPoke() {
+    if (!this.armEnabled()) {
+      this.o.onLog(
+        this.armArmed === undefined
+          ? "motors: this robot's gateway doesn't support remote arming"
+          : "motors: busy — the motion stack is still moving between states");
+      return;
+    }
+    const target = !(this.armArmed === true);
+    this.armPendingTarget = target;
+    this.armActedAt = performance.now();
+    try {
+      this.o.teleop.setArmed(target);
+      this.o.onLog(target
+        ? "motors: arming — this takes 20-45 s while the buses come live"
+        : "motors: disarming — SUPPORT THE ARMS, they de-torque after the idle timer");
+    } catch (e) {
+      this.armPendingTarget = null;
+      this.o.onLog((e as Error).message);
+    }
+  }
+
+  // Paint the motors panel: a title, the armPhase status word, and one button. The status
+  // word comes from motorsLabel — the SAME function the 2D chip renders — so the headset and
+  // the laptop can never disagree about whether torque is live.
+  private drawArmPanel() {
+    const ctx = this.armCtx;
+    const cv = this.armCanvas;
+    if (!ctx || !cv) return;
+    const W = cv.width, H = cv.height;
+    const px = (x: number) => (0.5 + x / ARM_W) * W;
+    const py = (y: number) => (0.5 - y / ARM_H) * H;
+    ctx.clearRect(0, 0, W, H);
+
+    const armed = this.armArmed === true;
+    const enabled = this.armEnabled();
+    const label = motorsLabel({
+      pendingTarget: this.armPendingTarget, armed,
+      activation: this.armActivation, enabled,
+    });
+    // Render the state the robot is LEAVING while a poke is in flight (ArmControlView's
+    // `showArmed`): the verb flipping the instant ownership changes is the same early
+    // "disarmed" lie as the label, just louder.
+    const showArmed = this.armPendingTarget !== null ? !this.armPendingTarget : armed;
+
+    // ARMED gets a red border: in a headset the operator cannot see the robot, so live torque
+    // has to be readable at a glance, not spelled out.
+    ctx.fillStyle = "rgba(15,23,42,0.92)";
+    this.roundRect(ctx, 4, 4, W - 8, H - 8, 26);
+    ctx.fill();
+    ctx.strokeStyle = showArmed ? "#f87171" : "#64748b";
+    ctx.lineWidth = showArmed ? 6 : 4;
+    this.roundRect(ctx, 4, 4, W - 8, H - 8, 26);
+    ctx.stroke();
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "bold 22px system-ui, sans-serif";
+    ctx.fillText("MOTORS", W / 2, 34);
+
+    ctx.fillStyle = isStuck(this.armActivation) ? "#fbbf24"
+      : showArmed ? "#f87171" : "#cbd5e1";
+    ctx.font = "bold 26px system-ui, sans-serif";
+    ctx.fillText(label, W / 2, 74);
+
+    const z = this.armZone();
+    const cx = px(z.x), cy = py(z.y);
+    const w = (z.w / ARM_W) * W, h = (z.h / ARM_H) * H;
+    ctx.globalAlpha = enabled ? 1 : 0.4;
+    ctx.fillStyle = this.armHot && enabled ? "rgba(34,197,94,0.95)"
+      : showArmed ? "rgba(51,65,85,0.95)" : "rgba(138,177,53,0.95)";
+    this.roundRect(ctx, cx - w / 2, cy - h / 2, w, h, 18);
+    ctx.fill();
+    ctx.strokeStyle = this.armHot && enabled ? "#bbf7d0" : "rgba(148,163,184,0.6)";
+    ctx.lineWidth = 3;
+    this.roundRect(ctx, cx - w / 2, cy - h / 2, w, h, 18);
+    ctx.stroke();
+    ctx.fillStyle = showArmed ? "#f1f5f9" : "#14131a";
+    ctx.font = "bold 26px system-ui, sans-serif";
+    ctx.fillText(showArmed ? "disarm" : "arm", cx, cy + 1);
+    ctx.globalAlpha = 1;
+
+    ctx.textAlign = "start"; // restore shared-ctx default
+    if (this.armTexture) this.armTexture.needsUpdate = true;
+  }
+
   // Paint the record panel: a title + status line, then one rounded button per recZones()
   // entry, tinted by tone (blue=start, red=record/stop, slate=finish, darkred=discard) and
   // lit green while poked. Button rects derive from recZones() so art + hit-test stay locked.
@@ -1352,7 +1634,8 @@ export class VrSession {
       this.roundRect(ctx, cx - w / 2, cy - h / 2, w, h, 18);
       ctx.stroke();
       ctx.fillStyle = "#f1f5f9";
-      ctx.font = `bold ${z.w >= 0.1 ? 26 : 21}px system-ui, sans-serif`;
+      // Threshold scaled with the rects (was 0.1 against 0.12-wide pills).
+      ctx.font = `bold ${z.w >= 0.08 ? 26 : 21}px system-ui, sans-serif`;
       ctx.fillText(z.label, cx, cy + 1);
     }
     ctx.textAlign = "start"; // restore shared-ctx default

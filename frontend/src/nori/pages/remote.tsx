@@ -174,6 +174,10 @@ const Remote = () => {
   // yet = treat as online; the HUD's own staleness timer still catches a dead controller.
   useEffect(() => {
     vrRef.current?.setMotorsOnline(!daemonStatus || daemonStatus.state === "online");
+    // Arm state for the in-VR motors panel. Both fields: they disagree in time by design
+    // (armPhase.ts), and `armed: undefined` means "gateway predates remote arming", which the
+    // panel renders differently from disarmed.
+    vrRef.current?.setArmState(daemonStatus?.armed, daemonStatus?.activation ?? "");
   }, [daemonStatus]);
 
   // VR is an optional mode on top of the same session: detect headset support, and on any

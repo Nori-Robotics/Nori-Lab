@@ -71,6 +71,10 @@ export default function VrLanding() {
   // Keep the HUD's control row honest about motor health (same rule as the 2D chip).
   useEffect(() => {
     vrRef.current?.setMotorsOnline(!daemonStatus || daemonStatus.state === "online");
+    // Arm state for the in-VR motors panel. Both fields: they disagree in time by design
+    // (armPhase.ts), and `armed: undefined` means "gateway predates remote arming", which the
+    // panel renders differently from disarmed.
+    vrRef.current?.setArmState(daemonStatus?.armed, daemonStatus?.activation ?? "");
   }, [daemonStatus]);
   // Mirror the app's idle "Are you still there?" countdown into the headset — the 2D dialog is
   // invisible under an active WebXR session. Controller input feeds the same timer (onActivity

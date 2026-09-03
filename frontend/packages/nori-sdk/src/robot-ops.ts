@@ -25,6 +25,7 @@
 // joint list).
 
 import { TASK_KEYS, JOINT_KEYS, BASE_KEYS, jointDofsFor, taskKeymapFor } from "./teleop";
+import { liftAxes } from "./rail";
 import type { RobotDescriptor } from "./teleop";
 
 // Unique DOF names per mode, in declaration order, from the same keybind maps the jog stream uses.
@@ -47,6 +48,12 @@ export function reachDofsFor(descriptor: RobotDescriptor | undefined | null): st
 export const JOINT_DOFS = dofNames(JOINT_KEYS);
 /** Mobile-base DOFs `base` accepts — derived from BASE_KEYS. */
 export const BASE_DOFS = dofNames(BASE_KEYS);
+
+// The no-descriptor rendering of `lift.side`. The L-series has one rail PER ARM, so the side
+// genuinely selects a column; an A-series descriptor (aux ["lift"]) replaces this at build time
+// via liftSideDescription(). Declared here rather than inline so the static manifest and the
+// descriptor-driven override are visibly the same field.
+const LIFT_SIDE_L2 = "which arm's rail to move";
 
 // ---- types -------------------------------------------------------------------
 
@@ -125,7 +132,11 @@ export const ROBOT_OPS: RobotOp[] = [
     agent: {
       tool: "get_state",
       motion: false,
-      summary: "Current joint positions + lift + base (proprioception, normalized). No image.",
+      summary:
+        "Current joint positions + lift + base (proprioception, normalized), plus the MOTOR " +
+        "STATE (armed / activating / hardware E-STOP) on robots that report it. No image. " +
+        "Call this first when a motion tool reports no visible effect: disarmed motors accept " +
+        "commands and do not move, and this is the only tool that can tell you so.",
       input_schema: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -259,13 +270,16 @@ export const ROBOT_OPS: RobotOp[] = [
     agent: {
       tool: "lift",
       motion: true,
-      summary: "Raise/lower one arm's vertical rail for ms. dir in [-1,1], + = up. Open-loop, timed.",
+      summary:
+        "Raise/lower this robot's vertical rail for ms. dir in [-1,1], + = up. Open-loop, timed. " +
+        "`side` selects WHICH rail on a robot that has one per arm; on a robot with a single " +
+        "central column both sides drive that one column (see the side description).",
       input_schema: {
         type: "object",
         required: ["side", "dir", "ms"],
         additionalProperties: false,
         properties: {
-          side: { enum: ["left", "right"] },
+          side: { enum: ["left", "right"], description: LIFT_SIDE_L2 },
           dir: { type: "number" },
           ms: { type: "number" },
         },
@@ -432,6 +446,48 @@ function jointTargetsDescription(descriptor: RobotDescriptor): string {
 }
 
 /**
+ * The live task-space vocabulary rendered for the `reach` schema.
+ *
+ * The static description names no DOFs at all ("the robot's advertised task DOFs"), which is
+ * honest but useless: with nothing to enumerate the model falls back to the DOF list in the
+ * system prompt's body-layout prose, which is the L2 cylindrical set. On an A3 that means it
+ * never discovers `z` (there is no other way to jog the gripper vertically in task space) and
+ * keeps sending `shoulder_pan`, the deprecated alias. ScriptDriver has resolved this per-robot
+ * from the descriptor since the A3 landed (reachDofsFor at op time) — this is the same
+ * resolution, told to the model instead of only enforced against it.
+ */
+function reachDofsDescription(descriptor: RobotDescriptor): string {
+  const dofs = reachDofsFor(descriptor);
+  if (!dofs.length) return "this robot advertises no task-space DOFs — use move_to instead";
+  return (
+    `subset of {${dofs.join(", ")}}, each a rate in [-1,1]; ` +
+    `+x forward, +y left, +z up. These are THIS robot's advertised task DOFs and OVERRIDE any ` +
+    `task-space DOF list in the body layout; other names are refused.`
+  );
+}
+
+/**
+ * The live rendering of `lift.side`.
+ *
+ * An A-series robot has ONE central telescoping column (descriptor.aux ["lift"]); both sides
+ * resolve to it (rail.ts liftJogKey). The schema still REQUIRES side — the executor's signature
+ * is shared with the L-series — so the risk is not a refused call but a silently wrong mental
+ * model: the agent plans independent per-arm heights and is then surprised that lifting the left
+ * arm raised both. Say so in the schema rather than letting it discover it by experiment.
+ */
+function liftSideDescription(descriptor: RobotDescriptor): string {
+  const axes = liftAxes(descriptor);
+  if (!axes.length) return "this robot has no lift — the call is accepted and moves nothing";
+  if (axes.length === 1 && axes[0].side === null) {
+    return (
+      "this robot has ONE central lift column shared by both arms: either side drives the same " +
+      "column and raises/lowers BOTH arms together. Required for signature compatibility only"
+    );
+  }
+  return LIFT_SIDE_L2;
+}
+
+/**
  * The Anthropic tools array — drop-in for lelab/server.py NORI_AGENT_TOOLS.
  *
  * Pass the CONNECTED robot's descriptor (RobotInfo.descriptor, from the ack) so the move_to
@@ -444,14 +500,22 @@ export function buildAgentTools(
 ): Array<{ name: string; description: string; input_schema: Record<string, unknown> }> {
   return ROBOT_OPS.filter((o) => o.agent).map((o) => {
     let schema = o.agent!.input_schema;
-    if (descriptor && o.agent!.tool === "move_to") {
+    // Every schema field whose vocabulary is PER-ROBOT is rebuilt here. Keep this list and
+    // ScriptDriver's op-time resolvers in step: a field the executor validates from the
+    // descriptor but the schema still describes from the L2 legacy set is not a refused call,
+    // it is a model reasoning correctly about the wrong robot.
+    const rewrite: Record<string, (d: RobotDescriptor) => [string, string]> = {
+      move_to: (d) => ["targets", jointTargetsDescription(d)],
+      reach: (d) => ["dofs", reachDofsDescription(d)],
+      lift: (d) => ["side", liftSideDescription(d)],
+    };
+    const rw = descriptor ? rewrite[o.agent!.tool] : undefined;
+    if (rw && descriptor) {
+      const [field, description] = rw(descriptor);
       const props = schema.properties as Record<string, Record<string, unknown>>;
       schema = {
         ...schema,
-        properties: {
-          ...props,
-          targets: { ...props.targets, description: jointTargetsDescription(descriptor) },
-        },
+        properties: { ...props, [field]: { ...props[field], description } },
       };
     }
     return {

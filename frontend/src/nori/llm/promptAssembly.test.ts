@@ -5,8 +5,9 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  buildCodegenContent, buildAgentSystem, inferNewRun, dailyView,
+  buildCodegenContent, buildAgentSystem, descriptorGrounding, inferNewRun, dailyView,
 } from "./promptAssembly";
+import type { RobotDescriptor } from "@nori/sdk";
 import { NORI_AGENT_SYSTEM } from "./prompts.generated";
 import type { AgentMessage } from "@/nori/remote/AgentSession";
 
@@ -90,6 +91,57 @@ describe("buildAgentSystem", () => {
     // the GROUNDING camera-layout line is absent (the base prompt mentions "Camera layout" itself,
     // so we check for the specific folded line, not the bare phrase)
     expect(s).not.toContain("Camera layout (which composite tile is which):");
+  });
+});
+
+// The base prompt narrates ONE model's anatomy. Three of its facts are per-robot — joint names,
+// task-space DOFs, and the lift — and each is wrong on an A3 in a way that reads as capability
+// rather than error: the agent simply never jogs in z and never learns the arms share a column.
+const A3: RobotDescriptor = {
+  joints: ["left", "right"].flatMap((s) =>
+    ["shoulder_pitch", "elbow_pitch", "wrist_roll", "gripper"].map((j) => `${s}_arm_${j}.pos`)),
+  aux: ["lift"],
+  ranges: {},
+  jog_scale: { task: { x: 1, y: 1, z: 1, pitch: 1, yaw: 1 } },
+};
+
+describe("descriptorGrounding", () => {
+  it("no descriptor grounds nothing (the legacy fleet sends none)", () => {
+    expect(descriptorGrounding(null)).toEqual([]);
+  });
+
+  it("overrides all THREE per-robot vocabularies, each saying it overrides", () => {
+    const lines = descriptorGrounding(A3);
+    const all = lines.join("\n");
+    expect(all).toContain("elbow_pitch");
+    expect(all).not.toContain("elbow_flex");      // the L2 joint an A3 doesn't have
+    expect(all).toContain("z");                    // task-space vertical — invisible without this
+    expect(all).toContain("ONE central lift column");
+    // Each line has to carry the override itself: they are folded in as independent lines and
+    // the model must not have to infer that one line's authority extends to the others.
+    expect(lines.every((l) => l.includes("OVERRIDE"))).toBe(true);
+  });
+
+  it("an L-series descriptor keeps the per-arm rail (no lift line at all)", () => {
+    const l2: RobotDescriptor = { joints: ["left_arm_gripper.pos"], aux: ["left_lift", "right_lift"], ranges: {} };
+    expect(descriptorGrounding(l2).some((l) => l.includes("lift column"))).toBe(false);
+  });
+
+  it("a robot with no lift says so — a lift call is accepted and moves nothing", () => {
+    const noLift: RobotDescriptor = { joints: ["left_arm_gripper.pos"], aux: [], ranges: {} };
+    expect(descriptorGrounding(noLift).some((l) => l.includes("no lift at all"))).toBe(true);
+  });
+});
+
+describe("buildAgentSystem motor grounding", () => {
+  it("folds the motor line in LAST — closest to the turn, the most volatile fact", () => {
+    const s = buildAgentSystem({ "x.pos": 1 }, undefined, A3, "gripper ≈ …", "Motors: DISARMED.");
+    expect(s.trimEnd().endsWith("Motors: DISARMED.")).toBe(true);
+  });
+
+  it("no motor line on a robot that reports no arming state", () => {
+    expect(buildAgentSystem(undefined, undefined, null, undefined, undefined))
+      .toBe(NORI_AGENT_SYSTEM);
   });
 });
 

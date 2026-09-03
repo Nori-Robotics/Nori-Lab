@@ -6,7 +6,10 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { ArmSide, CameraLayout, RemoteTeleop, TelemetryView } from "@nori/sdk";
-import { AgentSession, type AgentBlock, type AgentTurn, type AgentEvent, type PostTurn } from "./AgentSession";
+import {
+  AgentSession, describeMotorState,
+  type AgentBlock, type AgentTurn, type AgentEvent, type PostTurn,
+} from "./AgentSession";
 
 // ---- fakes -------------------------------------------------------------------
 
@@ -45,10 +48,13 @@ const telWithState = (state: Record<string, number>) => ({ state } as unknown as
 
 // A scripted transport: returns queued turns in order, recording what it was called with.
 function scriptedPostTurn(turns: AgentTurn[]) {
-  const calls: Array<{ messages: unknown[]; robotState: unknown; cameraLayout: unknown; poseSummary?: string }> = [];
+  const calls: Array<{
+    messages: unknown[]; robotState: unknown; cameraLayout: unknown;
+    poseSummary?: string; motors?: string;
+  }> = [];
   let i = 0;
-  const postTurn: PostTurn = async (messages, robotState, cameraLayout, _descriptor, poseSummary) => {
-    calls.push({ messages: structuredClone(messages), robotState, cameraLayout, poseSummary });
+  const postTurn: PostTurn = async (messages, robotState, cameraLayout, _descriptor, poseSummary, motors) => {
+    calls.push({ messages: structuredClone(messages), robotState, cameraLayout, poseSummary, motors });
     return turns[Math.min(i++, turns.length - 1)];
   };
   return { postTurn, calls };
@@ -396,5 +402,120 @@ describe("daily token budget (cost governance)", () => {
     const fin = finished(events)!;
     expect(fin.reason).toBe("budget");
     expect(fin.detail).toContain("budget reached");
+  });
+});
+
+// ---- motor / arming state ----------------------------------------------------
+//
+// `armed` rides daemon_status, NOT telemetry, so the loop was structurally blind to it: a
+// disarmed robot accepts every motion command and moves nothing, which the open-loop tools
+// report as "ok" and move_to reports as a timeout. These pin the three things that fix it —
+// the loop can SEE the state, it REFUSES motion it cannot perform, and a robot that reports
+// no arming state at all is completely unaffected.
+
+describe("describeMotorState", () => {
+  it("a robot that reports nothing has no line (the whole L-series)", () => {
+    expect(describeMotorState(null)).toBeNull();
+    expect(describeMotorState({})).toBeNull();
+    // Absence must never read as disarmed — that would block every legacy robot.
+    expect(describeMotorState({ activation: "" })).toBeNull();
+  });
+
+  it("names the state, and says who can fix it", () => {
+    expect(describeMotorState({ armed: true, activation: "active" })).toContain("armed");
+    const off = describeMotorState({ armed: false })!;
+    expect(off).toContain("DISARMED");
+    expect(off).toContain("does not move"); // the silent-success warning
+    expect(off).toContain("Only the human operator can arm it");
+  });
+
+  it("a hardware E-STOP outranks armed and carries the robot's own words", () => {
+    const line = describeMotorState({ armed: false, estop: "hardware", estopDetail: "lid open" })!;
+    expect(line).toContain("HARDWARE E-STOP");
+    expect(line).toContain("lid open");
+  });
+
+  it("armed but still activating is its own state, not 'ready'", () => {
+    const line = describeMotorState({ armed: true, activation: "arming" })!;
+    expect(line).toContain("still activating");
+  });
+});
+
+describe("motor state in the loop", () => {
+  it("rides every turn and appends to get_state after the FK line", async () => {
+    const { agent, calls } = setup([
+      turn([tool("get_state")]),
+      turn([tool("done", { summary: "" })]),
+    ], {
+      confirmFirstMotion: false,
+      describePose: () => "right gripper ≈ (x 1, y 2, z 3) mm",
+      motorState: () => ({ armed: true, activation: "active" }),
+    });
+    await agent.run("check state");
+    expect(calls[0].motors).toContain("armed");
+    const msgs = calls[1].messages as Array<{ content: AgentBlock[] }>;
+    const text = (msgs.at(-1)!.content[0].content as AgentBlock[])[0].text as string;
+    const lines = text.split("\n");
+    expect(JSON.parse(lines[0])["right_arm_shoulder_pan.pos"]).toBe(12.4);
+    expect(lines[1]).toContain("gripper ≈");
+    expect(lines[2]).toContain("Motors:");
+  });
+
+  it("REFUSES a motion tool while disarmed instead of reporting ok against dead buses", async () => {
+    const { agent, events, fake } = setup([
+      turn([tool("reach", { side: "left", dofs: { x: 0.5 }, ms: 10 })]),
+      turn([tool("done", { summary: "gave up" })]),
+    ], { confirmFirstMotion: false, motorState: () => ({ armed: false }) });
+    const jogs: unknown[] = [];
+    (fake.teleop as unknown as { setExternalJog: (j: unknown) => void }).setExternalJog =
+      (j) => { jogs.push(j); };
+    await agent.run("reach forward");
+    const res = events.find((e) => e.kind === "tool_result") as Extract<AgentEvent, { kind: "tool_result" }>;
+    expect(res.ok).toBe(false);
+    expect(res.text).toContain("DISARMED");
+    // The refusal is what makes it legible; not commanding the robot is what makes it honest.
+    expect(jogs.every((j) => JSON.stringify(j) === "{}" || j === null)).toBe(true);
+  });
+
+  it("does not block LOOKING or reading state while disarmed", async () => {
+    const { agent, events } = setup([
+      turn([tool("get_state"), tool("look", { camera: "overhead" })]),
+      turn([tool("done", { summary: "" })]),
+    ], { confirmFirstMotion: false, motorState: () => ({ armed: false }) });
+    await agent.run("look around");
+    const results = events.filter((e) => e.kind === "tool_result") as Array<Extract<AgentEvent, { kind: "tool_result" }>>;
+    expect(results.map((r) => r.ok)).toEqual([true, true]);
+  });
+
+  it("checks per CALL, so arming lost mid-run stops the NEXT motion", async () => {
+    // The robot's idle timer (or a hardware E-STOP) dropping arming out from under a running
+    // loop. Triggered off the FIRST grip actually reaching the wire rather than a timer, so the
+    // test pins the per-call check itself and cannot race.
+    let armed = true;
+    const { agent, events, fake } = setup([
+      turn([tool("base", { linear: 0.2, ms: 1 })]),
+      turn([tool("base", { linear: 0.2, ms: 1 })]),
+      turn([tool("done", { summary: "" })]),
+    ], { confirmFirstMotion: false, motorState: () => ({ armed }) });
+    (fake.teleop as unknown as { setExternalJog: (j: unknown) => void }).setExternalJog = (j) => {
+      if ((j as { base?: Record<string, number> } | null)?.base?.linear) armed = false;
+    };
+    await agent.run("grip twice");
+    const results: Array<Extract<AgentEvent, { kind: "tool_result" }>> = [];
+    for (const e of events) if (e.kind === "tool_result") results.push(e);
+    expect(results[0].ok).toBe(true);
+    expect(results[1].ok).toBe(false);
+    expect(results[1].text).toContain("DISARMED");
+  });
+
+  it("a robot with no arming state runs exactly as before (no line, no refusal)", async () => {
+    const { agent, calls, events } = setup([
+      turn([tool("base", { linear: 0.2, ms: 1 })]),
+      turn([tool("done", { summary: "" })]),
+    ], { confirmFirstMotion: false, motorState: () => ({}) });
+    await agent.run("drive forward");
+    expect(calls[0].motors).toBeUndefined();
+    const res = events.find((e) => e.kind === "tool_result") as Extract<AgentEvent, { kind: "tool_result" }>;
+    expect(res.ok).toBe(true);
   });
 });

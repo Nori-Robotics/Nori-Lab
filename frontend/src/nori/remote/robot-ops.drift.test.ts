@@ -99,6 +99,10 @@ const A3_DESCRIPTOR: RobotDescriptor = {
   aux: ["lift"],
   cameras: ["front"],
   ranges: {},
+  // The A3 gateway advertises jog_scale.task; its PRESENCE (never a model string) is what
+  // selects the cartesian task keymap, so a fixture without it exercises the L2 path by
+  // accident. Verified shape against NORI-A3-0000's live ack.
+  jog_scale: { task: { x: 1, y: 1, z: 1, pitch: 1, yaw: 1, shoulder_pan: 1 }, lift: 1 },
 };
 
 describe("descriptor-driven joint vocabulary", () => {
@@ -116,6 +120,33 @@ describe("descriptor-driven joint vocabulary", () => {
       .targets.description;
     expect(desc).toContain("elbow_pitch");
     expect(desc).not.toContain("elbow_flex"); // the L2 joint an A3 doesn't have
+  });
+
+  // Every schema field the EXECUTOR resolves per-robot must also be described per-robot. A field
+  // ScriptDriver validates from the descriptor while the schema still describes the L2 legacy set
+  // is not a refused call — it is a model reasoning correctly about the wrong robot, which is the
+  // expensive failure (it reads as a missing capability, not as an error).
+  it("buildAgentTools(descriptor) rewrites the reach task-space vocabulary", () => {
+    const reach = buildAgentTools(A3_DESCRIPTOR).find((t) => t.name === "reach")!;
+    const desc = (reach.input_schema.properties as Record<string, { description: string }>)
+      .dofs.description;
+    // z is the one that matters: there is no other way to jog the gripper vertically in task
+    // space, and the L2 prose never mentions it, so an un-rewritten schema hides the capability.
+    expect(desc).toContain("z");
+    expect(desc).toContain("yaw");
+    expect(desc).toContain("OVERRIDE");
+  });
+
+  it("buildAgentTools(descriptor) says when both arms share ONE lift column", () => {
+    const lift = buildAgentTools(A3_DESCRIPTOR).find((t) => t.name === "lift")!;
+    const side = (lift.input_schema.properties as Record<string, { description: string }>)
+      .side.description;
+    expect(side).toContain("ONE central lift column");
+    // The L-series keeps its per-arm rail wording.
+    const l2 = buildAgentTools({ aux: ["left_lift", "right_lift"], ranges: {} } as RobotDescriptor)
+      .find((t) => t.name === "lift")!;
+    expect((l2.input_schema.properties as Record<string, { description: string }>).side.description)
+      .toBe("which arm's rail to move");
   });
 
   it("buildAgentTools() with no descriptor is byte-identical to the static manifest", () => {

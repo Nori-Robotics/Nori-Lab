@@ -20,6 +20,7 @@ import { useApi } from "@/contexts/ApiContext";
 import { isDirectBackend } from "@/nori/api/client";
 import { hostedAgentTurn, hostedDepthGrid } from "@/nori/llm/hostedLlm";
 import { formatDepthGrid, isDepthGridResult } from "@/nori/remote/depthGrid";
+import { descriptorGrounding } from "@/nori/llm/promptAssembly";
 import type { RobotDescriptor } from "@nori/sdk";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
 import { createPoseSummarizer } from "@/nori/remote/poseSummary";
@@ -27,6 +28,8 @@ import {
   AgentSession, AgentBudgetError,
   type AgentBlock, type AgentEvent, type AgentTurn, type FinishReason, type AgentMessage,
 } from "@/nori/remote/AgentSession";
+import { ArmControlView } from "@/nori/remote/ArmControl";
+import { isPreparing, isStuck } from "@/nori/remote/armPhase";
 
 // A rendered transcript line. We keep the raw events and turn them into rows at render time so the
 // UI stays a pure function of the event log.
@@ -60,7 +63,7 @@ type DailyBudget = {
 };
 
 const Agent = () => {
-  const { teleop, connState, connecting, connect, tel, setSessionBusy } = useTeleopSession();
+  const { teleop, connState, connecting, connect, tel, setSessionBusy, daemonStatus } = useTeleopSession();
   const connectBlocked = useConnectGate();
   const { baseUrl, fetchWithHeaders } = useApi();
 
@@ -83,6 +86,37 @@ const Agent = () => {
   const status = connected
     ? `connected · ${Math.round(tel.loopHz)} Hz`
     : connecting ? "connecting…" : "not connected";
+
+  // MOTOR STATE. `armed` rides daemon_status, NOT telemetry, which is why the loop was blind to
+  // it: a disarmed robot accepts every motion command and moves nothing, so `reach`/`grip`/
+  // `base`/`lift` (all open-loop holds) report ok while the arm sits still and `move_to` reports
+  // a timeout the model reads as an obstruction. Absent entirely on a gateway without arming
+  // support (the whole L-series) — which is why the Agent page worked there for a year.
+  //
+  // Read through a ref so AgentSession sees the CURRENT value: a robot can disarm under a
+  // running loop (idle timer) or be dropped by a hardware E-STOP, and a value captured at
+  // start() would keep saying "armed" through both.
+  const motorRef = useRef(daemonStatus);
+  motorRef.current = daemonStatus;
+  const motorState = () => {
+    const d = motorRef.current;
+    if (!d || d.state !== "online") return null;
+    return { armed: d.armed, activation: d.activation, estop: d.estop, estopDetail: d.estop_detail };
+  };
+  // Arming is the OPERATOR's act, not the agent's — same call the Remote page's ArmControl makes,
+  // and the same reasoning that keeps E-STOP off the tool list: energizing hardware with no human
+  // at the moment power becomes motion is exactly what confirm-before-first-motion exists to
+  // prevent. So the page refuses to start rather than arming on the operator's behalf. A robot
+  // that reports no arming state at all is unaffected (armed === undefined → no block).
+  const motorBlock = (() => {
+    const d = daemonStatus;
+    if (!connected || !d || d.state !== "online") return null;
+    if (d.estop) return `Hardware E-STOP on the robot${d.estop_detail ? ` — ${d.estop_detail}` : ""}. Clear it, then arm.`;
+    if (d.armed === false) return "Motors are disarmed — arm the robot before starting a run.";
+    if (isStuck(d.activation ?? "")) return "Motion activation is blocked on the robot — clear the reported cause, then re-arm.";
+    if (isPreparing(d.activation ?? "")) return "Motion stack is still activating — wait for the motors to report active.";
+    return null;
+  })();
 
   // Keep get_state / moveTo current inside a running loop.
   useEffect(() => { sessionRef.current?.setTelemetry(tel); }, [tel]);
@@ -107,16 +141,27 @@ const Agent = () => {
   // since baseUrl points at a dead localhost there. Both raise AgentBudgetError on a 429.
   const postTurn = async (
     messages: AgentMessage[], robotState: Record<string, number> | undefined, cameraLayout: string | undefined,
-    descriptor?: RobotDescriptor | null, poseSummary?: string,
+    descriptor?: RobotDescriptor | null, poseSummary?: string, motors?: string,
   ): Promise<AgentTurn> => {
-    // Hosted path only: the LeLab server path below assembles its own tools server-side and
-    // drives the L2-era stack, so the descriptor (which rebuilds move_to for THIS robot's
-    // joints) stops here for it.
-    if (isDirectBackend()) return hostedAgentTurn(messages, robotState, cameraLayout, descriptor, poseSummary);
+    // The RAW descriptor is hosted-path only: that path has the SDK, so it rebuilds the
+    // move_to / reach / lift schemas from it. The LeLab server path below ships the static L2
+    // schemas and cannot resolve a descriptor, so it gets the same vocabulary as pre-rendered
+    // prose lines instead (robot_vocabulary) — the schemas stay L2-shaped there and the prose
+    // overrides them, which is why every line says "OVERRIDE".
+    if (isDirectBackend()) return hostedAgentTurn(messages, robotState, cameraLayout, descriptor, poseSummary, motors);
     const res = await fetchWithHeaders(`${baseUrl}/nori/llm/agent`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, robot_state: robotState, camera_layout: cameraLayout, pose_summary: poseSummary }),
+      // robot_vocabulary / motors are pre-RENDERED here rather than sent as a raw descriptor:
+      // this server path ships the static L2 tool schemas and has no SDK to resolve a descriptor
+      // with, so the browser (which has both) hands it the finished grounding lines and the
+      // server folds them in verbatim — the same shape pose_summary already uses.
+      body: JSON.stringify({
+        messages, robot_state: robotState, camera_layout: cameraLayout,
+        pose_summary: poseSummary,
+        robot_vocabulary: descriptorGrounding(descriptor),
+        motors,
+      }),
     });
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}));
@@ -194,6 +239,7 @@ const Agent = () => {
   const start = async () => {
     if (running || !goal.trim()) return;
     if (!teleop || !connected) { push({ kind: "end", reason: "error", detail: "not connected — Connect first" }); return; }
+    if (motorBlock) { push({ kind: "end", reason: "error", detail: motorBlock }); return; }
     setRows([{ kind: "goal", text: goal.trim() }]);
     setUsage({ steps: 0, inTokens: 0, outTokens: 0 });
     const session = new AgentSession({
@@ -204,6 +250,9 @@ const Agent = () => {
       describePose: createPoseSummarizer(teleop),
       // Relative-depth grid appended to every look (depthGrid.ts) — best-effort.
       fetchDepth,
+      // Lets the loop SEE the arming state (in get_state + every turn's grounding) and refuse a
+      // motion tool it cannot act on, instead of reporting ok against dead buses.
+      motorState,
       confirmFirstMotion,
       onConfirmMotion: confirmFirstMotion ? onConfirmMotion : undefined,
       onEvent,
@@ -252,6 +301,10 @@ const Agent = () => {
             <span className={"inline-flex h-9 items-center rounded-full px-3 font-mono text-xs " + (connected ? "bg-nori-h8ab135/25 text-nori-h4d6a1e" : "bg-nori-h14131a/8 text-nori-h857b6b")}>
               ● {status}
             </span>
+            {/* The SAME control the Remote page renders (one implementation — see
+                remote/ArmControl.tsx). It hides itself on a robot whose gateway doesn't report
+                arming, so the L-series page is unchanged. */}
+            {connected && <ArmControlView teleop={teleop} running={connected} daemonStatus={daemonStatus} compact />}
             {!connected && (
               <Button
                 size="sm"
@@ -287,7 +340,8 @@ const Agent = () => {
                 </label>
                 <div className="flex items-center gap-2">
                   {!running ? (
-                    <Button size="sm" onClick={start} disabled={!connected || !goal.trim()}
+                    <Button size="sm" onClick={start} disabled={!connected || !goal.trim() || !!motorBlock}
+                      title={motorBlock ?? undefined}
                       className="rounded-md bg-nori-h8ab135 text-foreground hover:bg-nori-h799c2a">
                       <Play className="mr-2 h-4 w-4" /> Start
                     </Button>
@@ -320,6 +374,16 @@ const Agent = () => {
               <div className="flex flex-col gap-1 rounded-md border border-nori-hb4442e/40 bg-nori-hfbecea p-3 text-[11px] text-nori-h8a2f20 shadow-sm">
                 <span className="font-mono uppercase tracking-[0.18em] text-nori-hb4442e">// high token usage</span>
                 <span>You've used {fmtTokens(daily.spent)} agent tokens today (past the {fmtTokens(daily.warn)} heads-up mark){daily.allowed != null ? ` of a ${fmtTokens(daily.allowed)} daily limit` : ""}. Approaching the cap — turns stop once it's reached.</span>
+              </div>
+            )}
+
+            {/* Motors not ready. Rendered ABOVE the confirm banner because it is the reason the
+                run cannot start at all — and because a disarmed A3 is otherwise indistinguishable
+                from a robot that simply refuses to move. */}
+            {motorBlock && (
+              <div className="flex flex-col gap-1 rounded-md border border-nori-hd98b3d/50 bg-nori-hfdf3e6 p-3 text-[11px] text-nori-h8a2f20 shadow-sm">
+                <span className="font-mono uppercase tracking-[0.18em] text-nori-hb06a1c">// motors not ready</span>
+                <span>{motorBlock}</span>
               </div>
             )}
 

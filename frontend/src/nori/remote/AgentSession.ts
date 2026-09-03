@@ -84,9 +84,52 @@ export type PostTurn = (
   // prompt next to robot_state so the model can plan in real units. Optional — absent when the
   // page wired no summarizer or FK isn't ready yet.
   poseSummary?: string,
+  // One line of MOTOR state ("Motors: armed", "Motors: DISARMED — …"). Folded into the system
+  // prompt like poseSummary. Optional and absent on a robot whose gateway never reports arming
+  // (the whole L-series), where there is no such state to describe.
+  motors?: string,
 ) => Promise<AgentTurn>;
 
 export type AgentMessage = { role: "user" | "assistant"; content: AgentBlock[] };
+
+// The arming/activation half of the robot's daemon_status, which does NOT ride TelemetryView —
+// it arrives on a separate status channel, which is why the loop could not previously see it.
+// Every field is optional because a gateway predating arming support sends none of them, and
+// absence must read as "this robot has no such state", never as "disarmed".
+export type MotorState = {
+  armed?: boolean;
+  activation?: string;
+  estop?: string;
+  estopDetail?: string;
+};
+
+// Tool-facing description of the motor state, or null when the robot reports none. Shared by
+// the per-turn grounding and get_state so the model reads the SAME sentence in both places.
+//
+// WHY THIS EXISTS AT ALL: on a robot with arming, disarmed motors ACCEPT commands and do not
+// move. Every open-loop tool (reach/grip/base/lift) is a held jog with no arrival feedback, so
+// it returns "ok" against dead buses; only move_to notices, and it reports `timeout`, which the
+// model reads as an obstruction. Without this line a disarmed robot is indistinguishable from a
+// world that refuses to change, and the loop spends its whole budget replanning around a
+// phantom obstacle. Naming the real cause is what turns that into one give_up.
+export function describeMotorState(m: MotorState | null | undefined): string | null {
+  if (!m || (m.armed === undefined && !m.activation && !m.estop)) return null;
+  if (m.estop) {
+    return `Motors: HARDWARE E-STOP (${m.estopDetail || m.estop}). Motion is impossible until a ` +
+      `human clears the physical fault and re-arms — do not retry; call give_up and say this.`;
+  }
+  if (m.armed === false) {
+    const act = m.activation && m.activation !== "inactive" ? ` (activation: ${m.activation})` : "";
+    return `Motors: DISARMED${act}. The robot ACCEPTS motion commands in this state and does ` +
+      `not move — a jog will report ok and change nothing. Only the human operator can arm it ` +
+      `(the Arm control on this page). Do not keep trying to move; say so and call give_up.`;
+  }
+  if (m.activation && m.activation !== "active") {
+    return `Motors: armed, but the motion stack is still activating (${m.activation}) — commands ` +
+      `may not take effect yet. Prefer wait + get_state over repeating a motion.`;
+  }
+  return "Motors: armed and active.";
+}
 
 // ---- transcript events (consumed by the milestone-3 Agent panel) -------------
 
@@ -144,6 +187,10 @@ export interface AgentSessionOptions {
   // Injected like postTurn (the page owns transport + formatting). MUST be soft-fail — a
   // throw/reject is swallowed here and the look returns image-only.
   fetchDepth?: (imageB64: string) => Promise<string | null>;
+  // The robot's live arming/activation state (the page reads it off daemon_status). Injected as a
+  // GETTER, not a value, because it changes under the loop — a robot can be disarmed by its idle
+  // timer, or dropped by a hardware E-STOP, mid-run. Omit on a surface with no such state.
+  motorState?: () => MotorState | null;
   onEvent?: (ev: AgentEvent) => void; // structured transcript for the UI
   onLog?: (line: string) => void; // plain text log (mirrors ScriptSession.onLog)
   onDone?: (reason: FinishReason) => void; // run ended (any reason)
@@ -236,6 +283,7 @@ export class AgentSession {
         this.messages, this.robotState(), this.cameraLayout(),
         this.o.teleop.robotInfo()?.descriptor ?? null,
         this.poseSummary(),
+        this.motorSummary(),
       );
       if (this.stopped) return; // an E-STOP during the request
       this.messages.push({ role: "assistant", content: turn.content });
@@ -309,15 +357,27 @@ export class AgentSession {
   // working as intended, not a crash).
   private async execTool(b: AgentBlock): Promise<AgentBlock> {
     const input = (b.input ?? {}) as Record<string, unknown>;
+    // Checked per CALL, not once per run: arming can be lost mid-run (idle timer, hardware
+    // E-STOP), and the tools that would silently no-op are exactly the open-loop ones.
+    if (MOTION_TOOLS.has(b.name ?? "")) {
+      const blocked = this.motionBlocked();
+      if (blocked) return this.errorResult(b, blocked);
+    }
     try {
       switch (b.name) {
         case "look":
           return await this.doLook(b, input.camera as string | undefined);
         case "get_state": {
-          // Raw joints + (when FK is available) the gripper world-coordinate line, so the model
-          // gets metric proprioception from the same call it already knows to make.
-          const pose = this.poseSummary();
-          return this.textResult(b, JSON.stringify(this.lastTelemetry?.state ?? {}) + (pose ? "\n" + pose : ""));
+          // Raw joints + (when FK is available) the gripper world-coordinate line + (when the
+          // robot reports it) the motor state, so the model gets metric proprioception AND the
+          // one fact that explains a motion with no visible effect from the call it already
+          // knows to make.
+          const lines = [
+            JSON.stringify(this.lastTelemetry?.state ?? {}),
+            this.poseSummary(),
+            this.motorSummary(),
+          ].filter(Boolean);
+          return this.textResult(b, lines.join("\n"));
         }
         case "move_to": {
           const state = await this.driver.exec("moveTo", [input.side, input.targets, { slew: input.slew }]);
@@ -411,6 +471,29 @@ export class AgentSession {
 
   // The FK gripper world-coordinate line for the CURRENT telemetry, or undefined when no
   // summarizer is wired / FK isn't ready / it throws (grounding must never kill the loop).
+  // Refuse a motion tool the robot cannot act on, naming the cause. Returns the refusal text,
+  // or null when motion is possible (including on every robot that reports no arming state).
+  //
+  // This is the guard that makes a disarmed robot FAIL LOUDLY. Letting the call through would
+  // return "ok" off a jog held against dead buses — the silent-success shape that the lift key
+  // bug already cost us once (see ScriptDriver.lift). Refusing costs one turn and tells the
+  // model exactly what a human has to do.
+  private motionBlocked(): string | null {
+    const m = this.o.motorState?.();
+    if (!m) return null;
+    if (m.estop) return describeMotorState(m);
+    if (m.armed === false) return describeMotorState(m);
+    return null;
+  }
+
+  private motorSummary(): string | undefined {
+    try {
+      return describeMotorState(this.o.motorState?.()) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private poseSummary(): string | undefined {
     const state = this.lastTelemetry?.state;
     if (!state || !this.o.describePose) return undefined;

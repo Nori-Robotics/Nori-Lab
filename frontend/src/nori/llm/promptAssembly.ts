@@ -8,7 +8,7 @@
 import { NORI_AGENT_SYSTEM } from "./prompts.generated";
 // jointDofsFor is a pure descriptor lookup (no DOM/WebRTC) — the one SDK import this module
 // needs so the live robot's joint vocabulary can override the generated prompt's L2 prose.
-import { jointDofsFor } from "@nori/sdk";
+import { jointDofsFor, reachDofsFor, liftAxes } from "@nori/sdk";
 import type { RobotDescriptor } from "@nori/sdk";
 import type { AgentMessage } from "@/nori/remote/AgentSession";
 
@@ -72,11 +72,58 @@ export function buildCodegenContent(body: CodegenRequest): ContentBlock[] {
   return content;
 }
 
+/**
+ * The per-robot vocabulary lines folded into the agent system prompt, from the connected robot's
+ * ack descriptor. Exported because the LeLab desktop path needs the SAME lines: that server ships
+ * the static L2 tool schemas and has no SDK to resolve a descriptor with, so the browser renders
+ * these and the server folds them in verbatim (like pose_summary).
+ */
+export function descriptorGrounding(descriptor: RobotDescriptor | null | undefined): string[] {
+  const out: string[] = [];
+  if (!descriptor) return out;
+  // The generated base prompt narrates the L2 anatomy (shoulder_pan, shoulder_lift, …).
+  // A connected robot's ack descriptor is the truth; without this override an A3 agent is
+  // taught six joints that don't exist while its real seven go unnamed.
+  //
+  // THREE vocabularies, not one. The joint override shipped first and was scoped to joint
+  // NAMES by its own wording ("any joint names"), which left the body layout's other two
+  // hardcoded L2 facts standing: the per-arm lift rail, and the cylindrical task-space DOF
+  // set. Both are wrong on an A3 in ways that read as capability rather than as error — the
+  // agent simply never jogs in z and never learns the two arms share one column.
+  const left = jointDofsFor(descriptor, "left");
+  const right = jointDofsFor(descriptor, "right");
+  const arms = left.join(",") === right.join(",")
+    ? `each arm has, torso out: ${left.join(", ")}`
+    : `left arm: ${left.join(", ")}; right arm: ${right.join(", ")}`;
+  out.push(
+    `THIS robot's actual arm joints (${arms}). These OVERRIDE any joint names in the body ` +
+    `layout above — command only these; other names are refused as unknown_joint.`,
+  );
+  const task = reachDofsFor(descriptor);
+  if (task.length) {
+    out.push(
+      `THIS robot's actual task-space DOFs for \`reach\` ({${task.join(", ")}}). These ` +
+      `OVERRIDE the task-space DOF list in the body layout above.`,
+    );
+  }
+  const axes = liftAxes(descriptor);
+  if (axes.length === 1 && axes[0].side === null) {
+    out.push(
+      "THIS robot has ONE central lift column shared by both arms, NOT one rail per arm: " +
+      "`lift` with either side drives the same column and moves both arms together. This " +
+      "OVERRIDES the per-arm rail described in the body layout above.",
+    );
+  } else if (!axes.length) {
+    out.push("THIS robot has no lift at all — a `lift` call is accepted and moves nothing.");
+  }
+  return out;
+}
+
 // Fold the run's grounding into the agent system prompt (a stable suffix), matching
 // `nori_llm_agent`. Returns the base prompt unchanged when there's nothing to ground.
 export function buildAgentSystem(
   robotState: Record<string, number> | undefined, cameraLayout: string | undefined,
-  descriptor?: RobotDescriptor | null, poseSummary?: string,
+  descriptor?: RobotDescriptor | null, poseSummary?: string, motors?: string,
 ): string {
   const grounding: string[] = [];
   if (cameraLayout) grounding.push(`Camera layout (which composite tile is which): ${cameraLayout}`);
@@ -84,20 +131,10 @@ export function buildAgentSystem(
   // Browser-side FK (poseSummary.ts): the gripper's world coordinates in mm, refreshed every
   // turn. Same fold as lelab/server.py's pose_summary — keep the line text identical.
   if (poseSummary) grounding.push("Gripper position (world-frame FK from joint telemetry, refreshed every turn): " + poseSummary);
-  if (descriptor) {
-    // The generated base prompt narrates the L2 anatomy (shoulder_pan, shoulder_lift, …).
-    // A connected robot's ack descriptor is the truth; without this override an A3 agent is
-    // taught six joints that don't exist while its real seven go unnamed.
-    const left = jointDofsFor(descriptor, "left");
-    const right = jointDofsFor(descriptor, "right");
-    const arms = left.join(",") === right.join(",")
-      ? `each arm has, torso out: ${left.join(", ")}`
-      : `left arm: ${left.join(", ")}; right arm: ${right.join(", ")}`;
-    grounding.push(
-      `THIS robot's actual arm joints (${arms}). These OVERRIDE any joint names in the body ` +
-      `layout above — command only these; other names are refused as unknown_joint.`,
-    );
-  }
+  grounding.push(...descriptorGrounding(descriptor));
+  // Motor/arming state (AgentSession.describeMotorState). Last, so it sits closest to the turn:
+  // it is the most volatile line here and the one that explains a motion with no visible effect.
+  if (motors) grounding.push(motors);
   return grounding.length ? NORI_AGENT_SYSTEM + "\n\nCONTEXT FOR THIS RUN:\n" + grounding.join("\n") : NORI_AGENT_SYSTEM;
 }
 

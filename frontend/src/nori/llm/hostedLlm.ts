@@ -82,6 +82,7 @@ export async function hostedAgentTurn(
   cameraLayout: string | undefined,
   descriptor?: RobotDescriptor | null,
   poseSummary?: string,
+  motors?: string,
 ): Promise<AgentTurn> {
   const res = await fetch(`${backendBase()}${LLM_BASE}/messages`, {
     method: "POST",
@@ -89,10 +90,11 @@ export async function hostedAgentTurn(
     body: JSON.stringify({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      system: buildAgentSystem(robotState, cameraLayout, descriptor, poseSummary),
-      // Rebuilt per-connection: with a descriptor the move_to schema names the joints THIS
-      // robot has; without one (legacy/no ack yet) it is byte-identical to the generated
-      // AGENT_TOOLS, which remains the L2 rendering LeLab's server-side path also ships.
+      system: buildAgentSystem(robotState, cameraLayout, descriptor, poseSummary, motors),
+      // Rebuilt per-connection: with a descriptor the move_to / reach / lift schemas name the
+      // joints, task DOFs and rail THIS robot has; without one (legacy/no ack yet) it is
+      // byte-identical to the generated AGENT_TOOLS, which remains the L2 rendering LeLab's
+      // server-side path also ships.
       tools: descriptor ? buildAgentTools(descriptor) : AGENT_TOOLS,
       messages,
       new_run: inferNewRun(messages),

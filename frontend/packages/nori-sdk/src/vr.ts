@@ -16,7 +16,7 @@
 // session glue (Phase 2) samples XRInputSource gamepads/poses into VrFrame and pipes the
 // output into RemoteTeleop.setExternalJog / .command. No daemon or protocol change.
 
-import type { ExternalJog } from "./teleop";
+import type { ExternalJog, RobotDescriptor } from "./teleop";
 
 // Per-controller state sampled from WebXR each frame. position is the grip-space pose in
 // meters (headset/local reference space); orientation is the RAW grip quaternion [x,y,z,w]
@@ -74,6 +74,22 @@ const ROLL_SCALE = 2.75;  // VR_WRIST_ROLL_SCALE (reference 1.0 ≈ half-speed t
 const ROLL_LIMIT = 5.0;   // VR_WRIST_ROLL_LIMIT (raised with the scale so it clamps at the
                           // same controller speed as before)
 const PAN_GAIN = 220.0;   // cartesian-x delta -> shoulder_pan deg (200 -> 220, 2026-07-15)
+// --- A3 cartesian task vocabulary (descriptor-gated; see setDescriptor) -----
+// Tool YAW about the base Z axis, from the hand's own yaw increment (rotvec.y —
+// the one wrist component the legacy mapping never consumed). It replaces the
+// tool-turning that lateral hand motion used to provide through shoulder_pan,
+// which in this vocabulary is a translation instead.
+//
+// Same scale/limit class as pitch: both are "tilt the hand" gestures and there
+// is no hardware tuning pass for yaw yet. Expect to touch these two constants
+// and YAW_SIGN after the first headset run.
+const YAW_SCALE = PITCH_SCALE;
+const YAW_LIMIT = PITCH_LIMIT;
+// UNVERIFIED ON HARDWARE. Flex and roll BOTH turned out inverted against the
+// reference (2026-07-02 and 2026-07-16) and were fixed at their single source
+// in wristStepDeg; yaw is the third of the same family and has not had that
+// check. Isolated here so the fix is one character, not a hunt.
+const YAW_SIGN = 1;
 const JUMP_POS = 50;      // reconnect guard on internal pos units
 const JUMP_ANGLE = 30;    // reconnect guard on wrist angles (deg)
 const THUMB_DEADZONE = 0.15;
@@ -190,9 +206,14 @@ function qRotvecDeg(q: Quat): [number, number, number] {
 // the controller (tilt down moved the wrist up). Roll (2026-07-16): same inversion —
 // −rotvec.z twisted the wrist opposite the controller on both arms (leader arms, which
 // share the daemon's target convention, were correct — so the fix belongs in VR sensing).
-function wristStepDeg(cur: Quat, prev: Quat): { flex: number; roll: number } {
+function wristStepDeg(
+  cur: Quat, prev: Quat,
+): { flex: number; roll: number; yaw: number } {
   const rv = qRotvecDeg(qMul(qConj(prev), cur));
-  return { flex: -rv[0], roll: rv[2] };
+  // rv[1] is the hand's yaw increment about its own up axis. The legacy
+  // vocabulary had no use for it (tool turning came from lateral motion via
+  // shoulder_pan); the cartesian one does. See YAW_SIGN.
+  return { flex: -rv[0], roll: rv[2], yaw: YAW_SIGN * rv[1] };
 }
 
 // Stateful per-hand integrator. One instance per controller; the mapper owns two.
@@ -223,6 +244,7 @@ class HandState {
     controlYaw: number,
     tuning: ResolvedTuning,
     gripperPos: number | null,
+    cartesian: boolean,
   ): Record<string, number> | null {
     if (!f) { this.release(); return null; }
 
@@ -237,7 +259,7 @@ class HandState {
     if (!this.engaged) return null;
 
     const cur = f.position;
-    if (!cur) return zeroArm();
+    if (!cur) return zeroArm(cartesian);
 
     // First engaged frame (or first frame after re-engage): establish baseline, hold.
     // Wrist motion integrates per-frame increments from here, so it starts at rest no
@@ -245,7 +267,7 @@ class HandState {
     if (!wasEngaged || !this.prevPos) {
       this.prevPos = cur;
       this.prevQuat = (f.orientation as Quat | null | undefined) ?? null;
-      return gripperOnly(f.trigger, tuning, gripperPos);
+      return gripperOnly(f.trigger, tuning, gripperPos, cartesian);
     }
 
     // World-frame metre deltas, rotated into the CONTROL frame (yaw set at recenter) before
@@ -256,14 +278,28 @@ class HandState {
     const wx = cur[0] - this.prevPos[0];
     const wz = cur[2] - this.prevPos[2];
     const cosY = Math.cos(controlYaw), sinY = Math.sin(controlYaw);
-    const vrX = (wx * cosY - wz * sinY) * POS_GAIN_X;
-    const vrY = (cur[1] - this.prevPos[1]) * POS_GAIN_Y;
-    const vrZ = (wx * sinY + wz * cosY) * POS_GAIN_Z;
+    // Control-frame components, still metres: lat = +RIGHT, fwdBack = +BACKWARD
+    // (WebXR faces −Z), up = +UP.
+    const latM = wx * cosY - wz * sinY;
+    const fwdBackM = wx * sinY + wz * cosY;
+    const upM = cur[1] - this.prevPos[1];
+    // The lateral gain depends on what lateral DRIVES. In the legacy vocabulary
+    // it drives shoulder_pan — a rotation — and POS_GAIN_X (265) was hand-tuned
+    // for that. In the cartesian vocabulary it is a translation (`y`), so it
+    // takes the same gain as the other two translation axes; keeping 265 would
+    // make sideways hand motion ~3.4x more sensitive than forward or vertical.
+    //
+    // Side effect worth knowing: the JUMP_POS guard below reads these scaled
+    // values, so the lateral tracking-glitch threshold moves from ~0.19 m to
+    // ~0.65 m — the same threshold forward and vertical have always had.
+    const vrX = latM * (cartesian ? POS_GAIN_Y : POS_GAIN_X);
+    const vrY = upM * POS_GAIN_Y;
+    const vrZ = fwdBackM * POS_GAIN_Z;
 
     // Controller reconnect / tracking glitch -> reset baseline, hold this frame.
     if (Math.abs(vrX) > JUMP_POS || Math.abs(vrY) > JUMP_POS || Math.abs(vrZ) > JUMP_POS) {
       this.prevPos = cur;
-      return gripperOnly(f.trigger, tuning, gripperPos);
+      return gripperOnly(f.trigger, tuning, gripperPos, cartesian);
     }
     this.prevPos = cur;
 
@@ -274,16 +310,31 @@ class HandState {
     const dy = clamp(vrY * POS_SCALE * sens, -DELTA_LIMIT, DELTA_LIMIT);
     const dz = clamp(vrZ * POS_SCALE * sens, -DELTA_LIMIT, DELTA_LIMIT);
 
-    const arm = zeroArm();
-    // rpi4 reference, sign-for-sign: current_x += -delta_z (Z flipped), current_y += delta_y.
-    // (Any genuine motor-direction inversion belongs in calibration/daemon so keyboard and
-    // VR agree — not flipped here, which would desync VR from the reference + keyboard.)
-    arm.x = clamp1(-dz / XY_STEP);
-    arm.y = clamp1(dy / XY_STEP);
+    const arm = zeroArm(cartesian);
+    if (cartesian) {
+      // A3 task lane, REP-103 base frame: +x FORWARD, +y LEFT, +z UP. All three
+      // are translations, so all three take the same XY_STEP rate conversion.
+      //
+      // This is the mapping the legacy branch below gets WRONG on an A3, which
+      // is the bug this gate exists to fix. The gateway routes by key name, so
+      // legacy `y` (vertical hand motion) arrived as linear-y and moved the tool
+      // SIDEWAYS, and legacy `shoulder_pan` (lateral hand motion) arrived as a
+      // yaw and ROTATED the tool instead of translating it. Vertical Cartesian
+      // had no key at all — the browser vocabulary predates `z`.
+      arm.x = clamp1(-dz / XY_STEP);   // −backward = forward
+      arm.y = clamp1(-dx / XY_STEP);   // −right    = left
+      arm.z = clamp1(dy / XY_STEP);
+    } else {
+      // rpi4 reference, sign-for-sign: current_x += -delta_z (Z flipped), current_y += delta_y.
+      // (Any genuine motor-direction inversion belongs in calibration/daemon so keyboard and
+      // VR agree — not flipped here, which would desync VR from the reference + keyboard.)
+      arm.x = clamp1(-dz / XY_STEP);
+      arm.y = clamp1(dy / XY_STEP);
 
-    // rpi4: delta_pan = clamp(delta_x * 200, ±8) deg, applied above a small deadband.
-    if (Math.abs(dx) > 0.001) {
-      arm.shoulder_pan = clamp1(clamp(dx * PAN_GAIN, -PITCH_LIMIT, PITCH_LIMIT) / DEG_STEP);
+      // rpi4: delta_pan = clamp(delta_x * 200, ±8) deg, applied above a small deadband.
+      if (Math.abs(dx) > 0.001) {
+        arm.shoulder_pan = clamp1(clamp(dx * PAN_GAIN, -PITCH_LIMIT, PITCH_LIMIT) / DEG_STEP);
+      }
     }
 
     // Wrist steps: this frame's rotation increment in the CONTROLLER's own frame
@@ -305,6 +356,17 @@ class HandState {
       if (Math.abs(dr) > JUMP_ANGLE) dr = 0;
       else dr = clamp(dr * sens, -ROLL_LIMIT, ROLL_LIMIT);
       arm.wrist_roll = clamp1(dr / DEG_STEP);
+
+      // Tool yaw about base Z — cartesian vocabulary only. In the legacy one
+      // tool turning came from lateral hand motion (shoulder_pan); here lateral
+      // is a translation, so without this the operator loses yaw entirely.
+      // Same guard/limit pipeline as pitch. Sign is UNVERIFIED (see YAW_SIGN).
+      if (cartesian) {
+        let dyaw = step.yaw * YAW_SCALE;
+        if (Math.abs(dyaw) > JUMP_ANGLE) dyaw = 0;
+        else dyaw = clamp(dyaw * sens, -YAW_LIMIT, YAW_LIMIT);
+        arm.yaw = clamp1(dyaw / DEG_STEP);
+      }
     }
     this.prevQuat = (f.orientation as Quat | null | undefined) ?? this.prevQuat;
 
@@ -320,13 +382,21 @@ class HandState {
   }
 }
 
-function zeroArm(): Record<string, number> {
-  return { shoulder_pan: 0, x: 0, y: 0, pitch: 0, wrist_roll: 0, gripper: 0 };
+// The key set for one arm, per vocabulary. The gateway routes by NAME: shorts in
+// its TASK_SHORTS (x/y/z/pitch/yaw, plus the shoulder_pan alias) drive the
+// task-space lane, everything else the per-joint lane. So the key set IS the
+// axis mapping — sending a legacy key to an A3 does not fail, it moves a
+// different axis. Hence the descriptor gate rather than a best guess.
+function zeroArm(cartesian: boolean): Record<string, number> {
+  return cartesian
+    ? { x: 0, y: 0, z: 0, pitch: 0, yaw: 0, wrist_roll: 0, gripper: 0 }
+    : { shoulder_pan: 0, x: 0, y: 0, pitch: 0, wrist_roll: 0, gripper: 0 };
 }
 function gripperOnly(
   trigger: number, tuning: ResolvedTuning, gripperPos: number | null,
+  cartesian: boolean,
 ): Record<string, number> {
-  const a = zeroArm();
+  const a = zeroArm(cartesian);
   a.gripper = gripperRate(trigger, tuning, gripperPos); // binary trigger, ramped rates
   return a;
 }
@@ -372,6 +442,30 @@ export class VrJogMapper {
   // operator physically turns. Wrist rates are body-frame (facing-independent) and the base
   // is thumbstick-driven (robot-relative), so neither consumes this.
   private controlYaw = 0;
+  // Which arm vocabulary to emit. False = the legacy cylindrical keys every L2
+  // expects; true = the A3 cartesian keys. Set from the robot's ack descriptor,
+  // never from a model string — see setDescriptor.
+  private cartesian = false;
+
+  // Select the arm vocabulary from the robot's ack descriptor. Gated on the
+  // PRESENCE of `jog_scale.task`, exactly like teleop.ts's taskKeymapFor for the
+  // keyboard — never on a model string, and never assumed: a robot that does not
+  // advertise the task vocabulary (every L2, and any pre-ack frame) keeps the
+  // legacy keys byte-for-byte, so deployed units are unaffected.
+  //
+  // Safe to call every frame; the session does, so a mid-session robot restart
+  // that re-handshakes takes effect without a re-clutch. Changing vocabulary
+  // does not need one — both are per-frame rate streams with no latched state
+  // on this side.
+  setDescriptor(descriptor: RobotDescriptor | null | undefined) {
+    this.cartesian = !!descriptor?.jog_scale?.task;
+  }
+
+  // Whether the mapper is currently emitting the cartesian vocabulary. For UI
+  // and logs (the in-VR HUD says which axes the sticks and hands drive).
+  get isCartesian(): boolean {
+    return this.cartesian;
+  }
 
   // Called by the session whenever recenter re-aims the panel cluster (same yaw it applies
   // to the panel group). Deliberately does NOT force a re-clutch: translation is per-frame
@@ -410,8 +504,10 @@ export class VrJogMapper {
   // Map one VR frame to a jog payload. Left controller -> left arm, right -> right arm;
   // base comes from the right controller; z-lift + E-STOP come from the resolved controls.
   map(frame: VrFrame): VrMapResult {
-    const lArm = this.left.step(frame.left, this.controlYaw, this.tuning, this.gripperPos.left);
-    const rArm = this.right.step(frame.right, this.controlYaw, this.tuning, this.gripperPos.right);
+    const lArm = this.left.step(
+      frame.left, this.controlYaw, this.tuning, this.gripperPos.left, this.cartesian);
+    const rArm = this.right.step(
+      frame.right, this.controlYaw, this.tuning, this.gripperPos.right, this.cartesian);
     const base = baseFromThumb(frame.right);
     const c = frame.controls;
     const leftLift = liftFromControls(c?.leftLiftUp, c?.leftLiftDown);

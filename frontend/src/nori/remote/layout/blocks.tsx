@@ -405,22 +405,28 @@ function useJointFlowSample(enabled: boolean): TelemetryFlowSample | null {
 // (the ack object, or the module-level display stand-in).
 const MemoJointTelemetry = memo(JointTelemetry);
 
-// Per-joint telemetry, as a collapsible SECTION of the telemetry card — the
-// numeric counterpart to the 3D schematic, and the deepest layer of the same
-// readout the rail/grip/temp blocks above it start.
+// Per-joint telemetry, as a SECTION of the telemetry card — the numeric
+// counterpart to the 3D schematic, and the deepest layer of the same readout
+// the rail/grip/temp blocks above it start.
 //
 // A section, not a card, so there is ONE telemetry surface: an operator asking
 // "what is this robot doing" should not have to know that half the answer is in
 // a second panel (or, in the drawer layouts, behind a second tab).
 //
-// Still collapsed by default, for two reasons that outlive the recombination:
-// it is by far the densest thing on the page, and `open` is what GATES the
-// sampler — useJointFlowSample only ingests and only runs its interval while
-// this is expanded, so a collapsed section costs nothing at 15 Hz.
-export const JointTelemetrySection = ({ defaultOpen = false }: { defaultOpen?: boolean }) => {
+// NOT separately collapsible. It used to be, and its collapsed state gated the
+// sampler — but every surface that renders it is ALREADY behind a collapse
+// (Drawers unmounts a closed drawer's body outright; Classic shows the card
+// whole), so the inner toggle only hid live data behind a second click nobody
+// expected. On the bench that read as "telemetry is not flowing" when in fact
+// it had never been asked for (2026-09-03).
+//
+// The sampler is therefore gated on `running` alone. Cost is unchanged where it
+// matters: in the drawer layouts a closed drawer does not mount this at all, and
+// in Classic it costs what an expanded section always cost — ingest into a ref at
+// telemetry rate, one throttled render at JOINT_SAMPLE_MS.
+export const JointTelemetrySection = () => {
   const { teleop, settings, running } = useRemoteUi();
-  const [open, setOpen] = useState(defaultOpen);
-  const sample = useJointFlowSample(open && running);
+  const sample = useJointFlowSample(running);
   // displayDescriptor: gives the table its shape (which joints to expect) before
   // the ack lands, and returns null for an L2 — which correctly leaves the table
   // driven purely by whatever keys actually arrive, with no advertised list and
@@ -428,18 +434,10 @@ export const JointTelemetrySection = ({ defaultOpen = false }: { defaultOpen?: b
   const descriptor = displayDescriptor(teleop?.robotInfo()?.descriptor, settings.room);
   return (
     <>
-      <div
-        className="flex min-h-5 cursor-pointer items-center justify-between gap-3"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <h2 className="text-sm font-semibold">Per-joint telemetry</h2>
-        <span className="text-sm text-muted-foreground">{open ? "▲ hide" : "▼ show"}</span>
+      <h2 className="text-sm font-semibold">Per-joint telemetry</h2>
+      <div className="mt-2">
+        <MemoJointTelemetry sample={sample} descriptor={descriptor} active={running} />
       </div>
-      {open && (
-        <div className="mt-2">
-          <MemoJointTelemetry sample={sample} descriptor={descriptor} active={running} />
-        </div>
-      )}
     </>
   );
 };

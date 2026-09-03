@@ -741,6 +741,12 @@ export class VrSession {
           return typeof v === "number" ? v : null;
         };
         this.mapper.setGripperPos(gPos("left_arm_gripper.pos"), gPos("right_arm_gripper.pos"));
+        // Which arm vocabulary this robot speaks (cartesian x/y/z/pitch/yaw vs the
+        // legacy cylindrical keys). Read per frame rather than latched at start:
+        // robotInfo() refreshes on every daemon (re)connect, so a robot that
+        // restarts mid-session is picked up without ending the VR session. It is a
+        // field read and a boolean coercion — cheap enough for the render loop.
+        this.mapper.setDescriptor(this.o.teleop.robotInfo()?.descriptor);
         const res = this.mapper.map(vrFrame);
         // null = nothing engaged this frame -> hand the stream back to the keyboard.
         this.o.teleop.setExternalJog(res.jog);

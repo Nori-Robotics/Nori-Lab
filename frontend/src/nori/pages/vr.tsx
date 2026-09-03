@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { VrSession } from "@nori/sdk/vr";
+import { ArmControlView } from "@/nori/remote/ArmControl";
 import { useNori } from "@/nori/NoriContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { Button } from "@/components/ui/button";
@@ -250,6 +251,29 @@ export default function VrLanding() {
                 >
                   {inVr ? "In VR — put on your headset" : "Enter VR"}
                 </Button>
+                {/* Arming, BEFORE entering VR — deliberately here and not a controller
+                    binding. Two reasons it cannot live anywhere else:
+
+                    1. There is no other page to do it from. The gateway is one session
+                       per process (gateway_node._on_session_closed exits for a clean
+                       respawn), so arming on the Remote page and then connecting from
+                       the headset does not carry over: closing that session kills the
+                       process, its arming-keeper child dies with it, and the arbiter's
+                       liveness release de-torques the arms. The headset session starts
+                       disarmed no matter what the laptop did.
+                    2. A controller button would be worse. Arming energizes hardware and
+                       every face button on a Quest controller is reachable by accident
+                       mid-drive.
+
+                    ArmControlView is the ONE implementation (its own header says a second
+                    copy is a second chance to get the truth-lag lock wrong) — the Agent
+                    page consumes it exactly like this. */}
+                <ArmControlView
+                  teleop={teleop}
+                  running={connected}
+                  daemonStatus={daemonStatus}
+                  compact
+                />
                 {/* Sensitivity — persisted in THIS (headset) browser, applied live while in VR. */}
                 <div className="space-y-2 rounded-lg bg-nori-h14131a/5 px-3 py-2">
                   <label className="flex items-center gap-2 text-sm" title="How much the robot moves per hand movement (100% = default)">

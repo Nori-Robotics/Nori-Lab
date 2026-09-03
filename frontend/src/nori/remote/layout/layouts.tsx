@@ -77,11 +77,10 @@ const SecondaryDrawers = () => (
       { id: "record", label: "record dataset", body: <RecordBlock open /> },
       { id: "deploy", label: "deploy policy", body: <DeployBlock open /> },
       // One drawer, not two: "full telemetry" now genuinely is full — rail,
-      // grip force, temps AND the per-joint table (a collapsed section inside
-      // TelemetryDetail). The joint table stays collapsed rather than following
-      // the RecordBlock/DeployBlock "open the drawer, open the body" rule,
-      // because unlike those it is not the drawer's only content — and its
-      // collapsed state is what gates the 15 Hz sampler.
+      // grip force, temps AND the per-joint table. Opening the drawer shows all
+      // of it; the joint table no longer hides behind a second collapse of its
+      // own, and Drawers unmounts a closed body outright, which is what gates
+      // the 15 Hz sampler.
       {
         id: "telemetry", label: "full telemetry",
         body: <div className={PANEL}><TelemetryDetail /></div>,

@@ -392,6 +392,12 @@ export class VrSession {
   // headset than on a laptop, where at least the tooltip explains it.
   private armArmed: boolean | undefined = undefined;
   private armActivation = "";
+  // The robot's verbatim activation_detail. Without it the panel says
+  // "preparing..." forever and the operator has no idea a joint is parked past
+  // its limit and needs a physical nudge -- and the arm button is disabled in
+  // that state, so there is nothing to press either. Reported from a headset
+  // 2026-09-04 as arming hanging with no way out. See known issue 30.
+  private armDetail = "";
   private armOnline = true;
   // Truth-lag lock, same contract as ArmControlView: after a poke the panel renders the state
   // the robot is LEAVING until isSettled() says the motion stack caught up. Cleared by the
@@ -450,9 +456,10 @@ export class VrSession {
   // Robot-reported arm state for the in-VR motors panel (the page wires daemon_status here).
   // Both fields are needed, not just `armed`: they disagree in time by design — on disarm
   // `armed:false` arrives while torque is still on — and armPhase.ts is what reconciles them.
-  setArmState(armed: boolean | undefined, activation: string) {
+  setArmState(armed: boolean | undefined, activation: string, detail = "") {
     this.armArmed = armed;
     this.armActivation = activation;
+    this.armDetail = detail;
   }
 
   // Mirror the app's idle "Are you still there?" countdown into the headset. The 2D dialog is
@@ -1551,7 +1558,7 @@ export class VrSession {
     }
 
     const sig = `${this.armArmed}|${this.armActivation}|${this.armOnline}`
-      + `|${this.armPendingTarget}|${hot}`;
+      + `|${this.armPendingTarget}|${hot}|${this.armDetail}`;
     if (sig !== this.armDrawSig) {
       this.armHot = hot;
       this.armDrawSig = sig;
@@ -1630,7 +1637,31 @@ export class VrSession {
     ctx.fillStyle = isStuck(this.armActivation) ? "#fbbf24"
       : showArmed ? "#f87171" : "#cbd5e1";
     ctx.font = "bold 26px system-ui, sans-serif";
-    ctx.fillText(label, W / 2, 74);
+    ctx.fillText(label, W / 2, 64);
+
+    // The robot's own words, wrapped, while it is preparing or blocked. This is
+    // the difference between "preparing..." forever and "the left shoulder
+    // pitch joint is parked past its upper limit -- nudge it toward center".
+    if (this.armDetail && (isPreparing(this.armActivation)
+                           || isStuck(this.armActivation))) {
+      ctx.font = "16px system-ui, sans-serif";
+      ctx.fillStyle = "#94a3b8";
+      const words = this.armDetail.split(/\s+/);
+      const lines: string[] = [];
+      let line = "";
+      for (const word of words) {
+        const next = line ? `${line} ${word}` : word;
+        if (ctx.measureText(next).width > W - 48 && line) {
+          lines.push(line);
+          line = word;
+        } else {
+          line = next;
+        }
+        if (lines.length === 2) break;   // two lines is all the panel has
+      }
+      if (lines.length < 2 && line) lines.push(line);
+      lines.forEach((text, i) => ctx.fillText(text, W / 2, 90 + i * 20));
+    }
 
     const z = this.armZone();
     const cx = px(z.x), cy = py(z.y);

@@ -177,7 +177,8 @@ const Remote = () => {
     // Arm state for the in-VR motors panel. Both fields: they disagree in time by design
     // (armPhase.ts), and `armed: undefined` means "gateway predates remote arming", which the
     // panel renders differently from disarmed.
-    vrRef.current?.setArmState(daemonStatus?.armed, daemonStatus?.activation ?? "");
+    vrRef.current?.setArmState(daemonStatus?.armed, daemonStatus?.activation ?? "",
+      daemonStatus?.activation_detail ?? "");
   }, [daemonStatus]);
 
   // VR is an optional mode on top of the same session: detect headset support, and on any
@@ -250,7 +251,8 @@ const Remote = () => {
     // the SDK de-duplicates daemon_status, so a still robot pushes nothing after the session
     // exists and the in-VR motors panel would stay greyed on `armed: undefined`.
     session.setMotorsOnline(!daemonStatus || daemonStatus.state === "online");
-    session.setArmState(daemonStatus?.armed, daemonStatus?.activation ?? "");
+    session.setArmState(daemonStatus?.armed, daemonStatus?.activation ?? "",
+      daemonStatus?.activation_detail ?? "");
     if (tel) session.setTelemetry(tel);
     try {
       await session.start();

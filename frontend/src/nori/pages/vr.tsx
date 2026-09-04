@@ -74,7 +74,8 @@ export default function VrLanding() {
     // Arm state for the in-VR motors panel. Both fields: they disagree in time by design
     // (armPhase.ts), and `armed: undefined` means "gateway predates remote arming", which the
     // panel renders differently from disarmed.
-    vrRef.current?.setArmState(daemonStatus?.armed, daemonStatus?.activation ?? "");
+    vrRef.current?.setArmState(daemonStatus?.armed, daemonStatus?.activation ?? "",
+      daemonStatus?.activation_detail ?? "");
   }, [daemonStatus]);
   // Mirror the app's idle "Are you still there?" countdown into the headset — the 2D dialog is
   // invisible under an active WebXR session. Controller input feeds the same timer (onActivity
@@ -125,7 +126,8 @@ export default function VrLanding() {
     // in-VR motors panel would sit greyed out forever on `armed: undefined` (which it renders
     // as "this gateway can't arm"). Mirrors the record panel's teleop.record("status") seed.
     session.setMotorsOnline(!daemonStatus || daemonStatus.state === "online");
-    session.setArmState(daemonStatus?.armed, daemonStatus?.activation ?? "");
+    session.setArmState(daemonStatus?.armed, daemonStatus?.activation ?? "",
+      daemonStatus?.activation_detail ?? "");
     if (tel) session.setTelemetry(tel);
     try {
       await session.start();

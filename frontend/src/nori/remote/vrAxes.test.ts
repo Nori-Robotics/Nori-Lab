@@ -65,9 +65,13 @@ describe("VR arm vocabulary — legacy (no descriptor)", () => {
 });
 
 describe("VR arm vocabulary — cartesian (descriptor advertises jog_scale.task)", () => {
-  it("emits the A3 cartesian key set, with no shoulder_pan", () => {
+  it("emits translations plus the WRIST JOINTS, and no task-space rotation", () => {
+    // pitch/yaw were task DOFs and so were IK constraints on every frame of hand
+    // rotation; noriA3-0 spent a whole session refusing them ("task jog holds —
+    // no IK solution ... after 4 relaxed retries"). wrist_pitch/wrist_roll are
+    // real joints and never reach the solver.
     expect(Object.keys(moveBy(FORWARD, A3)).sort())
-      .toEqual(["gripper", "pitch", "wrist_roll", "x", "y", "yaw", "z"]);
+      .toEqual(["gripper", "wrist_pitch", "wrist_roll", "x", "y", "z"]);
   });
 
   it("forward hand motion drives +x (REP-103 forward)", () => {
@@ -82,17 +86,46 @@ describe("VR arm vocabulary — cartesian (descriptor advertises jog_scale.task)
   });
 
   it("hand right drives −y, since REP-103 +y is LEFT", () => {
-    const arm = moveBy(RIGHT, A3);
-    expect(arm.y).toBeLessThan(0);
-    // and it is a TRANSLATION now, not the yaw shoulder_pan used to produce
-    expect(arm.yaw).toBe(0);
+    expect(moveBy(RIGHT, A3).y).toBeLessThan(0);
   });
 
-  it("lateral is no more sensitive than the other translations", () => {
-    // The legacy lateral gain (265) was tuned to drive a ROTATION. Reused for a
-    // translation it would make sideways ~3.4x faster than forward or vertical.
-    const lateral = Math.abs(moveBy(RIGHT, A3).y);
-    expect(lateral).toBeCloseTo(Math.abs(moveBy(UP, A3).z), 6);
+  it("all three translation axes share one scale", () => {
+    expect(Math.abs(moveBy(RIGHT, A3).y)).toBeCloseTo(Math.abs(moveBy(UP, A3).z), 6);
+  });
+});
+
+describe("VR cartesian is POSITION control, scaled by the descriptor", () => {
+  // The whole point: rate = hand metres / (advertised m/s x frame period). The
+  // old code divided by the L2 daemon's 8.1 mm step, so an A3 tracked the hand
+  // at ~26% and any brisk motion pinned the clamp — "moves by how long you hold
+  // it, not how far you moved" (operator report, 2026-09-03).
+  const at = (metres: number, d: unknown = A3) =>
+    moveBy([0, 0, -metres], d).x as number;
+
+  it("twice the hand distance asks for twice the rate", () => {
+    // Deltas kept well under one frame's travel (A3 fixture: 0.08 m/s) so the
+    // proportionality is visible rather than clipped at the rate ceiling.
+    expect(at(0.0004)).toBeCloseTo(2 * at(0.0002), 6);
+  });
+
+  it("a robot advertising twice the speed gets half the rate for the same motion", () => {
+    // This is the anti-staleness property: change task_linear_mps on the robot
+    // and the client follows, instead of silently mis-scaling as it did here.
+    const fast = { jog_scale: { task: { x: 0.16, y: 0.16, z: 0.16 } } };
+    expect(at(0.0002, fast)).toBeCloseTo(at(0.0002) / 2, 6);
+  });
+
+  it("a hand move the robot cannot cover in one frame clamps at full rate", () => {
+    // 5 cm in one frame is far past 0.15 m/s; the rate saturates rather than
+    // wrapping or going negative.
+    expect(at(0.05)).toBe(1);
+  });
+
+  it("falls back to an A3-shaped step when jog_scale carries no task speed", () => {
+    // Never the L2 constants — those describe a different robot.
+    const bare = { jog_scale: { task: {} } };
+    expect(at(0.0002, bare)).toBeGreaterThan(0);
+    expect(at(0.0002, bare)).toBeLessThanOrEqual(1);
   });
 });
 

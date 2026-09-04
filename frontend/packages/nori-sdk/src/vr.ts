@@ -49,6 +49,19 @@ export interface VrFrame {
   controls?: VrControls;
 }
 
+// What one unit of rate buys in ONE FRAME on this robot. The mapper divides the
+// hand's per-frame motion by these, which is what makes the mapping positional:
+// move the hand 5 mm, ask for 5 mm.
+//
+// The divisor is the VR FRAME period, not the robot's 50 Hz tick: rates are
+// level-triggered, so the robot holds the last one until the next frame lands.
+// Using the tick rate would over-command by (frameRate / 50) — 1.4x on a 72 Hz
+// headset, 1.8x on a 90 Hz one.
+export interface Steps {
+  xy: number;        // metres per unit rate per frame
+  wristDeg: number;  // degrees per unit rate per frame (wrist joints)
+}
+
 export interface VrMapResult {
   jog: ExternalJog | null; // null only before any clutch has engaged on either hand
   estop: boolean;          // rising edge of the designated E-STOP button this frame
@@ -74,22 +87,19 @@ const ROLL_SCALE = 2.75;  // VR_WRIST_ROLL_SCALE (reference 1.0 ≈ half-speed t
 const ROLL_LIMIT = 5.0;   // VR_WRIST_ROLL_LIMIT (raised with the scale so it clamps at the
                           // same controller speed as before)
 const PAN_GAIN = 220.0;   // cartesian-x delta -> shoulder_pan deg (200 -> 220, 2026-07-15)
-// --- A3 cartesian task vocabulary (descriptor-gated; see setDescriptor) -----
-// Tool YAW about the base Z axis, from the hand's own yaw increment (rotvec.y —
-// the one wrist component the legacy mapping never consumed). It replaces the
-// tool-turning that lateral hand motion used to provide through shoulder_pan,
-// which in this vocabulary is a translation instead.
-//
-// Same scale/limit class as pitch: both are "tilt the hand" gestures and there
-// is no hardware tuning pass for yaw yet. Expect to touch these two constants
-// and YAW_SIGN after the first headset run.
-const YAW_SCALE = PITCH_SCALE;
-const YAW_LIMIT = PITCH_LIMIT;
-// UNVERIFIED ON HARDWARE. Flex and roll BOTH turned out inverted against the
-// reference (2026-07-02 and 2026-07-16) and were fixed at their single source
-// in wristStepDeg; yaw is the third of the same family and has not had that
-// check. Isolated here so the fix is one character, not a hunt.
-const YAW_SIGN = 1;
+// --- A3 cartesian vocabulary (descriptor-gated; see setDescriptor) ----------
+// Tracking-glitch guard for the cartesian lane, in RAW METRES per frame. The
+// legacy lane guards on its gain-scaled internal units (JUMP_POS); this lane
+// works in metres, so it guards in metres. A controller that teleports on
+// reconnect jumps far more than this; a human hand never does.
+const JUMP_M = 0.25;
+// Fallback per-frame steps for the cartesian lane when the robot advertises no
+// jog_scale (so nothing can be derived). Deliberately NOT the L2 constants:
+// those describe a different robot. These are the A3 commissioning values
+// (0.08 m/s, 0.8 rad/s) at 72 Hz, which is at least the right order.
+const FALLBACK_XY_STEP_M = 0.08 / 72;
+const FALLBACK_WRIST_STEP_DEG = ((0.8 / 72) * 180) / Math.PI;
+
 const JUMP_POS = 50;      // reconnect guard on internal pos units
 const JUMP_ANGLE = 30;    // reconnect guard on wrist angles (deg)
 const THUMB_DEADZONE = 0.15;
@@ -225,14 +235,9 @@ function qRotvecDeg(q: Quat): [number, number, number] {
 // the controller (tilt down moved the wrist up). Roll (2026-07-16): same inversion —
 // −rotvec.z twisted the wrist opposite the controller on both arms (leader arms, which
 // share the daemon's target convention, were correct — so the fix belongs in VR sensing).
-function wristStepDeg(
-  cur: Quat, prev: Quat,
-): { flex: number; roll: number; yaw: number } {
+function wristStepDeg(cur: Quat, prev: Quat): { flex: number; roll: number } {
   const rv = qRotvecDeg(qMul(qConj(prev), cur));
-  // rv[1] is the hand's yaw increment about its own up axis. The legacy
-  // vocabulary had no use for it (tool turning came from lateral motion via
-  // shoulder_pan); the cartesian one does. See YAW_SIGN.
-  return { flex: -rv[0], roll: rv[2], yaw: YAW_SIGN * rv[1] };
+  return { flex: -rv[0], roll: rv[2] };
 }
 
 // Stateful per-hand integrator. One instance per controller; the mapper owns two.
@@ -264,6 +269,7 @@ class HandState {
     tuning: ResolvedTuning,
     gripperPos: number | null,
     cartesian: boolean,
+    steps: Steps,
   ): Record<string, number> | null {
     if (!f) { this.release(); return null; }
 
@@ -316,7 +322,13 @@ class HandState {
     const vrZ = fwdBackM * POS_GAIN_Z;
 
     // Controller reconnect / tracking glitch -> reset baseline, hold this frame.
-    if (Math.abs(vrX) > JUMP_POS || Math.abs(vrY) > JUMP_POS || Math.abs(vrZ) > JUMP_POS) {
+    // Cartesian guards in raw metres (JUMP_M); legacy in its gain-scaled units.
+    const glitch = cartesian
+      ? (Math.abs(latM) > JUMP_M || Math.abs(fwdBackM) > JUMP_M
+         || Math.abs(upM) > JUMP_M)
+      : (Math.abs(vrX) > JUMP_POS || Math.abs(vrY) > JUMP_POS
+         || Math.abs(vrZ) > JUMP_POS);
+    if (glitch) {
       this.prevPos = cur;
       return gripperOnly(f.trigger, tuning, gripperPos, cartesian);
     }
@@ -331,18 +343,20 @@ class HandState {
 
     const arm = zeroArm(cartesian);
     if (cartesian) {
-      // A3 task lane, REP-103 base frame: +x FORWARD, +y LEFT, +z UP. All three
-      // are translations, so all three take the same XY_STEP rate conversion.
+      // POSITION CONTROL, in raw metres. The rate that makes the robot travel
+      // exactly as far as the hand did this frame is `metres / step`, where
+      // step is what one unit of rate buys in one frame — derived from the
+      // robot's advertised jog_scale (see Steps). The gain/POS_SCALE/
+      // DELTA_LIMIT pipeline the legacy branch uses is deliberately skipped:
+      // every one of those constants was calibrated against the L2 daemon's
+      // step, and reusing them here is what made a whole-arm sweep move the
+      // tool a few centimetres (measured ~26% hand tracking, 2026-09-03).
       //
-      // This is the mapping the legacy branch below gets WRONG on an A3, which
-      // is the bug this gate exists to fix. The gateway routes by key name, so
-      // legacy `y` (vertical hand motion) arrived as linear-y and moved the tool
-      // SIDEWAYS, and legacy `shoulder_pan` (lateral hand motion) arrived as a
-      // yaw and ROTATED the tool instead of translating it. Vertical Cartesian
-      // had no key at all — the browser vocabulary predates `z`.
-      arm.x = clamp1(-dz / XY_STEP);   // −backward = forward
-      arm.y = clamp1(-dx / XY_STEP);   // −right    = left
-      arm.z = clamp1(dy / XY_STEP);
+      // REP-103 base frame: +x FORWARD, +y LEFT, +z UP.
+      const sensed = tuning.sensitivity;
+      arm.x = clamp1((-fwdBackM * sensed) / steps.xy);  // −backward = forward
+      arm.y = clamp1((-latM * sensed) / steps.xy);      // −right    = left
+      arm.z = clamp1((upM * sensed) / steps.xy);
     } else {
       // rpi4 reference, sign-for-sign: current_x += -delta_z (Z flipped), current_y += delta_y.
       // (Any genuine motor-direction inversion belongs in calibration/daemon so keyboard and
@@ -363,28 +377,40 @@ class HandState {
     if (f.orientation && this.prevQuat) {
       const step = wristStepDeg(f.orientation as Quat, this.prevQuat);
 
-      // Wrist pitch from the flex step (rpi4 couples wrist_flex to pitch downstream).
-      // Sensitivity multiplies after the glitch guard, same reasoning as translation.
-      let dp = step.flex * PITCH_SCALE;
-      if (Math.abs(dp) > JUMP_ANGLE) dp = 0; // glitch guard
-      else dp = clamp(dp * sens, -PITCH_LIMIT, PITCH_LIMIT);
-      arm.pitch = clamp1(dp / DEG_STEP);
-
-      // Wrist roll step (gentler than pitch — separate scale/limit).
-      let dr = step.roll * ROLL_SCALE;
-      if (Math.abs(dr) > JUMP_ANGLE) dr = 0;
-      else dr = clamp(dr * sens, -ROLL_LIMIT, ROLL_LIMIT);
-      arm.wrist_roll = clamp1(dr / DEG_STEP);
-
-      // Tool yaw about base Z — cartesian vocabulary only. In the legacy one
-      // tool turning came from lateral hand motion (shoulder_pan); here lateral
-      // is a translation, so without this the operator loses yaw entirely.
-      // Same guard/limit pipeline as pitch. Sign is UNVERIFIED (see YAW_SIGN).
       if (cartesian) {
-        let dyaw = step.yaw * YAW_SCALE;
-        if (Math.abs(dyaw) > JUMP_ANGLE) dyaw = 0;
-        else dyaw = clamp(dyaw * sens, -YAW_LIMIT, YAW_LIMIT);
-        arm.yaw = clamp1(dyaw / DEG_STEP);
+        // Hand rotation drives the WRIST JOINTS, not task-space orientation.
+        //
+        // Routing pitch/yaw through task space made every frame of hand
+        // rotation an IK constraint, and the robot spent the whole session
+        // refusing them — measured on noriA3-0 2026-09-03: "task jog holds — no
+        // IK solution for this TCP pose after 4 relaxed retries within 16 deg".
+        // Roll was already a joint and always worked, so the operator was
+        // driving three axes with three different failure modes and could find
+        // no pattern in it. wrist_pitch and wrist_roll are both real A3 joints
+        // (ARM_JOINT_ORDER), so neither touches the solver, and the cursor's
+        // held orientation keeps the carry-a-full-cup property intact.
+        //
+        // 1:1 in degrees before sensitivity — no PITCH_SCALE/ROLL_SCALE. Those
+        // amplified 6.6x/2.75x to compensate for a step constant that was ~10x
+        // too large; with a derived step the amplification is the bug.
+        // Guards run on the RAW increment so sensitivity cannot defeat them.
+        const dp = Math.abs(step.flex) > JUMP_ANGLE ? 0 : step.flex * sens;
+        arm.wrist_pitch = clamp1(dp / steps.wristDeg);
+        const dr = Math.abs(step.roll) > JUMP_ANGLE ? 0 : step.roll * sens;
+        arm.wrist_roll = clamp1(dr / steps.wristDeg);
+      } else {
+        // Wrist pitch from the flex step (rpi4 couples wrist_flex to pitch downstream).
+        // Sensitivity multiplies after the glitch guard, same reasoning as translation.
+        let dp = step.flex * PITCH_SCALE;
+        if (Math.abs(dp) > JUMP_ANGLE) dp = 0; // glitch guard
+        else dp = clamp(dp * sens, -PITCH_LIMIT, PITCH_LIMIT);
+        arm.pitch = clamp1(dp / DEG_STEP);
+
+        // Wrist roll step (gentler than pitch — separate scale/limit).
+        let dr = step.roll * ROLL_SCALE;
+        if (Math.abs(dr) > JUMP_ANGLE) dr = 0;
+        else dr = clamp(dr * sens, -ROLL_LIMIT, ROLL_LIMIT);
+        arm.wrist_roll = clamp1(dr / DEG_STEP);
       }
     }
     this.prevQuat = (f.orientation as Quat | null | undefined) ?? this.prevQuat;
@@ -411,7 +437,7 @@ class HandState {
 // different axis. Hence the descriptor gate rather than a best guess.
 function zeroArm(cartesian: boolean): Record<string, number> {
   return cartesian
-    ? { x: 0, y: 0, z: 0, pitch: 0, yaw: 0, wrist_roll: 0, gripper: 0 }
+    ? { x: 0, y: 0, z: 0, wrist_pitch: 0, wrist_roll: 0, gripper: 0 }
     : { shoulder_pan: 0, x: 0, y: 0, pitch: 0, wrist_roll: 0, gripper: 0 };
 }
 function gripperOnly(
@@ -468,6 +494,11 @@ export class VrJogMapper {
   // expects; true = the A3 cartesian keys. Set from the robot's ack descriptor,
   // never from a model string — see setDescriptor.
   private cartesian = false;
+  private descriptor: RobotDescriptor | null = null;
+  // Smoothed frame period. A single frame's dt is noisy (a dropped frame
+  // doubles it) and it divides straight into the commanded rate, so a raw
+  // value would show up as a velocity spike. EMA over ~half a second.
+  private frameDt = 1 / 72;
 
   // Select the arm vocabulary from the robot's ack descriptor. Gated on the
   // PRESENCE of `jog_scale.task`, exactly like teleop.ts's taskKeymapFor for the
@@ -480,7 +511,41 @@ export class VrJogMapper {
   // does not need one — both are per-frame rate streams with no latched state
   // on this side.
   setDescriptor(descriptor: RobotDescriptor | null | undefined) {
+    this.descriptor = descriptor ?? null;
     this.cartesian = !!descriptor?.jog_scale?.task;
+  }
+
+  // Full-deflection speed of one arm joint in rad/s, recovered from the
+  // descriptor. jog_scale.joints is in norm_mode units/s across a [-100,100]
+  // span, and ranges_si carries the matching SI bounds, so the physical rate is
+  // normPerSec * span / 200. Returns null when either half is missing (an older
+  // gateway, or a robot that never sends ranges_si) — the caller then falls back.
+  private jointRadPerSec(side: string, short: string): number | null {
+    const key = `${side}_arm_${short}.pos`;
+    const normPerSec = this.descriptor?.jog_scale?.joints?.[key];
+    const si = this.descriptor?.ranges_si?.[key];
+    if (typeof normPerSec !== "number" || !si) return null;
+    const span = Math.abs(si[1] - si[0]);
+    if (!(span > 0)) return null;
+    return (normPerSec * span) / 200;
+  }
+
+  // Per-frame steps for one arm. Legacy keeps the L2 daemon's constants
+  // byte-for-byte (they describe that robot correctly); cartesian derives from
+  // whatever THIS robot advertises, so a bench change to task_linear_mps or the
+  // joint rates is picked up without touching the client.
+  private stepsFor(side: string): Steps {
+    if (!this.cartesian) return { xy: XY_STEP, wristDeg: DEG_STEP };
+    const linear = this.descriptor?.jog_scale?.task?.x;
+    const wristRadS = this.jointRadPerSec(side, "wrist_pitch")
+      ?? this.jointRadPerSec(side, "wrist_roll");
+    return {
+      xy: typeof linear === "number" && linear > 0
+        ? linear * this.frameDt : FALLBACK_XY_STEP_M,
+      wristDeg: wristRadS != null && wristRadS > 0
+        ? (wristRadS * this.frameDt * 180) / Math.PI
+        : FALLBACK_WRIST_STEP_DEG,
+    };
   }
 
   // Whether the mapper is currently emitting the cartesian vocabulary. For UI
@@ -525,11 +590,20 @@ export class VrJogMapper {
 
   // Map one VR frame to a jog payload. Left controller -> left arm, right -> right arm;
   // base comes from the right controller; z-lift + E-STOP come from the resolved controls.
-  map(frame: VrFrame): VrMapResult {
+  map(frame: VrFrame, dtSeconds?: number): VrMapResult {
+    // Track the real frame period when the caller supplies it. Clamped to a
+    // sane window so a stalled tab or a first-frame zero cannot divide the
+    // commanded rate into a spike.
+    if (typeof dtSeconds === "number" && dtSeconds > 0) {
+      const dt = clamp(dtSeconds, 1 / 144, 1 / 30);
+      this.frameDt += (dt - this.frameDt) * 0.03; // EMA, ~0.5 s settle
+    }
     const lArm = this.left.step(
-      frame.left, this.controlYaw, this.tuning, this.gripperPos.left, this.cartesian);
+      frame.left, this.controlYaw, this.tuning, this.gripperPos.left,
+      this.cartesian, this.stepsFor("left"));
     const rArm = this.right.step(
-      frame.right, this.controlYaw, this.tuning, this.gripperPos.right, this.cartesian);
+      frame.right, this.controlYaw, this.tuning, this.gripperPos.right,
+      this.cartesian, this.stepsFor("right"));
     const base = baseFromThumb(frame.right);
     const c = frame.controls;
     const leftLift = liftFromControls(c?.leftLiftUp, c?.leftLiftDown);

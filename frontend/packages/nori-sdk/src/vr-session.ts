@@ -845,7 +845,9 @@ export class VrSession {
         // restarts mid-session is picked up without ending the VR session. It is a
         // field read and a boolean coercion — cheap enough for the render loop.
         this.mapper.setDescriptor(this.o.teleop.robotInfo()?.descriptor);
-        const res = this.mapper.map(vrFrame);
+        // dt drives the positional step (see Steps in vr.ts) — the robot holds
+        // the last rate until the next frame, so the frame period IS the scale.
+        const res = this.mapper.map(vrFrame, dt);
         // null = nothing engaged this frame -> hand the stream back to the keyboard.
         this.o.teleop.setExternalJog(res.jog);
         if (res.estop) {

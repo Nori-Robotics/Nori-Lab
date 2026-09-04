@@ -119,6 +119,14 @@ export default function VrLanding() {
       },
     });
     vrRef.current = session;
+    // Seed the session with the robot state we ALREADY have. The effects above only push on
+    // CHANGE, and the SDK de-duplicates daemon_status, so a robot sitting still — disarmed,
+    // activation "inactive", nothing moving — pushes nothing after the session exists and the
+    // in-VR motors panel would sit greyed out forever on `armed: undefined` (which it renders
+    // as "this gateway can't arm"). Mirrors the record panel's teleop.record("status") seed.
+    session.setMotorsOnline(!daemonStatus || daemonStatus.state === "online");
+    session.setArmState(daemonStatus?.armed, daemonStatus?.activation ?? "");
+    if (tel) session.setTelemetry(tel);
     try {
       await session.start();
       setInVr(true);
@@ -126,7 +134,8 @@ export default function VrLanding() {
       appendLog("enter VR failed: " + (e instanceof Error ? e.message : String(e)));
       vrRef.current = null;
     }
-  }, [teleop, appendLog, settings.vrSensitivity, settings.vrGripperOpen, set, noteActivity]);
+  }, [teleop, appendLog, settings.vrSensitivity, settings.vrGripperOpen, set, noteActivity,
+      daemonStatus, tel]);
 
   const handleDisconnect = useCallback(async () => {
     await vrRef.current?.stop();

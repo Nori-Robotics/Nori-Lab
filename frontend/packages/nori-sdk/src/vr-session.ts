@@ -146,9 +146,17 @@ const TUNE_ZONES = [
 // (each panel lookAt()s the head about its OWN centre) swung them across each other at
 // off-axis viewing angles. Every recZones() rect below was scaled by the same 0.8 so the art
 // and the hit-test stay locked; the canvas is unchanged because the aspect is preserved.
-const REC_UP = 0.32;   // metres above the right controller (stacked clear of TUNE_UP=0.17)
 const REC_W = 0.144;
 const REC_H = 0.096;   // 1.5:1, matches the 480x320 canvas
+// Centre-to-centre offset from the TUNE panel, along that panel's local up. This replaced a
+// wrist-axis anchor (REC_UP) on 2026-09-03: anchoring both panels up the forearm and letting
+// each billboard itself produced two independently-swivelling planes, and since each lookAt()s
+// the head about its OWN centre they swung across each other at off-axis viewing angles. Now
+// the panel takes the tune panel's orientation and offsets along that plane, so the pair is
+// one flat stacked surface that can never cross. Derived, not magic: half of each RENDERED
+// height (the meshes carry scale UI_SCALE) plus a margin, so resizing either panel re-spaces
+// the stack automatically.
+const REC_STACK_GAP = ((TUNE_H + REC_H) * UI_SCALE) / 2 + 0.012;
 const REC_POKE_DEPTH = 0.035;   // left tip within this of the panel plane (local m) = a poke
 // Scaled with the panel. Left at 0.012 the Finish/Discard hit rects would meet exactly at
 // x=0 (they sit 0.012 apart now), turning the dead zone between them into a shared edge that
@@ -164,9 +172,11 @@ const REC_RECONCILE_MS = 1200;  // ignore robot state this long after a local po
 // from the Remote page does NOT carry over — the gateway is one session per process
 // (gateway_node._on_session_closed exits for a clean respawn), so closing that session kills
 // its arming-keeper child and the arbiter's liveness release de-torques the arms.
-const ARM_UP = 0.32;   // metres above the LEFT controller (mirrors REC_UP; card sits at 0.17)
 const ARM_W = 0.144;
 const ARM_H = 0.072;   // 2:1, matches the 480x240 canvas
+// Centre-to-centre offset from the CONTROLS CARD, along that card's local up — the left-wrist
+// mirror of REC_STACK_GAP, and coplanar with it for the same reason.
+const ARM_STACK_GAP = ((CARD_H + ARM_H) * UI_SCALE) / 2 + 0.012;
 const ARM_POKE_DEPTH = 0.035;   // right tip within this of the panel plane (local m) = a poke
 const ARM_POKE_MARGIN = 0.010;
 const ARM_REARM_DEPTH = 0.07;   // tip must pull this far off before it can fire again
@@ -1318,13 +1328,20 @@ export class VrSession {
 
     const rp = f.right?.position;
     const rq = f.right?.orientation;
-    if (!rp) {
+    const below = this.tuneBtn; // this panel stacks ON the tune panel, coplanar with it
+    if (!rp || !below) {
       this.recShown = false; // right hand not tracked: fade out (mirrors the tune panel)
     } else {
-      const off = new THREE.Vector3(0, REC_UP, 0);
       const q = rq ? new THREE.Quaternion(rq[0], rq[1], rq[2], rq[3]) : null;
-      if (q) off.applyQuaternion(q);
-      btn.position.set(rp[0] + off.x, rp[1] + off.y, rp[2] + off.z);
+
+      // Coplanar stack (see REC_STACK_GAP): take the tune panel's orientation and offset
+      // along ITS local up, rather than billboarding separately off the wrist axis.
+      // updateTunePanel runs earlier in the frame loop, so this reads a transform already
+      // updated this frame — keep that order if the calls are ever rearranged.
+      below.updateMatrixWorld();
+      btn.quaternion.copy(below.quaternion);
+      const stackUp = new THREE.Vector3(0, 1, 0).applyQuaternion(below.quaternion);
+      btn.position.copy(below.position).addScaledVector(stackUp, REC_STACK_GAP);
 
       const head = new THREE.Vector3();
       this.renderer?.xr.getCamera().getWorldPosition(head);
@@ -1340,7 +1357,7 @@ export class VrSession {
         if (!this.recShown && facing > CARD_SHOW_DOT) this.recShown = true;
         else if (this.recShown && facing < CARD_HIDE_DOT) this.recShown = false;
       }
-      btn.lookAt(head); // billboard, same as the other hand-anchored UI
+      // No lookAt here — orientation comes from the panel below, which is the whole point.
     }
 
     const target = this.recShown ? 1 : 0;
@@ -1425,13 +1442,18 @@ export class VrSession {
 
     const lp = f.left?.position;
     const lq = f.left?.orientation;
-    if (!lp) {
+    const below = this.card; // this panel stacks ON the controls card, coplanar with it
+    if (!lp || !below) {
       this.armShown = false; // left hand not tracked: fade out
     } else {
-      const off = new THREE.Vector3(0, ARM_UP, 0);
       const q = lq ? new THREE.Quaternion(lq[0], lq[1], lq[2], lq[3]) : null;
-      if (q) off.applyQuaternion(q);
-      btn.position.set(lp[0] + off.x, lp[1] + off.y, lp[2] + off.z);
+
+      // Coplanar stack (see ARM_STACK_GAP) — the left-wrist mirror of the record panel.
+      // updateControlsCard runs earlier in the frame loop, so the card transform is fresh.
+      below.updateMatrixWorld();
+      btn.quaternion.copy(below.quaternion);
+      const stackUp = new THREE.Vector3(0, 1, 0).applyQuaternion(below.quaternion);
+      btn.position.copy(below.position).addScaledVector(stackUp, ARM_STACK_GAP);
 
       const head = new THREE.Vector3();
       this.renderer?.xr.getCamera().getWorldPosition(head);
@@ -1448,7 +1470,7 @@ export class VrSession {
         if (!this.armShown && facing > CARD_SHOW_DOT) this.armShown = true;
         else if (this.armShown && facing < CARD_HIDE_DOT) this.armShown = false;
       }
-      btn.lookAt(head); // billboard, same as the other hand-anchored UI
+      // No lookAt — orientation comes from the controls card below.
     }
 
     const target = this.armShown ? 1 : 0;

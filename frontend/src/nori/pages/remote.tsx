@@ -246,6 +246,12 @@ const Remote = () => {
       },
     });
     vrRef.current = session;
+    // Seed with the robot state we already have — the effects above only push on CHANGE, and
+    // the SDK de-duplicates daemon_status, so a still robot pushes nothing after the session
+    // exists and the in-VR motors panel would stay greyed on `armed: undefined`.
+    session.setMotorsOnline(!daemonStatus || daemonStatus.state === "online");
+    session.setArmState(daemonStatus?.armed, daemonStatus?.activation ?? "");
+    if (tel) session.setTelemetry(tel);
     try {
       await session.start();
       setInVr(true);

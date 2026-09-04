@@ -387,22 +387,25 @@ class HandState {
       const step = wristStepDeg(f.orientation as Quat, this.prevQuat);
 
       if (cartesian) {
-        // REVERTED 2026-09-03. Hand rotation briefly drove the wrist JOINTS
-        // (wrist_pitch/wrist_roll) to keep it out of the IK constraint. On
-        // hardware that was worse, not better: the joint's sign convention is
-        // not the task axis's, so pitch came out inverted, and the wrist target
-        // was still a RATE fighting a cursor orientation captured at clutch
-        // engage. Back on the task lane, which is at least predictable.
+        // NO TASK-SPACE ROTATION (2026-09-04). pitch/yaw are task DOFs, so every
+        // frame of hand rotation became an IK constraint on the cursor -- and
+        // the solver spent a whole session refusing them. Measured in one
+        // 60-minute session on noriA3-0: 151 refusal events (87 "no IK
+        // solution", 64 discarded solutions, 59 orientation relaxations).
         //
-        // The real fix is neither of these — it is absolute wrist targets with
-        // position-only IK (the SO-101 property: orientation computed, never
-        // solved). Until then this stays on the task lane with a DERIVED step,
-        // so at least the scale is this robot's rather than the L2 daemon's.
-        const dp = Math.abs(step.flex) > JUMP_ANGLE ? 0 : step.flex * sens;
-        arm.pitch = clamp1(dp / steps.taskDeg);
-        const dy = Math.abs(step.yaw) > JUMP_ANGLE ? 0 : step.yaw * sens;
-        arm.yaw = clamp1(dy / steps.taskDeg);
-        // Roll is a real joint on this arm, so it keeps the joint-lane step.
+        // That is why the operator reported straight X/Y/Z moves working while
+        // SWEPT motion did not: a straight reach with a steady hand holds the
+        // orientation constant, so only position is asked for and it solves. A
+        // sweep rotates the hand as it travels, which adds pitch/yaw, which
+        // makes the cursor demand an orientation the arm cannot reach -- and
+        // the WHOLE command is refused, translation included. One poisoned
+        // channel stalls the other two.
+        //
+        // So until the absolute-wrist lane lands, hand rotation drives only
+        // wrist_roll, which is a real A3 joint and never touches the solver.
+        // That costs pitch and yaw control and is a deliberate, temporary
+        // trade: partial wrist control that WORKS beats full wrist control
+        // that refuses and takes translation down with it.
         const dr = Math.abs(step.roll) > JUMP_ANGLE ? 0 : step.roll * sens;
         arm.wrist_roll = clamp1(dr / steps.wristDeg);
       } else {
@@ -444,7 +447,7 @@ class HandState {
 // different axis. Hence the descriptor gate rather than a best guess.
 function zeroArm(cartesian: boolean): Record<string, number> {
   return cartesian
-    ? { x: 0, y: 0, z: 0, pitch: 0, yaw: 0, wrist_roll: 0, gripper: 0 }
+    ? { x: 0, y: 0, z: 0, wrist_roll: 0, gripper: 0 }
     : { shoulder_pan: 0, x: 0, y: 0, pitch: 0, wrist_roll: 0, gripper: 0 };
 }
 function gripperOnly(

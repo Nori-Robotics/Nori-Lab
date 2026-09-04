@@ -101,6 +101,9 @@ const JUMP_M = 0.25;
 const FALLBACK_XY_STEP_M = 0.08 / 72;
 const FALLBACK_WRIST_STEP_DEG = ((0.8 / 72) * 180) / Math.PI;
 const FALLBACK_TASK_STEP_DEG = ((0.25 / 72) * 180) / Math.PI;
+// +forearm_yaw spins the tool NEGATIVELY (URDF measurement in the cartesian
+// branch below), so the hand's twist is negated. One character to flip.
+const FOREARM_YAW_SIGN = -1;
 // UNVERIFIED ON HARDWARE. Flex and roll BOTH turned out inverted against the
 // reference (2026-07-02, 2026-07-16) and were fixed at their single source in
 // wristStepDeg; yaw is the third of that family and has never had the check.
@@ -401,13 +404,32 @@ class HandState {
         // the WHOLE command is refused, translation included. One poisoned
         // channel stalls the other two.
         //
-        // So until the absolute-wrist lane lands, hand rotation drives only
-        // wrist_roll, which is a real A3 joint and never touches the solver.
-        // That costs pitch and yaw control and is a deliberate, temporary
-        // trade: partial wrist control that WORKS beats full wrist control
-        // that refuses and takes translation down with it.
+        // So until the absolute-wrist lane lands, hand rotation drives ONE
+        // joint. That costs pitch and yaw control and is a deliberate,
+        // temporary trade: partial wrist control that WORKS beats full wrist
+        // control that refuses and takes translation down with it.
+        //
+        // That joint is forearm_yaw, NOT wrist_roll (2026-09-04). Measured from
+        // the URDF, per +0.3 rad of each joint, as rotation about the TOOL's
+        // own long axis:
+        //     forearm_yaw   -0.273 rad   <- 91% efficient: this is the roll
+        //     wrist_pitch   +0.024 rad
+        //     wrist_roll    -0.006 rad   <- does not spin the tool at all
+        // Despite the name, wrist_roll TILTS the gripper: the tool extends
+        // ~112 mm along that joint's -Z while the joint turns about X, so it
+        // swings the tool rather than spinning it. Mapping twist to it was
+        // reported from a headset as "twisting the controller sometimes caused
+        // tilting" -- which is exactly what the geometry says it would do.
+        //
+        // forearm_yaw is also the anatomically right answer: twisting a human
+        // hand is forearm pronation, not a wrist joint. And it moves the wrist
+        // point by exactly 0 m, so it never disturbs the position solve.
+        //
+        // Sign: +forearm_yaw gives NEGATIVE tool spin (same measurement), so
+        // the hand's twist is negated. Evidence rather than a guess, but the
+        // first hardware run is still what confirms it.
         const dr = Math.abs(step.roll) > JUMP_ANGLE ? 0 : step.roll * sens;
-        arm.wrist_roll = clamp1(dr / steps.wristDeg);
+        arm.forearm_yaw = clamp1(FOREARM_YAW_SIGN * dr / steps.wristDeg);
       } else {
         // Wrist pitch from the flex step (rpi4 couples wrist_flex to pitch downstream).
         // Sensitivity multiplies after the glitch guard, same reasoning as translation.
@@ -447,7 +469,7 @@ class HandState {
 // different axis. Hence the descriptor gate rather than a best guess.
 function zeroArm(cartesian: boolean): Record<string, number> {
   return cartesian
-    ? { x: 0, y: 0, z: 0, wrist_roll: 0, gripper: 0 }
+    ? { x: 0, y: 0, z: 0, forearm_yaw: 0, gripper: 0 }
     : { shoulder_pan: 0, x: 0, y: 0, pitch: 0, wrist_roll: 0, gripper: 0 };
 }
 function gripperOnly(

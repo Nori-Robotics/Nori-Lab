@@ -65,12 +65,12 @@ describe("VR arm vocabulary — legacy (no descriptor)", () => {
 });
 
 describe("VR arm vocabulary — cartesian (descriptor advertises jog_scale.task)", () => {
-  it("emits translations and the roll joint, and NO task-space rotation", () => {
+  it("emits translations and forearm_yaw, and NO task-space rotation", () => {
     // pitch/yaw are IK constraints and were refused 151 times in one session
     // on noriA3-0 (2026-09-04), taking translation down with them. Until the
     // absolute-wrist lane lands, rotation is roll-only — see vr.ts.
     expect(Object.keys(moveBy(FORWARD, A3)).sort())
-      .toEqual(["gripper", "wrist_roll", "x", "y", "z"]);
+      .toEqual(["forearm_yaw", "gripper", "x", "y", "z"]);
   });
 
   it("forward hand motion drives +x (REP-103 forward)", () => {

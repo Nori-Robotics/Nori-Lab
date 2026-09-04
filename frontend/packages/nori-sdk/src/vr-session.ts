@@ -30,7 +30,7 @@ import * as THREE from "three";
 import { VrJogMapper, resolveTuning, type VrControllerFrame, type VrFrame, type VrTuning } from "./vr";
 import { buildRobotModel, type ArmHighlight, type RobotModel } from "./robot-model";
 import type { RemoteTeleop, TelemetryView } from "./teleop";
-import { CURRENT_FULL_LSB } from "./teleop";
+import { CURRENT_FULL_LSB, l3JointShorts } from "./teleop";
 // The ONE arm/disarm sequencing implementation, shared with the 2D ArmControl so the two
 // renders can never disagree about live torque.
 import { isPreparing, isStuck, isSettled, motorsLabel } from "./armPhase";
@@ -538,12 +538,36 @@ export class VrSession {
     // is off: a 3-unit floor plane looks right in the desktop card but would punch through the
     // panel cluster here. Lit by the directional light added below (the hemisphere light alone
     // renders the MeshStandardMaterial links flat and shapeless).
-    const robot = buildRobotModel({ showGrid: false });
-    robot.root.position.set(ROBOT_X + CLUSTER_X, ROBOT_Y, ROBOT_Z);
-    robot.root.rotation.set(0, ROBOT_YAW, 0);
-    robot.root.scale.setScalar(ROBOT_SCALE);
-    group.add(robot.root);
-    this.robot = robot;
+    //
+    // SHOWN ONLY FOR THE L-SERIES (2026-09-03). buildRobotModel is a hand-built
+    // SO101 chain — six named joints (shoulder_pan / shoulder_lift / elbow_flex
+    // / wrist_flex ...) with the daemon's zero-offsets baked into its angle
+    // convention. An A-series arm is a different 7-DOF chain (shoulder_pitch,
+    // shoulder_roll, bicep_yaw, elbow_pitch, forearm_yaw, wrist_pitch,
+    // wrist_roll) and has no shoulder_pan at all, so every key this model reads
+    // is absent from A3 telemetry. jointDeg() answers 0 for a missing key, which
+    // means it would render a motionless L2 robot in a rest pose it is not in —
+    // a confident lie about the arm you are steering, in a headset where you
+    // cannot see the real one. Nothing is better than that.
+    //
+    // Gated on l3JointShorts, the same predicate the keyboard uses to pick its
+    // per-motor keymap: null = L2 vocabulary or no descriptor yet (keep the
+    // legacy behaviour untouched), non-null = a chain this model cannot express.
+    const known = this.o.teleop.robotInfo()?.descriptor;
+    const nonL2 = l3JointShorts(known, "left") ?? l3JointShorts(known, "right");
+    if (nonL2) {
+      this.o.onLog(
+        "3D robot view: hidden — this robot's arms are "
+        + `${nonL2.length}-DOF (${nonL2.slice(0, 3).join(", ")}...) and the `
+        + "schematic only models the L-series chain");
+    } else {
+      const robot = buildRobotModel({ showGrid: false });
+      robot.root.position.set(ROBOT_X + CLUSTER_X, ROBOT_Y, ROBOT_Z);
+      robot.root.rotation.set(0, ROBOT_YAW, 0);
+      robot.root.scale.setScalar(ROBOT_SCALE);
+      group.add(robot.root);
+      this.robot = robot;
+    }
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
     keyLight.position.set(2, 4, 3); // same key as the desktop card, so the model shades alike
     scene.add(keyLight);

@@ -58,8 +58,9 @@ export interface VrFrame {
 // Using the tick rate would over-command by (frameRate / 50) — 1.4x on a 72 Hz
 // headset, 1.8x on a 90 Hz one.
 export interface Steps {
-  xy: number;        // metres per unit rate per frame
-  wristDeg: number;  // degrees per unit rate per frame (wrist joints)
+  xy: number;        // metres per unit rate per frame (task lane)
+  taskDeg: number;   // degrees per unit rate per frame (task pitch/yaw)
+  wristDeg: number;  // degrees per unit rate per frame (wrist_roll joint)
 }
 
 export interface VrMapResult {
@@ -99,6 +100,12 @@ const JUMP_M = 0.25;
 // (0.08 m/s, 0.8 rad/s) at 72 Hz, which is at least the right order.
 const FALLBACK_XY_STEP_M = 0.08 / 72;
 const FALLBACK_WRIST_STEP_DEG = ((0.8 / 72) * 180) / Math.PI;
+const FALLBACK_TASK_STEP_DEG = ((0.25 / 72) * 180) / Math.PI;
+// UNVERIFIED ON HARDWARE. Flex and roll BOTH turned out inverted against the
+// reference (2026-07-02, 2026-07-16) and were fixed at their single source in
+// wristStepDeg; yaw is the third of that family and has never had the check.
+// Isolated here so the fix is one character.
+const YAW_SIGN = 1;
 
 const JUMP_POS = 50;      // reconnect guard on internal pos units
 const JUMP_ANGLE = 30;    // reconnect guard on wrist angles (deg)
@@ -235,9 +242,11 @@ function qRotvecDeg(q: Quat): [number, number, number] {
 // the controller (tilt down moved the wrist up). Roll (2026-07-16): same inversion —
 // −rotvec.z twisted the wrist opposite the controller on both arms (leader arms, which
 // share the daemon's target convention, were correct — so the fix belongs in VR sensing).
-function wristStepDeg(cur: Quat, prev: Quat): { flex: number; roll: number } {
+function wristStepDeg(
+  cur: Quat, prev: Quat,
+): { flex: number; roll: number; yaw: number } {
   const rv = qRotvecDeg(qMul(qConj(prev), cur));
-  return { flex: -rv[0], roll: rv[2] };
+  return { flex: -rv[0], roll: rv[2], yaw: YAW_SIGN * rv[1] };
 }
 
 // Stateful per-hand integrator. One instance per controller; the mapper owns two.
@@ -378,24 +387,22 @@ class HandState {
       const step = wristStepDeg(f.orientation as Quat, this.prevQuat);
 
       if (cartesian) {
-        // Hand rotation drives the WRIST JOINTS, not task-space orientation.
+        // REVERTED 2026-09-03. Hand rotation briefly drove the wrist JOINTS
+        // (wrist_pitch/wrist_roll) to keep it out of the IK constraint. On
+        // hardware that was worse, not better: the joint's sign convention is
+        // not the task axis's, so pitch came out inverted, and the wrist target
+        // was still a RATE fighting a cursor orientation captured at clutch
+        // engage. Back on the task lane, which is at least predictable.
         //
-        // Routing pitch/yaw through task space made every frame of hand
-        // rotation an IK constraint, and the robot spent the whole session
-        // refusing them — measured on noriA3-0 2026-09-03: "task jog holds — no
-        // IK solution for this TCP pose after 4 relaxed retries within 16 deg".
-        // Roll was already a joint and always worked, so the operator was
-        // driving three axes with three different failure modes and could find
-        // no pattern in it. wrist_pitch and wrist_roll are both real A3 joints
-        // (ARM_JOINT_ORDER), so neither touches the solver, and the cursor's
-        // held orientation keeps the carry-a-full-cup property intact.
-        //
-        // 1:1 in degrees before sensitivity — no PITCH_SCALE/ROLL_SCALE. Those
-        // amplified 6.6x/2.75x to compensate for a step constant that was ~10x
-        // too large; with a derived step the amplification is the bug.
-        // Guards run on the RAW increment so sensitivity cannot defeat them.
+        // The real fix is neither of these — it is absolute wrist targets with
+        // position-only IK (the SO-101 property: orientation computed, never
+        // solved). Until then this stays on the task lane with a DERIVED step,
+        // so at least the scale is this robot's rather than the L2 daemon's.
         const dp = Math.abs(step.flex) > JUMP_ANGLE ? 0 : step.flex * sens;
-        arm.wrist_pitch = clamp1(dp / steps.wristDeg);
+        arm.pitch = clamp1(dp / steps.taskDeg);
+        const dy = Math.abs(step.yaw) > JUMP_ANGLE ? 0 : step.yaw * sens;
+        arm.yaw = clamp1(dy / steps.taskDeg);
+        // Roll is a real joint on this arm, so it keeps the joint-lane step.
         const dr = Math.abs(step.roll) > JUMP_ANGLE ? 0 : step.roll * sens;
         arm.wrist_roll = clamp1(dr / steps.wristDeg);
       } else {
@@ -437,7 +444,7 @@ class HandState {
 // different axis. Hence the descriptor gate rather than a best guess.
 function zeroArm(cartesian: boolean): Record<string, number> {
   return cartesian
-    ? { x: 0, y: 0, z: 0, wrist_pitch: 0, wrist_roll: 0, gripper: 0 }
+    ? { x: 0, y: 0, z: 0, pitch: 0, yaw: 0, wrist_roll: 0, gripper: 0 }
     : { shoulder_pan: 0, x: 0, y: 0, pitch: 0, wrist_roll: 0, gripper: 0 };
 }
 function gripperOnly(
@@ -535,13 +542,19 @@ export class VrJogMapper {
   // whatever THIS robot advertises, so a bench change to task_linear_mps or the
   // joint rates is picked up without touching the client.
   private stepsFor(side: string): Steps {
-    if (!this.cartesian) return { xy: XY_STEP, wristDeg: DEG_STEP };
+    if (!this.cartesian) {
+      return { xy: XY_STEP, taskDeg: DEG_STEP, wristDeg: DEG_STEP };
+    }
     const linear = this.descriptor?.jog_scale?.task?.x;
     const wristRadS = this.jointRadPerSec(side, "wrist_pitch")
       ?? this.jointRadPerSec(side, "wrist_roll");
+    const taskRadS = this.descriptor?.jog_scale?.task?.pitch;
     return {
       xy: typeof linear === "number" && linear > 0
         ? linear * this.frameDt : FALLBACK_XY_STEP_M,
+      taskDeg: typeof taskRadS === "number" && taskRadS > 0
+        ? (taskRadS * this.frameDt * 180) / Math.PI
+        : FALLBACK_TASK_STEP_DEG,
       wristDeg: wristRadS != null && wristRadS > 0
         ? (wristRadS * this.frameDt * 180) / Math.PI
         : FALLBACK_WRIST_STEP_DEG,

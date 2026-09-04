@@ -108,7 +108,18 @@ const clamp1 = (v: number) => clamp(v, -1, 1);
 // unchanged (only saturating, fast hand moves are limited). Z-lift stays full (discrete);
 // the gripper has its own per-direction rates below.
 const VR_MAX_RATE = 0.7;
-const capRate = (v: number) => clamp(v, -VR_MAX_RATE, VR_MAX_RATE);
+// CARTESIAN vocabulary only (2026-09-03). The 0.7 cap predates the robot advertising its own
+// full-deflection speed: it existed to make VR feel controlled when the only speed control
+// WAS the client. An A3 gateway publishes jog_scale.task and takes task_linear_mps /
+// task_angular_rad_s from its config, so the robot owns that decision — a client silently
+// withholding 30% makes the advertised number a lie and hides every robot-side tuning change
+// behind a constant nobody would think to look at. Slow an A3 down on the ROBOT.
+//
+// Deliberately NOT applied to the legacy path: the frozen L-series fleet has no such config,
+// so raising its cap would make every deployed L2 headset 43% faster with no way to tune it
+// back. vrL2Golden.test.ts caught exactly that when this was first written as one constant.
+const VR_MAX_RATE_CARTESIAN = 1.0;
+const capRate = (v: number, max: number = VR_MAX_RATE) => clamp(v, -max, max);
 
 // Gripper rates (reworked 2026-07-16 after a hardware check). Binary trigger>0.5; through
 // the daemon's jog accumulator, + drives toward the reference's 45° target (jaws OPEN) and
@@ -126,6 +137,11 @@ const GRIPPER_CLOSE_FACTOR = 1.5; // close speed = open speed × this, whatever 
 // where overshoot loses the object) is the slow end. Position unknown (no telemetry
 // yet) -> no taper. Close is NOT ramped.
 const GRIPPER_RAMP_FLOOR = 0.3;
+// CARTESIAN only. At 0.3 a fully-open jaw crawled, and because the taper applies to OPENING
+// only, opening ran ~3x slower than closing exactly where the operator was waiting on it.
+// The taper still exists — the fine end of the travel is still the slow end, which is the
+// point — it is just no longer the dominant term. Legacy keeps 0.3 (frozen fleet).
+const GRIPPER_RAMP_FLOOR_CARTESIAN = 0.5;
 
 // User-tunable sensitivity (the web UI exposes these as sliders — VrJogMapper.setTuning).
 // Everything here scales the hardware-tuned constants above; the defaults reproduce them
@@ -156,10 +172,13 @@ export function resolveTuning(t?: VrTuning): Required<VrTuning> {
 // Trigger held = + = open (tunable, ramped by how open the jaws already are); released =
 // − = close (1.5× the tuned open rate, capped at full, NOT ramped). gripperPos is the
 // telemetry gripper.pos [0,100] for this hand's arm, or null when unknown.
-const gripperRate = (trigger: number, t: ResolvedTuning, gripperPos: number | null) => {
+const gripperRate = (
+  trigger: number, t: ResolvedTuning, gripperPos: number | null, cartesian: boolean,
+) => {
   if (trigger <= 0.5) return -Math.min(1, t.gripperOpenRate * GRIPPER_CLOSE_FACTOR);
   const openFrac = gripperPos == null ? 0 : clamp(gripperPos, 0, 100) / 100;
-  return t.gripperOpenRate * (1 - (1 - GRIPPER_RAMP_FLOOR) * openFrac);
+  const floor = cartesian ? GRIPPER_RAMP_FLOOR_CARTESIAN : GRIPPER_RAMP_FLOOR;
+  return t.gripperOpenRate * (1 - (1 - floor) * openFrac);
 };
 
 // ---- wrist rates: per-frame BODY-FRAME angular increments -------------------
@@ -372,11 +391,14 @@ class HandState {
 
     // Cap top speed on the continuous motion DOFs (the gripper has its own per-direction
     // rates above).
-    for (const k of Object.keys(arm)) if (k !== "gripper") arm[k] = capRate(arm[k]);
+    // Cap the continuous DOFs. The cartesian vocabulary lets the robot's configured speed
+    // through at full deflection; the legacy one keeps the client-side 0.7 (see VR_MAX_RATE).
+    const cap = cartesian ? VR_MAX_RATE_CARTESIAN : VR_MAX_RATE;
+    for (const k of Object.keys(arm)) if (k !== "gripper") arm[k] = capRate(arm[k], cap);
 
     // Binary gripper trigger (reference: 45 if trigger>0.5 else 0). Through the daemon's
     // jog accumulator/clamp, + drives toward the 45° target (jaws open), − toward 0 (closed).
-    arm.gripper = gripperRate(f.trigger, tuning, gripperPos);
+    arm.gripper = gripperRate(f.trigger, tuning, gripperPos, cartesian);
 
     return arm;
   }
@@ -397,7 +419,7 @@ function gripperOnly(
   cartesian: boolean,
 ): Record<string, number> {
   const a = zeroArm(cartesian);
-  a.gripper = gripperRate(trigger, tuning, gripperPos); // binary trigger, ramped rates
+  a.gripper = gripperRate(trigger, tuning, gripperPos, cartesian); // binary, ramped
   return a;
 }
 

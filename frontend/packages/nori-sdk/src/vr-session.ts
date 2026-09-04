@@ -291,6 +291,7 @@ export class VrSession {
   // The C6 robot schematic — a real articulated three.js model (not a texture), re-posed from
   // telemetry every frame. Same builder the desktop card mounts, so the two can't drift.
   private robot: RobotModel | null = null;
+  private probeLoggedAt = 0;   // throttle for the wrist-axis probe
   // Operator-controlled turntable yaw of that model (left thumbstick X), radians. Survives
   // recenter: it's relative to the panel group, so re-aiming the cluster doesn't spin the robot.
   private robotYaw = ROBOT_YAW;
@@ -872,6 +873,27 @@ export class VrSession {
         // dt drives the positional step (see Steps in vr.ts) — the robot holds
         // the last rate until the next frame, so the frame period IS the scale.
         const res = this.mapper.map(vrFrame, dt);
+        // Axis probe (2026-09-04): report the accumulated rotation about each
+        // controller axis roughly twice a second while a clutch is held. Which
+        // grip-space axis carries the handle's TWIST has been guessed wrong
+        // twice, so it gets measured: squeeze, make one deliberate gesture,
+        // read which component moved. Costs one log line while clutched and
+        // never touches what is commanded.
+        if (nowMs - this.probeLoggedAt > 500) {
+          const eng = this.mapper.engagedArms();
+          if (eng.left || eng.right) {
+            const pr = this.mapper.wristProbe();
+            const fmt = (v: [number, number, number]) =>
+              `x${v[0] >= 0 ? "+" : ""}${v[0].toFixed(0)} ` +
+              `y${v[1] >= 0 ? "+" : ""}${v[1].toFixed(0)} ` +
+              `z${v[2] >= 0 ? "+" : ""}${v[2].toFixed(0)}`;
+            this.probeLoggedAt = nowMs;
+            this.o.onLog(
+              "wrist axes (deg since clutch)"
+              + (eng.left ? `  L: ${fmt(pr.left)}` : "")
+              + (eng.right ? `  R: ${fmt(pr.right)}` : ""));
+          }
+        }
         // null = nothing engaged this frame -> hand the stream back to the keyboard.
         this.o.teleop.setExternalJog(res.jog);
         if (res.estop) {

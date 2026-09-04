@@ -247,9 +247,12 @@ function qRotvecDeg(q: Quat): [number, number, number] {
 // share the daemon's target convention, were correct — so the fix belongs in VR sensing).
 function wristStepDeg(
   cur: Quat, prev: Quat,
-): { flex: number; roll: number; yaw: number } {
+): { flex: number; roll: number; yaw: number; rv: [number, number, number] } {
   const rv = qRotvecDeg(qMul(qConj(prev), cur));
-  return { flex: -rv[0], roll: rv[2], yaw: YAW_SIGN * rv[1] };
+  // `rv` is carried through raw for the axis diagnostic (VrJogMapper.wristProbe).
+  // Which grip-space axis is the handle's twist has now been guessed wrong
+  // twice, so the mapping is being MEASURED rather than reasoned about.
+  return { flex: -rv[0], roll: rv[2], yaw: YAW_SIGN * rv[1], rv };
 }
 
 // Stateful per-hand integrator. One instance per controller; the mapper owns two.
@@ -257,6 +260,9 @@ class HandState {
   private prevPos: [number, number, number] | null = null;
   private prevQuat: Quat | null = null; // last frame's orientation (body-frame increments)
   private engaged = false; // clutch latched on
+  // Accumulated raw rotation about each of the controller's OWN axes since the
+  // clutch engaged, degrees. Diagnostic only — never drives the robot.
+  probe: [number, number, number] = [0, 0, 0];
 
   // Is this hand's clutch latched right now? (Post-hysteresis — the same state that decides
   // whether step() contributes jog, so a UI reading this shows exactly what's driving.)
@@ -270,6 +276,7 @@ class HandState {
     this.engaged = false;
     this.prevPos = null;
     this.prevQuat = null;
+    this.probe = [0, 0, 0];   // each squeeze measures one gesture
   }
 
   // Returns the arm jog rates for this hand, or null when the clutch is released
@@ -388,6 +395,12 @@ class HandState {
     // handle_vr_input, fed body-frame increments instead of world-frame angle diffs.
     if (f.orientation && this.prevQuat) {
       const step = wristStepDeg(f.orientation as Quat, this.prevQuat);
+      // Integrate the RAW body-frame increment while clutched. Per-frame values
+      // are far too small and noisy to read; the accumulated total over a
+      // deliberate gesture is what identifies the axis.
+      this.probe[0] += step.rv[0];
+      this.probe[1] += step.rv[1];
+      this.probe[2] += step.rv[2];
 
       if (cartesian) {
         // NO TASK-SPACE ROTATION (2026-09-04). pitch/yaw are task DOFs, so every
@@ -610,6 +623,14 @@ export class VrJogMapper {
   // each frame so the opening ramp knows how far open each arm's jaws already are.
   setGripperPos(left: number | null, right: number | null) {
     this.gripperPos = { left, right };
+  }
+
+  // Accumulated rotation about each controller axis since the clutch engaged,
+  // in degrees, per hand: [x, y, z] of the grip frame. Squeeze, make ONE
+  // deliberate gesture, and read which component moved — that identifies which
+  // axis is the handle twist without anyone having to guess. Resets on release.
+  wristProbe(): { left: [number, number, number]; right: [number, number, number] } {
+    return { left: this.left.probe, right: this.right.probe };
   }
 
   // Which arms are under active clutch this frame. VR is dual-arm (each controller drives its

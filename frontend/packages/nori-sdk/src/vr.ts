@@ -263,6 +263,11 @@ class HandState {
   // Accumulated raw rotation about each of the controller's OWN axes since the
   // clutch engaged, degrees. Diagnostic only — never drives the robot.
   probe: [number, number, number] = [0, 0, 0];
+  // Accumulated hand TRANSLATION since the clutch engaged, metres, in the
+  // CONTROL frame and already sign-corrected to read as [forward, left, up] —
+  // the same words the robot's axes use, so the two halves of the diagnostic
+  // can be compared without anyone doing sign arithmetic in their head.
+  posProbe: [number, number, number] = [0, 0, 0];
 
   // Is this hand's clutch latched right now? (Post-hysteresis — the same state that decides
   // whether step() contributes jog, so a UI reading this shows exactly what's driving.)
@@ -276,7 +281,8 @@ class HandState {
     this.engaged = false;
     this.prevPos = null;
     this.prevQuat = null;
-    this.probe = [0, 0, 0];   // each squeeze measures one gesture
+    this.probe = [0, 0, 0];      // each squeeze measures one gesture
+    this.posProbe = [0, 0, 0];
   }
 
   // Returns the arm jog rates for this hand, or null when the clutch is released
@@ -336,6 +342,11 @@ class HandState {
     // Side effect worth knowing: the JUMP_POS guard below reads these scaled
     // values, so the lateral tracking-glitch threshold moves from ~0.19 m to
     // ~0.65 m — the same threshold forward and vertical have always had.
+    // Diagnostic accumulation, in robot words: forward is -fwdBackM (which is
+    // +backward), left is -latM (which is +right), up is upM.
+    this.posProbe[0] += -fwdBackM;
+    this.posProbe[1] += -latM;
+    this.posProbe[2] += upM;
     const vrX = latM * (cartesian ? POS_GAIN_Y : POS_GAIN_X);
     const vrY = upM * POS_GAIN_Y;
     const vrZ = fwdBackM * POS_GAIN_Z;
@@ -631,6 +642,11 @@ export class VrJogMapper {
   // axis is the handle twist without anyone having to guess. Resets on release.
   wristProbe(): { left: [number, number, number]; right: [number, number, number] } {
     return { left: this.left.probe, right: this.right.probe };
+  }
+
+  // Hand TRANSLATION since the clutch engaged, metres, as [forward, left, up].
+  handProbe(): { left: [number, number, number]; right: [number, number, number] } {
+    return { left: this.left.posProbe, right: this.right.posProbe };
   }
 
   // Which arms are under active clutch this frame. VR is dual-arm (each controller drives its

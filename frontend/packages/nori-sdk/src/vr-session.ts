@@ -29,7 +29,7 @@
 import * as THREE from "three";
 import { VrJogMapper, resolveTuning, type VrControllerFrame, type VrFrame, type VrTuning } from "./vr";
 import { buildRobotModel, type ArmHighlight, type RobotModel } from "./robot-model";
-import type { RemoteTeleop, TelemetryView } from "./teleop";
+import type { ExternalJog, RemoteTeleop, TelemetryView } from "./teleop";
 import { CURRENT_FULL_LSB, l3JointShorts } from "./teleop";
 // The ONE arm/disarm sequencing implementation, shared with the 2D ArmControl so the two
 // renders can never disagree about live torque.
@@ -291,7 +291,11 @@ export class VrSession {
   // The C6 robot schematic — a real articulated three.js model (not a texture), re-posed from
   // telemetry every frame. Same builder the desktop card mounts, so the two can't drift.
   private robot: RobotModel | null = null;
-  private probeLoggedAt = 0;   // throttle for the wrist-axis probe
+  private diagLoggedAt = 0;    // throttle for the motion diagnostic
+  // Joint positions at the moment each clutch engaged, so the diagnostic can
+  // report what the arm did over the SAME window the hand moved in.
+  private jointsAtClutch: Record<string, Record<string, number>> = {};
+  private wasEngaged: Record<string, boolean> = { left: false, right: false };
   // Operator-controlled turntable yaw of that model (left thumbstick X), radians. Survives
   // recenter: it's relative to the panel group, so re-aiming the cluster doesn't spin the robot.
   private robotYaw = ROBOT_YAW;
@@ -880,25 +884,33 @@ export class VrSession {
         // dt drives the positional step (see Steps in vr.ts) — the robot holds
         // the last rate until the next frame, so the frame period IS the scale.
         const res = this.mapper.map(vrFrame, dt);
-        // Axis probe (2026-09-04): report the accumulated rotation about each
-        // controller axis roughly twice a second while a clutch is held. Which
-        // grip-space axis carries the handle's TWIST has been guessed wrong
-        // twice, so it gets measured: squeeze, make one deliberate gesture,
-        // read which component moved. Costs one log line while clutched and
-        // never touches what is commanded.
-        if (nowMs - this.probeLoggedAt > 500) {
+        // Motion diagnostic (2026-09-04). Once a second while clutched, report
+        // the SAME gesture three ways so they can be compared directly:
+        //   HAND  — what the operator actually did, in robot words
+        //   SENT  — the normalized rates that went on the wire
+        //   ROBOT — what the arm actually did, from telemetry
+        // Reading any one of these alone has repeatedly led to wrong
+        // conclusions (a wrong axis looks like a dead axis; a refused solve
+        // looks like a bad mapping). Side by side, the failure names itself.
+        // Snapshot the arm's joints when a clutch engages, and forget them when
+        // it releases, so ROBOT below reports the same window HAND does.
+        {
           const eng = this.mapper.engagedArms();
-          if (eng.left || eng.right) {
-            const pr = this.mapper.wristProbe();
-            const fmt = (v: [number, number, number]) =>
-              `x${v[0] >= 0 ? "+" : ""}${v[0].toFixed(0)} ` +
-              `y${v[1] >= 0 ? "+" : ""}${v[1].toFixed(0)} ` +
-              `z${v[2] >= 0 ? "+" : ""}${v[2].toFixed(0)}`;
-            this.probeLoggedAt = nowMs;
-            this.o.onLog(
-              "wrist axes (deg since clutch)"
-              + (eng.left ? `  L: ${fmt(pr.left)}` : "")
-              + (eng.right ? `  R: ${fmt(pr.right)}` : ""));
+          for (const side of ["left", "right"] as const) {
+            if (eng[side] && !this.wasEngaged[side]) {
+              this.jointsAtClutch[side] = { ...(this.tel?.state ?? {}) };
+            } else if (!eng[side] && this.wasEngaged[side]) {
+              delete this.jointsAtClutch[side];
+            }
+            this.wasEngaged[side] = eng[side];
+          }
+        }
+        if (nowMs - this.diagLoggedAt > 1000) {
+          const eng = this.mapper.engagedArms();
+          for (const side of ["left", "right"] as const) {
+            if (!eng[side]) continue;
+            this.diagLoggedAt = nowMs;
+            this.o.onLog(this.motionDiagnostic(side, res.jog));
           }
         }
         // null = nothing engaged this frame -> hand the stream back to the keyboard.
@@ -1461,6 +1473,58 @@ export class VrSession {
       this.recDrawSig = sig;
       this.drawRecordPanel();
     }
+  }
+
+  // One gesture, reported three ways. See the call site for why.
+  private motionDiagnostic(side: "left" | "right", jog: ExternalJog | null): string {
+    const n = (v: number, d = 1) => (v >= 0 ? "+" : "") + v.toFixed(d);
+
+    // HAND — what the operator did, already in robot words (forward/left/up).
+    const pos = this.mapper.handProbe()[side];
+    const rot = this.mapper.wristProbe()[side];
+    const hand =
+      `move fwd${n(pos[0] * 100)} left${n(pos[1] * 100)} up${n(pos[2] * 100)} cm`
+      + `   turn x${n(rot[0], 0)} y${n(rot[1], 0)} z${n(rot[2], 0)} deg`;
+
+    // SENT — the normalized rates that actually went on the wire this frame.
+    const arm = (jog?.[`${side}_arm` as "left_arm" | "right_arm"]) ?? {};
+    const sentParts = Object.entries(arm)
+      .filter(([, v]) => Math.abs(v) > 0.02)
+      .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+      .map(([k, v]) => `${k}${n(v, 2)}`);
+    const sent = sentParts.length ? sentParts.join(" ") : "(nothing)";
+
+    // ROBOT — what the arm actually did over the same window, in DEGREES.
+    // Telemetry is normalized [-100,100]; ranges_si carries the matching SI
+    // bounds, so a normalized delta converts to real degrees. Without that the
+    // numbers are unitless and impossible to sanity-check against the hand.
+    const base = this.jointsAtClutch[side];
+    const now = this.tel?.state;
+    const ranges = this.o.teleop.robotInfo()?.descriptor?.ranges_si;
+    let robot = "(no telemetry)";
+    if (base && now) {
+      const moved: [string, number][] = [];
+      for (const key of Object.keys(now)) {
+        if (!key.startsWith(`${side}_arm_`) || !key.endsWith(".pos")) continue;
+        const before = base[key];
+        if (typeof before !== "number") continue;
+        const dNorm = now[key] - before;
+        const si = ranges?.[key];
+        const deg = si
+          ? ((dNorm / 200) * Math.abs(si[1] - si[0]) * 180) / Math.PI
+          : dNorm;                       // no ranges_si: normalized units
+        if (Math.abs(deg) < 0.5) continue;
+        moved.push([key.slice(`${side}_arm_`.length, -4), deg]);
+      }
+      moved.sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+      robot = moved.length
+        ? moved.slice(0, 4).map(([k, v]) => `${k}${n(v)}`).join(" ")
+          + (ranges ? " deg" : " norm")
+        : "(did not move)";
+    }
+
+    const tag = side === "left" ? "L" : "R";
+    return `${tag} hand  ${hand}\n${tag} sent  ${sent}\n${tag} robot ${robot}`;
   }
 
   // --- in-VR motors (arm/disarm) panel ---------------------------------------

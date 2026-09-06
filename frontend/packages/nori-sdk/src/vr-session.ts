@@ -910,7 +910,11 @@ export class VrSession {
           for (const side of ["left", "right"] as const) {
             if (!eng[side]) continue;
             this.diagLoggedAt = nowMs;
-            this.o.onLog(this.motionDiagnostic(side, res.jog));
+            const line = this.motionDiagnostic(side, res.jog);
+            this.o.onLog(line);
+            // Also to the robot journal, so this is readable without taking the
+            // headset off — see RemoteTeleop.clientLog.
+            try { this.o.teleop.clientLog(line); } catch { /* never fatal */ }
           }
         }
         // null = nothing engaged this frame -> hand the stream back to the keyboard.

@@ -1563,6 +1563,25 @@ export class RemoteTeleop {
   // Fire-and-forget like ordinary verbs; the truthful armed state comes BACK on
   // daemon_status.armed — render that, never this call. Robots without arming support
   // ignore the verb and never report `armed`.
+  /**
+   * Mirror a diagnostic line into the ROBOT's journal.
+   *
+   * Debug facility, not a product surface. The VR client's own log panel is
+   * invisible while an immersive session is running, so reading it means taking
+   * the headset off — which turned every axis/sign iteration into a multi-minute
+   * round trip. This puts the same line where `journalctl -u nori-gateway -f`
+   * can see it. The robot caps length and rate, ignores it entirely on older
+   * builds, and can never act on it.
+   */
+  clientLog(text: string) {
+    if (!text) return;
+    try {
+      this.dcSend({ type: "client_log", text });
+    } catch {
+      /* channel down — a debug line must never break a session */
+    }
+  }
+
   setArmed(on: boolean) {
     this.dcSend({ type: "command", [on ? "arm" : "disarm"]: true });
     this.log(on ? "arm requested" : "disarm requested — support the arms; they de-torque");

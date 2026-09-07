@@ -292,6 +292,14 @@ export class VrSession {
   // telemetry every frame. Same builder the desktop card mounts, so the two can't drift.
   private robot: RobotModel | null = null;
   private diagLoggedAt = 0;    // throttle for the motion diagnostic
+  // Commanded rate INTEGRATED over the diagnostic window, per side and key.
+  // The first version of this compared one frame's instantaneous rate against a
+  // whole second of accumulated joint motion, which cannot test sign agreement
+  // at all -- it produced a 50/50 "coin flip" twice and I read it as evidence
+  // both times (2026-09-06). Integrating both halves over the same window is
+  // what makes SENT and ROBOT comparable.
+  private sentIntegral: Record<string, Record<string, number>> = {};
+  private sentSince = 0;
   // Joint positions at the moment each clutch engaged, so the diagnostic can
   // report what the arm did over the SAME window the hand moved in.
   private jointsAtClutch: Record<string, Record<string, number>> = {};
@@ -905,12 +913,24 @@ export class VrSession {
             this.wasEngaged[side] = eng[side];
           }
         }
+        // Integrate what was actually commanded, every frame, so the window
+        // matches the joint deltas below.
+        for (const side of ["left", "right"] as const) {
+          const arm = res.jog?.[`${side}_arm` as "left_arm" | "right_arm"];
+          if (!arm) continue;
+          const acc = (this.sentIntegral[side] ??= {});
+          for (const [k, v] of Object.entries(arm)) {
+            acc[k] = (acc[k] ?? 0) + v * dt;
+          }
+        }
         if (nowMs - this.diagLoggedAt > 1000) {
           const eng = this.mapper.engagedArms();
           for (const side of ["left", "right"] as const) {
             if (!eng[side]) continue;
             this.diagLoggedAt = nowMs;
             const line = this.motionDiagnostic(side, res.jog);
+            this.sentIntegral[side] = {};        // window closes here
+            this.sentSince = nowMs;
             this.o.onLog(line);
             // Also to the robot journal, so this is readable without taking the
             // headset off — see RemoteTeleop.clientLog.
@@ -1490,13 +1510,17 @@ export class VrSession {
       `move fwd${n(pos[0] * 100)} left${n(pos[1] * 100)} up${n(pos[2] * 100)} cm`
       + `   turn x${n(rot[0], 0)} y${n(rot[1], 0)} z${n(rot[2], 0)} deg`;
 
-    // SENT — the normalized rates that actually went on the wire this frame.
-    const arm = (jog?.[`${side}_arm` as "left_arm" | "right_arm"]) ?? {};
-    const sentParts = Object.entries(arm)
-      .filter(([, v]) => Math.abs(v) > 0.02)
+    // SENT — rate INTEGRATED over this window (rate x seconds), not a single
+    // frame's snapshot. Comparing an instantaneous rate to a second of
+    // accumulated joint motion tests nothing; this is the half that makes the
+    // sign of SENT and the sign of ROBOT actually comparable.
+    const acc = this.sentIntegral[side] ?? {};
+    const sentParts = Object.entries(acc)
+      .filter(([, v]) => Math.abs(v) > 0.01)
       .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
       .map(([k, v]) => `${k}${n(v, 2)}`);
-    const sent = sentParts.length ? sentParts.join(" ") : "(nothing)";
+    const sent = sentParts.length ? `${sentParts.join(" ")} (rate·s)`
+                                  : "(nothing)";
 
     // ROBOT — what the arm actually did over the same window, in DEGREES.
     // Telemetry is normalized [-100,100]; ranges_si carries the matching SI

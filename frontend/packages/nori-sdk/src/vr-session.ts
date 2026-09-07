@@ -35,6 +35,7 @@ import { CURRENT_FULL_LSB, l3JointShorts } from "./teleop";
 // renders can never disagree about live torque.
 import { isPreparing, isStuck, isSettled, motorsLabel } from "./armPhase";
 import { WRIST_JOINTS, type WristAngles } from "./wrist-anatomy";
+import { SOLVED_JOINTS, type ArmQ } from "./arm-kinematics";
 
 const RESET_HOLD_MS = 1500;
 // Recenter is triggered by an in-VR button anchored above the LEFT controller, poked with
@@ -888,8 +889,8 @@ export class VrSession {
         // angles in radians. Read from the same normalized telemetry, converted
         // through ranges_si. Only consumed on a clutch edge, so the 15 Hz
         // telemetry rate against 50 Hz robot state costs nothing here.
-        this.mapper.setWristMeasured(
-          this.measuredWrist("left"), this.measuredWrist("right"));
+        this.mapper.setMeasured(
+          this.measuredArm("left"), this.measuredArm("right"));
         // Which arm vocabulary this robot speaks (cartesian x/y/z/pitch/yaw vs the
         // legacy cylindrical keys). Read per frame rather than latched at start:
         // robotInfo() refreshes on every daemon (re)connect, so a robot that
@@ -951,10 +952,10 @@ export class VrSession {
         // position-controlled wrist and the rate-controlled arm coexist on one
         // channel. Untagged (no action_id): this is a continuous stream, not a
         // move with a lifecycle, so nothing should be tracking done/blocked.
-        if (Object.keys(res.wrist).length) {
+        if (Object.keys(res.action).length) {
           // Streaming, not one-shot: drops under congestion and throttles to the
           // robot's 50 Hz tick rather than the XR loop's 72-90 Hz.
-          try { this.o.teleop.sendStreamingAction(res.wrist); } catch { /* never fatal in the XR loop */ }
+          try { this.o.teleop.sendStreamingAction(res.action); } catch { /* never fatal in the XR loop */ }
         }
         if (res.estop) {
           // command("estop") THROWS on a dead control channel: the operator must be told
@@ -1522,20 +1523,43 @@ export class VrSession {
   // Null rather than partial on purpose: anchoring two joints and guessing the
   // third would command an arbitrary real angle on the one left out.
   private measuredWrist(side: string): WristAngles | null {
+    return this.measuredArm(side)?.wrist ?? null;
+  }
+
+  // The robot's measured joint angles (RADIANS) for one side: the three wrist
+  // joints and the four the client now solves. Null rather than partial when any
+  // is missing or the descriptor lacks the SI bounds to convert it — anchoring
+  // some joints and guessing the rest would command arbitrary real angles.
+  //
+  // Read once per clutch to anchor, so the 15 Hz telemetry rate against 50 Hz
+  // robot state costs nothing: after the anchor the client owns the whole
+  // solution and never needs measured state again until the next squeeze.
+  private measuredArm(side: string): { wrist: WristAngles; q: ArmQ } | null {
     const now = this.tel?.state;
     const ranges = this.o.teleop.robotInfo()?.descriptor?.ranges_si;
     if (!now || !ranges) return null;
-    const out = {} as WristAngles;
-    for (const joint of WRIST_JOINTS) {
+    const si2rad = (joint: string): number | null => {
       const key = `${side}_arm_${joint}.pos`;
       const norm = now[key];
       const si = ranges[key];
       if (typeof norm !== "number" || !si) return null;
       const span = si[1] - si[0];
       if (!span) return null;
-      out[joint] = si[0] + ((norm + 100) / 200) * span;
+      return si[0] + ((norm + 100) / 200) * span;
+    };
+    const wrist = {} as WristAngles;
+    for (const joint of WRIST_JOINTS) {
+      const v = si2rad(joint);
+      if (v === null) return null;
+      wrist[joint] = v;
     }
-    return out;
+    const q: number[] = [];
+    for (const joint of SOLVED_JOINTS) {
+      const v = si2rad(joint);
+      if (v === null) return null;
+      q.push(v);
+    }
+    return { wrist, q: q as ArmQ };
   }
 
   private motionDiagnostic(side: "left" | "right", jog: ExternalJog | null): string {
@@ -1606,8 +1630,13 @@ export class VrSession {
       : "(no telemetry)";
 
     const tag = side === "left" ? "L" : "R";
+    // A refused solve is the one failure the operator cannot see from the arm
+    // itself — it just stops. Naming it (unreachable vs singular, and how big a
+    // step it wanted) is the difference between "steer around it" and "the robot
+    // is broken".
+    const hold = wd.hold ? `\n${tag} HOLD  ${wd.hold}` : "";
     return `${tag} hand  ${hand}\n${tag} sent  ${sent}\n${tag} robot ${robot}`
-      + `\n${tag} wrist ${wrist}`;
+      + `\n${tag} wrist ${wrist}${hold}`;
   }
 
   // --- in-VR motors (arm/disarm) panel ---------------------------------------

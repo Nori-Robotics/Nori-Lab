@@ -12,3 +12,6 @@ export * from "./robot-model";
 // Anatomical wrist decomposition (pure math, no three.js). Kept separate from
 // vr.ts so it can be unit-tested against the URDF's chain order on its own.
 export * from "./wrist-anatomy";
+// Closed-form arm kinematics, ported 1:1 from the gateway's Python original.
+// Robot facts (link lengths, limits, solution space) -- not client policy.
+export * from "./arm-kinematics";

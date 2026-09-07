@@ -46,12 +46,14 @@ function replay(descriptor?: unknown) {
       thumbstick: { x: sx, y: sy },
     };
     const r = m.map({ left: f, right: f, controls: {} });
-    // `wrist` is the A3 absolute-wrist action (2026-09-06) and is ALWAYS empty
-    // on the legacy path — asserted here, on every frame, so an A3 change that
-    // leaked wrist targets into an L2 session fails loudly instead of being
-    // normalized away before the comparison below.
-    expect(r.wrist).toEqual({});
-    const { wrist: _drop, ...frozen } = r;
+    // `action` is the A3 absolute joint stream (wrist 2026-09-06, then the four
+    // proximal joints 2026-09-07) and is ALWAYS empty on the legacy path —
+    // asserted here, on EVERY frame, so an A3 change that leaked absolute
+    // targets into an L2 session fails loudly instead of being normalized away
+    // before the comparison below. L2 robots have no client-side solver and
+    // would be commanded to arbitrary angles.
+    expect(r.action).toEqual({});
+    const { action: _drop, ...frozen } = r;
     return JSON.parse(JSON.stringify(frozen));
   });
 }

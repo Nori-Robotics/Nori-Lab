@@ -1589,8 +1589,25 @@ export class VrSession {
         : "(did not move)";
     }
 
+    // WRIST — commanded absolute angle vs the joint's actual angle, per axis,
+    // in degrees. Named for the GESTURE (roll/flex/dev) rather than the joint,
+    // because the joint names mislead: wrist_roll does not roll, it deviates.
+    // Reading "dev cmd+55 act+54" while waggling the hand sideways is the whole
+    // axis check, and it needs no robot-side logging to work.
+    const wd = this.mapper.wristDiag(side as "left" | "right");
+    const meas = this.measuredWrist(side);
+    const AX: [string, "forearm_yaw" | "wrist_pitch" | "wrist_roll"][] = [
+      ["roll", "forearm_yaw"], ["flex", "wrist_pitch"], ["dev", "wrist_roll"],
+    ];
+    const wrist = meas
+      ? AX.map(([label, joint]) =>
+          `${label} hand${n(wd.hand[joint])} cmd${n(wd.cmd[joint])}`
+          + ` act${n((meas[joint] * 180) / Math.PI)}`).join(" | ")
+      : "(no telemetry)";
+
     const tag = side === "left" ? "L" : "R";
-    return `${tag} hand  ${hand}\n${tag} sent  ${sent}\n${tag} robot ${robot}`;
+    return `${tag} hand  ${hand}\n${tag} sent  ${sent}\n${tag} robot ${robot}`
+      + `\n${tag} wrist ${wrist}`;
   }
 
   // --- in-VR motors (arm/disarm) panel ---------------------------------------

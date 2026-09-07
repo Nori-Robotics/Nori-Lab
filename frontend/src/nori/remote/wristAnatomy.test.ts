@@ -7,7 +7,7 @@
 // out as pure flexion no matter how far the hand has already rolled.
 import { describe, it, expect } from "vitest";
 import {
-  wristAngles, wristTargets, zeroWristAngles, GRIP_TO_FOREARM,
+  wristAngles, wristTargets, zeroWristAngles, applyRomGain, GRIP_TO_FOREARM,
   type Quat,
 } from "@nori/sdk/vr";
 
@@ -126,6 +126,33 @@ describe("wristAngles", () => {
     const first = wristAngles(hand, IDENT).angles;
     for (let i = 0; i < 100; i++) wristAngles(hand, IDENT);
     expect(wristAngles(hand, IDENT).angles).toEqual(first);
+  });
+});
+
+describe("applyRomGain", () => {
+  it("leaves pronation and flexion at strict 1:1", () => {
+    // These two were confirmed correct on hardware (2026-09-07) and their human
+    // ranges already match the joint well. Amplifying them would break what works.
+    const out = applyRomGain({ forearm_yaw: 0.7, wrist_pitch: -0.4, wrist_roll: 0 });
+    near(out.forearm_yaw, 0.7);
+    near(out.wrist_pitch, -0.4);
+  });
+
+  it("amplifies deviation, the axis the human wrist cannot fill", () => {
+    const out = applyRomGain({ forearm_yaw: 0, wrist_pitch: 0, wrist_roll: 0.2 });
+    near(out.wrist_roll, 0.6);
+  });
+
+  it("a full human deviation gesture reaches the tighter arm's limit", () => {
+    // Human radial/ulnar is about +/-25 deg; left wrist_roll calibrates to
+    // +/-75.0 deg on noriA3-0. The gain is chosen so the gesture just fills it.
+    const full = applyRomGain({ ...zeroWristAngles(), wrist_roll: 25 * DEG });
+    expect(Math.abs((full.wrist_roll * 180) / Math.PI - 75)).toBeLessThan(0.5);
+  });
+
+  it("all-ones gain gives a strict anatomical mirror", () => {
+    const a = { forearm_yaw: 0.3, wrist_pitch: -0.2, wrist_roll: 0.15 };
+    expect(applyRomGain(a, { forearm_yaw: 1, wrist_pitch: 1, wrist_roll: 1 })).toEqual(a);
   });
 });
 

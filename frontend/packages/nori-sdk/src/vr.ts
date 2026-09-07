@@ -18,7 +18,7 @@
 
 import type { ExternalJog, RobotDescriptor } from "./teleop";
 import {
-  wristAngles, wristTargets, zeroWristAngles, WRIST_JOINTS,
+  wristAngles, wristTargets, zeroWristAngles, applyRomGain, WRIST_JOINTS,
   type WristAngles, type Quat as AnatQuat,
 } from "./wrist-anatomy";
 
@@ -315,6 +315,11 @@ class HandState {
   // Last decomposition clear of the flexion pole. AT the pole pronation and
   // deviation are not separable, so those two hold here rather than spin.
   private lastGoodWrist: WristAngles = zeroWristAngles();
+  // Diagnostic only: last raw hand delta and last commanded target, DEGREES.
+  // The robot journal cannot see the wrist any more (it rides `action`, which
+  // main does not log), so this is how the axes get checked — in the headset.
+  lastWristDeltaDeg: WristAngles = zeroWristAngles();
+  lastWristTargetDeg: WristAngles = zeroWristAngles();
 
   // Is this hand's clutch latched right now? (Post-hysteresis — the same state that decides
   // whether step() contributes jog, so a UI reading this shows exactly what's driving.)
@@ -354,7 +359,20 @@ class HandState {
     } else {
       this.lastGoodWrist = angles;
     }
-    return wristTargets(this.anchorJoints, angles, limits);
+    // ROM gain BEFORE composing: deviation is amplified to cover a joint range
+    // the human wrist cannot reach 1:1 (see applyRomGain).
+    this.lastWristDeltaDeg = {
+      forearm_yaw: (angles.forearm_yaw * 180) / Math.PI,
+      wrist_pitch: (angles.wrist_pitch * 180) / Math.PI,
+      wrist_roll: (angles.wrist_roll * 180) / Math.PI,
+    };
+    const out = wristTargets(this.anchorJoints, applyRomGain(angles), limits);
+    this.lastWristTargetDeg = {
+      forearm_yaw: (out.forearm_yaw * 180) / Math.PI,
+      wrist_pitch: (out.wrist_pitch * 180) / Math.PI,
+      wrist_roll: (out.wrist_roll * 180) / Math.PI,
+    };
+    return out;
   }
 
   // Returns the arm jog rates for this hand, or null when the clutch is released
@@ -763,6 +781,15 @@ export class VrJogMapper {
       out[key] = Math.max(-100, Math.min(100, norm));
     }
     return out;
+  }
+
+  // Last raw hand delta and last commanded wrist target for one side, DEGREES.
+  // Diagnostic only. This exists because the robot journal can no longer see the
+  // wrist at all — it rides `control.action`, and the gateway on main logs only
+  // jog — so the axis check has to happen in the headset.
+  wristDiag(side: "left" | "right") {
+    const h = side === "left" ? this.left : this.right;
+    return { hand: h.lastWristDeltaDeg, cmd: h.lastWristTargetDeg };
   }
 
   setGripperPos(left: number | null, right: number | null) {

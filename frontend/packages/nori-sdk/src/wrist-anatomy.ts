@@ -177,6 +177,63 @@ export function wristTargets(
   return out;
 }
 
+// --- human ROM gain ---------------------------------------------------------
+//
+// A strict 1:1 anatomical map is right in principle and wrong on one axis in
+// practice, because the human wrist's three DOF are wildly unequal while the
+// robot's are not. Measured against noriA3-0's own calibration (2026-09-07):
+//
+//   gesture              human ROM   joint span (L)   reachable at 1:1
+//   pronation            +/-85 deg     310.4 deg          55%
+//   flexion/extension    80 / 70       183.7              82%
+//   radial/ulnar dev.    20 / 30       149.9              33%   <-- and 25% (R)
+//
+// Radial/ulnar deviation is the most restricted joint in the human wrist: about
+// +/-25 deg against +/-85 of pronation. Mapped 1:1 it produces a third of the
+// motion the other two do, on a movement the wrist can barely make — which is
+// exactly how it was reported from the headset ("roll and pitch seem ok, but
+// yaw is definitely not", 2026-09-07). It is not a sign or an axis error; the
+// basis is right-handed and the other two axes verified correct on hardware,
+// which leaves the third determined.
+//
+// So deviation alone is amplified. Pronation and flexion stay 1:1 because they
+// already match well and were confirmed good on hardware — this costs nothing
+// on the two axes that work.
+//
+// The gain is fixed rather than derived per-arm from ranges_si on purpose: left
+// wrist_roll is +/-75 deg and right is +/-101, and a per-arm gain would make the
+// two hands feel different in two-handed work. 3.0 fills the TIGHTER arm
+// (25 * 3 = 75) and leaves the wider one with margin.
+export const HUMAN_ROM_RAD: WristAngles = {
+  forearm_yaw: (85 * Math.PI) / 180,
+  wrist_pitch: (75 * Math.PI) / 180,
+  wrist_roll: (25 * Math.PI) / 180,
+};
+
+/** Per-axis amplification from human ROM to joint range. 1 = strict 1:1. */
+export const WRIST_GAIN: WristAngles = {
+  forearm_yaw: 1,
+  wrist_pitch: 1,
+  wrist_roll: 3,
+};
+
+/**
+ * Scale a decomposed hand delta by the per-axis ROM gain.
+ *
+ * Deliberately separate from wristTargets: composing an anchor with a delta is
+ * kinematics and belongs to the robot, whereas how far a human gesture should
+ * throw a joint is CONTROL POLICY and belongs to this client. Keeping them apart
+ * means the gain can be retuned, or set to all-ones for a strict anatomical
+ * mirror, without touching the geometry.
+ */
+export function applyRomGain(
+  angles: WristAngles, gain: WristAngles = WRIST_GAIN,
+): WristAngles {
+  const out = {} as WristAngles;
+  for (const joint of WRIST_JOINTS) out[joint] = angles[joint] * gain[joint];
+  return out;
+}
+
 /** Zero angles — the identity decomposition, and the value at clutch engage. */
 export function zeroWristAngles(): WristAngles {
   return { forearm_yaw: 0, wrist_pitch: 0, wrist_roll: 0 };

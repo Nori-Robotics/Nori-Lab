@@ -104,6 +104,24 @@ const FALLBACK_TASK_STEP_DEG = ((0.25 / 72) * 180) / Math.PI;
 // +forearm_yaw spins the tool NEGATIVELY (URDF measurement in the cartesian
 // branch below), so the hand's twist is negated. One character to flip.
 const FOREARM_YAW_SIGN = -1;
+// The two TILT axes. Measured from the URDF as rotation of the TOOL about its
+// own axes, per +0.3 rad of joint (2026-09-07):
+//     wrist_roll    tiltA -0.300  at EVERY pose — 100% efficient, no bleed
+//     wrist_pitch   tiltB +0.299 / +0.251 / +0.260, some roll bleed
+// So despite the names, wrist_roll and wrist_pitch are the arm's two tilt
+// axes and forearm_yaw is its roll. All three tool DOF exist; only roll was
+// wired, which is why the operator reported "the only motion that looks
+// correct is roll — the other axes do nothing or bump roll".
+//
+// WHICH hand axis drives WHICH tilt is the one thing the URDF cannot answer:
+// it depends on how the gripper's "up" reads on video, not on geometry. The
+// naming-based assignment is used here (hand flex -> wrist_pitch, hand yaw ->
+// wrist_roll) and is the single remaining unknown. If tilting your hand up
+// makes the tool tilt sideways, these two are swapped; if it tilts the right
+// way but backwards, flip that axis's sign. The VRLOG diagnostic resolves both
+// in one session now that SENT is integrated.
+const WRIST_PITCH_SIGN = 1;
+const WRIST_ROLL_SIGN = 1;
 // UNVERIFIED ON HARDWARE. Flex and roll BOTH turned out inverted against the
 // reference (2026-07-02, 2026-07-16) and were fixed at their single source in
 // wristStepDeg; yaw is the third of that family and has never had the check.
@@ -452,8 +470,14 @@ class HandState {
         // Sign: +forearm_yaw gives NEGATIVE tool spin (same measurement), so
         // the hand's twist is negated. Evidence rather than a guess, but the
         // first hardware run is still what confirms it.
+        // All three wrist DOF, all on the JOINT lane — the wrist_direct solver
+        // never writes these, so nothing contends for them.
         const dr = Math.abs(step.roll) > JUMP_ANGLE ? 0 : step.roll * sens;
         arm.forearm_yaw = clamp1(FOREARM_YAW_SIGN * dr / steps.wristDeg);
+        const dp = Math.abs(step.flex) > JUMP_ANGLE ? 0 : step.flex * sens;
+        arm.wrist_pitch = clamp1(WRIST_PITCH_SIGN * dp / steps.wristDeg);
+        const dy = Math.abs(step.yaw) > JUMP_ANGLE ? 0 : step.yaw * sens;
+        arm.wrist_roll = clamp1(WRIST_ROLL_SIGN * dy / steps.wristDeg);
       } else {
         // Wrist pitch from the flex step (rpi4 couples wrist_flex to pitch downstream).
         // Sensitivity multiplies after the glitch guard, same reasoning as translation.
@@ -493,7 +517,8 @@ class HandState {
 // different axis. Hence the descriptor gate rather than a best guess.
 function zeroArm(cartesian: boolean): Record<string, number> {
   return cartesian
-    ? { x: 0, y: 0, z: 0, forearm_yaw: 0, gripper: 0 }
+    ? { x: 0, y: 0, z: 0, forearm_yaw: 0, wrist_pitch: 0, wrist_roll: 0,
+        gripper: 0 }
     : { shoulder_pan: 0, x: 0, y: 0, pitch: 0, wrist_roll: 0, gripper: 0 };
 }
 function gripperOnly(

@@ -9,3 +9,6 @@ export * from "./vr-session";
 // The robot schematic as a plain three.js Object3D — mounted BOTH in the desktop R3F canvas
 // and in the VR panel cluster, so the two can never drift apart.
 export * from "./robot-model";
+// Anatomical wrist decomposition (pure math, no three.js). Kept separate from
+// vr.ts so it can be unit-tested against the URDF's chain order on its own.
+export * from "./wrist-anatomy";

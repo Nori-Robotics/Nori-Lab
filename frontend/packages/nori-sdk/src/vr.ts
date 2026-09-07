@@ -17,6 +17,10 @@
 // output into RemoteTeleop.setExternalJog / .command. No daemon or protocol change.
 
 import type { ExternalJog, RobotDescriptor } from "./teleop";
+import {
+  wristAngles, wristTargets, zeroWristAngles, WRIST_JOINTS,
+  type WristAngles, type Quat as AnatQuat,
+} from "./wrist-anatomy";
 
 // Per-controller state sampled from WebXR each frame. position is the grip-space pose in
 // meters (headset/local reference space); orientation is the RAW grip quaternion [x,y,z,w]
@@ -66,6 +70,12 @@ export interface Steps {
 export interface VrMapResult {
   jog: ExternalJog | null; // null only before any clutch has engaged on either hand
   estop: boolean;          // rising edge of the designated E-STOP button this frame
+  // ABSOLUTE normalized wrist targets for `control.action`, cartesian robots only
+  // ({} on L2 and before the ack). These do NOT ride the jog frame: the wrist is
+  // position-controlled and the rest of the arm is rate-controlled, and the
+  // gateway is explicit that a latched action survives a zero-jog, so the two
+  // coexist on the same channel. Empty means "send nothing", never "send zeros".
+  wrist: Record<string, number>;
 }
 
 // --- ported gains (rpi4 8_xlerobot_2wheels_teleop_vr.py) ---------------------
@@ -286,6 +296,25 @@ class HandState {
   // the same words the robot's axes use, so the two halves of the diagnostic
   // can be compared without anyone doing sign arithmetic in their head.
   posProbe: [number, number, number] = [0, 0, 0];
+  // --- anatomical wrist, absolute path (cartesian robots only) ---------------
+  // Captured ONCE on the clutch engage edge: the operator's hand orientation,
+  // and the robot's own measured wrist angles at that instant. Every frame after
+  // that, the target is anchorJoints + wristAngles(now, anchorRef) — recomputed
+  // from the current quaternion, never accumulated. That is what makes this
+  // immune to the drift, the wrap-around, and the gravity ratchet that every
+  // integrate-and-leash path on this robot shares.
+  //
+  // Anchoring rather than mapping absolutely is the no-lurch guard: the gateway
+  // applies `action` with no server-side slew, so an unanchored first frame
+  // would snap the wrist from wherever the robot was to wherever the hand
+  // happened to be. It also dissolves the "controller held aloft is not the
+  // robot's zero" problem with no hard-coded ready offset on either side — the
+  // correspondence is established wherever the operator clutches.
+  private anchorRef: AnatQuat | null = null;
+  private anchorJoints: WristAngles | null = null;
+  // Last decomposition clear of the flexion pole. AT the pole pronation and
+  // deviation are not separable, so those two hold here rather than spin.
+  private lastGoodWrist: WristAngles = zeroWristAngles();
 
   // Is this hand's clutch latched right now? (Post-hysteresis — the same state that decides
   // whether step() contributes jog, so a UI reading this shows exactly what's driving.)
@@ -301,6 +330,31 @@ class HandState {
     this.prevQuat = null;
     this.probe = [0, 0, 0];      // each squeeze measures one gesture
     this.posProbe = [0, 0, 0];
+    this.anchorRef = null;       // next squeeze re-anchors the wrist
+    this.anchorJoints = null;
+    this.lastGoodWrist = zeroWristAngles();
+  }
+
+  /**
+   * Absolute wrist targets in radians, or null when this hand is not driving a
+   * wrist (not engaged, no anchor yet, or the robot never reported its measured
+   * wrist so there is nothing to anchor to — commanding a guessed absolute
+   * angle is exactly the lurch this design exists to avoid).
+   */
+  wristAbsolute(
+    cur: Quat | null | undefined,
+    limits?: Partial<Record<(typeof WRIST_JOINTS)[number], readonly [number, number]>>,
+  ): WristAngles | null {
+    if (!this.engaged || !cur || !this.anchorRef || !this.anchorJoints) return null;
+    const { angles, gimbal } = wristAngles(
+      { x: cur[0], y: cur[1], z: cur[2], w: cur[3] }, this.anchorRef);
+    if (gimbal) {
+      angles.forearm_yaw = this.lastGoodWrist.forearm_yaw;
+      angles.wrist_roll = this.lastGoodWrist.wrist_roll;
+    } else {
+      this.lastGoodWrist = angles;
+    }
+    return wristTargets(this.anchorJoints, angles, limits);
   }
 
   // Returns the arm jog rates for this hand, or null when the clutch is released
@@ -313,6 +367,7 @@ class HandState {
     gripperPos: number | null,
     cartesian: boolean,
     steps: Steps,
+    wristAnchor: WristAngles | null,
   ): Record<string, number> | null {
     if (!f) { this.release(); return null; }
 
@@ -335,6 +390,13 @@ class HandState {
     if (!wasEngaged || !this.prevPos) {
       this.prevPos = cur;
       this.prevQuat = (f.orientation as Quat | null | undefined) ?? null;
+      // Anchor the anatomical wrist to THIS hand pose and the robot's measured
+      // wrist right now, so the first commanded target equals where the arm
+      // already is and the correspondence starts wherever the operator clutched.
+      const q = (f.orientation as Quat | null | undefined) ?? null;
+      this.anchorRef = q ? { x: q[0], y: q[1], z: q[2], w: q[3] } : null;
+      this.anchorJoints = wristAnchor;
+      this.lastGoodWrist = zeroWristAngles();
       return gripperOnly(f.trigger, tuning, gripperPos, cartesian);
     }
 
@@ -472,12 +534,11 @@ class HandState {
         // first hardware run is still what confirms it.
         // All three wrist DOF, all on the JOINT lane — the wrist_direct solver
         // never writes these, so nothing contends for them.
-        const dr = Math.abs(step.roll) > JUMP_ANGLE ? 0 : step.roll * sens;
-        arm.forearm_yaw = clamp1(FOREARM_YAW_SIGN * dr / steps.wristDeg);
-        const dp = Math.abs(step.flex) > JUMP_ANGLE ? 0 : step.flex * sens;
-        arm.wrist_pitch = clamp1(WRIST_PITCH_SIGN * dp / steps.wristDeg);
-        const dy = Math.abs(step.yaw) > JUMP_ANGLE ? 0 : step.yaw * sens;
-        arm.wrist_roll = clamp1(WRIST_ROLL_SIGN * dy / steps.wristDeg);
+        // NOTHING HERE ANY MORE (2026-09-06). The wrist left the jog lane for
+        // absolute anatomical targets — see wristAbsolute() below and
+        // wrist-anatomy.ts. The three sign constants above are retained only
+        // for the legacy branch and the probe diagnostic; the cartesian wrist
+        // no longer reads them, and no longer integrates anything.
       } else {
         // Wrist pitch from the flex step (rpi4 couples wrist_flex to pitch downstream).
         // Sensitivity multiplies after the glitch guard, same reasoning as translation.
@@ -517,8 +578,7 @@ class HandState {
 // different axis. Hence the descriptor gate rather than a best guess.
 function zeroArm(cartesian: boolean): Record<string, number> {
   return cartesian
-    ? { x: 0, y: 0, z: 0, forearm_yaw: 0, wrist_pitch: 0, wrist_roll: 0,
-        gripper: 0 }
+    ? { x: 0, y: 0, z: 0, gripper: 0 }
     : { shoulder_pan: 0, x: 0, y: 0, pitch: 0, wrist_roll: 0, gripper: 0 };
 }
 function gripperOnly(
@@ -565,6 +625,11 @@ export class VrJogMapper {
   private tuning: ResolvedTuning = { ...DEFAULT_TUNING };
   // Latest telemetry gripper positions ([0,100], null = unknown) for the opening ramp.
   private gripperPos: { left: number | null; right: number | null } = { left: null, right: null };
+  // Latest telemetry wrist angles in RADIANS, per side, or null when unknown.
+  // Read once per clutch to anchor the absolute wrist — never per frame, so the
+  // 15 Hz telemetry rate against a 50 Hz robot state does not matter here.
+  private wristMeasured: { left: WristAngles | null; right: WristAngles | null } =
+    { left: null, right: null };
   // Yaw (radians, reference space) of the control frame the arm TRANSLATIONS are expressed
   // in. 0 = reference-space forward (the panel's spawn facing). The session updates this on
   // every recenter so "toward the video panel" always means robot-forward, even after the
@@ -657,6 +722,49 @@ export class VrJogMapper {
 
   // Telemetry gripper positions (gripper.pos [0,100], null = unknown), fed by the session
   // each frame so the opening ramp knows how far open each arm's jaws already are.
+  // Telemetry wrist angles (radians), fed by the session. Null for a side whose
+  // angles the robot has not reported: that side then drives no absolute wrist
+  // rather than anchoring to a guess.
+  setWristMeasured(left: WristAngles | null, right: WristAngles | null) {
+    this.wristMeasured = { left, right };
+  }
+
+  // This robot's calibrated wrist bounds (radians), from the ack descriptor.
+  // Undefined when it does not advertise them — targets then go out unclamped
+  // and the gateway's own calibration clamp is the backstop, which it always is.
+  private wristLimits(side: string) {
+    const out: Record<string, readonly [number, number]> = {};
+    for (const joint of WRIST_JOINTS) {
+      const si = this.descriptor?.ranges_si?.[`${side}_arm_${joint}.pos`];
+      if (si) out[joint] = [si[0], si[1]] as const;
+    }
+    return out as Partial<Record<(typeof WRIST_JOINTS)[number], readonly [number, number]>>;
+  }
+
+  // One hand's absolute wrist as normalized `control.action` keys. Empty unless
+  // this robot speaks the cartesian vocabulary AND advertises ranges_si: without
+  // the SI bounds a normalized target would command an arbitrary real angle,
+  // which is the one failure mode worth refusing outright.
+  private wristActionFor(
+    side: "left" | "right", hand: HandState, f: VrControllerFrame | null | undefined,
+  ): Record<string, number> {
+    if (!this.cartesian) return {};
+    const targets = hand.wristAbsolute(
+      (f?.orientation as Quat | null | undefined) ?? null, this.wristLimits(side));
+    if (!targets) return {};
+    const out: Record<string, number> = {};
+    for (const joint of WRIST_JOINTS) {
+      const key = `${side}_arm_${joint}.pos`;
+      const si = this.descriptor?.ranges_si?.[key];
+      if (!si) continue;
+      const span = si[1] - si[0];
+      if (!span) continue;
+      const norm = ((targets[joint] - si[0]) / span) * 200 - 100;
+      out[key] = Math.max(-100, Math.min(100, norm));
+    }
+    return out;
+  }
+
   setGripperPos(left: number | null, right: number | null) {
     this.gripperPos = { left, right };
   }
@@ -700,10 +808,16 @@ export class VrJogMapper {
     }
     const lArm = this.left.step(
       frame.left, this.controlYaw, this.tuning, this.gripperPos.left,
-      this.cartesian, this.stepsFor("left"));
+      this.cartesian, this.stepsFor("left"), this.wristMeasured.left);
     const rArm = this.right.step(
       frame.right, this.controlYaw, this.tuning, this.gripperPos.right,
-      this.cartesian, this.stepsFor("right"));
+      this.cartesian, this.stepsFor("right"), this.wristMeasured.right);
+    // Absolute wrist, independent of the jog frame above. Computed after step()
+    // so the clutch edge has already anchored.
+    const wrist = {
+      ...this.wristActionFor("left", this.left, frame.left),
+      ...this.wristActionFor("right", this.right, frame.right),
+    };
     const base = baseFromThumb(frame.right);
     const c = frame.controls;
     const leftLift = liftFromControls(c?.leftLiftUp, c?.leftLiftDown);
@@ -715,7 +829,7 @@ export class VrJogMapper {
 
     // Nothing engaged at all -> null (let the keyboard keep the stream).
     if (lArm == null && rArm == null && !base && !leftLift && !rightLift) {
-      return { jog: null, estop: estopEdge };
+      return { jog: null, estop: estopEdge, wrist };
     }
     const jog: ExternalJog = {};
     if (lArm) jog.left_arm = lArm;
@@ -723,6 +837,6 @@ export class VrJogMapper {
     if (base) jog.base = base;
     if (leftLift) jog.left_lift = leftLift;
     if (rightLift) jog.right_lift = rightLift;
-    return { jog, estop: estopEdge };
+    return { jog, estop: estopEdge, wrist };
   }
 }

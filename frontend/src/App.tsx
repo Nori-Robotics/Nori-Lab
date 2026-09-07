@@ -38,6 +38,7 @@ import Marketplace from "@/nori/pages/marketplace";
 import MarketplaceDetail from "@/nori/pages/marketplace-detail";
 import TrainingHistory from "@/nori/pages/training-history";
 import Remote from "@/nori/pages/remote";
+import MobileDrive from "@/nori/pages/mobile";
 import VrLanding from "@/nori/pages/vr";
 import DrivePage from "@/nori/pages/drive";
 import ModelPage from "@/nori/pages/model";
@@ -144,6 +145,7 @@ function App() {
                           <Route path="training" element={<NoriTraining />} />
                           <Route path="training/:jobId" element={<NoriTraining />} />
                           <Route path="remote" element={<Remote />} />
+                          <Route path="mobile" element={<MobileDrive />} />
                           <Route path="leader-setup" element={<LeaderSetup />} />
                           <Route path="pairing" element={<Pairing />} />
                           <Route path="my-stuff" element={<MyStuff />} />

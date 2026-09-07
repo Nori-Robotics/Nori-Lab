@@ -34,6 +34,7 @@ import { CURRENT_FULL_LSB, l3JointShorts } from "./teleop";
 // The ONE arm/disarm sequencing implementation, shared with the 2D ArmControl so the two
 // renders can never disagree about live torque.
 import { isPreparing, isStuck, isSettled, motorsLabel } from "./armPhase";
+import { WRIST_JOINTS, type WristAngles } from "./wrist-anatomy";
 
 const RESET_HOLD_MS = 1500;
 // Recenter is triggered by an in-VR button anchored above the LEFT controller, poked with
@@ -883,6 +884,12 @@ export class VrSession {
           return typeof v === "number" ? v : null;
         };
         this.mapper.setGripperPos(gPos("left_arm_gripper.pos"), gPos("right_arm_gripper.pos"));
+        // Feed the anatomical wrist its anchor: the robot's OWN measured wrist
+        // angles in radians. Read from the same normalized telemetry, converted
+        // through ranges_si. Only consumed on a clutch edge, so the 15 Hz
+        // telemetry rate against 50 Hz robot state costs nothing here.
+        this.mapper.setWristMeasured(
+          this.measuredWrist("left"), this.measuredWrist("right"));
         // Which arm vocabulary this robot speaks (cartesian x/y/z/pitch/yaw vs the
         // legacy cylindrical keys). Read per frame rather than latched at start:
         // robotInfo() refreshes on every daemon (re)connect, so a robot that
@@ -939,6 +946,16 @@ export class VrSession {
         }
         // null = nothing engaged this frame -> hand the stream back to the keyboard.
         this.o.teleop.setExternalJog(res.jog);
+        // ABSOLUTE wrist, alongside the rate stream rather than inside it. The
+        // gateway latches `action` and a zero-jog does not cancel it, so the
+        // position-controlled wrist and the rate-controlled arm coexist on one
+        // channel. Untagged (no action_id): this is a continuous stream, not a
+        // move with a lifecycle, so nothing should be tracking done/blocked.
+        if (Object.keys(res.wrist).length) {
+          // Streaming, not one-shot: drops under congestion and throttles to the
+          // robot's 50 Hz tick rather than the XR loop's 72-90 Hz.
+          try { this.o.teleop.sendStreamingAction(res.wrist); } catch { /* never fatal in the XR loop */ }
+        }
         if (res.estop) {
           // command("estop") THROWS on a dead control channel: the operator must be told
           // the frame went nowhere (reach for the physical button), and the throw must
@@ -1500,6 +1517,27 @@ export class VrSession {
   }
 
   // One gesture, reported three ways. See the call site for why.
+  // The robot's measured wrist angles (radians) for one side, or null when any
+  // of the three is missing or the descriptor lacks the SI bounds to convert it.
+  // Null rather than partial on purpose: anchoring two joints and guessing the
+  // third would command an arbitrary real angle on the one left out.
+  private measuredWrist(side: string): WristAngles | null {
+    const now = this.tel?.state;
+    const ranges = this.o.teleop.robotInfo()?.descriptor?.ranges_si;
+    if (!now || !ranges) return null;
+    const out = {} as WristAngles;
+    for (const joint of WRIST_JOINTS) {
+      const key = `${side}_arm_${joint}.pos`;
+      const norm = now[key];
+      const si = ranges[key];
+      if (typeof norm !== "number" || !si) return null;
+      const span = si[1] - si[0];
+      if (!span) return null;
+      out[joint] = si[0] + ((norm + 100) / 200) * span;
+    }
+    return out;
+  }
+
   private motionDiagnostic(side: "left" | "right", jog: ExternalJog | null): string {
     const n = (v: number, d = 1) => (v >= 0 ? "+" : "") + v.toFixed(d);
 

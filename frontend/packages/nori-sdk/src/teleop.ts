@@ -943,6 +943,9 @@ export function keybindLegend(
 
 const JOG_HZ_MS = 20; // 50 Hz level-jog
 const BUFFER_LIMIT = 16384; // skip a jog frame if the channel is congested
+// Minimum gap between streaming-action frames. 20 ms = the gateway's own 50 Hz
+// tick: anything faster is a frame it cannot act on.
+const STREAM_ACTION_MIN_MS = 20;
 
 export class RemoteTeleop {
   private o: RemoteTeleopOptions;
@@ -1003,6 +1006,7 @@ export class RemoteTeleop {
 
   // ---- action completion (Phase E / G1) ------------------------------------
   private actionSeq = 0; // mints unique action_ids
+  private lastStreamActionAt = 0; // throttle for sendStreamingAction
   // Pending awaitAction() promises, keyed by action_id; resolved on the terminal action_status.
   private actionWaiters = new Map<string, { resolve: (s: ActionStatus) => void; timer: ReturnType<typeof setTimeout> }>();
   // Latest status seen per action_id (any state), so the executor can tell whether the daemon is
@@ -1203,6 +1207,29 @@ export class RemoteTeleop {
     const frame: Record<string, unknown> = { type: "control", seq: this.seq++, action };
     if (actionId) frame.action_id = actionId;
     this.dcSend(frame);
+  }
+
+  // A CONTINUOUS stream of absolute targets (the VR anatomical wrist), as
+  // opposed to sendAction's one-shot move. Two differences, both deliberate:
+  //
+  //   - Drops under congestion, exactly like jogTick. A streaming target is
+  //     superseded ~20 ms later anyway, so skipping one costs nothing, whereas
+  //     queueing it behind a full buffer adds latency to everything after it.
+  //     sendAction must NOT do this — dropping a one-shot move silently would
+  //     leave the caller awaiting a target that was never sent.
+  //   - Throttled to the robot's own 50 Hz tick. An XR loop runs at 72-90 Hz,
+  //     and frames the robot cannot act on are pure channel load.
+  //
+  // Always untagged: a stream has no lifecycle to track. Returns whether the
+  // frame actually went out.
+  sendStreamingAction(action: Record<string, number>): boolean {
+    const ch = this.controlCh;
+    if (!ch || ch.readyState !== "open") return false;
+    if (ch.bufferedAmount > BUFFER_LIMIT) return false;
+    const now = Date.now();
+    if (now - this.lastStreamActionAt < STREAM_ACTION_MIN_MS) return false;
+    this.lastStreamActionAt = now;
+    return this.dcSend({ type: "control", seq: this.seq++, action });
   }
 
   // Mint a fresh, unique action_id for a move (Phase E). Human-readable for logs.
@@ -3008,6 +3035,28 @@ export class RemoteTeleop {
     const k = e.key === " " ? " " : e.key.toLowerCase();
     this.pressed.delete(k);
     this.cmdDown.delete(k);
+  }
+
+  // ---- touch / on-screen buttons ------------------------------------------
+  // The mobile pad drives the SAME held-key set as the keyboard, so a screen button
+  // is byte-identical to holding the key: sensitivity, arm scoping, mode, and the
+  // leader/policy gates in jogTick all apply unchanged. Unknown keys are ignored
+  // (returns false) rather than latching a key nothing maps.
+  holdKey(key: string): boolean {
+    const k = key === " " ? " " : key.toLowerCase();
+    if (!(k in this.armKeymap() || k in BASE_KEYS || k in ZLIFT_KEYS)) return false;
+    this.pressed.add(k);
+    return true;
+  }
+
+  releaseKey(key: string) {
+    this.pressed.delete(key === " " ? " " : key.toLowerCase());
+  }
+
+  // Release everything at once — the mobile pad calls this on unmount, page hide and
+  // any lost pointer, so a button whose pointerup never arrives can't latch a jog.
+  releaseAllKeys() {
+    this.pressed.clear();
   }
 
   // External mappers (VR) speak PER-HAND lift intent: left_lift / right_lift. That is the

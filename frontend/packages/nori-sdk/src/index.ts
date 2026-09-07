@@ -19,6 +19,8 @@ export * from "./robot-ops";
 // TIME, and rendering that raw is a safety-relevant lie about live torque. Shared by the 2D
 // ArmControl and the in-VR motors panel so they can never disagree.
 export * from "./armPhase";
+// VR ready-wrist offset (client-side ergonomic preference, not a robot pose).
+export * from "./vr-ready";
 // Z-lift (rail) telemetry reading — pure, shared by the 2D gauge and the 3D robot model.
 export * from "./rail";
 // Pure-math L-series forward kinematics (gripper position in mm) — no three.js.

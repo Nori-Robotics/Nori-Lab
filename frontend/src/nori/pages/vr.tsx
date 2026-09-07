@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { VrSession } from "@nori/sdk/vr";
 import { ArmControlView } from "@/nori/remote/ArmControl";
+import { sendReadyWrist } from "@nori/sdk";
 import { useNori } from "@/nori/NoriContext";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,8 @@ export default function VrLanding() {
   const vrRef = useRef<VrSession | null>(null);
   const [inVr, setInVr] = useState(false);
   const [xrSupported, setXrSupported] = useState<boolean | null>(null);
+  // Fired once per arm cycle, reset on disarm (see the ready-wrist effect).
+  const readyWristSent = useRef(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Pre-fill from the laptop→headset handoff link so a headset that opened the app's shared
@@ -84,6 +87,36 @@ export default function VrLanding() {
   useEffect(() => {
     vrRef.current?.setIdlePrompt(idlePromptOpen, idleSecondsLeft);
   }, [idlePromptOpen, idleSecondsLeft]);
+  // Ready wrist, folded into ARMING rather than given its own button.
+  //
+  // A controller held aloft does not correspond to the robot's wrist at zero —
+  // zero is arms-at-sides — and with rate control the clutch anchors wherever
+  // the arm already is, so the correspondence has to come from the pose the
+  // wrist starts in. Arming is already the deliberate act with a 20-45 s wait
+  // and a confirm, so it is the right moment: a separate button would be one
+  // more thing to remember for no extra safety.
+  //
+  // Client-side by design. It rides sendAction (absolute normalized targets,
+  // the leader-arm path) straight through the arbiter and changes nothing on
+  // the robot — the shared READY pose stays the conditioning search's.
+  //
+  // Fires on the arm EDGE only, and re-arms on disarm, so it can never fight
+  // the operator mid-session.
+  useEffect(() => {
+    const armed = daemonStatus?.armed === true
+      && daemonStatus?.activation === "active";
+    if (!armed) {
+      readyWristSent.current = false;
+      return;
+    }
+    if (readyWristSent.current) return;
+    readyWristSent.current = true;
+    const sent = sendReadyWrist(teleop, teleop?.robotInfo()?.descriptor);
+    appendLog(sent.length
+      ? `ready wrist -> ${sent.join(", ")}`
+      : "ready wrist: robot advertised no ranges_si — skipped rather than "
+        + "guess a target");
+  }, [daemonStatus, teleop, appendLog]);
 
   // Detect headset support once, and force a fresh clutch squeeze after any link drop (no snap).
   useEffect(() => { VrSession.isSupported().then(setXrSupported); }, []);

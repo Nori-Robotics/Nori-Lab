@@ -50,7 +50,12 @@ const BatteryChip = () => {
   );
 };
 
-const NAV: { to: string; label: string }[] = [
+// `mobileOnly` items are hidden from the inline (lg and up) row and only appear in the
+// drawer — which is itself only reachable below lg. Drive is the phone-sized control pad;
+// on a laptop the Remote console is strictly better, so the tab would just be a worse door
+// to the same session.
+const NAV: { to: string; label: string; mobileOnly?: boolean }[] = [
+  { to: "/nori/mobile", label: "Drive", mobileOnly: true },
   { to: "/nori/remote", label: "Remote" },
   { to: "/nori/coding", label: "Coding" },
   { to: "/nori/agent", label: "Agent" },
@@ -111,7 +116,7 @@ const NoriLayout = () => {
 
           {/* Inline links — lg and up. Below that they live in the drawer instead. */}
           <div className="hidden gap-5 text-sm lg:flex">
-            {NAV.map((item) => (
+            {NAV.filter((item) => !item.mobileOnly).map((item) => (
               <Link
                 key={item.to}
                 to={item.to}

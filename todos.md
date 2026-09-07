@@ -24,6 +24,40 @@ merges stay easy. Additive files (`frontend/src/nori/`, `lelab/nori_client.py`) 
 
 ---
 
+## Known issues
+
+Standing defects that are understood but not yet fixed. Each names the evidence, so a
+reader can re-verify rather than trust the entry.
+
+- [ ] 🟢 **The CI typecheck gate checks nothing** (`.github/workflows/build_frontend.yml`).
+  The `Typecheck` step runs `npx tsc --noEmit` with no `-p`, so it resolves
+  `frontend/tsconfig.json` — a solution file with `"files": []` and two `references`.
+  Project references are only compiled under `tsc --build`; without it tsc typechecks
+  **zero files** and exits 0. Verified 2026-09-03: bare `npx tsc --noEmit` exits 0 while
+  `npx tsc --noEmit -p tsconfig.app.json` reports 5 errors.
+
+  This matters because the step exists precisely to stop type errors reaching `dist` —
+  it was added after broken code shipped twice on 2026-07-14 (an unused-var leftover, and
+  pause/resume handlers pasted into the wrong component scope), and its own comment claims
+  "Failing here blocks the dist rebuild for broken code." It has never blocked anything.
+
+  **Fix:** `npx tsc --build --noEmit`. NOT a one-line change in practice — turning the gate
+  on fails CI immediately on the 5 pre-existing errors, so they have to be cleared first:
+
+  - `src/lib/meshLoaders.ts:64` — `'result' is possibly 'null'`
+  - `src/nori/components/EpisodeReviewModal.tsx:150` — `unknown` not assignable to `SetStateAction<string | null>`
+  - `src/nori/components/RobotUrdfViewer.tsx:785` — `addEventListener` missing on the controls type
+  - `src/nori/pages/my-stuff.tsx:651` — comparison of `false | undefined` with `true`
+  - `src/nori/TeleopSessionContext.tsx:71` — seed telemetry missing `servoTemps`, `latchReason`
+
+  Note the 5 are the floor, not the ceiling: `tsconfig.app.json` runs with `strict: false`,
+  `noImplicitAny: false` and both `noUnused*` off (only `strictNullChecks` is on), so
+  tightening the config later will surface more. (The `strictNullChecks: false` in the root
+  `tsconfig.json` is a red herring — those `compilerOptions` sit in a solution file and never
+  reach the referenced projects.)
+
+---
+
 ## Done ledger (Phases 0–6 + M1)
 
 Compressed — see git history / `full_nori_plan.md` for detail. Do not re-open without cause.

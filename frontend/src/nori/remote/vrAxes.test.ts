@@ -65,13 +65,18 @@ describe("VR arm vocabulary — legacy (no descriptor)", () => {
 });
 
 describe("VR arm vocabulary — cartesian (descriptor advertises jog_scale.task)", () => {
-  it("emits translations and all three wrist joints, no task rotation", () => {
-    // pitch/yaw are IK constraints and were refused 151 times in one session
-    // on noriA3-0 (2026-09-04), taking translation down with them. Until the
-    // absolute-wrist lane lands, rotation is roll-only — see vr.ts.
+  it("emits translations and the gripper only — the wrist left the jog lane", () => {
+    // pitch/yaw are IK constraints and were refused 151 times in one session on
+    // noriA3-0 (2026-09-04), taking translation down with them. They are still
+    // absent.
+    //
+    // The three WRIST joints left this frame on 2026-09-06 for absolute
+    // anatomical targets on `control.action` (wrist-anatomy.ts). Their absence
+    // here is load-bearing, not incidental: a wrist key present in the jog frame
+    // would enter the gateway's `_jog_active`, and its park-at-measured on
+    // release would then clobber the action target every time the hand paused.
     expect(Object.keys(moveBy(FORWARD, A3)).sort())
-      .toEqual(["forearm_yaw", "gripper", "wrist_pitch", "wrist_roll",
-                "x", "y", "z"]);
+      .toEqual(["gripper", "x", "y", "z"]);
   });
 
   it("forward hand motion drives +x (REP-103 forward)", () => {

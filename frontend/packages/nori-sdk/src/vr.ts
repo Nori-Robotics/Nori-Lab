@@ -33,6 +33,13 @@ import {
 // workspace instead of over-running it constantly.
 const WRIST_POINT_SCALE = 0.6;
 
+// Fractions of the commanded step to try when the full one exceeds the solver's
+// per-tick joint ceiling. Halving rather than a fine search: each retry is a
+// full closed-form solve plus a swivel walk, and five of them is already the
+// worst case inside one XR frame. The last is ~3% of the step, which at the
+// park pose is well under the 0.54 mm the singularity allows.
+const ARM_STEP_FRACTIONS = [1, 0.5, 0.25, 0.125, 0.0625, 0.03125] as const;
+
 // Per-controller state sampled from WebXR each frame. position is the grip-space pose in
 // meters (headset/local reference space); orientation is the RAW grip quaternion [x,y,z,w]
 // — the mapper derives the wrist angles from it (XLeVR-style, see HandState); trigger/
@@ -405,8 +412,40 @@ class HandState {
       this.anchorWristPoint[1] + -lat * k,
       this.anchorWristPoint[2] + up * k,
     ];
-    const r = this.swivel.solve(target, this.swivel.value, dt, this.armSeed);
-    if (!r) {
+    // LAG, DO NOT REFUSE (2026-09-07). The solver enforces a per-tick joint-step
+    // ceiling, and near a singularity the joint travel per millimetre explodes.
+    // Measured against the URDF: at the arm's PARK pose (elbow 5 deg, 99.9% of
+    // max reach) one millimetre of wrist-point travel costs 2.92 deg of joint
+    // motion, so the 1.59 deg/frame ceiling allows 0.54 mm -- less than any real
+    // hand motion. Refusing outright meant the arm never moved at all from rest,
+    // which is exactly what was reported from nori-a3-0003: "the IK did not
+    // work, only the wrist moved".
+    //
+    // The keyboard never had this problem because it never refuses: it commands
+    // the step and the arm lags. Lagging reads as slow motion; refusing reads as
+    // a dead arm. So when the full step will not fit, take the largest fraction
+    // of it that does. The target stays ABSOLUTE -- only the approach to it is
+    // rate-limited -- so the arm converges on the operator's hand instead of
+    // stalling, and two routes to the same hand pose still end up in the same
+    // place.
+    const from = wristPoint(
+      this.armSeed![0], this.armSeed![1], this.armSeed![2], this.armSeed![3],
+      this.swivel.sign);
+    let solved: { q: ArmQ; swivel: number } | null = null;
+    for (const frac of ARM_STEP_FRACTIONS) {
+      const partial: Vec3 = [
+        from[0] + (target[0] - from[0]) * frac,
+        from[1] + (target[1] - from[1]) * frac,
+        from[2] + (target[2] - from[2]) * frac,
+      ];
+      solved = this.swivel.solve(partial, this.swivel.value, dt, this.armSeed);
+      if (solved) {
+        // Only worth telling the operator when the arm is well behind the hand.
+        this.armHold = frac < 0.5 ? `lagging (${(frac * 100).toFixed(0)}% of step)` : "";
+        break;
+      }
+    }
+    if (!solved) {
       const reach = Math.hypot(
         target[0] - this.anchorWristPoint[0],
         target[1] - this.anchorWristPoint[1],
@@ -416,9 +455,8 @@ class HandState {
         : `singular (needs ${(this.swivel.blockedBy * 180 / Math.PI).toFixed(0)} deg step)`;
       return this.armSeed;
     }
-    this.armHold = "";
-    this.armSeed = r.q;
-    return r.q;
+    this.armSeed = solved.q;
+    return solved.q;
   }
 
   /** Anchor the absolute arm to this hand pose and the robot's measured joints. */

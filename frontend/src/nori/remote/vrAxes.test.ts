@@ -195,14 +195,34 @@ describe("VR arm vocabulary — cartesian (descriptor advertises jog_scale.task)
     }
   });
 
-  it("holds the previous target when the hand jumps further than one tick allows", () => {
-    // 5 cm in a single frame is a tracking glitch, not a motion. The solver
-    // refuses a step it cannot take smoothly and the arm holds — the operator
-    // steers around it, as they would with their own arm.
-    const a = armAction([0, 0, -0.05]);
-    const p = commandedWristPoint(a);
-    expect(Math.hypot(p[0] - anchor[0], p[1] - anchor[1], p[2] - anchor[2]))
-      .toBeLessThan(0.01);
+  it("LAGS toward a hand jump instead of refusing it", () => {
+    // 5 cm in a single frame is far past the per-tick joint ceiling. The arm
+    // must still make progress — taking the largest fraction of the step that
+    // fits — rather than holding. Refusing outright is what made the arm look
+    // dead on nori-a3-0003 (2026-09-07).
+    const p = commandedWristPoint(armAction([0, 0, -0.05]));
+    const moved = Math.hypot(p[0] - anchor[0], p[1] - anchor[1], p[2] - anchor[2]);
+    expect(moved).toBeGreaterThan(0);          // it moved
+    expect(moved).toBeLessThan(0.6 * 0.05);    // but not the whole way
+    expect(p[0]).toBeGreaterThan(anchor[0]);   // and in the right direction
+  });
+
+  it("still moves from the PARK pose, at 99.9% extension — the 0003 bug", () => {
+    // The robot rests fully extended with the elbow at ~5 deg, where one
+    // millimetre of wrist-point travel costs 2.92 deg of joint motion and the
+    // per-frame ceiling allows only 0.54 mm. Every frame was refused, so the
+    // arm never moved from rest while the wrist kept working — reported as
+    // "the IK did not work, only wrist moved".
+    const PARK = [0.3, 0.9, 0.2, 0.087] as [number, number, number, number];
+    const m = new VrJogMapper();
+    m.setDescriptor(A3F as never);
+    m.setMeasured({ wrist: MEAS.wrist, q: PARK }, null);
+    m.map({ left: hand([0, 0, 0]) });
+    const parkAnchor = wristPoint(PARK[0], PARK[1], PARK[2], PARK[3], 1);
+    const p = commandedWristPoint(m.map({ left: hand([0, 0, -0.005]) }).action);
+    const moved = Math.hypot(
+      p[0] - parkAnchor[0], p[1] - parkAnchor[1], p[2] - parkAnchor[2]);
+    expect(moved).toBeGreaterThan(0);
   });
 });
 

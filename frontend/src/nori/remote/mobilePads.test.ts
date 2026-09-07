@@ -31,11 +31,14 @@ describe("armPadAxes", () => {
     }
   });
 
-  it("splits X/Y into the thumb pad and leaves the rest as rows", () => {
-    const { pad, rows } = splitArmAxes(armPadAxes(A3));
+  it("splits X/Y into the thumb pad, gripper into its own column, rest into rows", () => {
+    const { pad, grip, rows } = splitArmAxes(armPadAxes(A3));
     expect(pad.map((a) => a.dof)).toEqual(["x", "y"]);
-    expect(rows.map((a) => a.dof)).not.toContain("x");
-    expect(rows.map((a) => a.dof)).toContain("gripper");
+    expect(grip?.dof).toBe("gripper");
+    const dofs = rows.map((a) => a.dof);
+    expect(dofs).not.toContain("x");
+    expect(dofs).not.toContain("gripper");
+    expect(dofs).toContain("z");
   });
 });
 

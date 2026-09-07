@@ -73,10 +73,16 @@ export function armPadAxes(descriptor: RobotDescriptor | null | undefined): PadA
   return out;
 }
 
-// Split for layout: X/Y drive the thumb d-pad, everything else stacks as ± rows.
-export function splitArmAxes(axes: PadAxis[]): { pad: PadAxis[]; rows: PadAxis[] } {
+// Split for layout, mirroring the base pad: X/Y drive the thumb d-pad, the gripper
+// gets the tall column beside it (where lift sits next to the drive cluster), and
+// everything left over — turn / pitch / roll / z — stacks as condensed ± rows.
+export function splitArmAxes(
+  axes: PadAxis[],
+): { pad: PadAxis[]; grip: PadAxis | null; rows: PadAxis[] } {
+  const isPad = (a: PadAxis) => a.dof === "x" || a.dof === "y";
   return {
-    pad: axes.filter((a) => a.dof === "x" || a.dof === "y"),
-    rows: axes.filter((a) => a.dof !== "x" && a.dof !== "y"),
+    pad: axes.filter(isPad),
+    grip: axes.find((a) => a.dof === "gripper") ?? null,
+    rows: axes.filter((a) => !isPad(a) && a.dof !== "gripper"),
   };
 }

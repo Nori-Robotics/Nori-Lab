@@ -18,6 +18,7 @@ import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
 import { ArmControlView } from "@/nori/remote/ArmControl";
 import { armPadAxes, basePad, liftPad, splitArmAxes, type PadAxis } from "@/nori/remote/mobilePads";
+import { FORCE_CONSOLE_KEY } from "@/nori/remote/mobileRoute";
 
 // Touch button that holds a jog key for as long as the finger is down. pointer* (not
 // touch*/mouse*) so it works with finger, pen and a desktop mouse from one code path, and
@@ -63,21 +64,23 @@ const HoldButton = ({
   );
 };
 
-// A ± row for one task axis (z / pitch / roll / gripper / turn).
+// A condensed ± row for one secondary task axis (turn / pitch / roll / z). The
+// primaries (X/Y/gripper) get the thumb pad above; these are trim controls, so they
+// run at half the pad's height with the label inline rather than as a caption.
 const AxisRow = ({ axis, disabled, onHold, onRelease }: {
   axis: PadAxis; disabled: boolean; onHold: (k: string) => void; onRelease: (k: string) => void;
 }) => (
-  <div className="flex items-center gap-2">
-    <span className="w-24 shrink-0 font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+  <div className="flex items-center gap-1.5">
+    <span className="w-16 shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
       {axis.label}
     </span>
     <HoldButton
       jogKey={axis.negKey} label={axis.negLabel} disabled={disabled}
-      onHold={onHold} onRelease={onRelease} className="h-12 flex-1"
+      onHold={onHold} onRelease={onRelease} className="h-9 flex-1 !text-[11px]"
     />
     <HoldButton
       jogKey={axis.posKey} label={axis.posLabel} disabled={disabled}
-      onHold={onHold} onRelease={onRelease} className="h-12 flex-1"
+      onHold={onHold} onRelease={onRelease} className="h-9 flex-1 !text-[11px]"
     />
   </div>
 );
@@ -132,7 +135,7 @@ const Mobile = () => {
   const base = useMemo(basePad, []);
   const lift = useMemo(liftPad, []);
   const descriptor = teleop?.robotInfo()?.descriptor ?? null;
-  const { pad: xy, rows } = useMemo(
+  const { pad: xy, grip, rows } = useMemo(
     () => splitArmAxes(armPadAxes(descriptor)),
     [descriptor],
   );
@@ -155,15 +158,10 @@ const Mobile = () => {
         }>● {status}</span>
       </div>
 
-      <video
-        ref={videoRef} autoPlay playsInline muted
-        className={"w-full rounded-md " + (connected ? "bg-background" : "bg-nori-he5e1d2 dark:bg-[hsl(240_4%_20%)]")}
-        style={{ aspectRatio: "4 / 3" }}
-      />
-
-      {/* Connect + the two safety controls. E-STOP is full-width and always reachable
-          without scrolling past the video — on a phone it is the one button that must
-          never be hunted for. */}
+      {/* Connect + the two safety controls on one row, E-STOP beside arm/disarm as it
+          sits everywhere else in the app. Above the video, not below: on a phone the feed
+          is the tallest thing on the page, and anything under it can be scrolled out of
+          reach — E-STOP never may be. */}
       <div className="flex flex-wrap items-center gap-2">
         {!running ? (
           <button
@@ -185,26 +183,26 @@ const Mobile = () => {
           </button>
         )}
         <ArmControlView teleop={teleop} running={running} daemonStatus={daemonStatus} compact />
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => teleop?.command(latched ? "reset_latch" : "estop")}
+          title={latched ? "Latched — tap to reset" : "Emergency stop — halts all motion and latches"}
+          className={
+            "ml-auto rounded-xl px-3 py-1.5 font-mono text-[11px] font-semibold uppercase " +
+            "tracking-[0.1em] disabled:pointer-events-none disabled:opacity-40 " +
+            (latched ? "bg-nori-h14131a text-background" : "bg-nori-hd24a3d text-white")
+          }
+        >
+          {latched ? "reset" : "e-stop"}
+        </button>
       </div>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => teleop?.command(latched ? "reset_latch" : "estop")}
-        className={
-          "w-full rounded-xl py-3 font-mono text-sm font-semibold uppercase tracking-[0.1em] " +
-          "disabled:pointer-events-none disabled:opacity-40 " +
-          (latched ? "bg-nori-h14131a text-background" : "bg-nori-hd24a3d text-white")
-        }
-      >
-        {latched ? "latched — reset" : "e-stop"}
-      </button>
 
-      {!connected && (
-        <p className="text-xs text-muted-foreground">
-          Connect to drive. The full console (leader arms, VR, recording, logs) lives on{" "}
-          <Link to="/nori/remote" className="underline">Remote</Link>.
-        </p>
-      )}
+      <video
+        ref={videoRef} autoPlay playsInline muted
+        className={"w-full rounded-md " + (connected ? "bg-background" : "bg-nori-he5e1d2 dark:bg-[hsl(240_4%_20%)]")}
+        style={{ aspectRatio: "4 / 3" }}
+      />
 
       {/* Base + lift: one row, drive cluster on the left, column on the right. */}
       <div className="grid grid-cols-[1fr_auto] gap-3">
@@ -243,27 +241,45 @@ const Mobile = () => {
         </div>
       </div>
 
-      {/* X/Y as a thumb pad (reach + sideways), the remaining task axes as ± rows.
-          A robot whose task vocabulary has no Z (every L2) simply shows no Z row —
-          the axes come from the descriptor, never from a hardcoded list. */}
-      <div className="grid grid-cols-3 grid-rows-2 gap-2">
-        <div />
-        {xAxis && <HoldButton jogKey={xAxis.posKey} label="▲" sub="reach out" disabled={disabled} onHold={hold} onRelease={release} className="h-14" />}
-        <div />
-        {yAxis && <HoldButton jogKey={yAxis.posKey} label="◀" sub="left" disabled={disabled} onHold={hold} onRelease={release} className="h-14" />}
-        {xAxis && <HoldButton jogKey={xAxis.negKey} label="▼" sub="reach in" disabled={disabled} onHold={hold} onRelease={release} className="h-14" />}
-        {yAxis && <HoldButton jogKey={yAxis.negKey} label="▶" sub="right" disabled={disabled} onHold={hold} onRelease={release} className="h-14" />}
+      {/* Same shape as base + lift above: X/Y as the thumb pad, gripper in the column
+          beside it. The remaining task axes drop to condensed rows below. A robot whose
+          task vocabulary has no Z (every L2) simply shows no Z row — the axes come from
+          the descriptor, never from a hardcoded list. */}
+      <div className="grid grid-cols-[1fr_auto] gap-3">
+        <div className="grid grid-cols-3 grid-rows-2 gap-2">
+          <div />
+          {xAxis && <HoldButton jogKey={xAxis.posKey} label="▲" sub="reach out" disabled={disabled} onHold={hold} onRelease={release} className="h-14" />}
+          <div />
+          {yAxis && <HoldButton jogKey={yAxis.posKey} label="◀" sub="left" disabled={disabled} onHold={hold} onRelease={release} className="h-14" />}
+          {xAxis && <HoldButton jogKey={xAxis.negKey} label="▼" sub="reach in" disabled={disabled} onHold={hold} onRelease={release} className="h-14" />}
+          {yAxis && <HoldButton jogKey={yAxis.negKey} label="▶" sub="right" disabled={disabled} onHold={hold} onRelease={release} className="h-14" />}
+        </div>
+        {grip && (
+          <div className="grid w-20 grid-rows-2 gap-2">
+            <HoldButton jogKey={grip.posKey} label="◑" sub={grip.posLabel} disabled={disabled} onHold={hold} onRelease={release} className="h-14" />
+            <HoldButton jogKey={grip.negKey} label="◕" sub={grip.negLabel} disabled={disabled} onHold={hold} onRelease={release} className="h-14" />
+          </div>
+        )}
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         {rows.map((axis) => (
           <AxisRow key={axis.dof} axis={axis} disabled={disabled} onHold={hold} onRelease={release} />
         ))}
       </div>
 
-      <p className="pt-1 text-[11px] text-muted-foreground">
-        Buttons jog while held, at the sensitivity set on the Remote page.
-      </p>
+      <div className="flex items-center justify-between gap-3 pt-1 text-[11px] text-muted-foreground">
+        <span>Buttons jog while held, at the sensitivity set on the Remote page.</span>
+        {/* The escape hatch for the phone-redirect on Remote: without the flag, tapping
+            through to the console would bounce straight back here. */}
+        <Link
+          to="/nori/remote"
+          onClick={() => { try { sessionStorage.setItem(FORCE_CONSOLE_KEY, "1"); } catch { /* private mode */ } }}
+          className="shrink-0 underline"
+        >
+          full console →
+        </Link>
+      </div>
     </section>
   );
 };

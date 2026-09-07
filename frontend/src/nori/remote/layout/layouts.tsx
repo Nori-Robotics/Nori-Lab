@@ -176,7 +176,10 @@ const StageLayout = () => {
               rec · {recordState?.episodesKept ?? 0} kept
             </span>
           )}
-          <div className="min-w-0 flex-1"><VitalsChips dense /></div>
+          {/* basis-full below sm: as a flex-1 (basis-0) sibling of arm + E-STOP this
+              box collapsed to a sliver on a phone and the chips wrapped one-per-line
+              into a tall column. Its own full-width line there, shared row from sm up. */}
+          <div className="min-w-0 basis-full sm:flex-1 sm:basis-0"><VitalsChips dense /></div>
           <ArmControl compact />
           <EStopButton />
         </div>

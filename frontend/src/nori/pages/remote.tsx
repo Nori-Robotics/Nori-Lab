@@ -14,6 +14,7 @@
 // settings (room, ICE/TURN) which must match the Pi's .env.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -27,6 +28,7 @@ import { servoThermalThresholds } from "@/nori/robotModels";
 import { LeaderDriver } from "@/nori/remote/LeaderDriver";
 import { playAudioFile, type ClipHandle } from "@/nori/remote/audioClip";
 import { isM6VideoEnabled } from "@/nori/remote/flags";
+import { prefersMobileDrive, readViewport } from "@/nori/remote/mobileRoute";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { RemoteUiProvider, type RemoteUi, SELECT_TRIGGER_CLASS, SELECT_CONTENT_CLASS, SELECT_ITEM_CLASS } from "@/nori/remote/layout/blocks";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -36,6 +38,15 @@ import {
 
 const Remote = () => {
   const { ready, error: noriError } = useNori();
+  // A phone that lands here (a shared link, the nav, a bookmark) gets the drive pad
+  // instead: this page is a keyboard console and none of it survives a 390 px screen.
+  // Mount only, and `replace` so Back doesn't bounce between the two. The pad's
+  // "full console" link sets the escape hatch that turns this off for the visit.
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (prefersMobileDrive(readViewport())) navigate("/nori/mobile", { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const connectBlocked = useConnectGate();
   const { baseUrl, fetchWithHeaders } = useApi();
   // The session now lives in TeleopSessionProvider so it survives navigation (Remote <-> Coding).

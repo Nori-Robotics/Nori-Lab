@@ -105,7 +105,7 @@ const POS_GAIN_Z = 77;    // (was 70)
 const POS_SCALE = 0.01;
 const DELTA_LIMIT = 0.01; // max cartesian motion per frame (m)
 // Wrist scales/limits are PER-AXIS (verified on hardware 2026-06-25). Roll is deliberately
-// much gentler than pitch — matches NoriTeleopReference VR_WRIST_* defaults.
+// much gentler than pitch — matches the robot-side reference VR_WRIST_* defaults.
 const PITCH_SCALE = 6.6;  // VR_WRIST_PITCH_SCALE (reference default 4.0 felt too
                           // insensitive on hardware — large controller tilt for little flex;
                           // 6.0 -> 6.6 in the 2026-07-15 ~+10% sensitivity pass)

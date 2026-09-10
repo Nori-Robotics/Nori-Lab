@@ -3,8 +3,8 @@
 // signaling + control-data-channel logic; the React page (pages/remote.tsx) only wires
 // it to the DOM (video element, form, keyboard) and renders status.
 //
-// It is the TypeScript port of rpi5/media/webrtc_operator.html in NoriTeleop — same
-// wire protocol, so it talks to the same `webrtc_robot.py` on the Pi:
+// It is the TypeScript port of the robot-side operator page — same
+// wire protocol, so it talks to the same WebRTC sender on the Pi:
 //   * Supabase Realtime broadcast channel (room = NORI_ROOM) for SDP/ICE exchange
 //   * the browser is the ANSWERER; a FRESH RTCPeerConnection per offer (robot restarts)
 //   * control rides an UNRELIABLE data channel the robot opens ('control'), bridged on

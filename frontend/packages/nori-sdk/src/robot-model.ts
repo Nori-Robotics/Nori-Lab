@@ -8,8 +8,8 @@
 // WebGLRenderer, and a WebXR session can only be driven by one. Previously this geometry lived
 // as JSX inside Robot3D.tsx, which made it structurally impossible to show in the headset.
 //
-// The pose is TRUE forward kinematics in the daemon's own convention (NoriTeleop
-// rpi5/nori_core_agent kinematics.cpp / control.cpp):
+// The pose is TRUE forward kinematics in the daemon's own convention (the robot
+// daemon's kinematics.cpp / control.cpp):
 //
 //   * Joint values in `state` are lerobot-normalized ([-100,100]; grippers [0,100]). The
 //     daemon's IK conflates normalized units ≈ degrees (inherited from lerobot), so we do the

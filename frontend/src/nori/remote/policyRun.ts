@@ -161,6 +161,11 @@ export class PolicyRunner {
       throw new Error("no telemetry");
     }
 
+    // Store the session before handing it control. Any subsequent startup failure must be able to
+    // restore keyboard/leader control through stop(), even though no rollout timer exists yet.
+    this.teleop = teleop;
+    try {
+
     // The robot pauses its video ENCODER whenever no page is showing video (the
     // remote/vr pages resume on mount and pause on unmount; TeleopSessionContext
     // pauses too). Running a policy from any other page would therefore get a
@@ -308,12 +313,20 @@ export class PolicyRunner {
       });
     }
 
-    this.teleop = teleop;
     this.ref = ref;
     this.ticks = 0;
     this.consecutiveFailures = 0;
     this.timer = setInterval(() => void this.tick(), Math.max(50, 1000 / (loaded.fps || 10)));
     this.onPhase({ kind: "running", ticks: 0 });
+    } catch (e) {
+      // The policy handoff happens before load and layout validation. Do not leave the session in
+      // policy-driving mode if either fails: stop() releases the input gate and tears down any
+      // partially opened stream, preview, or loaded policy.
+      await this.stop("startup failed");
+      const message = e instanceof Error ? e.message : String(e);
+      this.onPhase({ kind: "error", message });
+      throw e;
+    }
   }
 
   private grab(src: FrameSource): string | null {

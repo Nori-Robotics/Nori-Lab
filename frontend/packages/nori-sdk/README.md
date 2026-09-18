@@ -123,6 +123,8 @@ What the mock gives you:
 - **Test-pattern video**: a canvas-drawn composite honoring the `camera_layout` grid, so
   `videoStream()`, `cameraView(role)`, `captureFrame`/`snapshot(role)` all work. Tiles move
   when you jog (a dot tracks `shoulder_pan`), so "is my view wired up" is answerable by eye.
+  Bring your own feed with `createMockRobot({ videoStream })` — any `MediaStream` (e.g. a
+  `canvas.captureStream()` of rendered scenes) tiled in the sim's `camera_layout` order.
 - **The real handshake**: `onReady`/`robotInfo()` deliver a descriptor (12 joints, 4 cameras,
   ranges) shaped exactly like a real robot's.
 - **Determinism for CI**: the simulation core (`MockDaemonSim`) is pure and seeded — no

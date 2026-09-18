@@ -42,6 +42,7 @@ import MobileDrive from "@/nori/pages/mobile";
 import VrLanding from "@/nori/pages/vr";
 import DrivePage from "@/nori/pages/drive";
 import ModelPage from "@/nori/pages/model";
+import SimTaskPage from "@/nori/pages/simTask";
 import LeaderSetup from "@/nori/pages/leader-setup";
 import NoriCoding from "@/nori/pages/coding";
 import NoriAgent from "@/nori/pages/agent";
@@ -128,6 +129,7 @@ function App() {
                             and no robot needed — the model is a static asset. The
                             link we hand a developer evaluating the A3. */}
                         <Route path="/nori/model" element={<ModelPage />} />
+                        <Route path="/nori/sim-task" element={<SimTaskPage />} />
                         <Route
                           path="/nori"
                           element={

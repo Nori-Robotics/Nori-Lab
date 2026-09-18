@@ -391,6 +391,11 @@ interface RobotUrdfViewerProps {
   /** Fires when the inset itself is clicked to step to the next camera. */
   onSimCameraViewChange?: (view: CameraView) => void;
   /**
+   * Hands the page the running sim (null when it stops), for things the page
+   * drives itself — e.g. rendering the robot's cameras into a video track.
+   */
+  onSimHandle?: (handle: SimHandle | null) => void;
+  /**
    * Whether this is a viewer or a picture.
    *
    * `false` gives a display-only render: no joint hover, no joint dragging, no
@@ -414,6 +419,13 @@ interface RobotUrdfViewerProps {
   liveState?: Record<string, number>;
   /** The robot's handshake descriptor, for future radian ranges (ranges_rad). */
   descriptor?: RobotDescriptor;
+  /**
+   * Material finish. Defaults to schematic whenever `liveState` is set (the
+   * remote page's small telemetry panel) and realistic otherwise. A live-posed
+   * model that is ALSO the apartment sim wants the realistic finish, which is
+   * what this override is for.
+   */
+  finish?: "schematic" | "realistic";
 }
 
 /** One-finger behaviour on touch screens. */
@@ -431,10 +443,12 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   simCameraView = "front",
   onSimState,
   onSimCameraViewChange,
+  onSimHandle,
   interactive = true,
   frameless = false,
   liveState,
   descriptor,
+  finish,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<URDFViewerElement | null>(null);
@@ -468,6 +482,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   // A viewer fed live telemetry is a display: the robot owns the pose, so touch
   // joint-posing (and its mode toggle) are off; touch is camera-only.
   const liveDisplay = liveState != null;
+  const schematic = finish ? finish === "schematic" : liveDisplay;
 
   // Live telemetry → model pose. Mutates the loaded robot in place (mirrors
   // Robot3D's pattern): no scene rebuild at the 15 Hz telemetry rate. Gated on
@@ -542,6 +557,8 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   const simRef = useRef<SimHandle | null>(null);
   const simStateCb = useRef(onSimState);
   simStateCb.current = onSimState;
+  const simHandleCb = useRef(onSimHandle);
+  simHandleCb.current = onSimHandle;
   // Read once when the sim starts. Held in a ref so changing the inset camera
   // does not restart the sim (which would put the robot back at the door).
   const simViewRef = useRef(simCameraView);
@@ -808,7 +825,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
           /* fall back to DEFAULT_FINISH */
         }
         try {
-          styleAndFrame(viewer, buildFinishLookup(doc), { schematic: liveDisplay });
+          styleAndFrame(viewer, buildFinishLookup(doc), { schematic });
           // styleAndFrame is what finally sets the camera's near and far, and
           // ambient occlusion is scaled against that range — so its metres have
           // to be converted again now, not at the moment the pass was built.
@@ -1136,7 +1153,9 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       initialCameraView: simViewRef.current ?? null,
     });
     simRef.current = handle;
+    simHandleCb.current?.(handle);
     return () => {
+      simHandleCb.current?.(null);
       handle?.dispose();
       simRef.current = null;
     };

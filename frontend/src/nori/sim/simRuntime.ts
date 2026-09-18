@@ -7,6 +7,7 @@
 // function over the existing viewer rather than a second viewer component.
 
 import * as THREE from "three";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
 import type { URDFViewerElement } from "@/lib/urdfViewerHelpers";
 import { SSAO_SCALE } from "@/nori/components/postprocess";
@@ -87,6 +88,20 @@ export type SimHandle = {
   setCameraView: (view: CameraView | null) => void;
   /** Put the robot back at the starting pose. */
   reset: () => void;
+  /**
+   * Render the robot's own cameras into ANOTHER renderer as a grid of
+   * viewports, row-major, one per view — the source for a composite video track
+   * (see cameraComposite.ts). Each camera sits on its optical frame exactly like
+   * the inset's, sees the walls at their real height, and gets the walls the
+   * chase camera has hidden put back for the duration of the draw. The target
+   * renderer's tone mapping and colour space are matched to the viewer's so the
+   * tiles look like the inset does.
+   */
+  renderRobotCameras: (
+    target: THREE.WebGLRenderer,
+    views: readonly CameraView[],
+    cols: number
+  ) => void;
   dispose: () => void;
 };
 
@@ -679,7 +694,11 @@ export function startSim(opts: SimOptions): SimHandle | null {
   // The robot's camera, and only the robot's camera, sees the walls at their
   // real height. See PIP_ONLY_LAYER in apartment.ts.
   pipCamera.layers.enable(PIP_ONLY_LAYER);
-  let pipView: CameraView | null = opts.initialCameraView ?? "front";
+  // `null` is an explicit "no inset" (the caller hides the bezel too); only an
+  // ABSENT option means the default front camera. `??` conflated the two, so a
+  // page asking for no inset got a bezel-less scissor render in the corner.
+  let pipView: CameraView | null =
+    opts.initialCameraView === undefined ? "front" : opts.initialCameraView;
 
   const mountPip = (view: CameraView | null) => {
     pipCamera.removeFromParent();
@@ -944,12 +963,81 @@ export function startSim(opts: SimOptions): SimHandle | null {
   // first frame has to be asked for.
   viewer.redraw();
 
+  // ---- the robot's cameras for an external renderer (composite video track)
+  //
+  // One camera per view, created on first use and left parented to its optical
+  // frame, so a 15 fps composite is four renders and nothing else. Same mount
+  // and the same half-turn about x as the inset — see mountPip.
+  const gridCameras = new Map<CameraView, THREE.PerspectiveCamera>();
+  const gridCameraFor = (view: CameraView): THREE.PerspectiveCamera | null => {
+    const have = gridCameras.get(view);
+    if (have) return have;
+    const entry = CAMERA_VIEWS.find((v) => v.id === view);
+    const frame = entry && robot.links?.[entry.frame];
+    if (!frame) return null;
+    const cam = new THREE.PerspectiveCamera(CAMERA_VFOV, 4 / 3, 0.03, 40);
+    cam.layers.enable(PIP_ONLY_LAYER);
+    frame.add(cam);
+    cam.position.set(0, 0, 0);
+    cam.rotation.set(Math.PI, 0, 0);
+    gridCameras.set(view, cam);
+    return cam;
+  };
+  const gridSize = new THREE.Vector2();
+  // The scene's environment map is a PMREM texture generated ON the viewer's GL
+  // context, which another context cannot sample — rendered there, every
+  // surface goes near-black because image-based lighting is most of the light.
+  // So each external renderer gets its own procedural room environment, swapped
+  // in for the duration of its draw (the HDRI the viewer may have swapped in is
+  // a refinement of the same room, so the tiles read the same as the inset).
+  const gridEnvs = new WeakMap<THREE.WebGLRenderer, THREE.Texture>();
+  const gridEnvFor = (target: THREE.WebGLRenderer): THREE.Texture => {
+    const have = gridEnvs.get(target);
+    if (have) return have;
+    const pmrem = new THREE.PMREMGenerator(target);
+    const tex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
+    gridEnvs.set(target, tex);
+    return tex;
+  };
+  const renderRobotCameras: SimHandle["renderRobotCameras"] = (target, views, cols) => {
+    if (target === renderer) return; // the viewer's own renderer is the inset's job
+    target.toneMapping = renderer.toneMapping;
+    target.toneMappingExposure = renderer.toneMappingExposure;
+    target.outputColorSpace = renderer.outputColorSpace;
+    target.getSize(gridSize);
+    const rows = Math.max(1, Math.ceil(views.length / cols));
+    const w = Math.floor(gridSize.x / cols);
+    const h = Math.floor(gridSize.y / rows);
+    if (w < 8 || h < 8) return;
+    for (const [mesh, material] of blocked) mesh.material = material;
+    const mainEnv = scene.environment;
+    scene.environment = gridEnvFor(target);
+    target.setScissorTest(true);
+    views.forEach((view, i) => {
+      const cam = gridCameraFor(view);
+      if (!cam) return;
+      const x = (i % cols) * w;
+      // WebGL viewports are bottom-up; tile 0 belongs top-left.
+      const y = gridSize.y - (Math.floor(i / cols) + 1) * h;
+      cam.aspect = w / h;
+      cam.updateProjectionMatrix();
+      target.setViewport(x, y, w, h);
+      target.setScissor(x, y, w, h);
+      target.render(scene, cam);
+    });
+    target.setScissorTest(false);
+    scene.environment = mainEnv;
+    for (const mesh of blocked.keys()) mesh.material = invisibleWall;
+  };
+
   const handle: SimHandle = {
     setCameraView: (view) => {
       mountPip(view);
       viewer.redraw();
     },
     reset: resetPose,
+    renderRobotCameras,
     dispose: () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("keydown", onKeyDown);
@@ -963,6 +1051,8 @@ export function startSim(opts: SimOptions): SimHandle | null {
         (renderer as unknown as { render: unknown }).render = previousRender;
       }
       pipCamera.removeFromParent();
+      for (const cam of gridCameras.values()) cam.removeFromParent();
+      gridCameras.clear();
 
       for (const [mesh, material] of blocked) mesh.material = material;
       blocked.clear();

@@ -27,6 +27,12 @@ export interface MockRobotOptions {
   token?: string;
   telemetryHz?: number; // default 20 (the bridge's ~15-25 Hz throttled band)
   video?: boolean; // default true; false = data-only session (still fully drivable)
+  // Bring your own composite video track instead of the built-in test pattern — e.g. a
+  // canvas.captureStream() of rendered scenes. The stream's first video track is sent as
+  // the robot's feed; the caller owns the stream (this shell never stops or redraws it) and
+  // is responsible for tiling it in the sim's camera_layout order so cameraView(role) crops
+  // the right cell. Ignored when `video` is false.
+  videoStream?: MediaStream;
   latencyMs?: number; // artificial one-way signaling latency
   log?: (msg: string) => void;
 }
@@ -143,7 +149,10 @@ export function createMockRobot(opts?: MockRobotOptions): MockRobotHandle {
     log("mock robot: building session (fresh peer + offer)");
     pc = new RTCPeerConnection(); // no ICE servers: in-page host candidates connect directly
 
-    if (opts?.video !== false && typeof document !== "undefined") {
+    if (opts?.video !== false && opts?.videoStream) {
+      const stream = opts.videoStream;
+      for (const track of stream.getVideoTracks()) pc.addTrack(track, stream);
+    } else if (opts?.video !== false && typeof document !== "undefined") {
       if (!canvas) {
         canvas = document.createElement("canvas");
         const n = (sim.descriptor.cameras ?? ["front"]).length;

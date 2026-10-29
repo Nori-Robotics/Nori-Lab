@@ -50,6 +50,21 @@ const BatteryChip = () => {
   );
 };
 
+// Shared across Nori pages; unknown or disconnected readings must not raise an alert.
+const LowBatteryBanner = () => {
+  const { running, connState, tel } = useTeleopSession();
+  const pct = tel.batteryPercent;
+  if (!running || connState !== "connected" || pct == null || !Number.isFinite(pct) || pct < 0 || pct > 10) return null;
+  return (
+    <div role="alert" className="mb-4 rounded-md border border-nori-hd24a3d/35 bg-nori-hfde7e4 px-4 py-3 text-nori-ha3271c">
+      <p className="font-mono text-[11px] uppercase tracking-[0.14em]">
+        Battery low. Charge the robot now.
+      </p>
+      <p className="mt-1 text-sm">Robot battery is at {pct}%.</p>
+    </div>
+  );
+};
+
 // `mobileOnly` items are hidden from the inline (lg and up) row and only appear in the
 // drawer — which is itself only reachable below lg. Drive is the phone-sized control pad;
 // on a laptop the Remote console is strictly better, so the tab would just be a worse door
@@ -196,6 +211,7 @@ const NoriLayout = () => {
       )}
 
       <main className="mx-auto max-w-5xl px-4 py-6">
+        <LowBatteryBanner />
         {/* Quick 0.7s page fade on every navigation, keyed by path so it re-plays. Skipped on
             landing + marketplace, which already run their own staggered FadeIn bring-up. The
             motion-reduce guard drops the animation for users who ask for reduced motion. */}

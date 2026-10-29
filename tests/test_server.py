@@ -251,3 +251,41 @@ def test_import_model_route_maps_value_error_to_400(client, monkeypatch) -> None
     resp = client.post("/jobs/import", json={"source": "/tmp/x"})
     assert resp.status_code == 400
     assert "No usable model" in resp.json()["detail"]
+
+
+# -- ASPIRE proxy (Agent page) ----------------------------------------------------------------------------
+def _aspire_client(monkeypatch, calls):
+    """Stand in for NoriClient: record each proxied call; `frame` answers None (the backend's 204)."""
+    from lelab import server
+
+    class Fake:
+        def __init__(self, jwt=None):
+            calls.append(("jwt", jwt))
+
+        def __getattr__(self, name):
+            def call(*a, **k):
+                calls.append((name, a, k))
+                return None if name == "aspire_frame" else {"name": name, "args": a}
+            return call
+    monkeypatch.setattr(server, "NoriClient", Fake)
+
+
+def test_aspire_proxy_forwards_the_jwt_and_turns_no_frame_into_204(client: TestClient, monkeypatch) -> None:
+    calls: list = []
+    _aspire_client(monkeypatch, calls)
+    c = client
+    if True:  # keep the block indented like the other route tests
+        h = {"X-Nori-JWT": "jwt-1"}
+        r = c.post("/nori/aspire/tasks", json={"robot": "NORI-A3-0003", "instruction": "pick up the can",
+                                               "constraints": {"operator_presence": True}}, headers=h)
+        assert r.status_code == 202 and r.json()["name"] == "aspire_start_task"
+        assert ("aspire_start_task", ({"robot": "NORI-A3-0003", "instruction": "pick up the can",
+                                       "constraints": {"operator_presence": True}},), {}) in calls
+        assert ("jwt", "jwt-1") in calls
+        assert c.get("/nori/aspire/tasks/t1/frame?after=3", headers=h).status_code == 204
+        assert ("aspire_frame", ("t1", 3), {}) in calls
+        assert c.get("/nori/aspire/tasks/t1/events?since=4", headers=h).json()["args"] == ["t1", 4]
+        assert c.post("/nori/aspire/tasks/t1/cancel", json={"reason": "E-STOP"}, headers=h).status_code == 202
+        assert ("aspire_cancel", ("t1", "E-STOP"), {}) in calls
+        assert c.post("/nori/aspire/tasks/t1/presence", headers=h).json()["name"] == "aspire_presence"
+        assert c.post("/nori/aspire/tasks/t1/answer", json={"text": "the red one"}, headers=h).json()["args"] == ["t1", "the red one"]

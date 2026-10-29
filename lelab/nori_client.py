@@ -540,6 +540,34 @@ class NoriClient:
         """DELETE /sounds/{id} — removes the row and both stored objects."""
         return self._request("DELETE", f"{API}/sounds/{sound_id}")
 
+    # -- ASPIRE tasks (the hosted System 2 agent; Nori-Backend routes/aspire.py) ----------------------
+
+    def aspire_start_task(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST /aspire/tasks -> 202 {task_id, status}; 409 {error: robot_busy} when the robot has a task."""
+        return self._request("POST", f"{API}/aspire/tasks", json=body)
+
+    def aspire_get_task(self, task_id: str) -> dict[str, Any]:
+        return self._request("GET", f"{API}/aspire/tasks/{task_id}")
+
+    def aspire_task_events(self, task_id: str, since: int = 0) -> list[dict[str, Any]]:
+        """The task's events from `since` as JSON (the page polls; no SSE through the proxy)."""
+        return self._request("GET", f"{API}/aspire/tasks/{task_id}/events", params={"since": since, "follow": "false"})
+
+    def aspire_answer(self, task_id: str, text: str) -> dict[str, Any]:
+        return self._request("POST", f"{API}/aspire/tasks/{task_id}/answer", json={"text": text})
+
+    def aspire_cancel(self, task_id: str, reason: str) -> dict[str, Any]:
+        """The executor stops the robot first, then the task ends `cancelled`."""
+        return self._request("POST", f"{API}/aspire/tasks/{task_id}/cancel", json={"reason": reason})
+
+    def aspire_frame(self, task_id: str, after: int = 0) -> dict[str, Any] | None:
+        """The latest live overhead frame, or None (204) when there is none newer than `after`."""
+        return self._request("GET", f"{API}/aspire/tasks/{task_id}/frame", params={"after": after})
+
+    def aspire_presence(self, task_id: str) -> dict[str, Any]:
+        """The Agent page's heartbeat: a presence-supervised task is cancelled when it stops."""
+        return self._request("POST", f"{API}/aspire/tasks/{task_id}/presence")
+
     def get_library(self) -> dict[str, Any]:
         """GET /library — the My Stuff aggregate: promoted datasets joined to
         the policies trained from each, plus source-unknown policies."""

@@ -560,10 +560,6 @@ class NoriClient:
         """The executor stops the robot first, then the task ends `cancelled`."""
         return self._request("POST", f"{API}/aspire/tasks/{task_id}/cancel", json={"reason": reason})
 
-    def aspire_frame(self, task_id: str, after: int = 0) -> dict[str, Any] | None:
-        """The latest live overhead frame, or None (204) when there is none newer than `after`."""
-        return self._request("GET", f"{API}/aspire/tasks/{task_id}/frame", params={"after": after})
-
     def aspire_presence(self, task_id: str) -> dict[str, Any]:
         """The Agent page's heartbeat: a presence-supervised task is cancelled when it stops."""
         return self._request("POST", f"{API}/aspire/tasks/{task_id}/presence")

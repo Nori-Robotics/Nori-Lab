@@ -29,7 +29,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.datastructures import Headers
@@ -1897,16 +1897,6 @@ def nori_aspire_cancel(task_id: str, body: NoriAspireCancelBody, request: Reques
     """Stop: the executor zeroes motion and E-STOPs the robot before the task ends."""
     client = _nori_client(request)
     return _nori_proxy(lambda: client.aspire_cancel(task_id, body.reason))
-
-
-@app.get("/nori/aspire/tasks/{task_id}/frame")
-def nori_aspire_frame(task_id: str, request: Request, after: int = 0):
-    """The latest live overhead frame; 204 when nothing newer than `after`."""
-    client = _nori_client(request)
-    frame = _nori_proxy(lambda: client.aspire_frame(task_id, after))
-    if frame is None:
-        return Response(status_code=204)
-    return frame
 
 
 @app.post("/nori/aspire/tasks/{task_id}/presence")

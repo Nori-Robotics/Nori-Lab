@@ -4,9 +4,9 @@
 // worker runs the look→think→act loop: the model decides, the executor moves the robot through the Nori SDK
 // under the bench safety layer. Nothing executes in the browser. The page only supervises:
 //
-//   transcript   the task's events, polled as JSON (thought / say / step / refused / needs_input / done ...)
-//   overhead     the worker posts the robot's overhead camera about once a second; the page cannot open its own
-//                video because the task holds the robot's single remote session
+//   transcript   the task's events, polled as JSON (thought / say / step / refused / needs_input / done ...), with
+//                every frame a tool returned to the model shown inline -- exactly what the agent looked at (the
+//                page cannot open its own video: the task holds the robot's single remote session)
 //   STOP/E-STOP  POST .../cancel: the executor zeroes motion, sends E-STOP and waits for the robot to confirm
 //                the latch BEFORE the task is reported cancelled. (A connected teleop session, if any, gets a
 //                direct estop too.)
@@ -17,19 +17,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Play, Square, OctagonX, Bot, Send, Camera } from "lucide-react";
+import { Play, Square, OctagonX, Bot, Send } from "lucide-react";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
 import { friendlyErrorMessage } from "@/lib/apiClient";
 import {
   aspireApi, RobotBusyError, TERMINAL,
-  type TaskEvent, type TaskRecord, type TaskStatus, type LiveFrame,
+  type TaskEvent, type TaskRecord, type TaskStatus,
 } from "@/nori/aspire/api";
 
 const EVENTS_MS = 700;      // transcript poll
 const RECORD_MS = 2000;     // task record poll (status, usage, waiting_for_answer)
-const FRAME_MS = 1000;      // overhead view poll (the worker posts ~1/s)
 const PRESENCE_MS = 2000;   // deadman check-in (the backend cancels after 6 s without one)
 
 // A rendered transcript line. Rows are a pure function of the event list (toRows below).
@@ -39,6 +38,7 @@ type Row =
   | { kind: "thought"; text: string }
   | { kind: "say"; text: string }
   | { kind: "call"; tool: string; args: Record<string, unknown>; pending: boolean; status?: string; result?: string }
+  | { kind: "frame"; tool: string; src: string }
   | { kind: "refused"; tool: string; reason: string }
   | { kind: "question"; text: string; answered?: string }
   | { kind: "safety"; text: string }
@@ -49,7 +49,8 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
   done: "finished", failed: "failed", cancelled: "stopped",
 };
 
-/** Events -> transcript rows. A `step_start` is a pending call until its `step` arrives (same tool, in order). */
+/** Events -> transcript rows. A `step_start` is a pending call until its `step` arrives (same tool, in order); the
+ * `frame` events that follow a step are the images that tool returned to the model. */
 export function toRows(instruction: string, events: TaskEvent[]): Row[] {
   const rows: Row[] = [{ kind: "goal", text: instruction }];
   const pending: number[] = [];                                  // indexes of unresolved call rows
@@ -80,6 +81,9 @@ export function toRows(instruction: string, events: TaskEvent[]): Row[] {
         }
         break;
       }
+      case "frame":
+        if (typeof e.jpeg_b64 === "string" && e.jpeg_b64) rows.push({ kind: "frame", tool: str(e.tool), src: `data:image/jpeg;base64,${e.jpeg_b64}` });
+        break;
       case "refused": rows.push({ kind: "refused", tool: str(e.tool), reason: str(e.reason) }); break;
       case "needs_input": rows.push({ kind: "question", text: str(e.question, 400) }); break;
       case "answered": {
@@ -119,15 +123,12 @@ const Agent = () => {
   const [taskId, setTaskId] = useState<string | null>(null);
   const [record, setRecord] = useState<TaskRecord | null>(null);
   const [events, setEvents] = useState<TaskEvent[]>([]);
-  const [frame, setFrame] = useState<LiveFrame | null>(null);
-  const [frameAt, setFrameAt] = useState<number>(0);            // wall-clock ms when the frame arrived
   const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sinceRef = useRef(0);
-  const frameSeqRef = useRef(0);
 
   const status = record?.status ?? null;
   const active = !!taskId && status !== null && !TERMINAL.has(status);
@@ -159,22 +160,6 @@ const Agent = () => {
     return () => { stop = true; clearInterval(a); clearInterval(b); };
   }, [api, taskId]);
 
-  // The overhead view: only while the task is active (the final frame stays on screen afterwards).
-  useEffect(() => {
-    if (!taskId || !active) return;
-    let stop = false;
-    const tick = async () => {
-      if (stop) return;
-      try {
-        const f = await api.frame(taskId, frameSeqRef.current);
-        if (f && !stop) { frameSeqRef.current = f.seq; setFrame(f); setFrameAt(Date.now()); }
-      } catch { /* best-effort view */ }
-    };
-    void tick();
-    const t = setInterval(tick, FRAME_MS);
-    return () => { stop = true; clearInterval(t); };
-  }, [api, taskId, active]);
-
   // The deadman: check in while the task is active. Unmounting (tab closed, navigated away) ends the check-ins,
   // and a presence-supervised task is then cancelled by the backend — robot stopped first.
   useEffect(() => {
@@ -188,8 +173,8 @@ const Agent = () => {
 
   // -- actions ---------------------------------------------------------------------------------------------------
   const attach = useCallback((id: string) => {
-    sinceRef.current = 0; frameSeqRef.current = 0;
-    setEvents([]); setRecord(null); setFrame(null); setError(null); setTaskId(id);
+    sinceRef.current = 0;
+    setEvents([]); setRecord(null); setError(null); setTaskId(id);
   }, []);
 
   const start = async () => {
@@ -225,7 +210,6 @@ const Agent = () => {
     try { await api.answer(taskId, answer.trim()); setAnswer(""); } catch (e) { setError(friendlyErrorMessage(e)); }
   };
 
-  const frameAge = frameAt ? Math.round((Date.now() - frameAt) / 1000) : null;
   const usage = record?.usage ?? {};
   const statusChip = status
     ? `${STATUS_LABEL[status]}${status === "running" && typeof usage.llm_calls === "number" ? ` · ${usage.llm_calls} turns` : ""}`
@@ -246,7 +230,7 @@ const Agent = () => {
                 {"// beta"}
               </span>
             </div>
-            <p className="text-sm text-muted-foreground">look → think → act on the robot · watch the overhead view · STOP / E-STOP below</p>
+            <p className="text-sm text-muted-foreground">look → think → act on the robot · the transcript shows what it sees · STOP / E-STOP below</p>
           </div>
           <span className={"inline-flex h-9 items-center rounded-full px-3 font-mono text-xs " + (active ? "bg-nori-h8ab135/25 text-nori-h4d6a1e" : "bg-nori-h14131a/8 text-nori-h857b6b")}>
             ● {statusChip}
@@ -320,22 +304,6 @@ const Agent = () => {
               </div>
             )}
 
-            {/* The overhead camera, posted by the worker while the task runs */}
-            <div className="flex min-h-0 flex-1 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// overhead view</span>
-                <span className="font-mono text-[10px] text-muted-foreground">
-                  {frame ? (active ? (frameAge != null && frameAge > 4 ? `stale · ${frameAge}s` : "live") : "last frame") : active ? "waiting for the first frame…" : ""}
-                </span>
-              </div>
-              <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-md border border-nori-h14131a/10 bg-nori-h14131a/90">
-                {frame ? (
-                  <img src={`data:image/jpeg;base64,${frame.jpeg_b64}`} alt="overhead camera" className="max-h-full max-w-full object-contain" />
-                ) : (
-                  <span className="flex items-center gap-2 font-mono text-[11px] text-nori-hf6f4eb/60"><Camera className="h-4 w-4" /> the robot's overhead camera appears here while a task runs</span>
-                )}
-              </div>
-            </div>
           </div>
 
           {/* Right: transcript */}
@@ -343,7 +311,7 @@ const Agent = () => {
             <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// transcript</span>
             <div ref={scrollRef} className="flex-1 min-w-0 space-y-2 overflow-y-auto overflow-x-hidden rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 text-xs text-nori-h5a5346">
               {!taskId ? (
-                <span className="font-mono text-muted-foreground">The agent's thoughts, what it says, its tool calls and their results appear here.</span>
+                <span className="font-mono text-muted-foreground">The agent's thoughts, what it says, its tool calls, their results and the frames it looked at appear here.</span>
               ) : rows.map((r, i) => <TranscriptRow key={i} row={r} />)}
             </div>
           </div>
@@ -378,6 +346,8 @@ const TranscriptRow = ({ row }: { row: Row }) => {
         </div>
       );
     }
+    case "frame":
+      return <img src={row.src} alt={`what the agent saw (${row.tool})`} className="max-h-48 w-auto rounded border border-nori-h14131a/20" />;
     case "refused":
       return <div className="whitespace-pre-wrap break-words font-mono text-[11px] text-nori-hb4442e">✗ {row.tool} refused — {row.reason}</div>;
     case "question":

@@ -3,8 +3,8 @@
 // to the backend's `/api/v1/aspire/*` (noriRequest rewrites the prefix and swaps the auth header).
 //
 // The page never opens its own robot session: the task holds the robot's single remote session
-// (the gateway serves one WebRTC session per robot) and the worker posts the overhead camera for
-// us (GET .../frame). Events are polled as JSON rather than streamed as SSE so one code path works
+// (the gateway serves one WebRTC session per robot). The frames the agent looked at arrive as
+// `frame` events. Events are polled as JSON rather than streamed as SSE so one code path works
 // through the proxy and directly.
 
 import { noriRequest } from "@/nori/api/client";
@@ -35,15 +35,6 @@ export interface TaskEvent {
   ts?: number;
   t?: number;
   [k: string]: unknown;
-}
-
-export interface LiveFrame {
-  role: "overhead" | "front";
-  jpeg_b64: string;
-  width?: number | null;
-  height?: number | null;
-  captured_at?: number | null;
-  seq: number;
 }
 
 export interface StartBody {
@@ -87,9 +78,6 @@ export function aspireApi(baseUrl: string, fetcher: Fetcher) {
       req<{ ok: boolean }>(`/nori/aspire/tasks/${id}/answer`, { method: "POST", body: { text }, action: "Answer the agent" }),
     cancel: (id: string, reason: string) =>
       req<{ status: string }>(`/nori/aspire/tasks/${id}/cancel`, { method: "POST", body: { reason }, action: "Stop the agent" }),
-    /** null when there is no frame newer than `after` (HTTP 204). */
-    frame: async (id: string, after: number) =>
-      (await req<LiveFrame | undefined>(`/nori/aspire/tasks/${id}/frame?after=${after}`, { action: "Read the live frame" })) ?? null,
     presence: (id: string) =>
       req<{ ok: boolean; status: TaskStatus }>(`/nori/aspire/tasks/${id}/presence`, { method: "POST", action: "Keep the task supervised" }),
   };

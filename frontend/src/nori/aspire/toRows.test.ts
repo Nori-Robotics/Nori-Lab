@@ -14,11 +14,14 @@ describe("toRows", () => {
       ev(5, "say", { text: "I'll look at the table." }),
       ev(6, "step_start", { tool: "observe", args: {} }),
       ev(7, "step", { tool: "observe", args: {}, result: "{\"status\": \"ok\"}", status: "ok" }),
-      ev(8, "step_start", { tool: "jog_arm", args: { x: 1, seconds: 2 } }),
+      ev(8, "frame", { tool: "observe", jpeg_b64: "QUJD" }),
+      ev(9, "frame", { tool: "observe", jpeg_b64: "" }),                       // an empty image is skipped
+      ev(10, "step_start", { tool: "jog_arm", args: { x: 1, seconds: 2 } }),
     ]);
-    expect(rows.map((r) => r.kind)).toEqual(["goal", "info", "info", "thought", "say", "call", "call"]);
+    expect(rows.map((r) => r.kind)).toEqual(["goal", "info", "info", "thought", "say", "call", "frame", "call"]);
     expect(rows[5]).toMatchObject({ kind: "call", tool: "observe", pending: false, status: "ok" });
-    expect(rows[6]).toMatchObject({ kind: "call", tool: "jog_arm", pending: true });
+    expect(rows[6]).toMatchObject({ kind: "frame", tool: "observe", src: "data:image/jpeg;base64,QUJD" });
+    expect(rows[7]).toMatchObject({ kind: "call", tool: "jog_arm", pending: true });
     expect(rows[2]).toMatchObject({ text: "homed the left arm to the high-side pose (12.5 s)" });
   });
 

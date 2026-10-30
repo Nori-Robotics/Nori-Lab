@@ -360,11 +360,15 @@ const Agent = () => {
                       <Square className="mr-2 h-4 w-4" /> Stop
                     </Button>
                   )}
-                  <Button size="sm" variant="destructive" className="font-bold" onClick={estop} disabled={!active && !teleop}
-                    title="Stop the robot now: zero motion + E-STOP latch, then end the task">
-                    <OctagonX className="mr-2 h-4 w-4" /> E-STOP
-                  </Button>
-                  {!active && (
+                  {/* One button, two states (like Remote's E-STOP / unlatch): while a task runs, or this app has its own
+                      session open, it is E-STOP. With nothing running there is nothing to stop, and the only useful act is
+                      clearing the latch a failed task left behind. */}
+                  {active || teleop ? (
+                    <Button size="sm" variant="destructive" className="font-bold" onClick={estop}
+                      title="Stop the robot now: zero motion + E-STOP latch, then end the task">
+                      <OctagonX className="mr-2 h-4 w-4" /> E-STOP
+                    </Button>
+                  ) : (
                     <Button size="sm" variant="outline" onClick={clearLatch} disabled={clearing || busy || !robot}
                       className={latchHint ? "border-nori-hd98b3d text-nori-hb06a1c" : undefined}
                       title="Clear the robot's software E-stop latch (a failed task leaves it set): opens this app's robot session, sends reset_latch, waits for motion online, closes the session">

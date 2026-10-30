@@ -132,6 +132,15 @@ export interface TeleopSessionValue {
   // the countdown in-headset — the 2D dialog is invisible under an active WebXR session.
   idlePromptOpen: boolean;
   idleSecondsLeft: number;
+  // Yield the robot to someone else's session. The gateway serves ONE WebRTC session per robot and
+  // treats a `ready` from the same operator as a page refresh that replaces the live session; the
+  // hosted ASPIRE worker drives the robot under THIS customer's identity, so while an ASPIRE task
+  // runs, a session from this app and the worker's would keep preempting each other (0003,
+  // 2026-10-30: a ten-second respawn loop, the task never got past the handshake). A page that
+  // starts or follows a task registers a yield for the task's duration: connect() refuses with the
+  // reason, and the Remote page shows it. Keyed like setSessionBusy; clear in an effect cleanup.
+  setYield: (key: string, reason: string | null) => void;
+  yieldedFor: string | null;
 }
 
 const TeleopSessionContext = createContext<TeleopSessionValue | undefined>(undefined);
@@ -161,6 +170,14 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
 
   const lastTelRef = useRef(0);
   const currentsListenerRef = useRef<((c: Record<string, number>) => void) | null>(null);
+  const yieldRef = useRef<Map<string, string>>(new Map());
+  const [yieldedFor, setYieldedFor] = useState<string | null>(null);
+  const setYield = useCallback((key: string, reason: string | null) => {
+    const m = yieldRef.current;
+    if (reason) m.set(key, reason);
+    else m.delete(key);
+    setYieldedFor((m.values().next().value as string | undefined) ?? null);
+  }, []);
 
   const appendLog = useCallback((msg: string) => {
     setLogLines((prev) => {
@@ -251,6 +268,11 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
 
   const connect = useCallback(async () => {
     if (teleopRef.current) return; // already have a session
+    const yielded = yieldRef.current.values().next().value as string | undefined;
+    if (yielded) {               // the robot is lent out (an ASPIRE task from this app); see setYield
+      appendLog(`not connecting: ${yielded}`);
+      return;
+    }
     setConnecting(true);
     setLogLines([]);
     setDaemonStatus(null);
@@ -429,7 +451,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     recordState, connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
-    setSessionBusy,
+    setSessionBusy, setYield, yieldedFor,
     noteActivity: idle.noteActivity,
     idlePromptOpen: idle.promptOpen,
     idleSecondsLeft: idle.secondsLeft,
@@ -438,7 +460,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     recordState, connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
-    setSessionBusy,
+    setSessionBusy, setYield, yieldedFor,
     idle.noteActivity, idle.promptOpen, idle.secondsLeft,
   ]);
 

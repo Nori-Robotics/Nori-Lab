@@ -148,6 +148,13 @@ export interface TeleopSessionValue {
   // by the next connect(). Unlike yieldedFor this covers every device of the customer, not just
   // the tab that pressed Start.
   heldNote: string | null;
+  // Clear the robot's software E-stop latch without leaving the current page: open this app's robot session, send
+  // reset_latch once the control channel is up, wait for the robot to report motion online, close the session.
+  // Built for the Agent page (2026-10-30): a hosted ASPIRE task that fails after its first commanded motion E-stops
+  // the robot and the latch persists, and the only way to clear it was to go to Remote, connect, reset, disconnect.
+  // Resolves to a one-line result for the log; rejects with the reason when the session cannot be opened. Refuses
+  // while this app already has a session (clear it from that page instead).
+  clearEstopLatch: () => Promise<string>;
 }
 
 const TeleopSessionContext = createContext<TeleopSessionValue | undefined>(undefined);
@@ -446,6 +453,44 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
 
   disconnectRef.current = disconnect;
 
+  const clearEstopLatch = useCallback(async (): Promise<string> => {
+    if (teleopRef.current) throw new Error("this app already has a robot session — clear the latch from the Remote page");
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    await connect();
+    const t = teleopRef.current as RemoteTeleop | null;
+    if (!t) throw new Error("could not open a robot session (see the session log)");
+    try {
+      const until = Date.now() + 25_000;
+      for (;;) {
+        const st = t.connectStatus();
+        if (st.phase === "connected") break;
+        if (st.phase === "failed") throw new Error(`could not connect: ${st.reason ?? "unknown"}${st.detail ? ` (${st.detail})` : ""}`);
+        if (Date.now() > until) throw new Error("the robot did not connect within 25 s");
+        await sleep(250);
+      }
+      // reset_latch rides the control channel and drops silently before it opens; the first daemon_status frame
+      // arrives right after the channel's ack, so its presence is the "channel is up" signal.
+      const chan = Date.now() + 8_000;
+      while (t.daemonStatus() === null) {
+        if (Date.now() > chan) throw new Error("connected, but the control channel never opened");
+        await sleep(200);
+      }
+      const before = t.daemonStatus();
+      t.command("reset_latch");
+      appendLog("reset_latch sent (clear E-stop latch)");
+      const settle = Date.now() + 8_000;
+      while (Date.now() < settle) {
+        const ds = t.daemonStatus();
+        if (ds?.state === "online") return `E-stop latch cleared — motion online${before?.state !== "online" ? ` (was ${before?.state}${before?.reason ? `: ${before.reason}` : ""})` : ""}`;
+        await sleep(250);
+      }
+      const ds = t.daemonStatus();
+      return `reset sent, but the robot still reports motion ${ds?.state ?? "unknown"}${ds?.reason ? ` (${ds.reason}${ds.detail ? `: ${ds.detail}` : ""})` : ""}`;
+    } finally {
+      await disconnect();
+    }
+  }, [connect, disconnect, appendLog]);
+
   // Leaving /nori entirely unmounts this provider — tear the session down cleanly (robot `bye`).
   useEffect(() => () => { teleopRef.current?.stop(); }, []);
 
@@ -476,7 +521,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     recordState, connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
-    setSessionBusy, setYield, yieldedFor, heldNote,
+    setSessionBusy, setYield, yieldedFor, heldNote, clearEstopLatch,
     noteActivity: idle.noteActivity,
     idlePromptOpen: idle.promptOpen,
     idleSecondsLeft: idle.secondsLeft,
@@ -485,7 +530,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     recordState, connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
-    setSessionBusy, setYield, yieldedFor, heldNote,
+    setSessionBusy, setYield, yieldedFor, heldNote, clearEstopLatch,
     idle.noteActivity, idle.promptOpen, idle.secondsLeft,
   ]);
 

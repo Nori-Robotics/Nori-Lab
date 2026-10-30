@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Play, Square, OctagonX, Bot, Send, ChevronDown, ChevronRight } from "lucide-react";
+import { Play, Square, OctagonX, Bot, Send, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
@@ -138,7 +138,7 @@ export function toRows(instruction: string, events: TaskEvent[]): Row[] {
 const Agent = () => {
   const {
     teleop, running: appSessionUp, connecting: appSessionJoining, disconnect: closeAppSession, setYield,
-    heldNote,
+    heldNote, clearEstopLatch,
   } = useTeleopSession();
   const { activeRobotSerial, customer } = useNori();
   const { baseUrl, fetchWithHeaders } = useApi();
@@ -154,6 +154,7 @@ const Agent = () => {
   const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sinceRef = useRef(0);
@@ -280,6 +281,19 @@ const Agent = () => {
     teleop?.command("estop");                                   // a teleop session open in this app, if any (none during a task: see yieldRobot)
   };
 
+  // A task that fails after its first commanded motion E-stops the robot and the latch stays; the next task then
+  // refuses at preflight ("motion daemon offline: estop_latched"). Clear it from here instead of going to Remote.
+  const clearLatch = async () => {
+    if (clearing || active) return;
+    setClearing(true); setError(null);
+    note("clearing the E-stop latch: opening this app's robot session, reset_latch, closing");
+    try { const r = await clearEstopLatch(); note(r); setYieldedNote(r); }
+    catch (e) { const m = e instanceof Error ? e.message : String(e); note(`clear E-stop latch failed: ${m}`); setError(`Could not clear the E-stop latch: ${m}`); }
+    finally { setClearing(false); }
+  };
+  const lastFailure = [...events].reverse().find((e) => e.type === "failed");
+  const latchHint = !active && typeof lastFailure?.reason === "string" && /estop_latched|E-stop/i.test(lastFailure.reason);
+
   const sendAnswer = async () => {
     if (!taskId || !answer.trim()) return;
     try { await api.answer(taskId, answer.trim()); setAnswer(""); } catch (e) { setError(friendlyErrorMessage(e)); }
@@ -350,6 +364,13 @@ const Agent = () => {
                     title="Stop the robot now: zero motion + E-STOP latch, then end the task">
                     <OctagonX className="mr-2 h-4 w-4" /> E-STOP
                   </Button>
+                  {!active && (
+                    <Button size="sm" variant="outline" onClick={clearLatch} disabled={clearing || busy || !robot}
+                      className={latchHint ? "border-nori-hd98b3d text-nori-hb06a1c" : undefined}
+                      title="Clear the robot's software E-stop latch (a failed task leaves it set): opens this app's robot session, sends reset_latch, waits for motion online, closes the session">
+                      <RotateCcw className="mr-2 h-4 w-4" /> {clearing ? "Clearing latch…" : "Clear E-stop latch"}
+                    </Button>
+                  )}
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-muted-foreground">

@@ -378,12 +378,12 @@ const Agent = () => {
                       <Square className="mr-2 h-4 w-4" /> Stop
                     </Button>
                   )}
-                  {/* One button, two states (like Remote's E-STOP / unlatch): while a task runs, or this app has its own
-                      session open, it is E-STOP. With nothing running there is nothing to stop, and the only useful act is
-                      clearing the latch a failed task left behind. */}
-                  {active || teleop ? (
-                    <Button size="sm" variant="destructive" className="font-bold" onClick={estop}
-                      title="Stop the robot now: zero motion + E-STOP latch, then end the task">
+                  {/* One button, two states (like Remote's E-STOP / unlatch). E-STOP is the default — the stop control is
+                      the one an operator must always find in the same place; it is inert when nothing is running. It
+                      becomes "Clear E-stop latch" only when this page knows the previous task left the latch set. */}
+                  {!latchHint || active || teleop ? (
+                    <Button size="sm" variant="destructive" className="font-bold" onClick={estop} disabled={!active && !teleop}
+                      title={active || teleop ? "Stop the robot now: zero motion + E-STOP latch, then end the task" : "Nothing is running"}>
                       <OctagonX className="mr-2 h-4 w-4" /> E-STOP
                     </Button>
                   ) : (

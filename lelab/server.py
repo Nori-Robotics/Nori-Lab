@@ -1846,6 +1846,65 @@ def nori_delete_sound(sound_id: str, request: Request):
     return _nori_proxy(lambda: client.delete_sound(sound_id))
 
 
+# -- ASPIRE tasks: the Agent page drives the hosted System 2 agent through these ----------------
+# Pure proxies (1:1 with Nori-Backend /api/v1/aspire/*): the hosted build calls the backend directly.
+
+
+class NoriAspireStartBody(BaseModel):
+    robot: str
+    instruction: str
+    budget: dict[str, int] | None = None
+    constraints: dict[str, Any] | None = None
+    caller: dict[str, Any] | None = None
+
+
+class NoriAspireTextBody(BaseModel):
+    text: str
+
+
+class NoriAspireCancelBody(BaseModel):
+    reason: str = ""
+
+
+@app.post("/nori/aspire/tasks", status_code=202)
+def nori_aspire_start(body: NoriAspireStartBody, request: Request):
+    """Queue an ASPIRE task on a paired robot; the hosted worker runs it."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.aspire_start_task(body.model_dump(exclude_none=True)))
+
+
+@app.get("/nori/aspire/tasks/{task_id}")
+def nori_aspire_task(task_id: str, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.aspire_get_task(task_id))
+
+
+@app.get("/nori/aspire/tasks/{task_id}/events")
+def nori_aspire_events(task_id: str, request: Request, since: int = 0):
+    """The task's events from `since`, as JSON (the page polls about once a second)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.aspire_task_events(task_id, since))
+
+
+@app.post("/nori/aspire/tasks/{task_id}/answer")
+def nori_aspire_answer(task_id: str, body: NoriAspireTextBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.aspire_answer(task_id, body.text))
+
+
+@app.post("/nori/aspire/tasks/{task_id}/cancel", status_code=202)
+def nori_aspire_cancel(task_id: str, body: NoriAspireCancelBody, request: Request):
+    """Stop: the executor zeroes motion and E-STOPs the robot before the task ends."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.aspire_cancel(task_id, body.reason))
+
+
+@app.post("/nori/aspire/tasks/{task_id}/presence")
+def nori_aspire_presence(task_id: str, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.aspire_presence(task_id))
+
+
 @app.get("/nori/library")
 def nori_library(request: Request):
     """My Stuff: datasets + policies + lineage in one call."""

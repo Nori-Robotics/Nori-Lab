@@ -17,6 +17,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Play, Square, OctagonX, Bot, Send, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { useNori } from "@/nori/NoriContext";
@@ -249,9 +253,18 @@ const Agent = () => {
     note(`following task ${id.slice(0, 8)}`);
   }, [note]);
 
-  const start = async () => {
+  const start = async (clearFirst = false) => {
     if (busy || !goal.trim() || !robot) return;
+    if (latchHint && !clearFirst) { setConfirmClear(true); return; }   // ask once; the dialog calls start(true)
     setBusy(true); setError(null);
+    if (clearFirst) {
+      note("clearing the E-stop latch before starting");
+      try { const r = await clearEstopLatch(); note(r); }
+      catch (e) {
+        const m = e instanceof Error ? e.message : String(e);
+        note(`clear E-stop latch failed: ${m}`); setError(`Could not clear the E-stop latch, not starting: ${m}`); setBusy(false); return;
+      }
+    }
     note(`start requested on ${robot}`);
     try {
       await yieldRobot();
@@ -291,8 +304,13 @@ const Agent = () => {
     catch (e) { const m = e instanceof Error ? e.message : String(e); note(`clear E-stop latch failed: ${m}`); setError(`Could not clear the E-stop latch: ${m}`); }
     finally { setClearing(false); }
   };
+  // The previous task on this page latched the robot's E-stop: it failed after its first commanded motion (the
+  // worker's stop path latches then), or its reason names the latch. Start then offers "clear it and start" as ONE
+  // explicit click — never silently: the page cannot tell this latch from one a person set on purpose.
   const lastFailure = [...events].reverse().find((e) => e.type === "failed");
-  const latchHint = !active && typeof lastFailure?.reason === "string" && /estop_latched|E-stop/i.test(lastFailure.reason);
+  const latchHint = !active && !!lastFailure && (
+    lastFailure.before_motion === false || (typeof lastFailure.reason === "string" && /estop_latched|E-stop/i.test(lastFailure.reason)));
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const sendAnswer = async () => {
     if (!taskId || !answer.trim()) return;
@@ -351,7 +369,7 @@ const Agent = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   {!active ? (
-                    <Button size="sm" onClick={start} disabled={busy || !robot || !goal.trim()}
+                    <Button size="sm" onClick={() => void start()} disabled={busy || !robot || !goal.trim()}
                       className="rounded-md bg-nori-h8ab135 text-foreground hover:bg-nori-h799c2a" title={robot ? undefined : "Pair a robot first"}>
                       <Play className="mr-2 h-4 w-4" /> Start
                     </Button>
@@ -438,6 +456,22 @@ const Agent = () => {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>The robot's E-stop is latched</AlertDialogTitle>
+            <AlertDialogDescription>
+              The previous task left {robot || "the robot"}'s software E-stop latched. Starting now would fail at preflight.
+              Clear the latch and start? Only do this if nobody stopped the robot on purpose and it is safe to move.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { setConfirmClear(false); void start(true); }}>Clear latch and start</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 };

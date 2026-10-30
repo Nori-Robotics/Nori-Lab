@@ -184,15 +184,24 @@ const Agent = () => {
   useEffect(() => {
     if (!taskId) return;
     let stop = false;
+    // One fetch in flight at a time: the immediate first tick and the interval's first tick used to overlap with the
+    // same cursor, so the opening events (queued, claimed) arrived twice. The cursor advances only when a fetch returns,
+    // and the merge drops anything at or below the last `n` already shown as a second guard.
+    let inflight = false;
     const tick = async () => {
-      if (stop) return;
+      if (stop || inflight) return;
+      inflight = true;
       try {
         const evs = await api.events(taskId, sinceRef.current);
         if (evs.length && !stop) {
           sinceRef.current = evs[evs.length - 1].n + 1;
-          setEvents((prev) => [...prev, ...evs]);
+          setEvents((prev) => {
+            const last = prev.length ? prev[prev.length - 1].n : -1;
+            return [...prev, ...evs.filter((e) => e.n > last)];
+          });
         }
       } catch (e) { setError(friendlyErrorMessage(e)); }
+      finally { inflight = false; }
     };
     const rec = async () => {
       if (stop) return;

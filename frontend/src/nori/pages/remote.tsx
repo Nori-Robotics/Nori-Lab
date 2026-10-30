@@ -56,7 +56,7 @@ const Remote = () => {
     teleop, running, connecting, connState, tel, stale, controlActive, mode, call, daemonStatus,
     connectStatus, recordState,
     logLines, appendLog, settings, setSetting: set, connect, disconnect: sessionDisconnect,
-    toggleControlMode, setCurrentsListener,
+    toggleControlMode, setCurrentsListener, yieldedFor,
   } = useTeleopSession();
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -455,7 +455,8 @@ const Remote = () => {
   };
   const status = connected
     ? "connected"
-    : running || connecting ? (PHASE_PILL[connectStatus.phase] ?? "connecting…") : "not connected";
+    : running || connecting ? (PHASE_PILL[connectStatus.phase] ?? "connecting…")
+    : yieldedFor ? `not connected — ${yieldedFor}` : "not connected";
   const controlMode = selectedMode;
   const selectKeyboard = useCallback(async () => {
     setSelectedMode("keyboard");

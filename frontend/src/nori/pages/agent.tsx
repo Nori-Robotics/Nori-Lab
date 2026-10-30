@@ -111,7 +111,7 @@ export function toRows(instruction: string, events: TaskEvent[]): Row[] {
 }
 
 const Agent = () => {
-  const { teleop } = useTeleopSession();
+  const { teleop, running: appSessionUp, connecting: appSessionJoining, disconnect: closeAppSession, setYield } = useTeleopSession();
   const { activeRobotSerial, customer } = useNori();
   const { baseUrl, fetchWithHeaders } = useApi();
   const api = useMemo(() => aspireApi(baseUrl, fetchWithHeaders), [baseUrl, fetchWithHeaders]);
@@ -171,6 +171,23 @@ const Agent = () => {
     return () => { stop = true; clearInterval(t); };
   }, [api, taskId, active, presence]);
 
+  // The robot has ONE session. The gateway treats a `ready` from the same operator as a page refresh that replaces
+  // the live session, and the hosted worker drives the robot under this customer's identity: with this app still
+  // connected, the app and the worker preempt each other every few seconds and the task never gets past the
+  // handshake (0003, 2026-10-30). So: close this app's session before a task starts (or before following one that
+  // is already running), and refuse to reconnect while it is active (TeleopSessionContext.setYield).
+  const [yieldedNote, setYieldedNote] = useState<string | null>(null);
+  const yieldRobot = useCallback(async () => {
+    if (appSessionUp || appSessionJoining || teleop) {
+      await closeAppSession();
+      setYieldedNote(`closed this app's session to ${robot || "the robot"}: ASPIRE holds the robot's one session while the task runs; reconnect from Remote when it ends`);
+    }
+  }, [appSessionUp, appSessionJoining, teleop, closeAppSession, robot]);
+  useEffect(() => {
+    setYield("agent-task", active ? `ASPIRE task running on ${robot || "the robot"} (Agent page)` : null);
+    return () => setYield("agent-task", null);
+  }, [setYield, active, robot]);
+
   // -- actions ---------------------------------------------------------------------------------------------------
   const attach = useCallback((id: string) => {
     sinceRef.current = 0;
@@ -181,6 +198,7 @@ const Agent = () => {
     if (busy || !goal.trim() || !robot) return;
     setBusy(true); setError(null);
     try {
+      await yieldRobot();
       const r = await api.start({
         robot, instruction: goal.trim(),
         constraints: { operator_presence: presence, home: homeFirst },
@@ -190,7 +208,7 @@ const Agent = () => {
     } catch (e) {
       if (e instanceof RobotBusyError) {
         setError("This robot already has a task running" + (e.running ? " — showing it." : "."));
-        if (e.running) attach(e.running);
+        if (e.running) { await yieldRobot(); attach(e.running); }
       } else setError(friendlyErrorMessage(e));
     } finally { setBusy(false); }
   };
@@ -201,8 +219,8 @@ const Agent = () => {
   };
   const stop = () => void cancel("stopped from the Agent page");
   const estop = () => {
-    void cancel("E-STOP from the Agent page");
-    teleop?.command("estop");                                   // a teleop session open in this app, if any
+    void cancel("E-STOP from the Agent page");                  // the backend cancels the task; the worker's guard stops the robot
+    teleop?.command("estop");                                   // a teleop session open in this app, if any (none during a task: see yieldRobot)
   };
 
   const sendAnswer = async () => {
@@ -288,6 +306,9 @@ const Agent = () => {
 
             {error && (
               <div className="rounded-md border border-nori-hb4442e/40 bg-nori-hfbecea p-3 text-[11px] text-nori-h8a2f20 shadow-sm">{error}</div>
+            )}
+            {yieldedNote && (
+              <div className="rounded-md border border-nori-hd98b3d/50 bg-nori-hfdf3e6 p-3 text-[11px] text-nori-hb06a1c shadow-sm">{yieldedNote}</div>
             )}
 
             {openQuestion && (

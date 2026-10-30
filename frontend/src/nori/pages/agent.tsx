@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Play, Square, OctagonX, Bot, Send } from "lucide-react";
+import { Play, Square, OctagonX, Bot, Send, ChevronDown, ChevronRight } from "lucide-react";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
@@ -43,6 +43,31 @@ type Row =
   | { kind: "question"; text: string; answered?: string }
   | { kind: "safety"; text: string }
   | { kind: "end"; status: TaskStatus; text: string };
+
+// Event types the transcript renders. Everything else is plumbing — queued/claimed/preflight/armed/table/
+// start_check/started/home/safety/record… — and that is exactly what the logs card shows: how the worker
+// got to the robot (claim → credentials → session → arming → table) and why it did not, when it did not.
+const TRANSCRIPT_TYPES = new Set([
+  "thought", "say", "step_start", "step", "frame", "needs_input", "answered", "done", "failed", "cancelled",
+]);
+
+/** One log line per non-transcript event: `HH:MM:SS type key=value …`, the payload compacted so an unknown
+ * event type from a newer worker still reads. `done`/`failed`/`cancelled` are repeated here too so the log ends. */
+export function toLogLines(events: TaskEvent[]): string[] {
+  const out: string[] = [];
+  for (const e of events) {
+    if (TRANSCRIPT_TYPES.has(e.type) && !["failed", "cancelled", "done"].includes(e.type)) continue;
+    const rest: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(e)) {
+      if (k === "n" || k === "ts" || k === "type" || k === "jpeg_b64" || v == null) continue;
+      rest[k] = typeof v === "string" && v.length > 160 ? v.slice(0, 157) + "…" : v;
+    }
+    const when = typeof e.ts === "number" ? new Date(e.ts * 1000).toLocaleTimeString([], { hour12: false }) : "--:--:--";
+    const body = Object.entries(rest).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(" ");
+    out.push(`${when}  ${e.type}${body ? "  " + body : ""}`);
+  }
+  return out;
+}
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   queued: "queued — waiting for a worker", claiming: "starting", running: "running",
@@ -111,7 +136,10 @@ export function toRows(instruction: string, events: TaskEvent[]): Row[] {
 }
 
 const Agent = () => {
-  const { teleop, running: appSessionUp, connecting: appSessionJoining, disconnect: closeAppSession, setYield } = useTeleopSession();
+  const {
+    teleop, running: appSessionUp, connecting: appSessionJoining, disconnect: closeAppSession, setYield,
+    heldNote, logLines: appSessionLog,
+  } = useTeleopSession();
   const { activeRobotSerial, customer } = useNori();
   const { baseUrl, fetchWithHeaders } = useApi();
   const api = useMemo(() => aspireApi(baseUrl, fetchWithHeaders), [baseUrl, fetchWithHeaders]);
@@ -129,6 +157,15 @@ const Agent = () => {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sinceRef = useRef(0);
+  const logRef = useRef<HTMLDivElement>(null);
+  const [showLog, setShowLog] = useState(true);
+  // Page-side notes (what THIS page did: closed its session, attached, cancelled) go in the same log so
+  // the order of app actions vs worker events is visible. Stamped like the worker lines.
+  const [pageNotes, setPageNotes] = useState<string[]>([]);
+  const note = useCallback((text: string) => {
+    const when = new Date().toLocaleTimeString([], { hour12: false });
+    setPageNotes((prev) => [...prev.slice(-100), `${when}  page  ${text}`]);
+  }, []);
 
   const status = record?.status ?? null;
   const active = !!taskId && status !== null && !TERMINAL.has(status);
@@ -136,6 +173,16 @@ const Agent = () => {
   const openQuestion = record?.waiting_for_answer && rows.some((r) => r.kind === "question" && !r.answered);
 
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [rows]);
+
+  // The logs card: worker plumbing events + this page's notes + whatever the app's own robot session logged
+  // (a `robot_held` refusal or an eviction lands there), merged in arrival order within each source.
+  const logText = useMemo(() => {
+    const worker = toLogLines(events);
+    const app = appSessionLog.slice(-20).map((l) => `--:--:--  app   ${l}`);
+    return [...pageNotes, ...worker, ...(app.length ? ["--:--:--  app   — this app's own robot session —", ...app] : [])];
+  }, [events, pageNotes, appSessionLog]);
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logText, showLog]);
+  useEffect(() => { if (heldNote) note(`robot: ${heldNote}`); }, [heldNote, note]);
 
   // -- polling while a task is open ----------------------------------------------------------------------------
   useEffect(() => {
@@ -181,8 +228,9 @@ const Agent = () => {
     if (appSessionUp || appSessionJoining || teleop) {
       await closeAppSession();
       setYieldedNote(`closed this app's session to ${robot || "the robot"}: ASPIRE holds the robot's one session while the task runs; reconnect from Remote when it ends`);
+      note(`closed this app's robot session so the task can take ${robot || "the robot"}`);
     }
-  }, [appSessionUp, appSessionJoining, teleop, closeAppSession, robot]);
+  }, [appSessionUp, appSessionJoining, teleop, closeAppSession, robot, note]);
   useEffect(() => {
     setYield("agent-task", active ? `ASPIRE task running on ${robot || "the robot"} (Agent page)` : null);
     return () => setYield("agent-task", null);
@@ -192,11 +240,13 @@ const Agent = () => {
   const attach = useCallback((id: string) => {
     sinceRef.current = 0;
     setEvents([]); setRecord(null); setError(null); setTaskId(id);
-  }, []);
+    note(`following task ${id.slice(0, 8)}`);
+  }, [note]);
 
   const start = async () => {
     if (busy || !goal.trim() || !robot) return;
     setBusy(true); setError(null);
+    note(`start requested on ${robot}`);
     try {
       await yieldRobot();
       const r = await api.start({
@@ -206,6 +256,7 @@ const Agent = () => {
       });
       attach(r.task_id);
     } catch (e) {
+      note(`start failed: ${friendlyErrorMessage(e)}`);
       if (e instanceof RobotBusyError) {
         setError("This robot already has a task running" + (e.running ? " — showing it." : "."));
         if (e.running) { await yieldRobot(); attach(e.running); }
@@ -215,6 +266,7 @@ const Agent = () => {
 
   const cancel = async (reason: string) => {
     if (!taskId) return;
+    note(`cancel: ${reason}`);
     try { await api.cancel(taskId, reason); } catch (e) { setError(friendlyErrorMessage(e)); }
   };
   const stop = () => void cancel("stopped from the Agent page");
@@ -324,6 +376,24 @@ const Agent = () => {
                 </div>
               </div>
             )}
+
+            {/* ASPIRE logs: how the worker reached the robot (claim → credentials → session → arming → table),
+                what this page did, and what this app's own robot session was told. The transcript is for
+                what the agent thinks; this is for why a run did or did not get going. */}
+            <div className="flex min-h-0 flex-1 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
+              <button type="button" onClick={() => setShowLog((v) => !v)}
+                className="flex items-center gap-1 self-start font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">
+                {showLog ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />} {"// aspire logs"}
+                <span className="ml-2 normal-case tracking-normal text-muted-foreground">{logText.length} lines</span>
+              </button>
+              {showLog && (
+                <div ref={logRef} className="min-h-[120px] flex-1 overflow-y-auto overflow-x-hidden rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 font-mono text-[10.5px] leading-relaxed text-nori-h5a5346">
+                  {logText.length === 0
+                    ? <span className="text-muted-foreground">Worker events (claim, credentials, session, arming, table), this page's actions and the app session's own log appear here as a task starts.</span>
+                    : logText.map((l, i) => <div key={i} className="whitespace-pre-wrap break-all">{l}</div>)}
+                </div>
+              )}
+            </div>
 
           </div>
 

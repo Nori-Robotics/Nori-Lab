@@ -17,7 +17,8 @@ import { RemoteTeleop, parseAck, tunnelAddress } from "@nori/sdk";
 type Raw = {
   ackInfo: unknown;
   connected: boolean;
-  connStatus: { phase: string };
+  connStatus: { phase: string; reason?: string; detail?: string };
+  retryTimer: unknown;
   controlCh: unknown;
   externalJog: unknown;
   dcSend: (f: Record<string, unknown>) => boolean;
@@ -217,5 +218,67 @@ describe("link-mode lan verdict refuses VPN/overlay paths", () => {
     expect(tunnelAddress("FD7A:115C:A1E0:0000::1")).toBe(true);  // uncompressed + upper
     expect(tunnelAddress("fd7b:115c:a1e0::1")).toBe(false);
     expect(tunnelAddress("robot.local")).toBe(false);     // mDNS-obfuscated: can't tell
+  });
+});
+
+// Gateway precedence (nori_ws PR #23, 2026-10-30): a hosted ASPIRE task outranks this app. The
+// robot either evicts a live session (alert session_evicted, then closes the link) or nacks a
+// new ready with robot_held. Either way the app must STOP re-sending ready — the old
+// re-ready-on-every-robot_here rule is what made the app and the task fight for the robot.
+describe("a hosted ASPIRE task holding the robot", () => {
+  it("robot_held nack: failed/robot_held naming the task, and no more readys", async () => {
+    const { t, raw, handlers, readySends } = session();
+    await t.start();
+    handlers.onOpen();
+    const before = readySends();
+    handlers.onNack({ reason: "robot_held", holder: "task", tid: "0123456789abcdef" });
+    expect(raw.connStatus).toMatchObject({ phase: "failed", reason: "robot_held" });
+    expect(String(raw.connStatus.detail)).toContain("ASPIRE task 01234567");
+    expect(raw.retryTimer).toBeNull();
+    await handlers.onRobotHere();   // the respawned gateway announcing itself
+    handlers.onOpen();              // a signaling reopen
+    expect(readySends()).toBe(before);
+    await t.stop();
+  });
+
+  it("session_evicted alert mid-session: failed/evicted, the drop is not retried through", async () => {
+    const { t, raw, handlers, readySends } = session();
+    await t.start();
+    raw.connected = true;
+    raw.handleTelemetry(JSON.stringify({
+      type: "alert", code: "session_evicted", severity: "warning", active: true, latched: true,
+      message: "ASPIRE task abc took control of this robot",
+    }));
+    expect(raw.connStatus).toMatchObject({ phase: "failed", reason: "evicted" });
+    expect(raw.connected).toBe(false);
+    const before = readySends();
+    await handlers.onRobotHere();
+    expect(readySends()).toBe(before);
+    await t.stop();
+  });
+
+  it("start() clears the hold so a later deliberate connect asks again", async () => {
+    const { t, raw, handlers, readySends } = session();
+    await t.start();
+    handlers.onOpen();
+    handlers.onNack({ reason: "robot_held", holder: "task", tid: "t1" });
+    await t.stop();
+    await t.start();
+    const before = readySends();
+    handlers.onOpen();
+    expect(readySends()).toBe(before + 1);
+    expect(raw.connStatus.phase).not.toBe("failed");
+    await t.stop();
+  });
+
+  it("other alerts are logged and forwarded, never a connect failure", async () => {
+    const alerts: unknown[] = [];
+    const { t, raw } = bare({ onAlert: (a: unknown) => alerts.push(a) });
+    raw.handleTelemetry(JSON.stringify({
+      type: "alert", code: "servo_thermal", severity: "warning", active: true, message: "hot",
+    }));
+    expect(alerts).toEqual([{ code: "servo_thermal", severity: "warning", active: true, message: "hot" }]);
+    expect(raw.connStatus.phase).not.toBe("failed");
+    void t;
   });
 });

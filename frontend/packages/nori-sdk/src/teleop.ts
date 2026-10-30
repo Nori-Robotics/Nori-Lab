@@ -248,7 +248,21 @@ export type ConnectFailure =
   // The offer/answer exchange itself threw (malformed SDP, browser refused the answer).
   | "negotiation_failed"
   // We reached the robot and it refused the session (handshake ack accepted:false).
-  | "session_rejected";
+  | "session_rejected"
+  // The robot is held by someone else — a hosted ASPIRE task (nack `robot_held`, holder/tid in
+  // `detail`). The gateway nacks every ready while the task runs, so we stop retrying: the
+  // operator reconnects when the task ends.
+  | "robot_held"
+  // OUR live session was taken by a hosted ASPIRE task (alert `session_evicted`). The robot
+  // closed the link on purpose and will refuse our ready until the task ends, so no auto-retry.
+  | "evicted";
+
+export interface RobotAlert {
+  code: string;
+  severity: string; // "info" | "warning" | "critical"
+  active: boolean;
+  message: string;
+}
 
 export interface ConnectStatus {
   phase: ConnectPhase;
@@ -697,6 +711,10 @@ export interface RemoteTeleopOptions {
   // a UI distinguishes "robot online but daemon down/restarting" from a healthy session — the
   // WebRTC connState alone cannot. Poll daemonStatus() for the latest value at use-time.
   onDaemonStatus?: (s: DaemonStatus) => void;
+  // Optional: robot-owned operator alerts (`alert` frames). State keyed on `code`; `active:false`
+  // clears it. The SDK acts on `session_evicted` itself (ConnectFailure "evicted"); everything
+  // else is for the UI to render at `severity`.
+  onAlert?: (a: RobotAlert) => void;
   // Optional: the daemon's handshake ack (robot self-description — joints, cameras, ranges,
   // watchdog profile, initial pose). Fires once per daemon (re)connect; poll robotInfo()
   // instead if you only need it at use-time. Check info.accepted / info.versionMismatch here
@@ -953,6 +971,11 @@ export class RemoteTeleop {
   private remoteSet = false;
   private pendingIce: RTCIceCandidateInit[] = [];
   private connected = false;
+  // Set by alert `session_evicted` (a hosted ASPIRE task took the robot) or by a `robot_held`
+  // nack. While set, nothing re-sends `ready` — not robot_here, not the signaling reopen, not
+  // the peer dropping — because the robot would only nack it, and the old "re-ready on every
+  // robot_here" rule is exactly what made the app fight the task. Cleared by start().
+  private heldOff = false;
   private retryTimer: ReturnType<typeof setInterval> | null = null;
   private latencyProbe: AudioLatencyProbe | null = null; // R-X.2 audio-latency harness (per peer)
   private videoLoop: VideoQualityLoop | null = null;     // ABR loop (videoQuality.ts, per peer)
@@ -2029,6 +2052,7 @@ export class RemoteTeleop {
   // ---- lifecycle -----------------------------------------------------------
   async start() {
     this.stopped = false;
+    this.heldOff = false;
     this.setPhase("joining");
     if (this.o.forceRelay && !this.o.turnUrls.length) {
       this.log("force relay is on but no TURN URL set — connect will fail");
@@ -2109,6 +2133,7 @@ export class RemoteTeleop {
       // offer — its robot_here usually beats us noticing the dead peer. Same fix as the
       // Python SDK's _on_robot_here.
       onRobotHere: async () => {
+        if (this.heldOff) { this.log("robot announced — not re-sending 'ready' (held by an ASPIRE task)"); return; }
         this.log("robot announced — sending 'ready'");
         this.sendReady();
       },
@@ -2118,6 +2143,19 @@ export class RemoteTeleop {
       // so it only picks the error copy; it never grants or denies anything.
       onNack: (payload) => {
         if (this.connected) return; // a live session ignores late/stray nacks
+        if (payload?.reason === "robot_held") {
+          // A hosted ASPIRE task holds the robot (gateway precedence rule, 2026-10-30). Every
+          // retry would be nacked the same way, so stop asking and tell the operator who has it.
+          const who = payload.holder === "task"
+            ? `ASPIRE task ${payload.tid ? String(payload.tid).slice(0, 8) : ""}`.trim()
+            : "another session";
+          this.log(`robot is held by ${who} — not retrying`);
+          this.heldOff = true;
+          if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
+          this.clearWaitDeadline();
+          this.setPhase("failed", "robot_held", who);
+          return;
+        }
         if (payload?.reason && payload.reason !== "unauthorized") {
           this.log("robot refused the session: " + payload.reason);
           this.clearWaitDeadline();
@@ -2136,6 +2174,7 @@ export class RemoteTeleop {
         // signaling reconnect, and the connection-state callback owns that flag. The
         // retry loop below already no-ops while connected, so a live session never
         // chatters — and if the peer later drops, the same loop resumes announcing.
+        if (this.heldOff) return; // evicted / held: the robot would only nack us
         this.sendReady();
         this.log("announced 'ready' — waiting for robot offer");
         // Only (re)enter `waiting` from a pre-connection phase. onOpen also fires on a mid-session
@@ -2335,7 +2374,7 @@ export class RemoteTeleop {
         // "failed" = ICE could find no working path (NAT/firewall/TURN) — a real, nameable fault.
         // "disconnected" is often a transient blip that heals itself, so we drop back to `waiting`
         // (the retry loop below is already asking for a fresh offer) rather than crying failure.
-        if (!this.stopped) {
+        if (!this.stopped && !this.heldOff) {   // an eviction already set its own phase
           if (pc.connectionState === "failed") {
             this.setPhase("failed", "ice_failed");
           } else {
@@ -2343,7 +2382,7 @@ export class RemoteTeleop {
             this.armWaitDeadline();
           }
         }
-        if (!this.retryTimer && !this.stopped) {
+        if (!this.retryTimer && !this.stopped && !this.heldOff) {
           this.retryTimer = setInterval(() => { if (!this.connected) this.sendReady(); }, 2000);
         }
       }
@@ -2521,11 +2560,34 @@ export class RemoteTeleop {
       this.ingestImu(m);
     } else if (m.type === "ack") {
       this.ingestAck(m);
+    } else if (m.type === "alert") {
+      this.ingestAlert(m);
     } else if (m.type === "error") {
       // Human-readable in the session log; the robot's msg carries the remedy for actionable
       // faults (e.g. startup_positions → "power-cycle the arm"). Persistent outage state is the
       // daemon_status frame above — this line is the transient event record.
       this.log(`robot error [${String(m.code ?? "?")}]${m.fatal ? " (fatal)" : ""}: ${String(m.msg ?? "")}`);
+    }
+  }
+
+  // Robot-owned operator alerts (spec daemon/alert.json): state keyed on `code`, rendered at
+  // `severity`; a code we don't know is logged and passed to onAlert, nothing more. One code is
+  // ours to act on: `session_evicted` — the gateway is handing the robot to a hosted ASPIRE task
+  // and will close this session right after. Mark the session held off so the drop that follows
+  // is not treated as a blip to retry through, and surface it as a connect failure.
+  private ingestAlert(m: Record<string, unknown>) {
+    const code = String(m.code ?? "");
+    const message = String(m.message ?? "");
+    const active = m.active !== false;
+    const severity = String(m.severity ?? "info");
+    this.log(`robot alert [${code}]${active ? "" : " (cleared)"}: ${message}`);
+    this.o.onAlert?.({ code, severity, active, message });
+    if (code === "session_evicted" && active) {
+      this.heldOff = true;
+      this.connected = false;
+      if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
+      this.clearWaitDeadline();
+      this.setPhase("failed", "evicted", message || "an ASPIRE task took control of the robot");
     }
   }
 

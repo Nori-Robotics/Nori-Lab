@@ -37,7 +37,10 @@ export interface RobotHerePayload {
 // be forged by anyone already in the room. It is a HINT used only to pick better error copy —
 // never a security decision.
 export interface NackPayload {
-  reason?: "unauthorized" | (string & {});
+  reason?: "unauthorized" | "robot_held" | (string & {});
+  // `robot_held`: who has the robot — "task" (a hosted ASPIRE task, `tid` = its id) or "operator".
+  holder?: "task" | "operator" | (string & {});
+  tid?: string;
 }
 
 // Transport health, as distinct from robot health. "open" = the room is live and we can speak;

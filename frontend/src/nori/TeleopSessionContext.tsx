@@ -141,6 +141,13 @@ export interface TeleopSessionValue {
   // reason, and the Remote page shows it. Keyed like setSessionBusy; clear in an effect cleanup.
   setYield: (key: string, reason: string | null) => void;
   yieldedFor: string | null;
+  // The ROBOT's answer when a hosted ASPIRE task holds it (gateway precedence, nori_ws PR #23):
+  // our live session was evicted (`alert session_evicted`) or our connect was refused (nack
+  // `robot_held`). The SDK session is torn down — the robot will not take us back until the task
+  // ends — but the connect banner keeps the failure, and this note feeds the status pill. Cleared
+  // by the next connect(). Unlike yieldedFor this covers every device of the customer, not just
+  // the tab that pressed Start.
+  heldNote: string | null;
 }
 
 const TeleopSessionContext = createContext<TeleopSessionValue | undefined>(undefined);
@@ -170,6 +177,10 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
 
   const lastTelRef = useRef(0);
   const currentsListenerRef = useRef<((c: Record<string, number>) => void) | null>(null);
+  const [heldNote, setHeldNote] = useState<string | null>(null);
+  // disconnect() is defined after connect(); the eviction handler inside connect() reaches it
+  // through this ref (assigned every render).
+  const disconnectRef = useRef<() => Promise<void>>(async () => {});
   const yieldRef = useRef<Map<string, string>>(new Map());
   const [yieldedFor, setYieldedFor] = useState<string | null>(null);
   const setYield = useCallback((key: string, reason: string | null) => {
@@ -277,6 +288,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     setLogLines([]);
     setDaemonStatus(null);
     setRecordState(null);
+    setHeldNote(null);
     setConnectStatus({ phase: "joining" });
     let turnUrls = settings.turn.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
     let turnUser = settings.turnUser.trim();
@@ -370,8 +382,19 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
       onDaemonStatus: setDaemonStatus,
       // On-robot recorder replies (W2.11) — drives the CallBar record control.
       onRecord: setRecordState,
-      // The connect-phase machine — drives the connection banner.
-      onConnectStatus: setConnectStatus,
+      // The connect-phase machine — drives the connection banner. Two failures mean the robot
+      // is deliberately not ours right now (a hosted ASPIRE task holds it): tear the dead SDK
+      // session down so Connect is offered again, but keep the failure on the banner — a
+      // disconnect() alone would wipe it to idle and the operator would never learn why.
+      onConnectStatus: (st) => {
+        setConnectStatus(st);
+        if (st.phase === "failed" && (st.reason === "evicted" || st.reason === "robot_held")) {
+          setHeldNote(st.reason === "evicted"
+            ? `an ASPIRE task took the robot${st.detail ? ` — ${st.detail}` : ""}`
+            : `held by ${st.detail || "an ASPIRE task"}`);
+          void disconnectRef.current().then(() => setConnectStatus(st));
+        }
+      },
       // The handshake ack. It was never wired, so a robot that REFUSED the session (accepted:false)
       // or spoke a different protocol version left no trace outside the collapsed log box. The SDK
       // turns a refusal into a `session_rejected` phase; this is here for the advisory mismatch.
@@ -421,6 +444,8 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     setConnectStatus({ phase: "idle" });
   }, []);
 
+  disconnectRef.current = disconnect;
+
   // Leaving /nori entirely unmounts this provider — tear the session down cleanly (robot `bye`).
   useEffect(() => () => { teleopRef.current?.stop(); }, []);
 
@@ -451,7 +476,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     recordState, connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
-    setSessionBusy, setYield, yieldedFor,
+    setSessionBusy, setYield, yieldedFor, heldNote,
     noteActivity: idle.noteActivity,
     idlePromptOpen: idle.promptOpen,
     idleSecondsLeft: idle.secondsLeft,
@@ -460,7 +485,7 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
     recordState, connectStatus,
     logLines, appendLog, settings, setSetting, connect, disconnect, toggleControlMode,
     setCurrentsListener, setTelemetryListener, setControlSentListener, scriptSource, setScriptSource,
-    setSessionBusy, setYield, yieldedFor,
+    setSessionBusy, setYield, yieldedFor, heldNote,
     idle.noteActivity, idle.promptOpen, idle.secondsLeft,
   ]);
 

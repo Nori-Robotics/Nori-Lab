@@ -253,6 +253,16 @@ const CONNECT_TROUBLE: Record<ConnectFailure, { headline: string; body: string }
     headline: "The robot refused this session",
     body: "The robot is reachable but wouldn't accept control. This usually means a provisioning problem — contact support.",
   },
+  // Gateway precedence (2026-10-30): a hosted ASPIRE task outranks this app. `detail` names the
+  // holder / the task; the body is the same remedy either way — wait for the task, then connect.
+  robot_held: {
+    headline: "Can't connect right now — an ASPIRE task holds the robot",
+    body: "The robot is running an agent task and won't take a second session. Stop the task from the Agent page or wait for it to finish, then connect again.",
+  },
+  evicted: {
+    headline: "Disconnected — an ASPIRE task took the robot",
+    body: "An agent task started on this robot and the robot handed it the session. Follow it on the Agent page; connect again when it ends.",
+  },
 };
 
 // What we're doing, while it's still going fine. Only used pre-connection.
@@ -272,10 +282,14 @@ export function ConnectionBanner({ status }: { status: ConnectStatus }) {
     // An unknown reason must still render as a failure rather than vanish.
     const headline = t?.headline ?? "Couldn't connect";
     const body = t?.body ?? "Disconnect and try again; if it keeps happening, contact support.";
+    // Held/evicted carry who has the robot in `detail` (the task id); show it, it is what the
+    // operator will look for on the Agent page.
+    const showDetail = (status.reason === "robot_held" || status.reason === "evicted") && status.detail;
     return (
       <div className="rounded-md border border-nori-hd24a3d/35 bg-nori-hfde7e4 px-4 py-3 text-nori-ha3271c">
         <p className="font-mono text-[11px] uppercase tracking-[0.14em]">{headline}</p>
         <p className="mt-1 text-sm">{body}</p>
+        {showDetail && <p className="mt-1 font-mono text-[11px] opacity-80">{status.detail}</p>}
       </div>
     );
   }

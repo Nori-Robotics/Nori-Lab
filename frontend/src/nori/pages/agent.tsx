@@ -21,7 +21,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Play, Square, OctagonX, Bot, Send, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
+import { Play, Square, OctagonX, Bot, Send, ChevronDown, ChevronRight } from "lucide-react";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
@@ -158,7 +158,6 @@ const Agent = () => {
   const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [clearing, setClearing] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sinceRef = useRef(0);
@@ -294,17 +293,8 @@ const Agent = () => {
     teleop?.command("estop");                                   // a teleop session open in this app, if any (none during a task: see yieldRobot)
   };
 
-  // A task that fails after its first commanded motion E-stops the robot and the latch stays; the next task then
-  // refuses at preflight ("motion daemon offline: estop_latched"). Clear it from here instead of going to Remote.
-  const clearLatch = async () => {
-    if (clearing || active) return;
-    setClearing(true); setError(null);
-    note("clearing the E-stop latch: opening this app's robot session, reset_latch, closing");
-    try { const r = await clearEstopLatch(); note(r); setYieldedNote(r); }
-    catch (e) { const m = e instanceof Error ? e.message : String(e); note(`clear E-stop latch failed: ${m}`); setError(`Could not clear the E-stop latch: ${m}`); }
-    finally { setClearing(false); }
-  };
-  // The previous task on this page latched the robot's E-stop: it failed after its first commanded motion (the
+  // A task that fails after its first commanded motion E-stops the robot and the latch stays; the next task would
+  // refuse at preflight ("motion daemon offline: estop_latched"). The previous task on this page latched the robot's E-stop: it failed after its first commanded motion (the
   // worker's stop path latches then), or its reason names the latch. Start then offers "clear it and start" as ONE
   // explicit click — never silently: the page cannot tell this latch from one a person set on purpose.
   const lastFailure = [...events].reverse().find((e) => e.type === "failed");
@@ -378,21 +368,12 @@ const Agent = () => {
                       <Square className="mr-2 h-4 w-4" /> Stop
                     </Button>
                   )}
-                  {/* One button, two states (like Remote's E-STOP / unlatch). E-STOP is the default — the stop control is
-                      the one an operator must always find in the same place; it is inert when nothing is running. It
-                      becomes "Clear E-stop latch" only when this page knows the previous task left the latch set. */}
-                  {!latchHint || active || teleop ? (
-                    <Button size="sm" variant="destructive" className="font-bold" onClick={estop} disabled={!active && !teleop}
-                      title={active || teleop ? "Stop the robot now: zero motion + E-STOP latch, then end the task" : "Nothing is running"}>
-                      <OctagonX className="mr-2 h-4 w-4" /> E-STOP
-                    </Button>
-                  ) : (
-                    <Button size="sm" variant="outline" onClick={clearLatch} disabled={clearing || busy || !robot}
-                      className={latchHint ? "border-nori-hd98b3d text-nori-hb06a1c" : undefined}
-                      title="Clear the robot's software E-stop latch (a failed task leaves it set): opens this app's robot session, sends reset_latch, waits for motion online, closes the session">
-                      <RotateCcw className="mr-2 h-4 w-4" /> {clearing ? "Clearing latch…" : "Clear E-stop latch"}
-                    </Button>
-                  )}
+                  {/* Clearing a latch the previous task left is Start's job ("Clear latch and start"), so this slot is
+                      always the stop control, inert when nothing is running. */}
+                  <Button size="sm" variant="destructive" className="font-bold" onClick={estop} disabled={!active && !teleop}
+                    title={active || teleop ? "Stop the robot now: zero motion + E-STOP latch, then end the task" : "Nothing is running"}>
+                    <OctagonX className="mr-2 h-4 w-4" /> E-STOP
+                  </Button>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-muted-foreground">

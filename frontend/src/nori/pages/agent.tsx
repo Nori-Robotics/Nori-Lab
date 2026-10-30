@@ -138,7 +138,7 @@ export function toRows(instruction: string, events: TaskEvent[]): Row[] {
 const Agent = () => {
   const {
     teleop, running: appSessionUp, connecting: appSessionJoining, disconnect: closeAppSession, setYield,
-    heldNote, logLines: appSessionLog,
+    heldNote,
   } = useTeleopSession();
   const { activeRobotSerial, customer } = useNori();
   const { baseUrl, fetchWithHeaders } = useApi();
@@ -174,13 +174,9 @@ const Agent = () => {
 
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [rows]);
 
-  // The logs card: worker plumbing events + this page's notes + whatever the app's own robot session logged
-  // (a `robot_held` refusal or an eviction lands there), merged in arrival order within each source.
-  const logText = useMemo(() => {
-    const worker = toLogLines(events);
-    const app = appSessionLog.slice(-20).map((l) => `--:--:--  app   ${l}`);
-    return [...pageNotes, ...worker, ...(app.length ? ["--:--:--  app   — this app's own robot session —", ...app] : [])];
-  }, [events, pageNotes, appSessionLog]);
+  // The logs card: the worker's plumbing events + this page's notes. NOT the app's own robot-session log — that
+  // is the operator's teleop session (Remote page's Robot logs), nothing to do with how the task reached the robot.
+  const logText = useMemo(() => [...pageNotes, ...toLogLines(events)], [events, pageNotes]);
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logText, showLog]);
   useEffect(() => { if (heldNote) note(`robot: ${heldNote}`); }, [heldNote, note]);
 
@@ -377,9 +373,9 @@ const Agent = () => {
               </div>
             )}
 
-            {/* ASPIRE logs: how the worker reached the robot (claim → credentials → session → arming → table),
-                what this page did, and what this app's own robot session was told. The transcript is for
-                what the agent thinks; this is for why a run did or did not get going. */}
+            {/* ASPIRE logs: how the worker reached the robot (claim → credentials → session → arming → table) and
+                what this page did. The transcript is for what the agent thinks; this is for why a run did or
+                did not get going. */}
             <div className="flex min-h-0 flex-1 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
               <button type="button" onClick={() => setShowLog((v) => !v)}
                 className="flex items-center gap-1 self-start font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">
@@ -389,7 +385,7 @@ const Agent = () => {
               {showLog && (
                 <div ref={logRef} className="min-h-[120px] flex-1 overflow-y-auto overflow-x-hidden rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 font-mono text-[10.5px] leading-relaxed text-nori-h5a5346">
                   {logText.length === 0
-                    ? <span className="text-muted-foreground">Worker events (claim, credentials, session, arming, table), this page's actions and the app session's own log appear here as a task starts.</span>
+                    ? <span className="text-muted-foreground">Worker events (claim, credentials, session, arming, table) and this page's actions appear here as a task starts.</span>
                     : logText.map((l, i) => <div key={i} className="whitespace-pre-wrap break-all">{l}</div>)}
                 </div>
               )}

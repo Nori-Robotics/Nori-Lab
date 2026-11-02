@@ -10,6 +10,7 @@
 // never has a live stream to lose.
 
 import { createContext, memo, useContext, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -249,15 +250,32 @@ export const VideoSurface = ({
   className = "", fill = false, overlay,
 }: { className?: string; fill?: boolean; overlay?: ReactNode }) => {
   const { videoRef, selfViewRef, m6, call, cameraTiles, selectedCamera, setSelectedCamera, connected } = useRemoteUi();
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    const sync = () => setIsFullscreen(document.fullscreenElement === boxRef.current);
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+    else void boxRef.current?.requestFullscreen?.().catch(() => {});
+  };
   return (
-    <div className={"relative " + className}>
-      {/* Native controls only while a stream is live: on an empty element the
-          browser still paints a greyed-out timestamp/fullscreen bar, which
-          reads as a broken player rather than "not connected". Idle, the box
-          is a plain slab of the bars' unfilled-track grey (nori-he5e1d2) —
-          not the page background, which read as a broken white screen. */}
+    <div ref={boxRef} className={"relative " + className}>
+      {/* NO native controls (2026-11-02). This is a live robot feed: pausing it
+          only freezes the operator's view of a robot that keeps moving, and the
+          native bar's timestamp means nothing on a live stream. The one useful
+          native control, fullscreen, is the button below, and it fullscreens
+          the whole surface so the camera picker and HUD come along.
+          onPause re-plays while connected, because a feed can still be paused
+          without the bar: keyboard media keys, the OS media controls, or
+          picture-in-picture. Idle, the box is a plain slab of the bars'
+          unfilled-track grey (nori-he5e1d2), not the page background, which
+          read as a broken white screen. */}
       <video
-        ref={videoRef} autoPlay playsInline muted controls={connected}
+        ref={videoRef} autoPlay playsInline muted disablePictureInPicture
+        onPause={(e) => { if (connected) void e.currentTarget.play().catch(() => {}); }}
         className={
           "w-full rounded-md " +
           (fill ? "h-full object-contain " : "") +
@@ -297,6 +315,17 @@ export const VideoSurface = ({
         }
         style={{ aspectRatio: "4 / 3" }}
       />
+      {connected && (
+        <button
+          type="button"
+          onClick={toggleFullscreen}
+          className="absolute right-2 top-2 z-10 rounded-md border border-background/40 bg-background/85 p-1.5 text-foreground shadow backdrop-blur hover:bg-background"
+          title={isFullscreen ? "Exit full screen" : "Full screen"}
+          aria-label={isFullscreen ? "Exit full screen" : "Full screen"}
+        >
+          {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+        </button>
+      )}
       {overlay}
     </div>
   );

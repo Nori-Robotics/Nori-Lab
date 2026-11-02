@@ -201,6 +201,26 @@ const angleBetween = (a: Mat3, b: Mat3) => {
 };
 
 describe("VR wrist magnification and edge cases", () => {
+  it("defaults to a strict mirror (gain 1)", () => {
+    const m = new VrJogMapper();
+    m.setDescriptor({ jog_scale: { task: { x: 0.08, y: 0.08, z: 0.08 } }, ranges_si: RANGES("left") } as never);
+    const meas = { wrist: W0, q: Q0 };
+    m.setMeasured(meas, null);
+    const dq = axisAngle([0.5, -0.7, 0.4], 0.3);
+    m.map({ left: frame([0, 0, 0], QA) });
+    const action = m.map({ left: frame([0, 0, 0], qmul(dq, QA)) }).action;
+    const ranges = RANGES("left");
+    const get = (j: string) => {
+      const [lo, hi] = ranges[`left_arm_${j}.pos`];
+      return lo + ((action[`left_arm_${j}.pos`] + 100) / 200) * (hi - lo);
+    };
+    const q = SOLVED_JOINTS.map(get) as ArmQ;
+    const wrist = { forearm_yaw: get("forearm_yaw"), wrist_pitch: get("wrist_pitch"), wrist_roll: get("wrist_roll") };
+    const C = vrToRobot(0);
+    const D = matMul(matMul(C, quatToMat(dq)), T(C));
+    expectMat(toolRotation(q, wrist, 1), matMul(D, toolRotation(Q0, W0, 1)));
+  });
+
   for (const [side, sign] of SIDES) {
     it(`${side}: gain scales the angle about the SAME axis, never the direction`, () => {
       const { m, decode } = mapper(side, 1.5);
@@ -258,7 +278,8 @@ describe("VR wrist magnification and edge cases", () => {
           Math.abs(wrist.forearm_yaw - start.forearm_yaw), Math.abs(wrist.wrist_pitch - start.wrist_pitch));
         last = wrist.forearm_yaw;
         lastRoll = wrist.wrist_roll;
-        expect(Math.abs(wrist.wrist_roll)).toBeLessThanOrEqual(1.309 + 1e-9);
+        // Never inside Servo's 0.05 rad stopping band at the range end.
+        expect(Math.abs(wrist.wrist_roll)).toBeLessThanOrEqual(1.309 - 0.06 + 1e-9);
       }
       expect(maxYawStep).toBeLessThan(0.2);
       expect(maxRollStep).toBeLessThan(0.1);      // never limit-to-limit

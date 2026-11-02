@@ -47,11 +47,12 @@ export type Settings = {
   kbSpeed: number;       // (0..1] fraction of the daemon's full per-tick step
   vrSensitivity: number; // multiplier on VR hand-motion response
   vrGripperOpen: number; // (0..1] VR gripper opening rate; close is always 1.5× this (capped)
+  vrWristGain: number;   // A3 wrist: gripper degrees per hand degree (1 = mirror)
 };
 
 const DEFAULTS: Settings = {
   room: "", stun: DEFAULT_STUN, turn: "", turnUser: "", turnCred: "", forceRelay: false, arm: "right",
-  kbSpeed: 1, vrSensitivity: 1, vrGripperOpen: 0.25,
+  kbSpeed: 1, vrSensitivity: 1, vrGripperOpen: 0.25, vrWristGain: 1,
 };
 
 const LS_SETTINGS = "nori_remote_settings";

@@ -129,8 +129,9 @@ export default function VrLanding() {
     vrRef.current?.setTuning({
       sensitivity: settings.vrSensitivity,
       gripperOpenRate: settings.vrGripperOpen,
+      wristGain: settings.vrWristGain,
     });
-  }, [settings.vrSensitivity, settings.vrGripperOpen]);
+  }, [settings.vrSensitivity, settings.vrGripperOpen, settings.vrWristGain]);
 
   // Stop the VR driver if the page unmounts (the session itself lives in the provider).
   useEffect(() => () => { vrRef.current?.stop(); }, []);
@@ -145,11 +146,15 @@ export default function VrLanding() {
       // Real VR controller input keeps the idle-disconnect clock alive — WebXR input fires no DOM
       // events, so without this an operator driving in-headset would be auto-disconnected as "idle".
       onActivity: noteActivity,
-      tuning: { sensitivity: settings.vrSensitivity, gripperOpenRate: settings.vrGripperOpen },
+      tuning: {
+        sensitivity: settings.vrSensitivity, gripperOpenRate: settings.vrGripperOpen,
+        wristGain: settings.vrWristGain,
+      },
       // In-VR poke-panel changes persist here too, so this page's sliders stay in sync.
       onTuningChange: (t) => {
         set("vrSensitivity", t.sensitivity);
         set("vrGripperOpen", t.gripperOpenRate);
+        set("vrWristGain", t.wristGain);
       },
     });
     vrRef.current = session;
@@ -343,6 +348,16 @@ export default function VrLanding() {
                       className="h-1 flex-1 cursor-pointer accent-nori-h14131a"
                     />
                     <span className="w-10 text-right font-mono text-xs">{Math.round(settings.vrGripperOpen * 100)}%</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm" title="How far the gripper turns per degree your hand turns (100% = mirror)">
+                    <span className="w-20 text-muted-foreground">wrist</span>
+                    <input
+                      type="range" min={0.5} max={2.5} step={0.05}
+                      value={settings.vrWristGain}
+                      onChange={(e) => set("vrWristGain", Number(e.target.value))}
+                      className="h-1 flex-1 cursor-pointer accent-nori-h14131a"
+                    />
+                    <span className="w-10 text-right font-mono text-xs">{Math.round(settings.vrWristGain * 100)}%</span>
                   </label>
                 </div>
                 <Button

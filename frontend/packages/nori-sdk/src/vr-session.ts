@@ -977,6 +977,10 @@ export class VrSession {
             try { this.o.teleop.clientLog(line); } catch { /* never fatal */ }
           }
         }
+        // TEMP debug: post-engage wrist trace to the robot journal.
+        for (const line of this.mapper.drainTrace()) {
+          try { this.o.teleop.clientLog(line); } catch { /* never fatal */ }
+        }
         // null = nothing engaged this frame -> hand the stream back to the keyboard.
         this.o.teleop.setExternalJog(res.jog);
         // ABSOLUTE wrist, alongside the rate stream rather than inside it. The

@@ -55,7 +55,7 @@ export type RemoteUi = {
   connectStatus: ConnectStatus;
   recordState: RecordState | null;
   logLines: string[];
-  settings: { arm: ArmSide; kbSpeed: number; vrSensitivity: number; vrGripperOpen: number; room: string };
+  settings: { arm: ArmSide; kbSpeed: number; vrSensitivity: number; vrGripperOpen: number; vrWristGain: number; room: string };
   set: (key: never, value: never) => void; // page passes its typed setter; blocks cast at the call site
   connect: () => void;
   requestDisconnect: () => void;
@@ -589,7 +589,7 @@ export const ActiveModeCard = ({ wide = false }: { wide?: boolean }) => {
     showKeyboardCard, setShowKeyboardCard, showLeaderCard, setShowLeaderCard, showVrCard, setShowVrCard,
   } = ui;
   const setArm = (arm: ArmSide) => (set as (k: "arm", v: ArmSide) => void)("arm", arm);
-  const setNum = (k: "kbSpeed" | "vrSensitivity" | "vrGripperOpen", v: number) =>
+  const setNum = (k: "kbSpeed" | "vrSensitivity" | "vrGripperOpen" | "vrWristGain", v: number) =>
     (set as (k: string, v: number) => void)(k, v);
 
   if (controlMode === "vr") {
@@ -619,6 +619,11 @@ export const ActiveModeCard = ({ wide = false }: { wide?: boolean }) => {
                 label="grip open" value={settings.vrGripperOpen} min={0.05} max={1}
                 title="How fast the gripper opens (closing always runs 1.5× this speed)"
                 onChange={(v) => setNum("vrGripperOpen", v)}
+              />
+              <TuneSlider
+                label="wrist" value={settings.vrWristGain} min={0.5} max={2.5}
+                title="How far the gripper turns per degree your hand turns (100% = mirror). Motion scales arm travel only."
+                onChange={(v) => setNum("vrWristGain", v)}
               />
             </div>
             <VrHandoff />

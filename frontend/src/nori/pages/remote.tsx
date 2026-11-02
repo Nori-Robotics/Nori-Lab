@@ -204,8 +204,9 @@ const Remote = () => {
     vrRef.current?.setTuning({
       sensitivity: settings.vrSensitivity,
       gripperOpenRate: settings.vrGripperOpen,
+      wristGain: settings.vrWristGain,
     });
-  }, [settings.vrSensitivity, settings.vrGripperOpen]);
+  }, [settings.vrSensitivity, settings.vrGripperOpen, settings.vrWristGain]);
 
   // Connect/disconnect the session itself live in the provider. This page's disconnect also
   // stops the page-local drivers (leader / VR / clip) first, then tears the session down.
@@ -249,12 +250,16 @@ const Remote = () => {
       videoEl: videoRef.current,
       onLog: appendLog,
       onEnd: () => { setInVr(false); vrRef.current = null; },
-      tuning: { sensitivity: settings.vrSensitivity, gripperOpenRate: settings.vrGripperOpen },
+      tuning: {
+        sensitivity: settings.vrSensitivity, gripperOpenRate: settings.vrGripperOpen,
+        wristGain: settings.vrWristGain,
+      },
       // In-VR poke-panel changes persist to the same settings the sliders edit (the
       // settings-change effect then echoes the same values back — harmless no-op).
       onTuningChange: (t) => {
         set("vrSensitivity", t.sensitivity);
         set("vrGripperOpen", t.gripperOpenRate);
+        set("vrWristGain", t.wristGain);
       },
     });
     vrRef.current = session;

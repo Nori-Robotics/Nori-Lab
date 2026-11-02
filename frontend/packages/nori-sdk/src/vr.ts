@@ -228,12 +228,17 @@ export interface VrTuning {
   wristGain?: number;
 }
 type ResolvedTuning = Required<VrTuning>;
-// 1.5 (2026-11-02): x3 on one axis read as too much, 1:1 leaves the joints
-// mostly unreachable. Human vs A3 range, one side of neutral: pronation 85 vs
-// ~155 deg, flexion 75 vs ~92, deviation 25 vs ~75. 1.5 brings pronation and
-// deviation most of the way without making flexion (the axis already well
-// matched) twitchy; it saturates flexion near the end of the human range.
-const WRIST_GAIN_DEFAULT = 1.5;
+// 1.0 (2026-11-02, was 1.5 the same day). On hardware 1.5 made the wrist far
+// livelier than translation: the gripper's 18 cm lever turns every wrist degree
+// into ~3 mm at the jaws, so even 1:1 reads larger than the hand's own motion.
+// Tunable live from the VR settings ("wrist") for operators who want reach.
+const WRIST_GAIN_DEFAULT = 1.0;
+// servo.yaml joint_limit_margins (0.05) plus a hair, so a target at the edge of
+// what we send never lands inside the band where Servo stops the joint.
+const SERVO_LIMIT_MARGIN_RAD = 0.06;
+// TEMP debug trace after each clutch engage: ~1 s at 72-90 Hz, every 8th frame.
+const TRACE_FRAMES = 80;
+const TRACE_EVERY = 8;
 const DEFAULT_TUNING: ResolvedTuning = {
   sensitivity: 1,
   gripperOpenRate: GRIPPER_OPEN_RATE,
@@ -245,7 +250,7 @@ export function resolveTuning(t?: VrTuning): Required<VrTuning> {
   return {
     sensitivity: clamp(t?.sensitivity ?? DEFAULT_TUNING.sensitivity, 0.1, 3),
     gripperOpenRate: clamp(t?.gripperOpenRate ?? DEFAULT_TUNING.gripperOpenRate, 0.05, 1),
-    wristGain: clamp(t?.wristGain ?? DEFAULT_TUNING.wristGain, 1, 3),
+    wristGain: clamp(t?.wristGain ?? DEFAULT_TUNING.wristGain, 0.5, 2.5),
   };
 }
 // Trigger held = + = open (tunable, ramped by how open the jaws already are); released =
@@ -344,6 +349,17 @@ class HandState {
   // rotation already in progress in a new frame, which would jump the wrist.
   private anchorYaw = 0;
   private prevDelta: Quat4 | null = null;
+  // TEMP debug (2026-11-02, grip-press jerk): frames left in the post-engage
+  // trace. VrJogMapper.wristActionFor emits a line every TRACE_EVERY frames.
+  traceLeft = 0;
+  traceFrame = 0;
+  get anchorWrist(): WristAngles | null { return this.anchorJoints; }
+  /** Hand rotation since the clutch, degrees (from the last handDelta). */
+  get handTurnDeg(): number {
+    const d = this.prevDelta;
+    if (!d) return 0;
+    return (2 * Math.atan2(Math.hypot(d[0], d[1], d[2]), d[3]) * 180) / Math.PI;
+  }
   private anchorJoints: WristAngles | null = null;
   // Last UNCLAMPED wrist solution, the starting point of the next solve. Keeps
   // the joints on one continuous solution through the flexion pole and past
@@ -567,6 +583,8 @@ class HandState {
       this.anchorHand = q ? ([...q] as Quat4) : null;
       this.anchorYaw = controlYaw;
       this.prevDelta = null;
+      this.traceLeft = TRACE_FRAMES;
+      this.traceFrame = 0;
       this.anchorTool = wristAnchor && armAnchor ? toolRotation(armAnchor, wristAnchor, sign) : null;
       this.prevWrist = wristAnchor ? { ...wristAnchor } : null;
       // ...and the arm, to the wrist point the robot is ALREADY at, so the first
@@ -938,6 +956,12 @@ export class VrJogMapper {
       if (!si) return;
       const span = si[1] - si[0];
       if (!span) return;
+      // Stay out of Servo's stopping band. Servo halts a joint within
+      // joint_limit_margins (0.05 rad) of its URDF limit, and on a calibrated
+      // unit the URDF limit IS this range. Targets clamped to the range end
+      // pinned joints there continuously (1005, 2026-11-02: ~33 stops/s).
+      const lo = si[0] + SERVO_LIMIT_MARGIN_RAD, hi = si[1] - SERVO_LIMIT_MARGIN_RAD;
+      if (hi > lo) radians = Math.max(lo, Math.min(hi, radians));
       const norm = ((radians - si[0]) / span) * 200 - 100;
       out[key] = Math.max(-100, Math.min(100, norm));
     };
@@ -955,6 +979,19 @@ export class VrJogMapper {
       (f?.orientation as Quat | null | undefined) ?? null, this.wristLimits(side),
       q ?? this.measured[side]?.q ?? null, this.tuning.wristGain);
     if (targets) for (const joint of WRIST_JOINTS) put(joint, targets[joint]);
+    if (hand.traceLeft > 0) {
+      if (hand.traceFrame % TRACE_EVERY === 0) {
+        const f3 = (w: WristAngles | null | undefined) => w
+          ? `${w.forearm_yaw.toFixed(3)},${w.wrist_pitch.toFixed(3)},${w.wrist_roll.toFixed(3)}` : "-";
+        const fq = (v: readonly number[] | null | undefined) => v ? v.map((x) => x.toFixed(3)).join(",") : "-";
+        this.trace.push(
+          `vr-engage ${side} f=${hand.traceFrame} hand=${hand.handTurnDeg.toFixed(1)}deg`
+          + ` anchorW=${f3(hand.anchorWrist)} cmdW=${f3(targets)} measW=${f3(this.measured[side]?.wrist)}`
+          + ` cmdQ=${fq(q)} measQ=${fq(this.measured[side]?.q)} gain=${this.tuning.wristGain}`);
+      }
+      hand.traceFrame++;
+      hand.traceLeft--;
+    }
     return out;
   }
 
@@ -987,6 +1024,15 @@ export class VrJogMapper {
   // Which arms are under active clutch this frame. VR is dual-arm (each controller drives its
   // own arm), so unlike the keyboard's single `settings.arm` there's no one "active" arm —
   // the 3D robot highlights whichever arm(s) you're actually commanding.
+  // TEMP debug: lines queued by the post-engage trace; the session ships them
+  // to the robot journal via RemoteTeleop.clientLog.
+  private trace: string[] = [];
+  drainTrace(): string[] {
+    const out = this.trace;
+    this.trace = [];
+    return out;
+  }
+
   engagedArms(): { left: boolean; right: boolean } {
     return { left: this.left.isEngaged, right: this.right.isEngaged };
   }

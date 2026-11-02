@@ -24,6 +24,7 @@ import {
 } from "./wrist-ik";
 import {
   SwivelTracker, wristPoint, swivelOf, sideSign, SOLVED_JOINTS,
+  dampedWristPointStep, MAX_JOINT_SPEED_RAD_S,
   UPPER_ARM_M, FOREARM_M, type ArmQ, type Vec3,
 } from "./arm-kinematics";
 
@@ -427,6 +428,7 @@ class HandState {
   armAbsolute(
     cur: [number, number, number] | null | undefined,
     controlYaw: number, dt: number, sens: number,
+    armLimits?: readonly (readonly [number, number])[] | null,
   ): ArmQ | null {
     if (!this.engaged || !cur || !this.anchorHandPos || !this.anchorWristPoint
         || !this.swivel) return null;
@@ -473,7 +475,11 @@ class HandState {
         from[1] + (target[1] - from[1]) * frac,
         from[2] + (target[2] - from[2]) * frac,
       ];
-      solved = this.swivel.solve(partial, this.swivel.value, dt, this.armSeed);
+      // Calibrated limits, not the solver's generic ones: a solution in the gap
+      // (e.g. 1005's right shoulder_roll stops at 1.46, the generic bound is
+      // 1.66) would be clamped on the wire, and the wrist would then be solved
+      // against a forearm pose the arm never reaches.
+      solved = this.swivel.solve(partial, this.swivel.value, dt, this.armSeed, armLimits ?? undefined);
       if (solved) {
         // Only worth telling the operator when the arm is well behind the hand.
         this.armHold = frac < 0.5 ? `lagging (${(frac * 100).toFixed(0)}% of step)` : "";
@@ -481,14 +487,26 @@ class HandState {
       }
     }
     if (!solved) {
+      // TRACK, DO NOT HOLD (2026-11-02). Holding here froze the arm in ~2 of
+      // every 3 engaged seconds on 1005, then released it in a rush. Take one
+      // damped step toward the target instead: same per-tick joint ceiling,
+      // never a jump, and it extends toward an out-of-reach hand rather than
+      // stopping short. See dampedWristPointStep.
       const reach = Math.hypot(
         target[0] - this.anchorWristPoint[0],
         target[1] - this.anchorWristPoint[1],
         target[2] - this.anchorWristPoint[2]);
       this.armHold = this.swivel.blockedBy === null
-        ? `unreachable (${reach.toFixed(2)}m from anchor)`
-        : `singular (needs ${(this.swivel.blockedBy * 180 / Math.PI).toFixed(0)} deg step)`;
-      return this.armSeed;
+        ? `reach limit (${reach.toFixed(2)}m from anchor), tracking damped`
+        : `near singular (needs ${(this.swivel.blockedBy * 180 / Math.PI).toFixed(0)} deg step), tracking damped`;
+      const q = dampedWristPointStep(
+        this.armSeed!, target, MAX_JOINT_SPEED_RAD_S * Math.max(dt, 1e-3), this.swivel.sign,
+        armLimits ?? undefined);
+      this.armSeed = q;
+      // Re-latch the swivel to where the arm now is, so the exact solver picks
+      // up continuously from here once a solution is within reach again.
+      this.swivel.reset(swivelOf(q, this.swivel.sign));
+      return q;
     }
     this.armSeed = solved.q;
     return solved.q;
@@ -941,6 +959,19 @@ export class VrJogMapper {
     return out as Partial<Record<(typeof WRIST_JOINTS)[number], readonly [number, number]>>;
   }
 
+  // This robot's calibrated bounds for the four solved joints, inset by the
+  // Servo margin, or null when it does not advertise them all.
+  private armLimits(side: string): [number, number][] | null {
+    const out: [number, number][] = [];
+    for (const joint of SOLVED_JOINTS) {
+      const si = this.descriptor?.ranges_si?.[`${side}_arm_${joint}.pos`];
+      if (!si) return null;
+      const lo = si[0] + SERVO_LIMIT_MARGIN_RAD, hi = si[1] - SERVO_LIMIT_MARGIN_RAD;
+      out.push(hi > lo ? [lo, hi] : [si[0], si[1]]);
+    }
+    return out;
+  }
+
   // One hand's absolute wrist as normalized `control.action` keys. Empty unless
   // this robot speaks the cartesian vocabulary AND advertises ranges_si: without
   // the SI bounds a normalized target would command an arbitrary real angle,
@@ -970,7 +1001,8 @@ export class VrJogMapper {
     // together — split across two frames they would be one tick out of step,
     // which at 50 Hz is a visible wobble at the gripper.
     const q = hand.armAbsolute(
-      f?.position ?? null, this.controlYaw, this.frameDt, this.tuning.sensitivity ?? 1);
+      f?.position ?? null, this.controlYaw, this.frameDt, this.tuning.sensitivity ?? 1,
+      this.armLimits(side));
     if (q) SOLVED_JOINTS.forEach((joint, i) => put(joint, q[i]));
     // The wrist is solved AFTER the arm, against the forearm this frame commands
     // (or the measured one when the arm is not being driven), so the gripper

@@ -319,7 +319,12 @@ export const VideoSurface = ({
         <button
           type="button"
           onClick={toggleFullscreen}
-          className="absolute right-2 top-2 z-10 rounded-md border border-background/40 bg-background/85 p-1.5 text-foreground shadow backdrop-blur hover:bg-background"
+          // Bottom-right, clear of the schematic over the top-right. When the
+          // self-view PIP occupies that corner (w-32 at right-2), sit just left of it.
+          className={
+            "absolute bottom-2 z-10 rounded-md border border-background/40 bg-background/85 p-1.5 text-foreground shadow backdrop-blur hover:bg-background "
+            + (m6 && call.cameraOn ? "right-[8.75rem]" : "right-2")
+          }
           title={isFullscreen ? "Exit full screen" : "Full screen"}
           aria-label={isFullscreen ? "Exit full screen" : "Full screen"}
         >

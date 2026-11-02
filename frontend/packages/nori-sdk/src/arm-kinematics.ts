@@ -167,6 +167,7 @@ export function elbowPosition(target: Vec3, swivel: number, sign = 1.0): Vec3 | 
  */
 export function solveWristPoint(
   target: Vec3, swivel = 0.0, seed: ArmQ | null = null, sign = 1.0,
+  limits: readonly (readonly [number, number])[] = JOINT_LIMITS,
 ): ArmQ | null {
   const E = elbowPosition(target, swivel, sign);
   if (E === null) return null;
@@ -188,7 +189,7 @@ export function solveWristPoint(
       const cand: ArmQ = [s1, s2, s3, s4];
       let ok = true;
       for (let i = 0; i < 4; i++) {
-        if (!(JOINT_LIMITS[i][0] <= cand[i] && cand[i] <= JOINT_LIMITS[i][1])) { ok = false; break; }
+        if (!(limits[i][0] <= cand[i] && cand[i] <= limits[i][1])) { ok = false; break; }
       }
       if (!ok) continue;
       let cost = 0;
@@ -242,6 +243,7 @@ export class SwivelTracker {
    */
   solve(
     target: Vec3, preferred: number, dt: number, seed: ArmQ | null = null,
+    limits: readonly (readonly [number, number])[] = JOINT_LIMITS,
   ): { q: ArmQ; swivel: number } | null {
     const limit = SWIVEL_MAX_RATE * Math.max(dt, 0.0);
     const step = Math.max(-limit, Math.min(limit, wrap(preferred - this.value)));
@@ -255,7 +257,7 @@ export class SwivelTracker {
     const ceiling = MAX_JOINT_SPEED_RAD_S * Math.max(dt, 1e-3);
     let fallback: number | null = null;
     for (const psi of candidates) {
-      const q = solveWristPoint(target, psi, seed, this.sign);
+      const q = solveWristPoint(target, psi, seed, this.sign, limits);
       if (q === null) continue;
       if (seed === null) { this.value = psi; this.blockedBy = null; return { q, swivel: psi }; }
       const jump = jointDistance(q, seed);
@@ -313,4 +315,81 @@ export function swivelOf(q: ArmQ, sign = 1.0): number {
   const w: Vec3 = [E[0] - C[0], E[1] - C[1], E[2] - C[2]];
   const [e1, e2] = perpBasis(u);
   return Math.atan2(dot(w, e2), dot(w, e1));
+}
+
+// --- damped fallback --------------------------------------------------------
+// The closed-form solver above REFUSES a step it cannot take within the
+// per-tick ceiling, and the caller used to hold the arm there. On hardware
+// (1005, 2026-11-02) that held the arm in ~2 of every 3 engaged seconds:
+// 84 "singular" holds near a straight elbow and ~37 "unreachable" ones, each a
+// dead arm that then caught up in a rush once a solution reappeared. In VR a
+// frozen arm is worse than a slow one, so the caller now falls back to this.
+//
+// One damped least-squares step from `seed` toward `target`: the minimum-norm
+// joint motion that reduces the wrist-point error, damped so it stays bounded
+// near a singularity, capped at `maxStep` rad per joint in total, and kept
+// inside the joint limits. It never jumps and never refuses. Near a
+// singularity it slows; past the reach sphere it extends toward the target.
+const DLS_LAMBDA_M = 0.02;    // damping, metres of wrist-point travel
+const DLS_ITERS = 6;
+const DLS_FD_RAD = 1e-6;
+
+export function dampedWristPointStep(
+  seed: ArmQ, target: Vec3, maxStep: number, sign = 1.0,
+  limits: readonly (readonly [number, number])[] = JOINT_LIMITS,
+): ArmQ {
+  const q: number[] = [...seed];
+  for (let it = 0; it < DLS_ITERS; it++) {
+    const p = wristPoint(q[0], q[1], q[2], q[3], sign);
+    const e: Vec3 = [target[0] - p[0], target[1] - p[1], target[2] - p[2]];
+    if (Math.hypot(e[0], e[1], e[2]) < 1e-7) break;
+    // Numeric Jacobian, 3x4: column j = d(wrist point)/d(q_j).
+    const J: number[][] = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
+    for (let j = 0; j < 4; j++) {
+      const qh = [...q];
+      qh[j] += DLS_FD_RAD;
+      const ph = wristPoint(qh[0], qh[1], qh[2], qh[3], sign);
+      for (let r = 0; r < 3; r++) J[r][j] = (ph[r] - p[r]) / DLS_FD_RAD;
+    }
+    // dq = J^T (J J^T + lambda^2 I)^-1 e
+    const A: number[] = [];
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+      let v = 0;
+      for (let j = 0; j < 4; j++) v += J[r][j] * J[c][j];
+      A.push(v + (r === c ? DLS_LAMBDA_M * DLS_LAMBDA_M : 0));
+    }
+    const y = solve3x3(A, e);
+    const dq = [0, 1, 2, 3].map((j) => J[0][j] * y[0] + J[1][j] * y[1] + J[2][j] * y[2]);
+    // Keep the TOTAL move from the seed within maxStep per joint, scaling the
+    // whole step (not clipping joints one by one) so its direction is kept.
+    let scale = 1;
+    for (let j = 0; j < 4; j++) {
+      const next = q[j] + dq[j] - seed[j];
+      if (Math.abs(next) > maxStep && Math.abs(dq[j]) > 1e-12) {
+        const room = Math.sign(dq[j]) * maxStep - (q[j] - seed[j]);
+        scale = Math.min(scale, Math.max(0, room / dq[j]));
+      }
+    }
+    for (let j = 0; j < 4; j++) {
+      const lim = limits[j];
+      q[j] = Math.max(lim[0], Math.min(lim[1], q[j] + dq[j] * scale));
+    }
+    if (scale < 1) break; // at the per-tick ceiling: this frame's move is used up
+  }
+  return q as ArmQ;
+}
+
+function solve3x3(A: number[], e: Vec3): Vec3 {
+  const [a, b, c, d, f, g, h, i, j] = A;
+  const det = a * (f * j - g * i) - b * (d * j - g * h) + c * (d * i - f * h);
+  const inv = [
+    f * j - g * i, c * i - b * j, b * g - c * f,
+    g * h - d * j, a * j - c * h, c * d - a * g,
+    d * i - f * h, b * h - a * i, a * f - b * d,
+  ];
+  return [
+    (inv[0] * e[0] + inv[1] * e[1] + inv[2] * e[2]) / det,
+    (inv[3] * e[0] + inv[4] * e[1] + inv[5] * e[2]) / det,
+    (inv[6] * e[0] + inv[7] * e[1] + inv[8] * e[2]) / det,
+  ];
 }

@@ -150,6 +150,12 @@ const TUNE_ZONES = [
 // and the hit-test stay locked; the canvas is unchanged because the aspect is preserved.
 const REC_W = 0.144;
 const REC_H = 0.096;   // 1.5:1, matches the 480x320 canvas
+// Enlarged 1.6x on 2026-11-02: at 0.115 m wide the Finish/Discard pills were under 5 cm and
+// hard to hit with a controller tip. Applied as extra mesh SCALE rather than by editing the
+// rects above, so the art (canvas px from REC_W/REC_H), the hit-test (worldToLocal divides
+// the scale out) and the stack gap all stay derived from one set of numbers. The panel now
+// renders 0.184 x 0.123 m, with every button 1.6x wider and taller.
+const REC_SCALE = 1.6;
 // Centre-to-centre offset from the TUNE panel, along that panel's local up. This replaced a
 // wrist-axis anchor (REC_UP) on 2026-09-03: anchoring both panels up the forearm and letting
 // each billboard itself produced two independently-swivelling planes, and since each lookAt()s
@@ -158,14 +164,40 @@ const REC_H = 0.096;   // 1.5:1, matches the 480x320 canvas
 // one flat stacked surface that can never cross. Derived, not magic: half of each RENDERED
 // height (the meshes carry scale UI_SCALE) plus a margin, so resizing either panel re-spaces
 // the stack automatically.
-const REC_STACK_GAP = ((TUNE_H + REC_H) * UI_SCALE) / 2 + 0.012;
-const REC_POKE_DEPTH = 0.035;   // left tip within this of the panel plane (local m) = a poke
-// Scaled with the panel. Left at 0.012 the Finish/Discard hit rects would meet exactly at
-// x=0 (they sit 0.012 apart now), turning the dead zone between them into a shared edge that
-// the zone loop resolves by declaration order rather than by where the operator poked.
-const REC_POKE_MARGIN = 0.010;  // slack added around each button's rect for the hit-test
-const REC_REARM_DEPTH = 0.07;   // tip must pull this far off the plane before it can fire again
+const REC_STACK_GAP = (TUNE_H * UI_SCALE + REC_H * UI_SCALE * REC_SCALE) / 2 + 0.012;
+// Depths are in the panel's LOCAL metres, which REC_SCALE stretches, so they are divided by it
+// to keep the physical poke and re-arm distances the operator learned (2.8 cm / 5.6 cm).
+const REC_POKE_DEPTH = 0.035 / REC_SCALE; // left tip within this of the panel plane = a poke
+// Slack around each button's rect for the hit-test (local m, so it grows with REC_SCALE).
+// Overlaps between slack rects are resolved by pickPokeZone (drawn rect first, then the
+// nearest edge), never by declaration order.
+const REC_POKE_MARGIN = 0.010;
+const REC_REARM_DEPTH = 0.07 / REC_SCALE; // tip must pull this far off before it can fire again
 const REC_RECONCILE_MS = 1200;  // ignore robot state this long after a local poke (optimistic UI)
+
+/**
+ * Which poke zone a fingertip at (x, y) hits, in the panel's local metres, or "".
+ * A tip inside a button's DRAWN rect always hits that button. Only in the slack
+ * margin around the rects does the nearest EDGE decide. Nearest CENTRE was wrong:
+ * a tip in the bottom corner of the wide Record pill is nearer Discard's centre
+ * than Record's, so a poke you could see landing on Record deleted the last take.
+ */
+export function pickPokeZone(
+  x: number, y: number,
+  zones: readonly { id: string; x: number; y: number; w: number; h: number }[],
+  margin: number,
+): string {
+  let best = "";
+  let bestGap = Infinity;
+  for (const z of zones) {
+    const gx = Math.max(0, Math.abs(x - z.x) - z.w / 2);
+    const gy = Math.max(0, Math.abs(y - z.y) - z.h / 2);
+    if (gx > margin || gy > margin) continue;
+    const gap = Math.hypot(gx, gy); // 0 inside the drawn rect
+    if (gap < bestGap) { bestGap = gap; best = z.id; }
+  }
+  return best;
+}
 // In-VR "motors" (arm/disarm) poke panel — the record panel's LEFT-wrist mirror: glance at
 // the left controller, poke with the RIGHT tip. It lives here and not on a controller button
 // because arming energizes hardware and every face button on a Quest controller is reachable
@@ -680,7 +712,7 @@ export class VrSession {
     const recBtn = new THREE.Mesh(new THREE.PlaneGeometry(REC_W, REC_H), recMat);
     recBtn.renderOrder = 998; // same layer as the controls card / tune panel
     recBtn.visible = false;
-    recBtn.scale.setScalar(UI_SCALE);
+    recBtn.scale.setScalar(UI_SCALE * REC_SCALE);
     scene.add(recBtn);
     this.recBtn = recBtn;
     this.drawRecordPanel();
@@ -1359,8 +1391,8 @@ export class VrSession {
       if (this.recKept > 0) {
         // A take is bankable, so offer Discard-last beside Finish (keep-by-default in VR; no
         // in-headset video review — that's a laptop affordance).
-        z.push({ id: "session_end", x: -0.036, y: -0.031, w: 0.06, h: 0.029, label: "Finish", tone: "slate" });
-        z.push({ id: "episode_discard", x: 0.036, y: -0.031, w: 0.06, h: 0.029, label: "Discard", tone: "darkred" });
+        z.push({ id: "session_end", x: -0.037, y: -0.031, w: 0.058, h: 0.029, label: "Finish", tone: "slate" });
+        z.push({ id: "episode_discard", x: 0.037, y: -0.031, w: 0.058, h: 0.029, label: "Discard", tone: "darkred" });
       } else {
         z.push({ id: "session_end", x: 0, y: -0.031, w: 0.084, h: 0.029, label: "Finish session", tone: "slate" });
       }
@@ -1488,12 +1520,7 @@ export class VrSession {
       const tip = btn.worldToLocal(new THREE.Vector3(lp[0], lp[1], lp[2]));
       let inZone = "";
       if (Math.abs(tip.z) < REC_POKE_DEPTH) {
-        for (const z of this.recZones()) {
-          if (
-            Math.abs(tip.x - z.x) <= z.w / 2 + REC_POKE_MARGIN &&
-            Math.abs(tip.y - z.y) <= z.h / 2 + REC_POKE_MARGIN
-          ) { inZone = z.id; break; }
-        }
+        inZone = pickPokeZone(tip.x, tip.y, this.recZones(), REC_POKE_MARGIN);
       }
       hot = inZone;
       // Fire on enter; must pull the tip REC_REARM_DEPTH off the plane before it can fire
@@ -1625,7 +1652,9 @@ export class VrSession {
     ];
     const wrist = meas
       ? AX.map(([label, joint]) =>
-          `${label} hand${n(wd.hand[joint])} cmd${n(wd.cmd[joint])}`
+          // "moved" = commanded change since the clutch (the orientation-matching
+          // wrist has no per-joint hand angle to show).
+          `${label} moved${n(wd.hand[joint])} cmd${n(wd.cmd[joint])}`
           + ` act${n((meas[joint] * 180) / Math.PI)}`).join(" | ")
       : "(no telemetry)";
 

@@ -121,6 +121,13 @@ type SimOptions = {
   setSsaoScale?: (radius: number, range: number) => void;
   onState?: (state: SimState) => void;
   initialCameraView?: CameraView | null;
+  /**
+   * Whether the lift keys drive the model's lift joint. Default true. A page
+   * that poses the model from live telemetry (which carries `lift.pos`) turns
+   * this off — otherwise the key and the telemetry write the same joint at
+   * different values every frame and the model jitters between the two.
+   */
+  liftKeys?: boolean;
 };
 
 /**
@@ -869,6 +876,7 @@ export function startSim(opts: SimOptions): SimHandle | null {
     if (dt <= 0) return;
 
     const axes = axesFromKeys(held);
+    if (opts.liftKeys === false) axes.lift = 0;
     const next = step({ pose, twist }, axes, dt, slabs, apartment.obstacles);
     const moving =
       Math.abs(next.twist.linear) > 1e-4 ||

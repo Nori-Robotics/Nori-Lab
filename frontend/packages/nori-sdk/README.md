@@ -119,7 +119,12 @@ What the mock gives you:
 
 - **A drivable robot**: jog (keyboard/`setExternalJog`), absolute `sendAction` targets with the
   full `accepted -> active -> done|clamped|blocked` action-status lifecycle, range clamping
-  (clamp-don't-reject, like the daemon), `estop`/`reset_latch` latching, and an arrival-keyedwatchdog that stops motion when your control frames go silent — so your error handling is testable, not just your happy path.
+  (clamp-don't-reject, like the daemon), `estop`/`reset_latch` latching, and an arrival-keyed
+  watchdog that stops motion when your control frames go silent — so your error handling is
+  testable, not just your happy path. `sendPose` is accepted too (the mock advertises
+  `pose_targets`) but is **protocol-only** — no IK, a nudge on one joint. Subclass
+  `MockDaemonSim` and override `handleFrame` to make it geometric (the Lab's `A3MockSim` does
+  exactly this with `solveWristPoint` from `@nori/sdk/vr`).
 - **Test-pattern video**: a canvas-drawn composite honoring the `camera_layout` grid, so
   `videoStream()`, `cameraView(role)`, `captureFrame`/`snapshot(role)` all work. Tiles move
   when you jog (a dot tracks `shoulder_pan`), so "is my view wired up" is answerable by eye.
@@ -549,8 +554,12 @@ Three contracts worth knowing:
 - **Capability-gated, three-valued.** A robot without `pose_targets` ignores the frame
   *silently*, so `sendPose` **throws** on an explicitly missing capability rather than letting
   a script hang to its timeout. A legacy ack (no capabilities field at all) passes through —
-  probe-or-assume-legacy is the ack contract. The mock advertises its truthful set *without*
-  `pose_targets`, so `sendPose` against mock mode throws: that is the correct teaching, not a bug.
+  probe-or-assume-legacy is the ack contract. The mock **advertises `pose_targets` and serves
+  it** (its default capability set matches a healthy A3 gateway), so `sendPose` against mock
+  mode goes through the full `accepted -> active -> done` lifecycle — but the stock mock does
+  no IK: an accepted pose just nudges one joint so telemetry visibly responds. Protocol
+  rehearsal, not geometry. To rehearse the throw, trim the set:
+  `new MockDaemonSim({ capabilities: ["task_jog", "record"] })`.
 - **Terminal states come from observed motion**, never from the solver returning: the
   intermediate `active` means solved-and-tracking, and a pose that stops progressing ends
   `blocked` with the live Servo status named. There is no accepted-then-nothing state.

@@ -395,6 +395,9 @@ interface RobotUrdfViewerProps {
    * drives itself — e.g. rendering the robot's cameras into a video track.
    */
   onSimHandle?: (handle: SimHandle | null) => void;
+  /** Let the sim's lift keys drive the lift joint (default true). Off when the
+   *  lift is owned by `liveState` telemetry — see SimOptions.liftKeys. */
+  simLiftKeys?: boolean;
   /**
    * Whether this is a viewer or a picture.
    *
@@ -420,10 +423,11 @@ interface RobotUrdfViewerProps {
   /** The robot's handshake descriptor, for future radian ranges (ranges_rad). */
   descriptor?: RobotDescriptor;
   /**
-   * Material finish. Defaults to schematic whenever `liveState` is set (the
-   * remote page's small telemetry panel) and realistic otherwise. A live-posed
-   * model that is ALSO the apartment sim wants the realistic finish, which is
-   * what this override is for.
+   * Material finish, READ ONCE AT MOUNT (materials are styled in the model's
+   * load callback and never restyled). Defaults to schematic when `liveState`
+   * is set on the first render (the remote page's small telemetry panel) and
+   * realistic otherwise. A live-posed model that is ALSO the apartment sim
+   * wants the realistic finish, which is what this override is for.
    */
   finish?: "schematic" | "realistic";
 }
@@ -444,6 +448,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   onSimState,
   onSimCameraViewChange,
   onSimHandle,
+  simLiftKeys = true,
   interactive = true,
   frameless = false,
   liveState,
@@ -563,6 +568,8 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
   // does not restart the sim (which would put the robot back at the door).
   const simViewRef = useRef(simCameraView);
   simViewRef.current = simCameraView;
+  const simLiftKeysRef = useRef(simLiftKeys);
+  simLiftKeysRef.current = simLiftKeys;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -1151,6 +1158,7 @@ const RobotUrdfViewer: React.FC<RobotUrdfViewerProps> = ({
       setSsaoScale: (radius, range) => postRef.current?.setSsaoScale(radius, range),
       onState: (state) => simStateCb.current?.(state),
       initialCameraView: simViewRef.current ?? null,
+      liftKeys: simLiftKeysRef.current,
     });
     simRef.current = handle;
     simHandleCb.current?.(handle);

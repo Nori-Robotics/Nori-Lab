@@ -15,3 +15,9 @@ export * from "./wrist-anatomy";
 // Closed-form arm kinematics, ported 1:1 from the gateway's Python original.
 // Robot facts (link lengths, limits, solution space) -- not client policy.
 export * from "./arm-kinematics";
+// Orientation-matching wrist solver the mapper uses on cartesian robots: the
+// gripper turns in the world as the hand did, solved against the live forearm.
+export {
+  forearmRotation, toolRotation, solveWrist, targetTool, vrToRobot, quatToMat,
+  type Mat3, type WristSolution,
+} from "./wrist-ik";

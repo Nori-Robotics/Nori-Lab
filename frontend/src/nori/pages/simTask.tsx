@@ -81,6 +81,13 @@ const SimTaskPage = () => {
     setLog((l) => [...l.slice(-60), `${new Date().toLocaleTimeString()} ${m}`]);
   }, []);
 
+  // The inputs are a draft of `target`; anything that sets the target programmatically
+  // must refresh the draft too, or the next blur re-applies the stale text over it.
+  const setTargetAndDraft = useCallback((t: Vec3) => {
+    setTarget([...t] as Vec3);
+    setDraft(t.map((v) => v.toFixed(2)) as [string, string, string]);
+  }, []);
+
   // ---- session: built once the sim (apartment + cameras) is running
   const onSimHandle = useCallback((handle: SimHandle | null) => {
     if (!handle) {
@@ -123,12 +130,14 @@ const SimTaskPage = () => {
       onControlActive: () => {},
     });
     teleopRef.current = teleop;
-    void teleop.start().then(() => setReady(true));
+    teleop.start().then(
+      () => setReady(true),
+      (e: unknown) => addLog(`sdk: start failed: ${(e as Error)?.message ?? String(e)}`),
+    );
     (window as unknown as { __simTask?: unknown }).__simTask = {
-      teleop, sim: simRef.current, composite: composite.canvas,
-      setTarget: (t: Vec3) => setTarget([...t] as Vec3),
+      teleop, sim: simRef.current, composite: composite.canvas, setTarget: setTargetAndDraft,
     };
-  }, [addLog]);
+  }, [addLog, setTargetAndDraft]);
 
   useEffect(() => () => onSimHandle(null), [onSimHandle]);
 
@@ -231,7 +240,8 @@ const SimTaskPage = () => {
           The model is posed from the mock robot&apos;s telemetry through the real SDK, and the
           robot&apos;s cameras are its video feed. <code>sendPose</code> places the <b>wrist point</b>{" "}
           (amber = target, cyan = where the sim says the wrist is). Cartesian jog is not geometric
-          in the mock — use <code>sendPose</code>. Handles: <code>window.__simTask</code>.
+          in the mock — use <code>sendPose</code>. Keyboard drives the base only; the lift is
+          the mock&apos;s (<code>lift.pos</code>). Handles: <code>window.__simTask</code>.
         </p>
       </header>
 
@@ -240,6 +250,7 @@ const SimTaskPage = () => {
           className={`${PANEL_HEIGHT} nori-rise w-full [animation-delay:120ms]`}
           sim
           simCameraView={null}
+          simLiftKeys={false}
           onSimHandle={onSimHandle}
           onViewerReady={onViewerReady}
           liveState={liveState}
@@ -307,10 +318,7 @@ const SimTaskPage = () => {
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
               <Button size="sm" disabled={!ready} onClick={sendPose}>sendPose</Button>
-              <Button size="sm" variant="outline" onClick={() => {
-                const t = simRef.current.wristPointBf(side);
-                setTarget(t); setDraft(t.map((v) => v.toFixed(2)) as [string, string, string]);
-              }}>
+              <Button size="sm" variant="outline" onClick={() => setTargetAndDraft(simRef.current.wristPointBf(side))}>
                 target = current wrist
               </Button>
             </div>

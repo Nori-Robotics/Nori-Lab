@@ -1,5 +1,12 @@
 // Anatomical wrist decomposition for VR. CLIENT-SIDE ON PURPOSE.
 //
+// SUPERSEDED as the mapper's wrist path on 2026-11-02 by wrist-ik.ts. Measured
+// against the robot's own TF at live poses, this decomposition turned the gripper
+// about the wrong axis for most gestures: it ignores the right arm's mirrored
+// chain, puts forearm +Z toward the hand (the URDF's points to the elbow), and
+// adds Euler angles to a non-zero anchor. Kept for its exports and tests; the
+// shared WRIST_JOINTS / WristAngles types still live here.
+//
 // The A3 wrist is a human wrist. Measured from the URDF (2026-09-06):
 //
 //     forearm_yaw   rotates about Z   = pronation / supination

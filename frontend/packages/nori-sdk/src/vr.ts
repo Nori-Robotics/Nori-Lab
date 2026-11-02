@@ -406,9 +406,6 @@ class HandState {
   private anchorHandPos: [number, number, number] | null = null;
   private anchorWristPoint: Vec3 | null = null;
   private armSeed: ArmQ | null = null;
-  // Which way the elbow was bent at the clutch: +1, -1. The damped fallback
-  // never crosses straight to the other bend (see dampedWristPointStep).
-  private elbowSign = 0;
   private anchorReach = 0;
   private swivel: SwivelTracker | null = null;
   /** Why the arm held this frame, "" when it moved. Surfaced in the HUD. */
@@ -506,8 +503,7 @@ class HandState {
       // (e.g. 1005's right shoulder_roll stops at 1.46, the generic bound is
       // 1.66) would be clamped on the wire, and the wrist would then be solved
       // against a forearm pose the arm never reaches.
-      solved = this.swivel.solve(
-        partial, this.swivel.value, dt, this.armSeed, armLimits ?? undefined, this.elbowSign);
+      solved = this.swivel.solve(partial, this.swivel.value, dt, this.armSeed, armLimits ?? undefined);
       if (solved) {
         // Only worth telling the operator when the arm is well behind the hand.
         this.armHold = frac < 0.5 ? `lagging (${(frac * 100).toFixed(0)}% of step)` : "";
@@ -529,7 +525,7 @@ class HandState {
         : `near singular (needs ${(this.swivel.blockedBy * 180 / Math.PI).toFixed(0)} deg step), tracking damped`;
       const q = dampedWristPointStep(
         this.armSeed!, target, MAX_JOINT_SPEED_RAD_S * Math.max(dt, 1e-3), this.swivel.sign,
-        armLimits ?? undefined, this.elbowSign);
+        armLimits ?? undefined);
       this.armSeed = q;
       // Re-latch the swivel to where the arm now is, so the exact solver picks
       // up continuously from here once a solution is within reach again.
@@ -548,7 +544,6 @@ class HandState {
     const S = shoulderPoint(sign), A = this.anchorWristPoint;
     this.anchorReach = Math.hypot(A[0] - S[0], A[1] - S[1], A[2] - S[2]);
     this.armSeed = [...q] as ArmQ;
-    this.elbowSign = q[3] >= 0 ? 1 : -1;
     // Seeded from the elbow the arm is ALREADY in, so squeezing the clutch does
     // not snap the elbow to a nominal swivel.
     this.swivel = new SwivelTracker(swivelOf(q, sign), sign);

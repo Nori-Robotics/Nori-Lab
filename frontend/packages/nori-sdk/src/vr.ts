@@ -234,6 +234,24 @@ const GRIPPER_RAMP_FLOOR = 0.3;
 // point — it is just no longer the dominant term. Legacy keeps 0.3 (frozen fleet).
 const GRIPPER_RAMP_FLOOR_CARTESIAN = 0.5;
 
+// CARTESIAN (A3) gripper, 2026-11-02: HOLD TO MOVE, ALTERNATING DIRECTION.
+// The old mapping closed whenever the trigger was up, so a held object was
+// squeezed for as long as the arm was clutched and the gateway's running target
+// kept the jaws pushing past wherever they stopped: it crushed a test box.
+// Now the trigger only moves the jaws while held; the first squeeze closes and
+// each release flips the next one. Releasing HOLDS the jaws where they are
+// (an absolute target at the measured position), so the grip never tightens
+// on its own. Opening and closing run at the same tuned speed. A squeeze with
+// the jaws already fully open closes, fully closed opens, so a press is never
+// spent pushing into a stop.
+const GRIP_PRESS_AT = 0.55;   // trigger hysteresis
+const GRIP_RELEASE_AT = 0.45;
+const GRIP_FULL_OPEN = 95;    // telemetry gripper.pos, 0 closed .. 100 open
+const GRIP_FULL_CLOSED = 5;
+// The hold rides control.action, which the stream throttles to ~50 Hz and drops
+// under congestion; repeating it for a few frames makes one lost send harmless.
+const GRIP_HOLD_FRAMES = 6;
+
 // User-tunable sensitivity (the web UI exposes these as sliders — VrJogMapper.setTuning).
 // Everything here scales the hardware-tuned constants above; the defaults reproduce them
 // exactly, so an untouched slider changes nothing.
@@ -424,7 +442,54 @@ class HandState {
 
   // Drop all baselines so a fresh squeeze re-establishes them with no jump (used on
   // clutch release AND on forced re-clutch after a safe-hold — re-clutch-on-resume).
+  // --- gripper: hold to move, alternating direction (cartesian robots) -------
+  private gripPressed = false;
+  private gripDir: 1 | -1 = -1;        // direction of the press in progress
+  private gripNextDir: 1 | -1 = -1;    // the first squeeze closes
+  private gripLastPos: number | null = null;
+  private gripHoldPos: number | null = null;
+  private gripHoldFrames = 0;
+
+  /** This frame's gripper rate. Call once per frame for the hand. */
+  gripperCmd(trigger: number, t: ResolvedTuning, gripperPos: number | null, cartesian: boolean): number {
+    if (!cartesian) return gripperRate(trigger, t, gripperPos, cartesian);
+    this.gripLastPos = gripperPos;
+    const pressed = this.gripPressed ? trigger > GRIP_RELEASE_AT : trigger >= GRIP_PRESS_AT;
+    if (pressed && !this.gripPressed) {
+      let dir = this.gripNextDir;
+      if (gripperPos != null) {
+        if (gripperPos >= GRIP_FULL_OPEN) dir = -1;
+        else if (gripperPos <= GRIP_FULL_CLOSED) dir = 1;
+      }
+      this.gripDir = dir;
+    } else if (!pressed && this.gripPressed) {
+      this.endGripPress();
+    }
+    this.gripPressed = pressed;
+    return pressed ? this.gripDir * t.gripperOpenRate : 0;
+  }
+
+  private endGripPress() {
+    this.gripNextDir = this.gripDir === 1 ? -1 : 1;
+    if (this.gripLastPos != null) {
+      this.gripHoldPos = this.gripLastPos;
+      this.gripHoldFrames = GRIP_HOLD_FRAMES;
+    }
+  }
+
+  /** The hold target to send this frame (gripper.pos, 0..100), if any. */
+  takeGripHold(): number | null {
+    if (this.gripHoldFrames <= 0 || this.gripHoldPos == null) return null;
+    this.gripHoldFrames--;
+    return this.gripHoldPos;
+  }
+
+  /** Which way the next squeeze will move the jaws (HUD). */
+  get nextGripDir(): "open" | "close" { return this.gripNextDir === 1 ? "open" : "close"; }
+
   release() {
+    // Letting go of the clutch mid-squeeze ends the squeeze: hold and flip.
+    if (this.gripPressed) { this.endGripPress(); this.gripPressed = false; }
     this.engaged = false;
     this.prevPos = null;
     this.prevQuat = null;
@@ -597,6 +662,9 @@ class HandState {
     armAnchor: ArmQ | null,
     sign: number,
   ): Record<string, number> | null {
+    // Latest jaw position first, so a clutch release below holds where the jaws
+    // ARE, not where they were on the last frame the gripper logic ran.
+    this.gripLastPos = gripperPos;
     if (!f) { this.release(); return null; }
 
     // Clutch with hysteresis. Released -> hold (zero) and forget baselines so the next
@@ -634,7 +702,7 @@ class HandState {
       // ...and the arm, to the wrist point the robot is ALREADY at, so the first
       // commanded target is exactly where it stands.
       this.anchorArm(cur, armAnchor, sign);
-      return gripperOnly(f.trigger, tuning, gripperPos, cartesian);
+      return gripperOnly(this.gripperCmd(f.trigger, tuning, gripperPos, cartesian), cartesian);
     }
 
     // World-frame metre deltas, rotated into the CONTROL frame (yaw set at recenter) before
@@ -677,7 +745,7 @@ class HandState {
          || Math.abs(vrZ) > JUMP_POS);
     if (glitch) {
       this.prevPos = cur;
-      return gripperOnly(f.trigger, tuning, gripperPos, cartesian);
+      return gripperOnly(this.gripperCmd(f.trigger, tuning, gripperPos, cartesian), cartesian);
     }
     this.prevPos = cur;
 
@@ -802,9 +870,9 @@ class HandState {
     const cap = cartesian ? VR_MAX_RATE_CARTESIAN : VR_MAX_RATE;
     for (const k of Object.keys(arm)) if (k !== "gripper") arm[k] = capRate(arm[k], cap);
 
-    // Binary gripper trigger (reference: 45 if trigger>0.5 else 0). Through the daemon's
-    // jog accumulator/clamp, + drives toward the 45° target (jaws open), − toward 0 (closed).
-    arm.gripper = gripperRate(f.trigger, tuning, gripperPos, cartesian);
+    // Gripper: legacy = binary trigger (reference: 45 if trigger>0.5 else 0); cartesian =
+    // hold to move, alternating direction (see GRIP_PRESS_AT). + opens, − closes.
+    arm.gripper = this.gripperCmd(f.trigger, tuning, gripperPos, cartesian);
 
     return arm;
   }
@@ -820,12 +888,9 @@ function zeroArm(cartesian: boolean): Record<string, number> {
     ? { gripper: 0 }
     : { shoulder_pan: 0, x: 0, y: 0, pitch: 0, wrist_roll: 0, gripper: 0 };
 }
-function gripperOnly(
-  trigger: number, tuning: ResolvedTuning, gripperPos: number | null,
-  cartesian: boolean,
-): Record<string, number> {
+function gripperOnly(rate: number, cartesian: boolean): Record<string, number> {
   const a = zeroArm(cartesian);
-  a.gripper = gripperRate(trigger, tuning, gripperPos, cartesian); // binary, ramped
+  a.gripper = rate;
   return a;
 }
 
@@ -1091,6 +1156,11 @@ export class VrJogMapper {
     return out;
   }
 
+  /** Which way each hand's next gripper squeeze moves the jaws (cartesian). */
+  nextGripperDirs(): { left: "open" | "close"; right: "open" | "close" } {
+    return { left: this.left.nextGripDir, right: this.right.nextGripDir };
+  }
+
   engagedArms(): { left: boolean; right: boolean } {
     return { left: this.left.isEngaged, right: this.right.isEngaged };
   }
@@ -1126,6 +1196,13 @@ export class VrJogMapper {
       ...this.wristActionFor("left", this.left, frame.left),
       ...this.wristActionFor("right", this.right, frame.right),
     };
+    // A released gripper squeeze holds the jaws where they are (cartesian only).
+    if (this.cartesian) {
+      for (const [side, hand] of [["left", this.left], ["right", this.right]] as const) {
+        const hold = hand.takeGripHold();
+        if (hold != null) action[`${side}_arm_gripper.pos`] = clamp(hold, 0, 100);
+      }
+    }
     const base = baseFromThumb(frame.right);
     const c = frame.controls;
     const leftLift = liftFromControls(c?.leftLiftUp, c?.leftLiftDown);

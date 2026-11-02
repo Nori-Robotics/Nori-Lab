@@ -1322,7 +1322,7 @@ export class VrSession {
     this.drawTunePanel();
     this.o.onLog(
       `tuning: motion ${Math.round(this.tuning.sensitivity * 100)}% · ` +
-        `grip open ${Math.round(this.tuning.gripperOpenRate * 100)}%`
+        `grip speed ${Math.round(this.tuning.gripperOpenRate * 100)}%`
     );
     this.o.onTuningChange?.(this.tuning);
   }
@@ -1352,7 +1352,7 @@ export class VrSession {
     ctx.textBaseline = "middle";
     const rows: [string, number][] = [
       ["motion", this.tuning.sensitivity],
-      ["grip open", this.tuning.gripperOpenRate],
+      ["grip speed", this.tuning.gripperOpenRate],
     ];
     // Font sizes track the controls card's 28-30px range — at this panel's matched pixel
     // density that's the same physical text size on both wrists.
@@ -1977,7 +1977,7 @@ export class VrSession {
 
     const rows: [string, string][] = [
       ["grip", "hold = clutch (move arm)"],
-      ["trigger", "that arm's gripper"],
+      ["trigger", "hold moves; next reverses"],
       ["B/Y · A/X", "that arm's lift up / down"],
       ["right stick", "drive the base"],
       ["left stick ↔", "spin the 3D robot"],

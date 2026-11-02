@@ -339,8 +339,8 @@ export default function VrLanding() {
                     />
                     <span className="w-10 text-right font-mono text-xs">{Math.round(settings.vrSensitivity * 100)}%</span>
                   </label>
-                  <label className="flex items-center gap-2 text-sm" title="How fast the gripper opens (closing always runs 1.5× this speed)">
-                    <span className="w-20 text-muted-foreground">grip open</span>
+                  <label className="flex items-center gap-2 text-sm" title="How fast the gripper moves while the trigger is held (A3: same speed opening and closing)">
+                    <span className="w-20 text-muted-foreground">grip speed</span>
                     <input
                       type="range" min={0.05} max={1} step={0.05}
                       value={settings.vrGripperOpen}

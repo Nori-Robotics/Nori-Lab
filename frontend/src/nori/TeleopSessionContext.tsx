@@ -455,6 +455,10 @@ export const TeleopSessionProvider: React.FC<{ children: ReactNode }> = ({ child
 
   const clearEstopLatch = useCallback(async (): Promise<string> => {
     if (teleopRef.current) throw new Error("this app already has a robot session — clear the latch from the Remote page");
+    // Once this app has lent the robot to a task (setYield), it opens NO session for anything until the task ends:
+    // the connect+disconnect this helper does would broadcast into the room the task now holds (2026-11-01).
+    const yielded = yieldRef.current.values().next().value as string | undefined;
+    if (yielded) throw new Error(`not touching the robot while it is lent out (${yielded}); clear the latch when the task ends`);
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     await connect();
     const t = teleopRef.current as RemoteTeleop | null;

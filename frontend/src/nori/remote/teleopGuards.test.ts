@@ -282,3 +282,120 @@ describe("a hosted ASPIRE task holding the robot", () => {
     void t;
   });
 });
+
+// 2026-11-01 (NORI-A3-0003, ASPIRE task 6d47d9d0): `bye` and the gateway's offer are room BROADCASTS without sender
+// identity. Byes from this app's connect/disconnect pairs that never held the robot closed the hosted worker's live
+// session twice, and a bystander session answered the worker's offer. A session says bye only if it was the
+// connected operator, and answers an offer only while it is itself waiting for one.
+type RawBye = Raw & {
+  everConnected: boolean; awaitingOffer: boolean; heldOff: boolean; stopped: boolean;
+  ingestAlert: (m: Record<string, unknown>) => void;
+  freshPeer: () => unknown;
+};
+
+function byeSession() {
+  const handlers: Record<string, (p?: unknown) => unknown> = {};
+  let byes = 0, answers = 0, peers = 0;
+  const signaling = {
+    room: "NORI-A3-0003",
+    connect: async (h: Record<string, (p?: unknown) => unknown>) => { Object.assign(handlers, h); },
+    sendReady: () => {}, sendIce: () => {},
+    sendSdp: (p: { type: string }) => { if (p.type === "answer") answers += 1; },
+    sendBye: () => { byes += 1; },
+    close: async () => {},
+  };
+  const t = new RemoteTeleop({
+    signaling, stun: "", turnUrls: [], turnUser: "", turnCred: "",
+    forceRelay: false, arm: "right",
+    onLog: () => {}, onConnState: () => {}, onTelemetry: () => {},
+    onMode: () => {}, onControlActive: () => {},
+  } as never);
+  const raw = t as unknown as RawBye;
+  // No RTCPeerConnection in node: a stand-in peer records that an answer was built.
+  raw.freshPeer = () => {
+    peers += 1;
+    return {
+      setRemoteDescription: async () => {}, addIceCandidate: async () => {}, getTransceivers: () => [],
+      createAnswer: async () => ({ type: "answer", sdp: "v=0" }), setLocalDescription: async () => {},
+      onconnectionstatechange: null, onicecandidate: null, ontrack: null, ondatachannel: null,
+    };
+  };
+  return { t, raw, handlers, byes: () => byes, answers: () => answers, peers: () => peers };
+}
+
+describe("bye is only for a session that held the robot", () => {
+  it("a session that never connected leaves without a bye", async () => {
+    const { t, handlers, byes } = byeSession();
+    await t.start(); handlers.onOpen();
+    await t.stop();
+    expect(byes()).toBe(0);
+  });
+
+  it("the connected operator says bye on stop", async () => {
+    const { t, raw, handlers, byes } = byeSession();
+    await t.start(); handlers.onOpen();
+    raw.connected = true; raw.everConnected = true;        // as pc.onconnectionstatechange "connected" sets them
+    await t.stop();
+    expect(byes()).toBe(1);
+  });
+
+  it("an evicted session leaves quietly: the robot already closed it for a task", async () => {
+    const { t, raw, handlers, byes } = byeSession();
+    await t.start(); handlers.onOpen();
+    raw.connected = true; raw.everConnected = true;
+    raw.ingestAlert({ code: "session_evicted", severity: "warning", active: true, message: "task" });
+    await t.stop();
+    expect(byes()).toBe(0);
+  });
+
+  it("a robot_held refusal leaves quietly too", async () => {
+    const { t, handlers, byes } = byeSession();
+    await t.start(); handlers.onOpen();
+    handlers.onNack({ reason: "robot_held", holder: "task", tid: "6d47d9d0" });
+    await t.stop();
+    expect(byes()).toBe(0);
+  });
+});
+
+describe("an offer is answered only by the session that is waiting for it", () => {
+  it("waiting after 'ready' answers the offer", async () => {
+    const { t, handlers, answers, peers } = byeSession();
+    await t.start(); handlers.onOpen();
+    await handlers.onSdp({ type: "offer", sdp: "v=0" });
+    expect(peers()).toBe(1); expect(answers()).toBe(1);
+    await t.stop();
+  });
+
+  it("a connected session ignores a stray offer (it is for someone else)", async () => {
+    const { t, raw, handlers, answers, peers } = byeSession();
+    await t.start(); handlers.onOpen();
+    raw.connected = true; raw.everConnected = true; raw.awaitingOffer = false;
+    await handlers.onSdp({ type: "offer", sdp: "v=0" });
+    expect(peers()).toBe(0); expect(answers()).toBe(0);
+    expect(raw.connStatus.phase).not.toBe("negotiating");
+    await t.stop();
+  });
+
+  it("a held-off or stopped session never answers", async () => {
+    const { t, raw, handlers, answers, peers } = byeSession();
+    await t.start(); handlers.onOpen();
+    handlers.onNack({ reason: "robot_held", holder: "task", tid: "6d47d9d0" });
+    await handlers.onSdp({ type: "offer", sdp: "v=0" });
+    expect(peers()).toBe(0);
+    await t.stop();
+    await handlers.onSdp({ type: "offer", sdp: "v=0" });
+    expect(peers()).toBe(0); expect(answers()).toBe(0);
+    void raw;
+  });
+
+  it("a re-ready from a live session does not re-arm answering", async () => {
+    const { t, raw, handlers, peers } = byeSession();
+    await t.start(); handlers.onOpen();
+    raw.connected = true; raw.everConnected = true; raw.awaitingOffer = false;
+    await handlers.onRobotHere();                          // live session re-announces ready (gateway dedupes)
+    expect(raw.awaitingOffer).toBe(false);
+    await handlers.onSdp({ type: "offer", sdp: "v=0" });
+    expect(peers()).toBe(0);
+    await t.stop();
+  });
+});

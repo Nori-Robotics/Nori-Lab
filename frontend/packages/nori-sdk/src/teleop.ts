@@ -971,6 +971,16 @@ export class RemoteTeleop {
   private remoteSet = false;
   private pendingIce: RTCIceCandidateInit[] = [];
   private connected = false;
+  // Did THIS session ever hold the robot (pc reached "connected")? `bye` is a room BROADCAST with no sender
+  // identity, and the gateway used to end whatever session was live on any of them: on 2026-11-01 (NORI-A3-0003,
+  // ASPIRE task 6d47d9d0) byes from this app's own connect/disconnect pairs that never held the robot (a latch clear,
+  // a session that only joined signaling) closed the hosted worker's live session twice. So stop() says bye only
+  // for a session that was the connected operator; everything else leaves quietly.
+  private everConnected = false;
+  // We have asked for an offer (sent `ready`) and not yet been answered. The gateway's offer is also a room
+  // broadcast: a bystander app (connected, held off, or merely subscribed) used to answer it too, and the robot
+  // applied whichever answer came first. Only a session that is actually waiting answers.
+  private awaitingOffer = false;
   // Set by alert `session_evicted` (a hosted ASPIRE task took the robot) or by a `robot_held`
   // nack. While set, nothing re-sends `ready` — not robot_here, not the signaling reopen, not
   // the peer dropping — because the robot would only nack it, and the old "re-ready on every
@@ -2053,6 +2063,8 @@ export class RemoteTeleop {
   async start() {
     this.stopped = false;
     this.heldOff = false;
+    this.everConnected = false;
+    this.awaitingOffer = false;
     this.setPhase("joining");
     if (this.o.forceRelay && !this.o.turnUrls.length) {
       this.log("force relay is on but no TURN URL set — connect will fail");
@@ -2068,6 +2080,15 @@ export class RemoteTeleop {
       // a fresh offer => a fresh peer connection (handles robot restarts / reconnects)
       onSdp: async (payload) => {
         if (!payload || payload.type !== "offer") return;
+        // The offer is a room broadcast. Answer it only if WE asked for it and are still waiting: a session that
+        // is connected, stopped, held off / evicted, or never sent `ready` is a bystander, and its answer would
+        // race the intended operator's (seen as "remote answer applied" twice per session, 2026-11-01).
+        if (this.stopped || this.heldOff || this.connected || !this.awaitingOffer) {
+          this.log("offer in the room is not for this session (" +
+            (this.stopped ? "stopped" : this.heldOff ? "held off" : this.connected ? "already connected" : "no ready outstanding") +
+            ") — not answering");
+          return;
+        }
         // The robot answered — whatever else goes wrong from here, it is NOT absent, so the
         // "nobody is home" deadline is void.
         this.clearWaitDeadline();
@@ -2250,8 +2271,12 @@ export class RemoteTeleop {
     this.latencyProbe?.stop();
     this.videoLoop?.stop();
     this.tel.videoNet = null;
-    // tell the robot to exit (clean restart) before we tear down
-    this.o.signaling.sendBye();
+    // Tell the robot to exit (clean restart) before we tear down -- but ONLY if this session was the connected
+    // operator. A session that never connected, only joined signaling, or was evicted / held off by a hosted task
+    // holds nothing on the robot, and its bye (a broadcast without identity) could end someone else's live session.
+    this.awaitingOffer = false;
+    if (this.everConnected && !this.heldOff) this.o.signaling.sendBye();
+    else if (typeof this.o.onLog === "function") this.log("leaving without 'bye' (this session never held the robot)");
     if (this.pc) { try { this.pc.close(); } catch { /* noop */ } this.pc = null; }
     await this.o.signaling.close();
     this.controlCh = null;
@@ -2291,6 +2316,9 @@ export class RemoteTeleop {
       ...(turn ? { turn } : {}),
       ...(this.o.sessionGrant ? { grant: this.o.sessionGrant } : {}),
     });
+    // A re-ready from a LIVE session (robot_here mid-session) is a dedupe no-op at the gateway, not a request
+    // for an offer; only a session without a peer is actually waiting for one.
+    if (!this.connected) this.awaitingOffer = true;
   }
 
   private freshPeer(): RTCPeerConnection {
@@ -2358,6 +2386,8 @@ export class RemoteTeleop {
       this.o.onConnState(pc.connectionState);
       if (pc.connectionState === "connected") {
         this.connected = true;
+        this.everConnected = true;
+        this.awaitingOffer = false;
         this.clearWaitDeadline();
         this.setPhase("connected");
         if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }

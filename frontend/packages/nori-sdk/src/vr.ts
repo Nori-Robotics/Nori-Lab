@@ -24,16 +24,39 @@ import {
 } from "./wrist-ik";
 import {
   SwivelTracker, wristPoint, swivelOf, sideSign, SOLVED_JOINTS,
-  dampedWristPointStep, MAX_JOINT_SPEED_RAD_S,
+  dampedWristPointStep, MAX_JOINT_SPEED_RAD_S, shoulderPoint,
   UPPER_ARM_M, FOREARM_M, type ArmQ, type Vec3,
 } from "./arm-kinematics";
+
+// A hand beyond the arm's reach aims at the nearest point just inside it, along
+// the shoulder-to-hand direction (2026-11-02). Unclamped, the exact solver
+// stepped along the line toward the hand while the damped fallback headed for
+// the closest reachable point, and at full extension the arm alternated between
+// the two every frame. One reachable target for both ends that.
+const REACH_INSET_M = 0.002;
+// `anchorReach` (the clutch pose's own reach) widens the band so a clutch taken
+// at full extension commands exactly the measured pose, never a pull-in.
+function clampToReach(target: Vec3, sign: number, anchorReach: number): Vec3 {
+  const S = shoulderPoint(sign);
+  const v: Vec3 = [target[0] - S[0], target[1] - S[1], target[2] - S[2]];
+  const d = Math.hypot(v[0], v[1], v[2]);
+  const max = Math.max(UPPER_ARM_M + FOREARM_M - REACH_INSET_M, anchorReach);
+  const min = Math.min(Math.abs(UPPER_ARM_M - FOREARM_M) + REACH_INSET_M, anchorReach);
+  if (d < 1e-9) return target;
+  const r = d > max ? max : d < min ? min : d;
+  if (r === d) return target;
+  return [S[0] + (v[0] * r) / d, S[1] + (v[1] * r) / d, S[2] + (v[2] * r) / d];
+}
 
 // Hand travel -> wrist-point travel. The A3 arm is a 0.61-scale human arm
 // (upper/forearm ratio 1.131 vs a human's ~1.11, matched to 2%), so a scaled
 // map makes its posture a geometrically SIMILAR copy of the operator's rather
 // than a distorted one, and keeps a full human reach inside the robot's 0.344 m
 // workspace instead of over-running it constantly.
-const WRIST_POINT_SCALE = 0.6;
+// Halved to 0.3 on 2026-11-02: once the arm stopped freezing, 0.6 at the
+// default "motion" 100% tracked unreasonably fast on hardware, and operators
+// settled on 50%. That is now the default; the slider still scales it live.
+const WRIST_POINT_SCALE = 0.3;
 
 // Fractions of the commanded step to try when the full one exceeds the solver's
 // per-tick joint ceiling. Halving rather than a fine search: each retry is a
@@ -383,6 +406,10 @@ class HandState {
   private anchorHandPos: [number, number, number] | null = null;
   private anchorWristPoint: Vec3 | null = null;
   private armSeed: ArmQ | null = null;
+  // Which way the elbow was bent at the clutch: +1, -1. The damped fallback
+  // never crosses straight to the other bend (see dampedWristPointStep).
+  private elbowSign = 0;
+  private anchorReach = 0;
   private swivel: SwivelTracker | null = null;
   /** Why the arm held this frame, "" when it moved. Surfaced in the HUD. */
   armHold = "";
@@ -444,11 +471,11 @@ class HandState {
     const k = WRIST_POINT_SCALE * sens;
     // Arm-mount frame is REP-103: +x forward, +y left, +z up. Same sign
     // convention the jog vocabulary used, so "forward" keeps meaning forward.
-    const target: Vec3 = [
+    const target: Vec3 = clampToReach([
       this.anchorWristPoint[0] + -fwdBack * k,
       this.anchorWristPoint[1] + -lat * k,
       this.anchorWristPoint[2] + up * k,
-    ];
+    ], this.swivel.sign, this.anchorReach);
     // LAG, DO NOT REFUSE (2026-09-07). The solver enforces a per-tick joint-step
     // ceiling, and near a singularity the joint travel per millimetre explodes.
     // Measured against the URDF: at the arm's PARK pose (elbow 5 deg, 99.9% of
@@ -479,7 +506,8 @@ class HandState {
       // (e.g. 1005's right shoulder_roll stops at 1.46, the generic bound is
       // 1.66) would be clamped on the wire, and the wrist would then be solved
       // against a forearm pose the arm never reaches.
-      solved = this.swivel.solve(partial, this.swivel.value, dt, this.armSeed, armLimits ?? undefined);
+      solved = this.swivel.solve(
+        partial, this.swivel.value, dt, this.armSeed, armLimits ?? undefined, this.elbowSign);
       if (solved) {
         // Only worth telling the operator when the arm is well behind the hand.
         this.armHold = frac < 0.5 ? `lagging (${(frac * 100).toFixed(0)}% of step)` : "";
@@ -501,7 +529,7 @@ class HandState {
         : `near singular (needs ${(this.swivel.blockedBy * 180 / Math.PI).toFixed(0)} deg step), tracking damped`;
       const q = dampedWristPointStep(
         this.armSeed!, target, MAX_JOINT_SPEED_RAD_S * Math.max(dt, 1e-3), this.swivel.sign,
-        armLimits ?? undefined);
+        armLimits ?? undefined, this.elbowSign);
       this.armSeed = q;
       // Re-latch the swivel to where the arm now is, so the exact solver picks
       // up continuously from here once a solution is within reach again.
@@ -517,7 +545,10 @@ class HandState {
     this.anchorHandPos = handPos;
     if (!q) { this.anchorWristPoint = null; this.armSeed = null; this.swivel = null; return; }
     this.anchorWristPoint = wristPoint(q[0], q[1], q[2], q[3], sign);
+    const S = shoulderPoint(sign), A = this.anchorWristPoint;
+    this.anchorReach = Math.hypot(A[0] - S[0], A[1] - S[1], A[2] - S[2]);
     this.armSeed = [...q] as ArmQ;
+    this.elbowSign = q[3] >= 0 ? 1 : -1;
     // Seeded from the elbow the arm is ALREADY in, so squeezing the clutch does
     // not snap the elbow to a nominal swivel.
     this.swivel = new SwivelTracker(swivelOf(q, sign), sign);

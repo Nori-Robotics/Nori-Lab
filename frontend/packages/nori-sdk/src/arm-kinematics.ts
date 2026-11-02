@@ -168,6 +168,7 @@ export function elbowPosition(target: Vec3, swivel: number, sign = 1.0): Vec3 | 
 export function solveWristPoint(
   target: Vec3, swivel = 0.0, seed: ArmQ | null = null, sign = 1.0,
   limits: readonly (readonly [number, number])[] = JOINT_LIMITS,
+  elbowSign = 0,
 ): ArmQ | null {
   const E = elbowPosition(target, swivel, sign);
   if (E === null) return null;
@@ -192,6 +193,12 @@ export function solveWristPoint(
         if (!(limits[i][0] <= cand[i] && cand[i] <= limits[i][1])) { ok = false; break; }
       }
       if (!ok) continue;
+      // Keep the elbow's bend (2026-11-02). At a straight elbow bicep_yaw is
+      // undefined, so the mirror candidate (q3+pi, -q4) can sit right next to
+      // the seed and pass every continuity check, then keep bending the other
+      // way: on 1005 that folded the right forearm and Servo collision-stopped.
+      if (elbowSign > 0 && cand[3] < -1e-9) continue;
+      if (elbowSign < 0 && cand[3] > 1e-9) continue;
       let cost = 0;
       if (seed !== null) for (let i = 0; i < 4; i++) cost += Math.abs(cand[i] - seed[i]);
       if (bestCost === null || cost < bestCost) { best = cand; bestCost = cost; }
@@ -244,6 +251,7 @@ export class SwivelTracker {
   solve(
     target: Vec3, preferred: number, dt: number, seed: ArmQ | null = null,
     limits: readonly (readonly [number, number])[] = JOINT_LIMITS,
+    elbowSign = 0,
   ): { q: ArmQ; swivel: number } | null {
     const limit = SWIVEL_MAX_RATE * Math.max(dt, 0.0);
     const step = Math.max(-limit, Math.min(limit, wrap(preferred - this.value)));
@@ -257,7 +265,7 @@ export class SwivelTracker {
     const ceiling = MAX_JOINT_SPEED_RAD_S * Math.max(dt, 1e-3);
     let fallback: number | null = null;
     for (const psi of candidates) {
-      const q = solveWristPoint(target, psi, seed, this.sign, limits);
+      const q = solveWristPoint(target, psi, seed, this.sign, limits, elbowSign);
       if (q === null) continue;
       if (seed === null) { this.value = psi; this.blockedBy = null; return { q, swivel: psi }; }
       const jump = jointDistance(q, seed);
@@ -337,7 +345,18 @@ const DLS_FD_RAD = 1e-6;
 export function dampedWristPointStep(
   seed: ArmQ, target: Vec3, maxStep: number, sign = 1.0,
   limits: readonly (readonly [number, number])[] = JOINT_LIMITS,
+  elbowSign = 0,
 ): ArmQ {
+  // ELBOW BEND IS KEPT (2026-11-02). Unconstrained, this step happily carried
+  // the elbow through straight to the opposite bend when that was the shortest
+  // way to the target: on 1005 the right elbow went +0.14 -> -0.71 rad in under
+  // a second with bicep_yaw unchanged, folding the forearm the other way, and
+  // Servo's collision monitor e-stopped both arms. The closed-form solver can
+  // only reach the other bend through a half-turn of bicep_yaw, which its
+  // continuity check refuses, so this is the one path that could flip it.
+  // elbowSign > 0 keeps q4 >= 0, < 0 keeps q4 <= 0, 0 leaves it free.
+  const bent = (j: number, v: number) =>
+    j === 3 && elbowSign > 0 ? Math.max(0, v) : j === 3 && elbowSign < 0 ? Math.min(0, v) : v;
   const q: number[] = [...seed];
   for (let it = 0; it < DLS_ITERS; it++) {
     const p = wristPoint(q[0], q[1], q[2], q[3], sign);
@@ -372,7 +391,7 @@ export function dampedWristPointStep(
     }
     for (let j = 0; j < 4; j++) {
       const lim = limits[j];
-      q[j] = Math.max(lim[0], Math.min(lim[1], q[j] + dq[j] * scale));
+      q[j] = bent(j, Math.max(lim[0], Math.min(lim[1], q[j] + dq[j] * scale)));
     }
     if (scale < 1) break; // at the per-tick ceiling: this frame's move is used up
   }

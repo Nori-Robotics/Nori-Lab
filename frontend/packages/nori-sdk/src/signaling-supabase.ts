@@ -107,8 +107,8 @@ export class SupabaseSignaling implements SignalingTransport {
     this.channel?.send({ type: "broadcast", event: "ice", payload });
   }
 
-  sendBye(): void {
-    try { this.channel?.send({ type: "broadcast", event: "bye", payload: {} }); } catch { /* noop */ }
+  sendBye(session?: string): void {
+    try { this.channel?.send({ type: "broadcast", event: "bye", payload: session ? { session } : {} }); } catch { /* noop */ }
   }
 
   async close(): Promise<void> {

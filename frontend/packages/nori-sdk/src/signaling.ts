@@ -19,10 +19,15 @@
 export interface SdpPayload {
   type: "offer" | "answer";
   sdp: string;
+  // The robot's per-session token: carried by its offer, echoed on our answer, ICE and bye so the
+  // robot can tell our messages from a bystander's in the same room (2026-11-01). Absent on a
+  // robot that predates it.
+  session?: string;
 }
 export interface IcePayload {
   candidate: string;
   sdpMLineIndex: number | null;
+  session?: string; // see SdpPayload.session
 }
 export interface RobotHerePayload {
   nonce?: string;
@@ -99,7 +104,9 @@ export interface SignalingTransport {
   // Publish one local ICE candidate to the robot.
   sendIce(payload: IcePayload): void;
   // Best-effort "operator leaving" so the robot restarts cleanly. MUST NOT throw.
-  sendBye(): void;
+  // `session` = the robot's per-session token from its offer; without it the robot treats the bye
+  // as unattributed and ignores it while a session is live.
+  sendBye(session?: string): void;
   // Tear down the room subscription. Idempotent.
   close(): Promise<void>;
   // Optional: the room this transport addresses, when it is a fleet serial ("NORI-A3-0001").

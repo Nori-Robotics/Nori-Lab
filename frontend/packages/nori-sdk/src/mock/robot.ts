@@ -74,6 +74,7 @@ export function createMockRobot(opts?: MockRobotOptions): MockRobotHandle {
   let drawTimer: ReturnType<typeof setInterval> | null = null;
   let offerDebounce: ReturnType<typeof setTimeout> | null = null;
   let generation = 0;
+  let sessionToken: string | null = null;
   let negotiatingSince = 0;
   let pendingIce: RTCIceCandidateInit[] = [];
   let nonce = "mock-nonce-1";
@@ -204,7 +205,9 @@ export function createMockRobot(opts?: MockRobotOptions): MockRobotHandle {
     const offer = await pc.createOffer();
     if (gen !== generation || !pc) return; // torn down while negotiating
     await pc.setLocalDescription(offer);
-    port.sendSdp({ type: "offer", sdp: offer.sdp ?? "" });
+    // Like the real gateway: a per-session token in the offer; a bye that carries another one is not ours.
+    sessionToken = Math.random().toString(36).slice(2, 14);
+    port.sendSdp({ type: "offer", sdp: offer.sdp ?? "", session: sessionToken });
   };
 
   // Debounced: the open+robot_here double-ready (and the 2 s retry) collapse to one offer.
@@ -299,7 +302,8 @@ export function createMockRobot(opts?: MockRobotOptions): MockRobotHandle {
     void pc.addIceCandidate(cand).catch(() => {});
   });
 
-  port.onBye(() => {
+  port.onBye((session) => {
+    if (session && sessionToken && session !== sessionToken) { log("mock robot: bye from another session — ignored"); return; }
     log("mock robot: operator bye");
     teardownSession();
   });

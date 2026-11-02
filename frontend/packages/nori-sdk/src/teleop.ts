@@ -981,6 +981,8 @@ export class RemoteTeleop {
   // broadcast: a bystander app (connected, held off, or merely subscribed) used to answer it too, and the robot
   // applied whichever answer came first. Only a session that is actually waiting answers.
   private awaitingOffer = false;
+  // The robot's per-session token from its offer (SdpPayload.session), echoed on our answer, ICE and bye.
+  private sessionToken: string | null = null;
   // Set by alert `session_evicted` (a hosted ASPIRE task took the robot) or by a `robot_held`
   // nack. While set, nothing re-sends `ready` — not robot_here, not the signaling reopen, not
   // the peer dropping — because the robot would only nack it, and the old "re-ready on every
@@ -2065,6 +2067,7 @@ export class RemoteTeleop {
     this.heldOff = false;
     this.everConnected = false;
     this.awaitingOffer = false;
+    this.sessionToken = null;
     this.setPhase("joining");
     if (this.o.forceRelay && !this.o.turnUrls.length) {
       this.log("force relay is on but no TURN URL set — connect will fail");
@@ -2095,6 +2098,7 @@ export class RemoteTeleop {
         this.setPhase("negotiating");
         try {
         this.log("offer received; building fresh peer + answering...");
+        this.sessionToken = typeof payload.session === "string" && payload.session ? payload.session : null;
         const pc = this.freshPeer();
         await pc.setRemoteDescription({ type: "offer", sdp: payload.sdp });
         this.remoteSet = true;
@@ -2116,7 +2120,7 @@ export class RemoteTeleop {
         }
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        this.o.signaling.sendSdp({ type: "answer", sdp: answer.sdp ?? "" });
+        this.o.signaling.sendSdp({ type: "answer", sdp: answer.sdp ?? "", ...(this.sessionToken ? { session: this.sessionToken } : {}) });
         this.log("answer sent");
         // If a call was already joined before (re)connect, re-wire mic/cam onto this fresh
         // peer's transceivers. Pure replaceTrack — no renegotiation (R-X.1).
@@ -2275,7 +2279,7 @@ export class RemoteTeleop {
     // operator. A session that never connected, only joined signaling, or was evicted / held off by a hosted task
     // holds nothing on the robot, and its bye (a broadcast without identity) could end someone else's live session.
     this.awaitingOffer = false;
-    if (this.everConnected && !this.heldOff) this.o.signaling.sendBye();
+    if (this.everConnected && !this.heldOff) this.o.signaling.sendBye(this.sessionToken ?? undefined);
     else if (typeof this.o.onLog === "function") this.log("leaving without 'bye' (this session never held the robot)");
     if (this.pc) { try { this.pc.close(); } catch { /* noop */ } this.pc = null; }
     await this.o.signaling.close();
@@ -2422,6 +2426,7 @@ export class RemoteTeleop {
         this.o.signaling.sendIce({
           sdpMLineIndex: ev.candidate.sdpMLineIndex,
           candidate: ev.candidate.candidate,
+          ...(this.sessionToken ? { session: this.sessionToken } : {}),
         });
       }
     };

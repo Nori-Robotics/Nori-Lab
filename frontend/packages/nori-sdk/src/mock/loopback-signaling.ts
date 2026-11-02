@@ -29,7 +29,7 @@ export interface MockRobotSignalingPort {
   onReady(cb: (p: { mac?: string }) => void): void;
   onSdp(cb: (p: SdpPayload) => void): void;
   onIce(cb: (p: IcePayload) => void): void;
-  onBye(cb: () => void): void;
+  onBye(cb: (session?: string) => void): void;
 }
 
 export interface LoopbackSignalingOptions {
@@ -86,8 +86,8 @@ export function createLoopbackSignaling(opts?: LoopbackSignalingOptions): {
     sendIce(payload: IcePayload) {
       deliver(() => robotCbs.ice?.(payload));
     },
-    sendBye() {
-      deliver(() => robotCbs.bye?.());
+    sendBye(session?: string) {
+      deliver(() => robotCbs.bye?.(session));
     },
     async close() {
       closed = true;

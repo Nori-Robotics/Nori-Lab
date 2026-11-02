@@ -399,3 +399,67 @@ describe("an offer is answered only by the session that is waiting for it", () =
     await t.stop();
   });
 });
+
+
+describe("the robot's per-session token is echoed on answer, ICE and bye", () => {
+  function tokenSession() {
+    const handlers: Record<string, (p?: unknown) => unknown> = {};
+    const sent: { ev: string; p: Record<string, unknown> }[] = [];
+    const signaling = {
+      room: "NORI-A3-0003",
+      connect: async (h: Record<string, (p?: unknown) => unknown>) => { Object.assign(handlers, h); },
+      sendReady: () => {},
+      sendSdp: (p: Record<string, unknown>) => { sent.push({ ev: "sdp", p }); },
+      sendIce: (p: Record<string, unknown>) => { sent.push({ ev: "ice", p }); },
+      sendBye: (session?: string) => { sent.push({ ev: "bye", p: { session } }); },
+      close: async () => {},
+    };
+    const t = new RemoteTeleop({
+      signaling, stun: "", turnUrls: [], turnUser: "", turnCred: "",
+      forceRelay: false, arm: "right",
+      onLog: () => {}, onConnState: () => {}, onTelemetry: () => {},
+      onMode: () => {}, onControlActive: () => {},
+    } as never);
+    const raw = t as unknown as RawBye & { pc: { onicecandidate: ((ev: unknown) => void) | null } | null };
+    raw.freshPeer = () => {
+      const pc = {
+        setRemoteDescription: async () => {}, addIceCandidate: async () => {}, getTransceivers: () => [],
+        createAnswer: async () => ({ type: "answer", sdp: "v=0" }), setLocalDescription: async () => {},
+        onconnectionstatechange: null, onicecandidate: null as ((ev: unknown) => void) | null, ontrack: null, ondatachannel: null,
+      };
+      (raw as unknown as { pc: unknown }).pc = pc;
+      return pc;
+    };
+    return { t, raw, handlers, sent };
+  }
+
+  it("answer and bye carry the offer's token", async () => {
+    const { t, raw, handlers, sent } = tokenSession();
+    await t.start(); handlers.onOpen();
+    await handlers.onSdp({ type: "offer", sdp: "v=0", session: "tok-A" });
+    expect(sent.find((m) => m.ev === "sdp")?.p).toMatchObject({ type: "answer", session: "tok-A" });
+    raw.connected = true; raw.everConnected = true;
+    await t.stop();
+    expect(sent.find((m) => m.ev === "bye")?.p).toEqual({ session: "tok-A" });
+  });
+
+  it("a robot without a token gets the old shapes back", async () => {
+    const { t, raw, handlers, sent } = tokenSession();
+    await t.start(); handlers.onOpen();
+    await handlers.onSdp({ type: "offer", sdp: "v=0" });
+    expect(sent.find((m) => m.ev === "sdp")?.p).toEqual({ type: "answer", sdp: "v=0" });
+    raw.connected = true; raw.everConnected = true;
+    await t.stop();
+    expect(sent.find((m) => m.ev === "bye")?.p).toEqual({ session: undefined });
+  });
+
+  it("start() forgets the previous session's token", async () => {
+    const { t, raw, handlers } = tokenSession();
+    await t.start(); handlers.onOpen();
+    await handlers.onSdp({ type: "offer", sdp: "v=0", session: "tok-A" });
+    await t.stop();
+    await t.start();
+    expect((raw as unknown as { sessionToken: string | null }).sessionToken).toBeNull();
+    await t.stop();
+  });
+});

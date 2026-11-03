@@ -271,6 +271,22 @@ type RecordingGroup = {
   newestMs: number;
   bundles: RawBundleEntry[];
 };
+// Is the cloud copy the LAST one? `local_deleted_at` is the robot's own
+// confirmation that it has dropped its copy, so this is exact rather than a
+// guess.
+//
+// Why it has to be said out loud: a raw recording is the only PRIMARY data in
+// the product -- datasets are assembled from recordings and policies trained
+// from datasets, so both can be rebuilt, while a recording is a robot and an
+// operator in a room at one moment. Until episode-level reclaim landed
+// (nori_ws #36) the robot held its copy for hours, so a mistaken delete healed
+// itself: the robot simply re-shipped. Now the copy is gone within seconds of
+// promotion, and the same button became irreversible without the dialog
+// changing a word.
+function isLastCopy(b: RawBundleEntry): boolean {
+  return b.local_deleted_at != null;
+}
+
 function groupRecordings(bundles: RawBundleEntry[]): RecordingGroup[] {
   const ms = (b: RawBundleEntry) => {
     const t = Date.parse(b.created_at);
@@ -1033,6 +1049,13 @@ const MyStuff = () => {
 
   // How many of the picked recordings are actually deletable (stable state,
   // unlocked, not mid-assembly) — gates the bulk Delete action.
+  // How many of the picked recordings would be destroyed outright (the robot
+  // has already cleared its copy) — drives the bulk dialog's wording.
+  const lastCopyPickedCount = (robot?.bundles ?? []).filter((b) => {
+    if (!picked.has(b.session_id)) return false;
+    const f = recordingFlags(b);
+    return !f.assembling && (f.promoted || f.failed) && !b.locked && isLastCopy(b);
+  }).length;
   const deletablePickedCount = (robot?.bundles ?? []).filter((b) => {
     if (!picked.has(b.session_id)) return false;
     const f = recordingFlags(b);
@@ -2015,8 +2038,9 @@ const MyStuff = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete “{deletingRecording?.label}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently deletes the recording and its original video files from your Nori
-              cloud. This can’t be undone. Any datasets you already assembled from it are kept.
+              {deletingRecording && isLastCopy(deletingRecording)
+                ? "The robot has already cleared its copy, so this is the ONLY remaining copy of this recording. Deleting it destroys the original video permanently — it cannot be re-uploaded or recovered. Any datasets you already assembled from it are kept."
+                : "This deletes the recording and its original video files from your Nori cloud. The robot still holds its own copy of this one and will upload it again, so this is recoverable. Any datasets you already assembled from it are kept."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {deleteRecErr && (
@@ -2055,9 +2079,9 @@ const MyStuff = () => {
               Delete {deletablePickedCount} recording{deletablePickedCount === 1 ? "" : "s"}?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently deletes the selected recordings and their original video
-              files from your Nori cloud. This can’t be undone. Any datasets you already
-              assembled from them are kept, and locked recordings are skipped.
+              {lastCopyPickedCount > 0
+                ? `${lastCopyPickedCount} of these ${lastCopyPickedCount === 1 ? "is" : "are"} the ONLY remaining copy — the robot has already cleared its own. Deleting ${lastCopyPickedCount === 1 ? "it" : "them"} destroys the original video permanently; it cannot be re-uploaded or recovered. Any datasets you already assembled are kept, and locked recordings are skipped.`
+                : "This deletes the selected recordings and their original video files from your Nori cloud. The robot still holds its own copy of each, so these are recoverable. Any datasets you already assembled are kept, and locked recordings are skipped."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {deleteRecErr && (

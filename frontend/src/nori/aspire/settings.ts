@@ -22,7 +22,7 @@ export interface AgentSettings {
   stopOnClose: boolean;
   homeFirst: boolean;
   allowBase: boolean;
-  recordEpisode: boolean;      // sent as constraints.record_episode; the worker does not act on it yet
+  recordEpisode: boolean;
 }
 
 // Budget defaults sized for a pick and place: real runs take 45-67 tool calls, the API's default of 30 ends them early.

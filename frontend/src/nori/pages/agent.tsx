@@ -67,6 +67,7 @@ export function toLogLines(events: TaskEvent[]): string[] {
   const out: string[] = [];
   for (const e of events) {
     if (TRANSCRIPT_TYPES.has(e.type) && !["failed", "cancelled", "done"].includes(e.type)) continue;
+    if (e.type === "episode_sidecar") continue;                // the annotation record, for later, not for reading here
     const rest: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(e)) {
       if (k === "n" || k === "ts" || k === "type" || k === "jpeg_b64" || v == null) continue;
@@ -395,7 +396,7 @@ const Agent = () => {
                       <input type="checkbox" checked={settings.allowBase} onChange={(e) => tune({ allowBase: e.target.checked })} />
                       allow base movement
                     </label>
-                    <label className="flex items-center gap-1.5" title="Record this run as a dataset episode. Not active yet: the setting is saved and sent, the worker does not record from it.">
+                    <label className="flex items-center gap-1.5" title="Record this run as a dataset episode, labelled with the agent's verdict. A cancelled run is discarded.">
                       <input type="checkbox" checked={settings.recordEpisode} onChange={(e) => tune({ recordEpisode: e.target.checked })} />
                       record episode
                     </label>

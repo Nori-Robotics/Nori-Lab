@@ -14,7 +14,7 @@
 //                with "stop if I close this page" (constraints.operator_presence) is cancelled by the backend when
 //                the check-ins stop, so closing the tab stops the robot within a few seconds.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -88,6 +88,12 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
 
 /** Events -> transcript rows. A `step_start` is a pending call until its `step` arrives (same tool, in order); the
  * `frame` events that follow a step are the images that tool returned to the model. */
+const BOTTOM_SLACK_PX = 40;   // near enough to the end to count as following it
+
+export function isAtBottom(el: { scrollHeight: number; scrollTop: number; clientHeight: number }): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_SLACK_PX;
+}
+
 function settingsLine(s: Record<string, unknown>): string {
   const n = (v: unknown, unit = "") => (v == null ? "?" : `${String(v)}${unit}`);
   return `speed ${n(s.speed_factor)} · table ${n(s.table_z, " m")} · depth ${n(s.depth_model)} · map ${s.world_session ? "on" : "off"} · base ${s.allow_base ? "on" : "off"} · recording ${s.record_episode ? "on" : "off"}`;
@@ -112,7 +118,7 @@ export function toRows(instruction: string, events: TaskEvent[]): Row[] {
       case "think": rows.push({ kind: "think", text: str(e.text, 4000) }); break;
       case "say": rows.push({ kind: "say", text: str(e.text) }); break;
       case "episode_started":
-        rows.push({ kind: "info", text: `recording ${str(e.episode)}` + (e.free_gb != null ? ` · ${Number(e.free_gb).toFixed(1)} GB free on the robot` : "") });
+        rows.push({ kind: "info", text: `recording ${str(e.episode)}` + (Number(e.free_gb) > 0 ? ` · ${Number(e.free_gb).toFixed(1)} GB free on the robot` : "") });
         break;
       case "episode_done":
         rows.push({ kind: "info", text: e.keep
@@ -203,7 +209,10 @@ const Agent = () => {
   const rows = useMemo(() => toRows(record?.instruction ?? goal, events), [record?.instruction, goal, events]);
   const openQuestion = record?.waiting_for_answer && rows.some((r) => r.kind === "question" && !r.answered);
 
-  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [rows]);
+  // Follow the transcript only while the reader is at the bottom: scrolling up holds the view, scrolling back down resumes.
+  const followRef = useRef(true);
+  const onTranscriptScroll = useCallback((e: UIEvent<HTMLDivElement>) => { followRef.current = isAtBottom(e.currentTarget); }, []);
+  useEffect(() => { if (scrollRef.current && followRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [rows]);
 
   // The logs card: the worker's plumbing events + this page's notes. NOT the app's own robot-session log — that
   // is the operator's teleop session (Remote page's Robot logs), nothing to do with how the task reached the robot.
@@ -505,7 +514,7 @@ const Agent = () => {
           {/* Right: transcript */}
           <div className="flex h-full min-w-0 min-h-0 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
             <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// transcript</span>
-            <div ref={scrollRef} className="flex-1 min-w-0 space-y-2 overflow-y-auto overflow-x-hidden rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 text-xs text-nori-h5a5346">
+            <div ref={scrollRef} onScroll={onTranscriptScroll} className="flex-1 min-w-0 space-y-2 overflow-y-auto overflow-x-hidden rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 text-xs text-nori-h5a5346">
               {!taskId ? (
                 <span className="font-mono text-muted-foreground">The agent's thoughts, what it says, its tool calls, their results and the frames it looked at appear here.</span>
               ) : rows.map((r, i) => <TranscriptRow key={i} row={r} />)}

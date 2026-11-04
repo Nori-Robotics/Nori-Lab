@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toLogLines, toRows } from "@/nori/pages/agent";
+import { isAtBottom, toLogLines, toRows } from "@/nori/pages/agent";
 import type { TaskEvent } from "@/nori/aspire/api";
 
 const ev = (n: number, type: string, rest: Record<string, unknown> = {}): TaskEvent => ({ n, type, ...rest });
@@ -77,5 +77,15 @@ describe("toRows", () => {
       "recording problem (refused): already recording an episode",
     ]);
     expect(rows[4].kind).toBe("safety");
+  });
+
+  it("leaves out a free-space figure the robot did not report", () => {
+    expect(toRows("x", [ev(0, "episode_started", { episode: "episode-0001", free_gb: 0 })])[1]).toMatchObject({ text: "recording episode-0001" });
+  });
+
+  it("follows the transcript only near the bottom", () => {
+    expect(isAtBottom({ scrollHeight: 1000, scrollTop: 600, clientHeight: 400 })).toBe(true);
+    expect(isAtBottom({ scrollHeight: 1000, scrollTop: 570, clientHeight: 400 })).toBe(true);
+    expect(isAtBottom({ scrollHeight: 1000, scrollTop: 300, clientHeight: 400 })).toBe(false);
   });
 });

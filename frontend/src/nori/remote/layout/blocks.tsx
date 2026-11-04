@@ -621,8 +621,8 @@ export const ActiveModeCard = ({ wide = false }: { wide?: boolean }) => {
                 onChange={(v) => setNum("vrSensitivity", v)}
               />
               <TuneSlider
-                label="grip open" value={settings.vrGripperOpen} min={0.05} max={1}
-                title="How fast the gripper opens (closing always runs 1.5× this speed)"
+                label="grip speed" value={settings.vrGripperOpen} min={0.05} max={1}
+                title="How fast the gripper moves while the trigger is held (A3: same speed opening and closing)"
                 onChange={(v) => setNum("vrGripperOpen", v)}
               />
               <TuneSlider

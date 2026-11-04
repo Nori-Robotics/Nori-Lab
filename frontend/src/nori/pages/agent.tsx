@@ -36,7 +36,8 @@ import {
 import { TuneSlider } from "@/nori/remote/TuneSlider";
 import { useAgentTask } from "@/nori/aspire/AgentTaskContext";
 
-const EVENTS_MS = 700;      // transcript poll
+const EVENTS_MS = 1500;     // transcript poll
+const LOG_LINE_MAX = 240;   // a log line, however much the event carried
 const RECORD_MS = 2000;     // task record poll (status, usage, waiting_for_answer)
 
 // A rendered transcript line. Rows are a pure function of the event list (toRows below).
@@ -73,7 +74,8 @@ export function toLogLines(events: TaskEvent[]): string[] {
     }
     const when = typeof e.ts === "number" ? new Date(e.ts * 1000).toLocaleTimeString([], { hour12: false }) : "--:--:--";
     const body = Object.entries(rest).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(" ");
-    out.push(`${when}  ${e.type}${body ? "  " + body : ""}`);
+    const line = `${when}  ${e.type}${body ? "  " + body : ""}`;
+    out.push(line.length > LOG_LINE_MAX ? line.slice(0, LOG_LINE_MAX - 1) + "…" : line);
   }
   return out;
 }
@@ -87,7 +89,7 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
  * `frame` events that follow a step are the images that tool returned to the model. */
 function settingsLine(s: Record<string, unknown>): string {
   const n = (v: unknown, unit = "") => (v == null ? "?" : `${String(v)}${unit}`);
-  return `speed ${n(s.speed_factor)} · table ${n(s.table_z, " m")} · depth ${n(s.depth_model)} · map ${s.world_session ? "on" : "off"}`;
+  return `speed ${n(s.speed_factor)} · table ${n(s.table_z, " m")} · depth ${n(s.depth_model)} · map ${s.world_session ? "on" : "off"} · base ${s.allow_base ? "on" : "off"}`;
 }
 
 export function toRows(instruction: string, events: TaskEvent[]): Row[] {
@@ -187,6 +189,7 @@ const Agent = () => {
 
   const status = record?.status ?? null;
   const active = !!taskId && status !== null && !TERMINAL.has(status);
+  const ended = status !== null && TERMINAL.has(status);
   const rows = useMemo(() => toRows(record?.instruction ?? goal, events), [record?.instruction, goal, events]);
   const openQuestion = record?.waiting_for_answer && rows.some((r) => r.kind === "question" && !r.answered);
 
@@ -226,9 +229,10 @@ const Agent = () => {
       try { const r = await api.task(taskId); if (!stop) setRecord(r); } catch (e) { setError(friendlyErrorMessage(e)); }
     };
     void tick(); void rec();
+    if (ended) return () => { stop = true; };               // one last read for the final events, then nothing changes
     const a = setInterval(tick, EVENTS_MS), b = setInterval(rec, RECORD_MS);
     return () => { stop = true; clearInterval(a); clearInterval(b); };
-  }, [api, taskId]);
+  }, [api, taskId, ended]);
 
   // The robot has ONE session. The gateway treats a `ready` from the same operator as a page refresh that replaces
   // the live session, and the hosted worker drives the robot under this customer's identity: with this app still
@@ -336,8 +340,8 @@ const Agent = () => {
 
         <div className="grid h-[calc(100vh-12rem)] grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Left: goal + controls + overhead view */}
-          <div className="flex h-full min-w-0 min-h-0 flex-col gap-4">
-            <div className="flex flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
+          <div className="flex h-full min-w-0 min-h-0 flex-col gap-4 overflow-y-auto pr-1">
+            <div className="flex shrink-0 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
               <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// goal</span>
               <Textarea
                 value={goal}
@@ -386,6 +390,10 @@ const Agent = () => {
                     <label className="flex items-center gap-1.5" title="Move the working arm from rest to the high-side staging pose before the agent's first turn">
                       <input type="checkbox" checked={settings.homeFirst} onChange={(e) => tune({ homeFirst: e.target.checked })} />
                       home the arm first
+                    </label>
+                    <label className="flex items-center gap-1.5" title="Let the agent drive the base. Off keeps the robot where it stands, and the agent works within reach. Keep the area around the robot clear.">
+                      <input type="checkbox" checked={settings.allowBase} onChange={(e) => tune({ allowBase: e.target.checked })} />
+                      allow base movement
                     </label>
                     <label className="flex items-center gap-1.5" title="Record this run as a dataset episode. Not active yet: the setting is saved and sent, the worker does not record from it.">
                       <input type="checkbox" checked={settings.recordEpisode} onChange={(e) => tune({ recordEpisode: e.target.checked })} />
@@ -463,7 +471,7 @@ const Agent = () => {
             {/* ASPIRE logs: how the worker reached the robot (claim → credentials → session → arming → table) and
                 what this page did. The transcript is for what the agent thinks; this is for why a run did or
                 did not get going. */}
-            <div className={`flex flex-col rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb text-nori-h14131a shadow-sm ${showLog ? "min-h-0 flex-1 gap-2 p-4" : "shrink-0 px-4 py-2"}`}>
+            <div className={`flex flex-col rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb text-nori-h14131a shadow-sm ${showLog ? "min-h-[16rem] flex-1 gap-2 p-4" : "shrink-0 px-4 py-2"}`}>
               <button type="button" onClick={() => setShowLog((v) => !v)}
                 className="flex w-full min-w-0 items-center gap-1 font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">
                 {showLog ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
@@ -474,10 +482,10 @@ const Agent = () => {
                 )}
               </button>
               {showLog && (
-                <div ref={logRef} className="min-h-[120px] flex-1 overflow-y-auto overflow-x-hidden rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 font-mono text-[10.5px] leading-relaxed text-nori-h5a5346">
+                <div ref={logRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 font-mono text-[10.5px] leading-relaxed text-nori-h5a5346">
                   {logText.length === 0
                     ? <span className="text-muted-foreground">Worker events (claim, credentials, session, arming, table) and this page's actions appear here as a task starts.</span>
-                    : logText.map((l, i) => <div key={i} className="whitespace-pre-wrap break-all">{l}</div>)}
+                    : logText.map((l, i) => <div key={i} className="whitespace-pre-wrap break-words py-0.5 leading-snug">{l}</div>)}
                 </div>
               )}
             </div>

@@ -411,3 +411,7 @@
   animation-fill-mode: backwards;
 }
 
+/* Native scrollbars and form controls follow the theme. Without this browsers draw them light on the dark theme. */
+.dark {
+  color-scheme: dark;
+}

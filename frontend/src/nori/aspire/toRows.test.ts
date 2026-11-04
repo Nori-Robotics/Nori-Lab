@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toRows } from "@/nori/pages/agent";
+import { toLogLines, toRows } from "@/nori/pages/agent";
 import type { TaskEvent } from "@/nori/aspire/api";
 
 const ev = (n: number, type: string, rest: Record<string, unknown> = {}): TaskEvent => ({ n, type, ...rest });
@@ -51,10 +51,15 @@ describe("toRows", () => {
 
   it("shows the agent's thinking and the settings a run used", () => {
     const rows = toRows("x", [
-      ev(0, "started", { robot: "r", model: "m", grant: "g", settings: { speed_factor: 0.6, table_z: 0.76, depth_model: "default", world_session: false } }),
+      ev(0, "started", { robot: "r", model: "m", grant: "g", settings: { speed_factor: 0.6, table_z: 0.76, depth_model: "default", world_session: false, allow_base: true } }),
       ev(1, "think", { text: "the box is left of the gripper" }),
     ]);
-    expect(rows[2]).toMatchObject({ kind: "info", text: "speed 0.6 · table 0.76 m · depth default · map off" });
+    expect(rows[2]).toMatchObject({ kind: "info", text: "speed 0.6 · table 0.76 m · depth default · map off · base on" });
     expect(rows[3]).toMatchObject({ kind: "think", text: "the box is left of the gripper" });
+  });
+
+  it("keeps a log line short however much the event carried", () => {
+    const [line] = toLogLines([ev(0, "video", { rtp: "x".repeat(150), more: "y".repeat(150), again: "z".repeat(150) })]);
+    expect(line.length).toBeLessThanOrEqual(240);
   });
 });

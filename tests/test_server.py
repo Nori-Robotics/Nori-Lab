@@ -287,3 +287,7 @@ def test_aspire_proxy_forwards_the_jwt_and_the_bodies(client: TestClient, monkey
         assert ("aspire_cancel", ("t1", "E-STOP"), {}) in calls
         assert c.post("/nori/aspire/tasks/t1/presence", headers=h).json()["name"] == "aspire_presence"
         assert c.post("/nori/aspire/tasks/t1/answer", json={"text": "the red one"}, headers=h).json()["args"] == ["t1", "the red one"]
+        # the robot's memory (migration 059): read, and one entry action
+        assert c.get("/nori/aspire/robots/NORI-A3-0003/notes", headers=h).json()["name"] == "aspire_robot_notes"
+        r = c.post("/nori/aspire/robots/NORI-A3-0003/notes/entries/reach/Right%20arm%20inward%20edge", json={"action": "edit", "field": "what", "text": "x"}, headers=h)
+        assert r.json()["args"] == ["NORI-A3-0003", "reach", "Right arm inward edge", {"action": "edit", "field": "what", "text": "x"}]

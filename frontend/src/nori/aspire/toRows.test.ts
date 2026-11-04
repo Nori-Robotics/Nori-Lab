@@ -79,3 +79,30 @@ describe("toRows", () => {
     expect(rows[4].kind).toBe("safety");
   });
 });
+
+describe("toRows: the graded verdict and what the agent learned", () => {
+  it("renders the verdict row with its goals, the done row by the verdict, and the learned row", () => {
+    const rows = toRows("put the box in the bowl", [
+      ev(0, "verdict", { confidence: 0.78, label: "success", summary: "In the bowl, leaning.",
+        goals: [{ goal: "box inside the bowl", met: "yes", observed: "inside" }, { goal: "upright", met: "partial", observed: "leaning" }] }),
+      ev(1, "advice", { ok: true, written: ["Lift to 0.48 before the carry"], edited: [["Reach gap", "what"]], graded: [["Old one", "useful"]], context: ["table_z"] }),
+      ev(2, "done", { success_claim: false, summary: "I think it tipped", verification: { confidence: 0.78, label: "success" } }),
+    ]);
+    expect(rows.map((r) => r.kind)).toEqual(["goal", "verdict", "learned", "end"]);
+    expect(rows[1]).toMatchObject({ kind: "verdict", confidence: 0.78, label: "success", goals: [{ met: "yes" }, { met: "partial" }] });
+    expect(rows[2]).toMatchObject({ kind: "learned", titles: ["Lift to 0.48 before the carry", "Reach gap"] });
+    expect((rows[2] as { text: string }).text).toContain("new: Lift to 0.48 before the carry");
+    expect((rows[3] as { text: string }).text).toBe("✓ goal reached (verdict 0.78) — the agent said failure — I think it tipped");
+  });
+
+  it("falls back to the agent's claim without a verdict, and says when nothing was learned", () => {
+    const rows = toRows("x", [
+      ev(0, "advice", { ok: false, error: "ValueError: no JSON object" }),
+      ev(1, "episode_done", { keep: true, episode: "e1", success_claim: true, seconds: 40, verification: { label: "uncertain" } }),
+      ev(2, "done", { success_claim: true, summary: "done" }),
+    ]);
+    expect((rows[1] as { text: string }).text).toBe("nothing learned (ValueError: no JSON object)");
+    expect((rows[2] as { text: string }).text).toBe("recording kept: e1 as uncertain (40 s)");
+    expect((rows[3] as { text: string }).text).toBe("✓ goal reached — done");
+  });
+});

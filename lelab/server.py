@@ -1905,6 +1905,25 @@ def nori_aspire_presence(task_id: str, request: Request):
     return _nori_proxy(lambda: client.aspire_presence(task_id))
 
 
+class NoriAspireEntryActionBody(BaseModel):
+    action: str
+    field: str | None = None
+    text: str | None = None
+
+
+@app.get("/nori/aspire/robots/{robot}/notes")
+def nori_aspire_robot_notes(robot: str, request: Request):
+    """The agent's memory for a robot (the Agent page's card under the transcript)."""
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.aspire_robot_notes(robot))
+
+
+@app.post("/nori/aspire/robots/{robot}/notes/entries/{topic}/{title}")
+def nori_aspire_note_action(robot: str, topic: str, title: str, body: NoriAspireEntryActionBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.aspire_note_action(robot, topic, title, body.model_dump(exclude_none=True)))
+
+
 @app.get("/nori/library")
 def nori_library(request: Request):
     """My Stuff: datasets + policies + lineage in one call."""

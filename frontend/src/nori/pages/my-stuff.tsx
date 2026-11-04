@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Download, Loader2, Lock, Play, Trash2, Unlock, UploadCloud } from "lucide-react";
+import { Download, Loader2, Lock, Play, RefreshCw, Trash2, Unlock, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -238,14 +238,22 @@ type RecordingFlags = {
 // A stale (>15 min) pre-terminal row really is stalled (robot went offline
 // mid-upload; it resumes when idle) — "waiting" stays the honest label there.
 const UPLOAD_FRESH_MS = 15 * 60_000;
+// A session's STATUS is the authority on whether bytes are still moving; row
+// age is only a tiebreaker WITHIN the one ambiguous status. This used to read
+// `FINALIZING || row younger than 15 min` with no status test at all, so every
+// PROMOTED / FAILED / PROMOTION_FAILED row claimed to be actively uploading
+// for its first 15 minutes of life.
+const SETTLED_STATUSES = ["PROMOTED", "FAILED", "PROMOTION_FAILED", "CANCELLED"];
 function recordingFlags(b: RawBundleEntry): RecordingFlags {
   const assembling = b.assembling === true;
   const promoted = b.status === "PROMOTED";
   const localCleared = b.local_deleted_at != null;
   const createdMs = Date.parse(b.created_at);
+  const settled = SETTLED_STATUSES.includes(b.status);
   const uploadActive =
-    b.status === "FINALIZING" ||
-    (!Number.isNaN(createdMs) && Date.now() - createdMs < UPLOAD_FRESH_MS);
+    !settled &&
+    (b.status === "FINALIZING" ||
+      (!Number.isNaN(createdMs) && Date.now() - createdMs < UPLOAD_FRESH_MS));
   return {
     assembling,
     promoted,
@@ -263,6 +271,22 @@ type RecordingGroup = {
   newestMs: number;
   bundles: RawBundleEntry[];
 };
+// Is the cloud copy the LAST one? `local_deleted_at` is the robot's own
+// confirmation that it has dropped its copy, so this is exact rather than a
+// guess.
+//
+// Why it has to be said out loud: a raw recording is the only PRIMARY data in
+// the product -- datasets are assembled from recordings and policies trained
+// from datasets, so both can be rebuilt, while a recording is a robot and an
+// operator in a room at one moment. Until episode-level reclaim landed
+// (nori_ws #36) the robot held its copy for hours, so a mistaken delete healed
+// itself: the robot simply re-shipped. Now the copy is gone within seconds of
+// promotion, and the same button became irreversible without the dialog
+// changing a word.
+function isLastCopy(b: RawBundleEntry): boolean {
+  return b.local_deleted_at != null;
+}
+
 function groupRecordings(bundles: RawBundleEntry[]): RecordingGroup[] {
   const ms = (b: RawBundleEntry) => {
     const t = Date.parse(b.created_at);
@@ -312,10 +336,10 @@ function summarizeGroup(
     if (f.failed) failed++;
     else if (f.assembling) assembling++;
     else if (f.inCloud) inCloud++;
-    // per-bundle activity beats the coarse heartbeat proxy — a fresh row IS
-    // an in-flight upload even when the heartbeat says nothing (see
-    // recordingFlags.uploadActive); "finishing on robot" rolls up here too.
-    else if (robotReporting || f.uploadActive) uploading++;
+    // Per-bundle status ONLY. `robotReporting` is global — it means the robot
+    // holds *some* unfinished episode — so OR-ing it in counted every settled
+    // recording as uploading whenever the robot had anything queued at all.
+    else if (f.uploadActive) uploading++;
     else waiting++;
   }
   const parts: string[] = [];
@@ -323,12 +347,16 @@ function summarizeGroup(
   if (uploading) parts.push(`${uploading} uploading`);
   if (waiting) parts.push(`${waiting} waiting`);
   if (assembling) parts.push(`${assembling} assembling`);
-  if (failed) parts.push(`${failed} need attention`);
+  if (failed) parts.push(`${failed} retrying`);
   const allInCloud = inCloud === group.bundles.length;
+  // A failed ATTEMPT is not a failed recording: the robot keeps the episode and
+  // re-ships it under a new session, so one failure must not outrank real
+  // progress. It only sets the headline when nothing else is happening.
+  const onlyTrouble = failed > 0 && inCloud === 0 && uploading === 0 && assembling === 0;
   return {
-    tone: failed ? "secondary" : allInCloud ? "leaf" : "sticker",
-    pill: failed
-      ? "Needs attention"
+    tone: onlyTrouble ? "secondary" : allInCloud ? "leaf" : "sticker",
+    pill: onlyTrouble
+      ? "Retrying upload"
       : allInCloud
         ? "In cloud"
         : uploading
@@ -376,6 +404,12 @@ const RecordingPreview = ({
   fill?: boolean;
 }) => {
   const [state, setState] = useState<"idle" | "loading" | "ready" | "empty" | "error">("idle");
+  // Bumping this re-arms the fetch. The listing can fail for reasons that pass
+  // on their own (the episode was promoted seconds ago, a cold remux, a blip),
+  // and `started` used to latch on the first attempt either way — so one
+  // transient error left a finished recording showing "Preview unavailable"
+  // until the whole page was reloaded.
+  const [attempt, setAttempt] = useState(0);
   const [token, setToken] = useState<string | null>(null);
   const [epIndex, setEpIndex] = useState<number | null>(null);
   const [defaultCam, setDefaultCam] = useState<string | null>(null);
@@ -411,6 +445,8 @@ const RecordingPreview = ({
         const listing = await listRecordingEpisodes(baseUrl, fetchWithHeaders, sessionId);
         const ep = listing.episodes[0];
         if (!ep) {
+          // A promoted bundle with no episodes yet is a race, not a verdict.
+          started.current = false;
           setState("empty");
           return;
         }
@@ -426,10 +462,14 @@ const RecordingPreview = ({
         reportCameras(groupKey, listing.cameras);
         setState("ready");
       } catch {
+        // Un-latch so a retry is possible; the user (or a later render) can
+        // ask again rather than being stuck with a dead tile.
+        started.current = false;
         setState("error");
       }
     }
-  }, [promoted, sessionId, baseUrl, fetchWithHeaders, backendBase, groupKey, reportCameras]);
+  }, [promoted, sessionId, baseUrl, fetchWithHeaders, backendBase, groupKey,
+      reportCameras, attempt]);
 
   // The group's selected camera wins; until it's known, this take's own default.
   const activeCam = camera ?? defaultCam;
@@ -487,9 +527,18 @@ const RecordingPreview = ({
           </span>
         </button>
       ) : state === "error" || state === "empty" ? (
-        <div className="flex h-full w-full items-center justify-center text-[11px] text-muted-foreground">
-          Preview unavailable
-        </div>
+        <button
+          type="button"
+          className="flex h-full w-full flex-col items-center justify-center gap-1 px-2 text-center text-[11px] text-muted-foreground hover:text-foreground"
+          onClick={() => {
+            started.current = false;
+            setState("idle");
+            setAttempt((n) => n + 1);
+          }}
+        >
+          <RefreshCw className="h-4 w-4 opacity-60" />
+          <span className="leading-tight">Preview unavailable · retry</span>
+        </button>
       ) : (
         <div className="flex h-full w-full items-center justify-center">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -1000,6 +1049,13 @@ const MyStuff = () => {
 
   // How many of the picked recordings are actually deletable (stable state,
   // unlocked, not mid-assembly) — gates the bulk Delete action.
+  // How many of the picked recordings would be destroyed outright (the robot
+  // has already cleared its copy) — drives the bulk dialog's wording.
+  const lastCopyPickedCount = (robot?.bundles ?? []).filter((b) => {
+    if (!picked.has(b.session_id)) return false;
+    const f = recordingFlags(b);
+    return !f.assembling && (f.promoted || f.failed) && !b.locked && isLastCopy(b);
+  }).length;
   const deletablePickedCount = (robot?.bundles ?? []).filter((b) => {
     if (!picked.has(b.session_id)) return false;
     const f = recordingFlags(b);
@@ -1043,7 +1099,10 @@ const MyStuff = () => {
     // "Actually happening right now": either the robot's heartbeat says so, or
     // this bundle's own row is fresh/finalizing (the robot creates the row at
     // upload start — see recordingFlags.uploadActive).
-    const activeNow = robotReporting || uploadActive;
+    // Deliberately NOT OR-ed with `robotReporting`: that flag is global, so a
+    // single unfinished recording made every card on the page — including ones
+    // promoted hours earlier — claim to be uploading.
+    const activeNow = uploadActive;
     // Assembly only needs the CLOUD copy, so a PROMOTED recording is selectable
     // even during the brief local-delete tail — don't block on cleanup.
     const selectable = promoted && !assembling;
@@ -1059,7 +1118,8 @@ const MyStuff = () => {
         tone={
           assembling
             ? "sticker"
-            : inCloud || (finishing && !activeNow)
+            : // `finishing` is PROMOTED: cloud-safe whatever the robot is doing.
+              inCloud || finishing
               ? "leaf"
               : failed
                 ? "secondary"
@@ -1070,15 +1130,18 @@ const MyStuff = () => {
           ? "Uploading to dataset"
           : inCloud
             ? "In cloud"
-            : failed
-              ? "Needs attention"
-              : !activeNow
-                ? finishing
-                  ? "In cloud · clearing pending"
-                  : "On robot · waiting for upload"
-                : finishing
-                  ? "Finishing on robot…"
-                  : "Uploading to cloud"}
+            : // PROMOTED outranks every activity guess: the bytes are in the
+              // dataset repo and the only thing outstanding is the robot
+              // reclaiming its own copy.
+              finishing
+              ? "In cloud · clearing on robot"
+              : failed
+                ? // The robot keeps the episode and re-ships it under a new
+                  // session, so this needs no operator action.
+                  "Upload failed · robot will retry"
+                : activeNow
+                  ? "Uploading to cloud"
+                  : "On robot · waiting for upload"}
       </Pill>
     );
 
@@ -1975,8 +2038,9 @@ const MyStuff = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete “{deletingRecording?.label}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently deletes the recording and its original video files from your Nori
-              cloud. This can’t be undone. Any datasets you already assembled from it are kept.
+              {deletingRecording && isLastCopy(deletingRecording)
+                ? "The robot has already cleared its copy, so this is the ONLY remaining copy of this recording. Deleting it destroys the original video permanently — it cannot be re-uploaded or recovered. Any datasets you already assembled from it are kept."
+                : "This deletes the recording and its original video files from your Nori cloud. The robot still holds its own copy of this one and will upload it again, so this is recoverable. Any datasets you already assembled from it are kept."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {deleteRecErr && (
@@ -2015,9 +2079,9 @@ const MyStuff = () => {
               Delete {deletablePickedCount} recording{deletablePickedCount === 1 ? "" : "s"}?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently deletes the selected recordings and their original video
-              files from your Nori cloud. This can’t be undone. Any datasets you already
-              assembled from them are kept, and locked recordings are skipped.
+              {lastCopyPickedCount > 0
+                ? `${lastCopyPickedCount} of these ${lastCopyPickedCount === 1 ? "is" : "are"} the ONLY remaining copy — the robot has already cleared its own. Deleting ${lastCopyPickedCount === 1 ? "it" : "them"} destroys the original video permanently; it cannot be re-uploaded or recovered. Any datasets you already assembled are kept, and locked recordings are skipped.`
+                : "This deletes the selected recordings and their original video files from your Nori cloud. The robot still holds its own copy of each, so these are recoverable. Any datasets you already assembled are kept, and locked recordings are skipped."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {deleteRecErr && (

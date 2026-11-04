@@ -54,12 +54,28 @@ describe("toRows", () => {
       ev(0, "started", { robot: "r", model: "m", grant: "g", settings: { speed_factor: 0.6, table_z: 0.76, depth_model: "default", world_session: false, allow_base: true } }),
       ev(1, "think", { text: "the box is left of the gripper" }),
     ]);
-    expect(rows[2]).toMatchObject({ kind: "info", text: "speed 0.6 · table 0.76 m · depth default · map off · base on" });
+    expect(rows[2]).toMatchObject({ kind: "info", text: "speed 0.6 · table 0.76 m · depth default · map off · base on · recording off" });
     expect(rows[3]).toMatchObject({ kind: "think", text: "the box is left of the gripper" });
   });
 
   it("keeps a log line short however much the event carried", () => {
     const [line] = toLogLines([ev(0, "video", { rtp: "x".repeat(150), more: "y".repeat(150), again: "z".repeat(150) })]);
     expect(line.length).toBeLessThanOrEqual(240);
+  });
+
+  it("shows what happened to the recording", () => {
+    const rows = toRows("x", [
+      ev(0, "episode_started", { episode: "episode-0001", free_gb: 41.2 }),
+      ev(1, "episode_done", { episode: "episode-0001", keep: true, success_claim: false, seconds: 212.4 }),
+      ev(2, "episode_done", { episode: "episode-0002", keep: false }),
+      ev(3, "record_warning", { kind: "refused", detail: "already recording an episode" }),
+    ]);
+    expect(rows.slice(1).map((r) => ("text" in r ? r.text : ""))).toEqual([
+      "recording episode-0001 · 41.2 GB free on the robot",
+      "recording kept: episode-0001 as failure (212.4 s)",
+      "recording discarded: episode-0002",
+      "recording problem (refused): already recording an episode",
+    ]);
+    expect(rows[4].kind).toBe("safety");
   });
 });

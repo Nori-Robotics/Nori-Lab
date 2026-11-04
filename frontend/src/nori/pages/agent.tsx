@@ -58,7 +58,7 @@ type Row =
 // start_check/started/home/safety/record… — and that is exactly what the logs card shows: how the worker
 // got to the robot (claim → credentials → session → arming → table) and why it did not, when it did not.
 const TRANSCRIPT_TYPES = new Set([
-  "thought", "think", "say", "step_start", "step", "frame", "needs_input", "answered", "done", "failed", "cancelled",
+  "thought", "think", "say", "episode_started", "episode_done", "record_warning", "step_start", "step", "frame", "needs_input", "answered", "done", "failed", "cancelled",
 ]);
 
 /** One log line per non-transcript event: `HH:MM:SS type key=value …`, the payload compacted so an unknown
@@ -90,7 +90,7 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
  * `frame` events that follow a step are the images that tool returned to the model. */
 function settingsLine(s: Record<string, unknown>): string {
   const n = (v: unknown, unit = "") => (v == null ? "?" : `${String(v)}${unit}`);
-  return `speed ${n(s.speed_factor)} · table ${n(s.table_z, " m")} · depth ${n(s.depth_model)} · map ${s.world_session ? "on" : "off"} · base ${s.allow_base ? "on" : "off"}`;
+  return `speed ${n(s.speed_factor)} · table ${n(s.table_z, " m")} · depth ${n(s.depth_model)} · map ${s.world_session ? "on" : "off"} · base ${s.allow_base ? "on" : "off"} · recording ${s.record_episode ? "on" : "off"}`;
 }
 
 export function toRows(instruction: string, events: TaskEvent[]): Row[] {
@@ -111,6 +111,15 @@ export function toRows(instruction: string, events: TaskEvent[]): Row[] {
       case "thought": rows.push({ kind: "thought", text: str(e.text, 2000) }); break;
       case "think": rows.push({ kind: "think", text: str(e.text, 4000) }); break;
       case "say": rows.push({ kind: "say", text: str(e.text) }); break;
+      case "episode_started":
+        rows.push({ kind: "info", text: `recording ${str(e.episode)}` + (e.free_gb != null ? ` · ${Number(e.free_gb).toFixed(1)} GB free on the robot` : "") });
+        break;
+      case "episode_done":
+        rows.push({ kind: "info", text: e.keep
+          ? `recording kept: ${str(e.episode)} as ${e.success_claim === true ? "success" : "failure"} (${str(e.seconds)} s)`
+          : `recording discarded: ${str(e.episode)}` });
+        break;
+      case "record_warning": rows.push({ kind: "safety", text: `recording problem (${str(e.kind)}): ${str(e.detail)}` }); break;
       case "step_start":
         pending.push(rows.length);
         rows.push({ kind: "call", tool: str(e.tool), args: (e.args as Record<string, unknown>) ?? {}, pending: true });
@@ -396,7 +405,7 @@ const Agent = () => {
                       <input type="checkbox" checked={settings.allowBase} onChange={(e) => tune({ allowBase: e.target.checked })} />
                       allow base movement
                     </label>
-                    <label className="flex items-center gap-1.5" title="Record this run as a dataset episode, labelled with the agent's verdict. A cancelled run is discarded.">
+                    <label className="flex items-center gap-1.5" title="Record this run as a dataset episode, labelled with the agent's verdict. A cancelled run is discarded. The transcript shows what happened to the recording.">
                       <input type="checkbox" checked={settings.recordEpisode} onChange={(e) => tune({ recordEpisode: e.target.checked })} />
                       record episode
                     </label>

@@ -30,6 +30,10 @@ import {
   aspireApi, RobotBusyError, TERMINAL,
   type TaskEvent, type TaskRecord, type TaskStatus,
 } from "@/nori/aspire/api";
+import {
+  DEPTH_MODELS, LLM_CALLS, SECONDS, SPEED, TABLE_Z, loadSettings, parseTableZ, saveSettings, taskFields, type AgentSettings,
+} from "@/nori/aspire/settings";
+import { TuneSlider } from "@/nori/remote/TuneSlider";
 
 const EVENTS_MS = 700;      // transcript poll
 const RECORD_MS = 2000;     // task record poll (status, usage, waiting_for_answer)
@@ -40,6 +44,7 @@ type Row =
   | { kind: "goal"; text: string }
   | { kind: "info"; text: string }
   | { kind: "thought"; text: string }
+  | { kind: "think"; text: string }
   | { kind: "say"; text: string }
   | { kind: "call"; tool: string; args: Record<string, unknown>; pending: boolean; status?: string; result?: string }
   | { kind: "frame"; tool: string; src: string }
@@ -52,7 +57,7 @@ type Row =
 // start_check/started/home/safety/record… — and that is exactly what the logs card shows: how the worker
 // got to the robot (claim → credentials → session → arming → table) and why it did not, when it did not.
 const TRANSCRIPT_TYPES = new Set([
-  "thought", "say", "step_start", "step", "frame", "needs_input", "answered", "done", "failed", "cancelled",
+  "thought", "think", "say", "step_start", "step", "frame", "needs_input", "answered", "done", "failed", "cancelled",
 ]);
 
 /** One log line per non-transcript event: `HH:MM:SS type key=value …`, the payload compacted so an unknown
@@ -80,6 +85,11 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
 
 /** Events -> transcript rows. A `step_start` is a pending call until its `step` arrives (same tool, in order); the
  * `frame` events that follow a step are the images that tool returned to the model. */
+function settingsLine(s: Record<string, unknown>): string {
+  const n = (v: unknown, unit = "") => (v == null ? "?" : `${String(v)}${unit}`);
+  return `speed ${n(s.speed_factor)} · table ${n(s.table_z, " m")} · depth ${n(s.depth_model)} · map ${s.world_session ? "on" : "off"}`;
+}
+
 export function toRows(instruction: string, events: TaskEvent[]): Row[] {
   const rows: Row[] = [{ kind: "goal", text: instruction }];
   const pending: number[] = [];                                  // indexes of unresolved call rows
@@ -89,12 +99,14 @@ export function toRows(instruction: string, events: TaskEvent[]): Row[] {
       case "queued": case "claimed": break;                     // plumbing; the status chip shows these
       case "started":
         rows.push({ kind: "info", text: `started on ${str(e.robot)} · model ${str(e.model)} · ${str(e.grant)} session` });
+        if (e.settings) rows.push({ kind: "info", text: settingsLine(e.settings as Record<string, unknown>) });
         break;
       case "home":
         rows.push({ kind: "info", text: e.ok ? `homed the ${str(e.side)} arm to the high-side pose (${str(e.duration_s)} s)`
           : `homing skipped: ${str(e.skipped ?? e.reason)}` });
         break;
       case "thought": rows.push({ kind: "thought", text: str(e.text, 2000) }); break;
+      case "think": rows.push({ kind: "think", text: str(e.text, 4000) }); break;
       case "say": rows.push({ kind: "say", text: str(e.text) }); break;
       case "step_start":
         pending.push(rows.length);
@@ -152,6 +164,10 @@ const Agent = () => {
   const [goal, setGoal] = useState("");
   const [presence, setPresence] = useState(true);               // stop the robot if this page goes away
   const [homeFirst, setHomeFirst] = useState(true);
+  const [settings, setSettings] = useState<AgentSettings>(loadSettings);
+  const [showSettings, setShowSettings] = useState(false);
+  const tune = (patch: Partial<AgentSettings>) => setSettings((s) => { const n = { ...s, ...patch }; saveSettings(n); return n; });
+  const badTable = parseTableZ(settings.tableZ) === "invalid";
   const [taskId, setTaskId] = useState<string | null>(null);
   const [record, setRecord] = useState<TaskRecord | null>(null);
   const [events, setEvents] = useState<TaskEvent[]>([]);
@@ -162,7 +178,7 @@ const Agent = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const sinceRef = useRef(0);
   const logRef = useRef<HTMLDivElement>(null);
-  const [showLog, setShowLog] = useState(true);
+  const [showLog, setShowLog] = useState(false);
   // Page-side notes (what THIS page did: closed its session, attached, cancelled) go in the same log so
   // the order of app actions vs worker events is visible. Stamped like the worker lines.
   const [pageNotes, setPageNotes] = useState<string[]>([]);
@@ -253,7 +269,7 @@ const Agent = () => {
   }, [note]);
 
   const start = async (clearFirst = false) => {
-    if (busy || !goal.trim() || !robot) return;
+    if (busy || !goal.trim() || !robot || badTable) return;
     if (latchHint && !clearFirst) { setConfirmClear(true); return; }   // ask once; the dialog calls start(true)
     setBusy(true); setError(null);
     if (clearFirst) {
@@ -267,9 +283,10 @@ const Agent = () => {
     note(`start requested on ${robot}`);
     try {
       await yieldRobot();
+      const fields = taskFields(settings);
       const r = await api.start({
-        robot, instruction: goal.trim(),
-        constraints: { operator_presence: presence, home: homeFirst },
+        robot, instruction: goal.trim(), budget: fields.budget,
+        constraints: { operator_presence: presence, home: homeFirst, ...fields.constraints },
         caller: { kind: "lab_agent_page" },
       });
       attach(r.task_id);
@@ -346,6 +363,46 @@ const Agent = () => {
                 className="min-h-[80px] resize-none border-nori-h14131a/12 bg-nori-hfffdf7"
                 disabled={active}
               />
+              {showSettings && (
+                <fieldset disabled={active} className="space-y-2 rounded border border-nori-h14131a/12 p-3 text-[11px] text-muted-foreground">
+                  <TuneSlider label="speed" value={settings.speed} min={SPEED.min} max={SPEED.max}
+                    title="How fast the robot moves, as a share of its full rate. A jog covers the same distance at any speed; contact is harder at higher speed."
+                    onChange={(v) => tune({ speed: v })} />
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <label className="flex items-center gap-1.5" title="The table's height in metres. It is the hand's safety floor, and depth is anchored to it. Empty uses the robot's configured height.">
+                      table height (m)
+                      <input type="number" step={0.01} min={TABLE_Z.min} max={TABLE_Z.max} value={settings.tableZ} placeholder="robot default"
+                        onChange={(e) => tune({ tableZ: e.target.value })}
+                        className={`w-24 rounded border bg-transparent px-1 py-0.5 ${badTable ? "border-red-500" : "border-nori-h14131a/20"}`} />
+                    </label>
+                    <label className="flex items-center gap-1.5" title="The most model calls this task may use before it stops">
+                      model calls
+                      <input type="number" min={LLM_CALLS.min} max={LLM_CALLS.max} value={settings.llmCalls}
+                        onChange={(e) => tune({ llmCalls: Number(e.target.value) })} className="w-16 rounded border border-nori-h14131a/20 bg-transparent px-1 py-0.5" />
+                    </label>
+                    <label className="flex items-center gap-1.5" title="The longest this task may run before it stops">
+                      time limit (s)
+                      <input type="number" min={SECONDS.min} max={SECONDS.max} step={60} value={settings.seconds}
+                        onChange={(e) => tune({ seconds: Number(e.target.value) })} className="w-20 rounded border border-nori-h14131a/20 bg-transparent px-1 py-0.5" />
+                    </label>
+                    <label className="flex items-center gap-1.5" title="Which depth model the agent's views use">
+                      depth
+                      <select value={settings.depthModel} onChange={(e) => tune({ depthModel: e.target.value })} className="rounded border border-nori-h14131a/20 bg-transparent px-1 py-0.5">
+                        {DEPTH_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-1.5" title="Build the 3D voxel map on every observe. About 5 s slower each time; only peek and where_to_look use it.">
+                      <input type="checkbox" checked={settings.worldMap} onChange={(e) => tune({ worldMap: e.target.checked })} />
+                      voxel map
+                    </label>
+                    <label className="flex items-center gap-1.5" title="Show the agent's reasoning in the transcript">
+                      <input type="checkbox" checked={settings.showThinking} onChange={(e) => tune({ showThinking: e.target.checked })} />
+                      show thinking
+                    </label>
+                  </div>
+                  {badTable && <div className="text-red-600">Table height must be between {TABLE_Z.min} and {TABLE_Z.max} m. Leave it empty to use the robot's height.</div>}
+                </fieldset>
+              )}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
                   <label className="flex items-center gap-1.5" title="Cancel the task (robot stopped first) if this page closes or stops responding.">
@@ -356,10 +413,14 @@ const Agent = () => {
                     <input type="checkbox" checked={homeFirst} disabled={active} onChange={(e) => setHomeFirst(e.target.checked)} />
                     home the arm first
                   </label>
+                  <button type="button" className="flex items-center gap-1 hover:text-foreground" onClick={() => setShowSettings((v) => !v)}>
+                    {showSettings ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                    settings
+                  </button>
                 </div>
                 <div className="flex items-center gap-2">
                   {!active ? (
-                    <Button size="sm" onClick={() => void start()} disabled={busy || !robot || !goal.trim()}
+                    <Button size="sm" onClick={() => void start()} disabled={busy || !robot || !goal.trim() || badTable}
                       className="rounded-md bg-nori-h8ab135 text-foreground hover:bg-nori-h799c2a" title={robot ? undefined : "Pair a robot first"}>
                       <Play className="mr-2 h-4 w-4" /> Start
                     </Button>
@@ -409,11 +470,15 @@ const Agent = () => {
             {/* ASPIRE logs: how the worker reached the robot (claim → credentials → session → arming → table) and
                 what this page did. The transcript is for what the agent thinks; this is for why a run did or
                 did not get going. */}
-            <div className="flex min-h-0 flex-1 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
+            <div className={`flex flex-col rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb text-nori-h14131a shadow-sm ${showLog ? "min-h-0 flex-1 gap-2 p-4" : "shrink-0 px-4 py-2"}`}>
               <button type="button" onClick={() => setShowLog((v) => !v)}
-                className="flex items-center gap-1 self-start font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">
-                {showLog ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />} {"// aspire logs"}
-                <span className="ml-2 normal-case tracking-normal text-muted-foreground">{logText.length} lines</span>
+                className="flex w-full min-w-0 items-center gap-1 font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">
+                {showLog ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
+                <span className="shrink-0">{"// aspire logs"}</span>
+                <span className="ml-2 shrink-0 normal-case tracking-normal text-muted-foreground">{logText.length} lines</span>
+                {!showLog && logText.length > 0 && (
+                  <span className="ml-2 min-w-0 truncate normal-case tracking-normal text-muted-foreground">{logText[logText.length - 1]}</span>
+                )}
               </button>
               {showLog && (
                 <div ref={logRef} className="min-h-[120px] flex-1 overflow-y-auto overflow-x-hidden rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 font-mono text-[10.5px] leading-relaxed text-nori-h5a5346">
@@ -467,6 +532,13 @@ const TranscriptRow = ({ row }: { row: Row }) => {
       return <div className="whitespace-pre-wrap break-words font-mono text-[11px] text-nori-h857b6b">· {row.text}</div>;
     case "thought":
       return <div className="whitespace-pre-wrap break-words italic text-nori-h5a5346/80">{row.text}</div>;
+    case "think":
+      return (
+        <details className="text-nori-h5a5346/70">
+          <summary className="cursor-pointer select-none font-mono text-[11px]">thinking: {row.text.slice(0, 90)}{row.text.length > 90 ? "…" : ""}</summary>
+          <div className="mt-1 whitespace-pre-wrap break-words border-l border-nori-h14131a/15 pl-2 italic">{row.text}</div>
+        </details>
+      );
     case "say":
       return <div className="whitespace-pre-wrap break-words rounded border border-nori-h8ab135/40 bg-nori-h8ab135/10 px-2 py-1 text-nori-h14131a">🗣 {row.text}</div>;
     case "call": {

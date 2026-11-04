@@ -48,4 +48,13 @@ describe("toRows", () => {
     expect(toRows("x", [ev(0, "done", { success_claim: false })]).at(-1)).toMatchObject({ text: "finished without success" });
     expect(toRows("x", [ev(0, "failed", { reason: "budget:llm_calls" })]).at(-1)).toMatchObject({ text: "failed — budget:llm_calls" });
   });
+
+  it("shows the agent's thinking and the settings a run used", () => {
+    const rows = toRows("x", [
+      ev(0, "started", { robot: "r", model: "m", grant: "g", settings: { speed_factor: 0.6, table_z: 0.76, depth_model: "default", world_session: false } }),
+      ev(1, "think", { text: "the box is left of the gripper" }),
+    ]);
+    expect(rows[2]).toMatchObject({ kind: "info", text: "speed 0.6 · table 0.76 m · depth default · map off" });
+    expect(rows[3]).toMatchObject({ kind: "think", text: "the box is left of the gripper" });
+  });
 });

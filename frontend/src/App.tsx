@@ -25,6 +25,7 @@ import UpdateNotice from "@/components/UpdateNotice";
 // NORI: additive Nori laptop-app surface (all under /nori/*; no upstream routes touched).
 import { NoriProvider } from "@/nori/NoriContext";
 import { TeleopSessionProvider } from "@/nori/TeleopSessionContext";
+import { AgentTaskProvider } from "@/nori/aspire/AgentTaskContext";
 import NoriLayout from "@/nori/components/NoriLayout";
 import SignIn from "@/nori/pages/sign-in";
 import ForgotPassword from "@/nori/pages/forgot-password";
@@ -135,7 +136,9 @@ function App() {
                           element={
                             <NoriProvider>
                               <TeleopSessionProvider>
-                                <NoriLayout />
+                                <AgentTaskProvider>
+                                  <NoriLayout />
+                                </AgentTaskProvider>
                               </TeleopSessionProvider>
                             </NoriProvider>
                           }

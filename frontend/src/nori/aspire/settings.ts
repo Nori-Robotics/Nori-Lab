@@ -19,11 +19,15 @@ export interface AgentSettings {
   depthModel: string;
   worldMap: boolean;
   showThinking: boolean;
+  stopOnClose: boolean;
+  homeFirst: boolean;
+  recordEpisode: boolean;      // sent as constraints.record_episode; the worker does not act on it yet
 }
 
 // Budget defaults sized for a pick and place: real runs take 45-67 tool calls, the API's default of 30 ends them early.
 export const DEFAULT_SETTINGS: AgentSettings = {
   speed: 0.3, llmCalls: 80, seconds: 900, tableZ: "", depthModel: DEPTH_MODELS[0].id, worldMap: false, showThinking: true,
+  stopOnClose: true, homeFirst: true, recordEpisode: true,
 };
 
 const KEY = "nori_agent_settings";
@@ -53,6 +57,7 @@ export function taskFields(s: AgentSettings): Pick<StartBody, "budget"> & { cons
   return {
     budget: { seconds: clamp(s.seconds, SECONDS), llm_calls: clamp(s.llmCalls, LLM_CALLS) },
     constraints: {
+      operator_presence: s.stopOnClose, home: s.homeFirst, record_episode: s.recordEpisode,
       speed_factor: clamp(s.speed, SPEED), depth_model: s.depthModel, world_session: s.worldMap, show_thinking: s.showThinking,
       ...(typeof table === "number" ? { table_z: table } : {}),
     },

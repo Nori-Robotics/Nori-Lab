@@ -10,9 +10,9 @@
 //   STOP/E-STOP  POST .../cancel: the executor zeroes motion, sends E-STOP and waits for the robot to confirm
 //                the latch BEFORE the task is reported cancelled. (A connected teleop session, if any, gets a
 //                direct estop too.)
-//   deadman      while a task runs the page checks in every PRESENCE_MS; a task started with "stop if I close
-//                this page" (constraints.operator_presence) is cancelled by the backend when the check-ins stop,
-//                so closing the tab (or navigating away) stops the robot within a few seconds.
+//   deadman      AgentTaskContext checks in while a task runs, on every page and in a background tab; a task started
+//                with "stop if I close this page" (constraints.operator_presence) is cancelled by the backend when
+//                the check-ins stop, so closing the tab stops the robot within a few seconds.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Play, Square, OctagonX, Bot, Send, ChevronDown, ChevronRight } from "lucide-react";
+import { Play, Square, OctagonX, Bot, Send, ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
@@ -34,10 +34,10 @@ import {
   DEPTH_MODELS, LLM_CALLS, SECONDS, SPEED, TABLE_Z, loadSettings, parseTableZ, saveSettings, taskFields, type AgentSettings,
 } from "@/nori/aspire/settings";
 import { TuneSlider } from "@/nori/remote/TuneSlider";
+import { useAgentTask } from "@/nori/aspire/AgentTaskContext";
 
 const EVENTS_MS = 700;      // transcript poll
 const RECORD_MS = 2000;     // task record poll (status, usage, waiting_for_answer)
-const PRESENCE_MS = 2000;   // deadman check-in (the backend cancels after 6 s without one)
 
 // A rendered transcript line. Rows are a pure function of the event list (toRows below).
 type Row =
@@ -153,7 +153,7 @@ export function toRows(instruction: string, events: TaskEvent[]): Row[] {
 
 const Agent = () => {
   const {
-    teleop, running: appSessionUp, connecting: appSessionJoining, disconnect: closeAppSession, setYield,
+    teleop, running: appSessionUp, connecting: appSessionJoining, disconnect: closeAppSession,
     heldNote, clearEstopLatch,
   } = useTeleopSession();
   const { activeRobotSerial, customer } = useNori();
@@ -162,13 +162,11 @@ const Agent = () => {
 
   const robot = activeRobotSerial ?? customer?.robot_serial_number ?? "";
   const [goal, setGoal] = useState("");
-  const [presence, setPresence] = useState(true);               // stop the robot if this page goes away
-  const [homeFirst, setHomeFirst] = useState(true);
   const [settings, setSettings] = useState<AgentSettings>(loadSettings);
-  const [showSettings, setShowSettings] = useState(false);
+  const [showSettings, setShowSettings] = useState(true);
   const tune = (patch: Partial<AgentSettings>) => setSettings((s) => { const n = { ...s, ...patch }; saveSettings(n); return n; });
   const badTable = parseTableZ(settings.tableZ) === "invalid";
-  const [taskId, setTaskId] = useState<string | null>(null);
+  const { taskId, track } = useAgentTask();
   const [record, setRecord] = useState<TaskRecord | null>(null);
   const [events, setEvents] = useState<TaskEvent[]>([]);
   const [answer, setAnswer] = useState("");
@@ -232,17 +230,6 @@ const Agent = () => {
     return () => { stop = true; clearInterval(a); clearInterval(b); };
   }, [api, taskId]);
 
-  // The deadman: check in while the task is active. Unmounting (tab closed, navigated away) ends the check-ins,
-  // and a presence-supervised task is then cancelled by the backend — robot stopped first.
-  useEffect(() => {
-    if (!taskId || !active || !presence) return;
-    let stop = false;
-    const beat = async () => { if (!stop) { try { await api.presence(taskId); } catch { /* retried next beat */ } } };
-    void beat();
-    const t = setInterval(beat, PRESENCE_MS);
-    return () => { stop = true; clearInterval(t); };
-  }, [api, taskId, active, presence]);
-
   // The robot has ONE session. The gateway treats a `ready` from the same operator as a page refresh that replaces
   // the live session, and the hosted worker drives the robot under this customer's identity: with this app still
   // connected, the app and the worker preempt each other every few seconds and the task never gets past the
@@ -256,15 +243,11 @@ const Agent = () => {
       note(`closed this app's robot session so the task can take ${robot || "the robot"}`);
     }
   }, [appSessionUp, appSessionJoining, teleop, closeAppSession, robot, note]);
-  useEffect(() => {
-    setYield("agent-task", active ? `ASPIRE task running on ${robot || "the robot"} (Agent page)` : null);
-    return () => setYield("agent-task", null);
-  }, [setYield, active, robot]);
 
   // -- actions ---------------------------------------------------------------------------------------------------
   const attach = useCallback((id: string) => {
     sinceRef.current = 0;
-    setEvents([]); setRecord(null); setError(null); setTaskId(id);
+    setEvents([]); setRecord(null); setError(null); track(id, settings.stopOnClose);
     note(`following task ${id.slice(0, 8)}`);
   }, [note]);
 
@@ -286,7 +269,7 @@ const Agent = () => {
       const fields = taskFields(settings);
       const r = await api.start({
         robot, instruction: goal.trim(), budget: fields.budget,
-        constraints: { operator_presence: presence, home: homeFirst, ...fields.constraints },
+        constraints: fields.constraints,
         caller: { kind: "lab_agent_page" },
       });
       attach(r.task_id);
@@ -364,6 +347,7 @@ const Agent = () => {
                 disabled={active}
               />
               {showSettings && (
+                <>
                 <fieldset disabled={active} className="space-y-2 rounded border border-nori-h14131a/12 p-3 text-[11px] text-muted-foreground">
                   <TuneSlider label="speed" value={settings.speed} min={SPEED.min} max={SPEED.max}
                     title="How fast the robot moves, as a share of its full rate. A jog covers the same distance at any speed; contact is harder at higher speed."
@@ -395,6 +379,18 @@ const Agent = () => {
                       <input type="checkbox" checked={settings.worldMap} onChange={(e) => tune({ worldMap: e.target.checked })} />
                       voxel map
                     </label>
+                    <label className="flex items-center gap-1.5" title="Cancel the task (robot stopped first) if this tab closes. Switching pages or windows does not count.">
+                      <input type="checkbox" checked={settings.stopOnClose} onChange={(e) => tune({ stopOnClose: e.target.checked })} />
+                      stop if I close this page
+                    </label>
+                    <label className="flex items-center gap-1.5" title="Move the working arm from rest to the high-side staging pose before the agent's first turn">
+                      <input type="checkbox" checked={settings.homeFirst} onChange={(e) => tune({ homeFirst: e.target.checked })} />
+                      home the arm first
+                    </label>
+                    <label className="flex items-center gap-1.5" title="Record this run as a dataset episode. Not active yet: the setting is saved and sent, the worker does not record from it.">
+                      <input type="checkbox" checked={settings.recordEpisode} onChange={(e) => tune({ recordEpisode: e.target.checked })} />
+                      record episode
+                    </label>
                     <label className="flex items-center gap-1.5" title="Show the agent's reasoning in the transcript">
                       <input type="checkbox" checked={settings.showThinking} onChange={(e) => tune({ showThinking: e.target.checked })} />
                       show thinking
@@ -402,22 +398,19 @@ const Agent = () => {
                   </div>
                   {badTable && <div className="text-red-600">Table height must be between {TABLE_Z.min} and {TABLE_Z.max} m. Leave it empty to use the robot's height.</div>}
                 </fieldset>
-              )}
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-                  <label className="flex items-center gap-1.5" title="Cancel the task (robot stopped first) if this page closes or stops responding.">
-                    <input type="checkbox" checked={presence} disabled={active} onChange={(e) => setPresence(e.target.checked)} />
-                    stop if I close this page
-                  </label>
-                  <label className="flex items-center gap-1.5" title="Move the working arm from rest to the high-side staging pose before the first turn.">
-                    <input type="checkbox" checked={homeFirst} disabled={active} onChange={(e) => setHomeFirst(e.target.checked)} />
-                    home the arm first
-                  </label>
-                  <button type="button" className="flex items-center gap-1 hover:text-foreground" onClick={() => setShowSettings((v) => !v)}>
-                    {showSettings ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                    settings
+                <div className="flex justify-end text-[11px] text-muted-foreground">
+                  <button type="button" className="flex items-center gap-1 hover:text-foreground" onClick={() => setShowSettings(false)} title="Minimize settings">
+                    <ChevronUp className="h-3 w-3" /> minimize
                   </button>
                 </div>
+                </>
+              )}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                {!showSettings ? (
+                  <button type="button" className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground" onClick={() => setShowSettings(true)}>
+                    <ChevronRight className="h-3 w-3" /> settings
+                  </button>
+                ) : <span />}
                 <div className="flex items-center gap-2">
                   {!active ? (
                     <Button size="sm" onClick={() => void start()} disabled={busy || !robot || !goal.trim() || badTable}

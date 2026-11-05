@@ -111,11 +111,11 @@ export const RobotMemory = ({ api, robot, refreshKey }: { api: AspireApi; robot:
   return (
     <div className="rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 text-xs text-nori-h5a5346">
       <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between px-3 py-2 text-left" title="What the agent wrote into this robot's memory at the end of earlier runs. It reads this before every task.">
-        <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">{"// what this robot has learned"}</span>
+        <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">{"// learning"}</span>
         <span className="font-mono text-[11px] text-nori-h857b6b">{summary} {open ? "▾" : "▸"}</span>
       </button>
       {open && notes && (
-        <div className="max-h-80 space-y-3 overflow-y-auto border-t border-nori-h14131a/10 px-3 py-2">
+        <div className="space-y-3 border-t border-nori-h14131a/10 px-3 py-2">
           {context.length > 0 && (
             <div>
               <div className="font-mono text-[11px] font-semibold text-nori-h14131a">facts about {robot}</div>

@@ -370,7 +370,7 @@ const Agent = () => {
     : robot ? `ready · ${robot}` : "no robot paired";
 
   return (
-    <section className="relative -my-6 -mx-[calc(50vw-50%)] min-h-[calc(100vh-3.5rem)] overflow-hidden px-[calc(50vw-50%)] py-6">
+    <section className="relative -my-6 -mx-[calc(50vw-50%)] min-h-[calc(100vh-3.5rem)] overflow-x-clip px-[calc(50vw-50%)] py-6">
       <div className="dot-grid pointer-events-none absolute inset-0 opacity-60" aria-hidden />
       <div className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-leaf opacity-70 blur-3xl" aria-hidden />
       <div className="pointer-events-none absolute -right-20 top-32 h-64 w-64 rounded-full bg-sticker opacity-60 blur-3xl" aria-hidden />
@@ -391,9 +391,9 @@ const Agent = () => {
           </span>
         </div>
 
-        <div className="grid h-[calc(100vh-12rem)] grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="grid min-h-[calc(100vh-12rem)] grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Left: goal + controls + overhead view */}
-          <div className="flex h-full min-w-0 min-h-0 flex-col gap-4 overflow-y-auto pr-1">
+          <div className="flex min-w-0 flex-col gap-4">
             <div className="flex shrink-0 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
               <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// goal</span>
               <Textarea
@@ -539,7 +539,7 @@ const Agent = () => {
                 )}
               </button>
               {showLog && (
-                <div ref={logRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 font-mono text-[10.5px] leading-relaxed text-nori-h5a5346">
+                <div ref={logRef} className="max-h-[70vh] min-h-[12rem] flex-1 overflow-y-auto overflow-x-hidden rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 font-mono text-[10.5px] leading-relaxed text-nori-h5a5346">
                   {logText.length === 0
                     ? <span className="text-muted-foreground">Worker events (claim, credentials, session, arming, table) and this page's actions appear here as a task starts.</span>
                     : logText.map((l, i) => <div key={i} className="whitespace-pre-wrap break-words py-0.5 leading-snug">{l}</div>)}
@@ -550,9 +550,9 @@ const Agent = () => {
           </div>
 
           {/* Right: transcript */}
-          <div className="flex h-full min-w-0 min-h-0 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
+          <div className="flex min-w-0 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
             <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// transcript</span>
-            <div ref={scrollRef} onScroll={onTranscriptScroll} className="flex-1 min-w-0 space-y-2 overflow-y-auto overflow-x-hidden rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 text-xs text-nori-h5a5346">
+            <div ref={scrollRef} onScroll={onTranscriptScroll} className="h-[calc(100vh-16rem)] min-h-[24rem] min-w-0 space-y-2 overflow-y-auto overflow-x-hidden rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 text-xs text-nori-h5a5346">
               {!taskId ? (
                 <span className="font-mono text-muted-foreground">The agent's thoughts, what it says, its tool calls, their results and the frames it looked at appear here.</span>
               ) : rows.map((r, i) => <TranscriptRow key={i} row={r} />)}

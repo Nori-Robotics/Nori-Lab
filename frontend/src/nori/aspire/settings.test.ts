@@ -5,7 +5,7 @@ describe("agent settings", () => {
   it("sends the tunables as constraints and a budget a pick can finish in", () => {
     const f = taskFields(DEFAULT_SETTINGS);
     expect(f.budget).toEqual({ seconds: 900, llm_calls: 80 });
-    expect(f.constraints).toEqual({ operator_presence: true, home: true, allow_base: false, record_episode: true, speed_factor: 0.3, depth_model: "unidepth_v2_vits", world_session: false, show_thinking: true });
+    expect(f.constraints).toEqual({ operator_presence: true, home: true, allow_base: false, record_episode: true, learn: true, speed_factor: 0.3, depth_model: "unidepth_v2_vits", world_session: false, show_thinking: true });
   });
   it("keeps speed under the worker's 0.8 limit", () => {
     expect(taskFields({ ...DEFAULT_SETTINGS, speed: 1 }).constraints.speed_factor).toBe(0.8);

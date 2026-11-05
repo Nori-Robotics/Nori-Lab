@@ -35,6 +35,7 @@ import {
 } from "@/nori/aspire/settings";
 import { TuneSlider } from "@/nori/remote/TuneSlider";
 import { useAgentTask } from "@/nori/aspire/AgentTaskContext";
+import { RobotMemory } from "@/nori/aspire/RobotMemory";
 
 const EVENTS_MS = 1500;     // transcript poll
 const LOG_LINE_MAX = 240;   // a log line, however much the event carried
@@ -52,13 +53,15 @@ type Row =
   | { kind: "refused"; tool: string; reason: string }
   | { kind: "question"; text: string; answered?: string }
   | { kind: "safety"; text: string }
+  | { kind: "verdict"; confidence: number | null; label: string; summary: string; goals: { goal: string; met: string; observed: string }[] }
+  | { kind: "learned"; text: string; titles: string[] }
   | { kind: "end"; status: TaskStatus; text: string };
 
 // Event types the transcript renders. Everything else is plumbing — queued/claimed/preflight/armed/table/
 // start_check/started/home/safety/record… — and that is exactly what the logs card shows: how the worker
 // got to the robot (claim → credentials → session → arming → table) and why it did not, when it did not.
 const TRANSCRIPT_TYPES = new Set([
-  "thought", "think", "say", "episode_started", "episode_done", "record_warning", "step_start", "step", "frame", "needs_input", "answered", "done", "failed", "cancelled",
+  "thought", "think", "say", "episode_started", "episode_done", "record_warning", "step_start", "step", "frame", "needs_input", "answered", "verdict", "advice", "done", "failed", "cancelled",
 ]);
 
 /** One log line per non-transcript event: `HH:MM:SS type key=value …`, the payload compacted so an unknown
@@ -120,11 +123,33 @@ export function toRows(instruction: string, events: TaskEvent[]): Row[] {
       case "episode_started":
         rows.push({ kind: "info", text: `recording ${str(e.episode)}` + (Number(e.free_gb) > 0 ? ` · ${Number(e.free_gb).toFixed(1)} GB free on the robot` : "") });
         break;
-      case "episode_done":
-        rows.push({ kind: "info", text: e.keep
-          ? `recording kept: ${str(e.episode)} as ${e.success_claim === true ? "success" : "failure"} (${str(e.seconds)} s)`
-          : `recording discarded: ${str(e.episode)}` });
+      case "episode_done": {
+        const v = (e.verification as { label?: string } | undefined)?.label;
+        const label = v && v !== "unknown" ? v : (e.success_claim === true ? "success" : "failure");
+        rows.push({ kind: "info", text: e.keep ? `recording kept: ${str(e.episode)} as ${label} (${str(e.seconds)} s)` : `recording discarded: ${str(e.episode)}` });
         break;
+      }
+      case "verdict": {
+        // the graded verdict (synthesis/aspire_service/verdict.py): a separate judge on fresh frames, confidence in [0, 1]
+        const conf = typeof e.confidence === "number" ? e.confidence : null;
+        const goals = Array.isArray(e.goals) ? (e.goals as { goal?: unknown; met?: unknown; observed?: unknown }[]).map((g) => ({
+          goal: str(g.goal, 160), met: str(g.met, 10), observed: str(g.observed, 200) })) : [];
+        rows.push({ kind: "verdict", confidence: conf, label: str(e.label, 12) || "unknown", summary: str(e.summary, 300), goals });
+        break;
+      }
+      case "advice": {
+        // what the agent wrote into the robot's memory at the end of the run (advice.py); the memory card below shows it
+        const names = (k: string) => Array.isArray(e[k]) ? (e[k] as unknown[]).map((x) => Array.isArray(x) ? str(x[0], 120) : str(x, 120)) : [];
+        const written = names("written"), edited = names("edited"), graded = names("graded"), ctx = names("context");
+        const parts = [
+          written.length ? `new: ${written.join("; ")}` : "", edited.length ? `edited: ${edited.join("; ")}` : "",
+          graded.length ? `graded: ${graded.join("; ")}` : "", ctx.length ? `facts: ${ctx.join("; ")}` : "",
+        ].filter(Boolean);
+        const text = e.ok === false ? `nothing learned (${str(e.error ?? e.skipped, 160)})`
+          : parts.length ? parts.join(" · ") : "nothing new to remember";
+        rows.push({ kind: "learned", text, titles: [...written, ...edited] });
+        break;
+      }
       case "record_warning": rows.push({ kind: "safety", text: `recording problem (${str(e.kind)}): ${str(e.detail)}` }); break;
       case "step_start":
         pending.push(rows.length);
@@ -157,8 +182,16 @@ export function toRows(instruction: string, events: TaskEvent[]): Row[] {
         break;
       case "operator_lost": rows.push({ kind: "safety", text: str(e.reason) }); break;
       case "done": {
-        const ok = e.success_claim === true;
-        rows.push({ kind: "end", status: "done", text: `${ok ? "✓ goal reached" : "finished without success"}${e.summary ? ` — ${str(e.summary, 500)}` : ""}` });
+        // the judge's label when there is one; the agent's own claim beside it only when they disagree
+        const v = e.verification as { confidence?: number; label?: string } | undefined;
+        const claim = e.success_claim === true;
+        const judged = v && typeof v.confidence === "number" && v.label && v.label !== "unknown";
+        const head = !judged ? (claim ? "✓ goal reached" : "finished without success")
+          : v!.label === "success" ? `✓ goal reached (verdict ${v!.confidence!.toFixed(2)})`
+          : v!.label === "failure" ? `finished without success (verdict ${v!.confidence!.toFixed(2)})`
+          : `uncertain outcome (verdict ${v!.confidence!.toFixed(2)})`;
+        const disagree = judged && ((v!.label === "success") !== claim) && v!.label !== "uncertain" ? ` — the agent said ${claim ? "success" : "failure"}` : "";
+        rows.push({ kind: "end", status: "done", text: `${head}${disagree}${e.summary ? ` — ${str(e.summary, 500)}` : ""}` });
         break;
       }
       case "failed": rows.push({ kind: "end", status: "failed", text: `failed — ${str(e.reason)}` }); break;
@@ -207,6 +240,7 @@ const Agent = () => {
   const active = !!taskId && status !== null && !TERMINAL.has(status);
   const ended = status !== null && TERMINAL.has(status);
   const rows = useMemo(() => toRows(record?.instruction ?? goal, events), [record?.instruction, goal, events]);
+  const memoryRefresh = useMemo(() => events.filter((e) => e.type === "advice").length, [events]);
   const openQuestion = record?.waiting_for_answer && rows.some((r) => r.kind === "question" && !r.answered);
 
   // Follow the transcript only while the reader is at the bottom: scrolling up holds the view, scrolling back down resumes.
@@ -422,6 +456,10 @@ const Agent = () => {
                       <input type="checkbox" checked={settings.showThinking} onChange={(e) => tune({ showThinking: e.target.checked })} />
                       show thinking
                     </label>
+                    <label className="flex items-center gap-1.5" title="At the end of the run the agent writes what it learned into this robot's memory (the card under the transcript) and reads it before the next task. Off runs the task without writing anything.">
+                      <input type="checkbox" checked={settings.learn} onChange={(e) => tune({ learn: e.target.checked })} />
+                      learn from this run
+                    </label>
                   </div>
                   {badTable && <div className="text-red-600">Table height must be between {TABLE_Z.min} and {TABLE_Z.max} m. Leave it empty to use the robot's height.</div>}
                 </fieldset>
@@ -519,6 +557,7 @@ const Agent = () => {
                 <span className="font-mono text-muted-foreground">The agent's thoughts, what it says, its tool calls, their results and the frames it looked at appear here.</span>
               ) : rows.map((r, i) => <TranscriptRow key={i} row={r} />)}
             </div>
+            <RobotMemory api={api} robot={robot} refreshKey={memoryRefresh} />
           </div>
         </div>
       </div>
@@ -586,6 +625,22 @@ const TranscriptRow = ({ row }: { row: Row }) => {
       );
     case "safety":
       return <div className="whitespace-pre-wrap break-words font-mono text-[11px] font-semibold text-nori-hb4442e">⚠ {row.text}</div>;
+    case "verdict": {
+      const tone = row.label === "success" ? "border-nori-h8ab135/50 bg-nori-h8ab135/10" : row.label === "failure" ? "border-nori-hb4442e/40 bg-nori-hfbecea" : "border-nori-hd98b3d/50 bg-nori-hfdf3e6";
+      const mark = (m: string) => (m === "yes" ? "✓" : m === "partial" ? "~" : m === "no" ? "✗" : "?");
+      return (
+        <div className={"whitespace-pre-wrap break-words rounded border px-2 py-1 text-nori-h14131a " + tone}>
+          <div className="font-mono text-[11px] font-semibold">verdict {row.confidence == null ? "unknown" : row.confidence.toFixed(2)} · {row.label}{row.summary ? ` — ${row.summary}` : ""}</div>
+          {row.goals.length > 0 && (
+            <ul className="mt-1 space-y-0.5 font-mono text-[11px] text-nori-h5a5346">
+              {row.goals.map((g, i) => <li key={i}>{mark(g.met)} {g.goal}{g.observed ? <span className="text-nori-h857b6b"> — {g.observed}</span> : null}</li>)}
+            </ul>
+          )}
+        </div>
+      );
+    }
+    case "learned":
+      return <div className="whitespace-pre-wrap break-words font-mono text-[11px] text-nori-h4d6a1e">✎ learned this run — {row.text}</div>;
     case "end":
       return <div className="whitespace-pre-wrap break-words font-mono text-[11px] font-semibold text-nori-hb06a1c">{row.text}</div>;
   }

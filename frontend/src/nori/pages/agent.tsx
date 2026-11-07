@@ -30,9 +30,7 @@ import {
   aspireApi, RobotBusyError, TERMINAL,
   type TaskEvent, type TaskRecord, type TaskStatus,
 } from "@/nori/aspire/api";
-import {
-  DEPTH_MODELS, LLM_CALLS, SECONDS, SPEED, TABLE_Z, loadSettings, parseTableZ, saveSettings, taskFields, type AgentSettings,
-} from "@/nori/aspire/settings";
+import { DEPTH_MODELS, LLM_CALLS, SECONDS, SPEED, TABLE_Z, loadSettings, parseTableZ, saveSettings, taskFields, type AgentSettings, PRIMITIVES } from "@/nori/aspire/settings";
 import { TuneSlider } from "@/nori/remote/TuneSlider";
 import { useAgentTask } from "@/nori/aspire/AgentTaskContext";
 import { RobotMemory } from "@/nori/aspire/RobotMemory";
@@ -100,7 +98,7 @@ export function isAtBottom(el: { scrollHeight: number; scrollTop: number; client
 
 function settingsLine(s: Record<string, unknown>): string {
   const n = (v: unknown, unit = "") => (v == null ? "?" : `${String(v)}${unit}`);
-  return `speed ${n(s.speed_factor)} · table ${n(s.table_z, " m")} · depth ${n(s.depth_model)} · map ${s.world_session ? "on" : "off"} · base ${s.allow_base ? "on" : "off"} · recording ${s.record_episode ? "on" : "off"}`;
+  return `speed ${n(s.speed_factor)} · table ${n(s.table_z, " m")} · depth ${n(s.depth_model)} · map ${s.world_session ? "on" : "off"} · base ${s.allow_base ? "on" : "off"} · recording ${s.record_episode ? "on" : "off"}` + (s.primitives ? ` · primitives ${String(s.primitives)}` : "");
 }
 
 export const COMMENT_MAX = 400;   // the backend keeps the first 400 characters (Nori-Backend repo.py COMMENT_MAX_CHARS)
@@ -470,6 +468,12 @@ const Agent = () => {
                       depth
                       <select value={settings.depthModel} onChange={(e) => tune({ depthModel: e.target.value })} className="rounded border border-nori-h14131a/20 bg-transparent px-1 py-0.5">
                         {DEPTH_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-1.5" title="Which primitive set the agent gets. new: the target-based tools (move_to steers the hand to a point, locate_object, descend_until_contact, grasped, placed) next to the jog tools, with the position pick-and-place skill. old: the jog tools alone with the jog pick-and-place skill, as before 2026-11-06.">
+                      primitives
+                      <select value={settings.primitives} onChange={(e) => tune({ primitives: e.target.value as AgentSettings["primitives"] })} className="rounded border border-nori-h14131a/20 bg-transparent px-1 py-0.5">
+                        {PRIMITIVES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
                       </select>
                     </label>
                     <label className="flex items-center gap-1.5" title="Build the 3D voxel map on every observe. About 5 s slower each time; only peek and where_to_look use it.">

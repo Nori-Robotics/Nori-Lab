@@ -9,7 +9,17 @@ export const TABLE_Z = { min: 0.3, max: 1.2 };
 export const DEPTH_MODELS = [
   { id: "unidepth_v2_vits", label: "UniDepth ViT-S (fast)" },
   { id: "unidepth_v2_vitl", label: "UniDepth ViT-L" },
+  { id: "depth_anything_v2_large", label: "Depth Anything V2 L (metric)" },   // Apache-2.0; no intrinsics; 84 ms vs 55 ms on A10G
+  { id: "depth_anything_v2_small", label: "Depth Anything V2 S (metric)" },
 ] as const;
+// The agent's primitive set (worker: synthesis/real/position.py). "position" = the target-based tools (move_to as a jog
+// servo, locate_object, descend_until_contact, grasped, placed) next to the jog tools, with the position pick-and-place
+// skill; "jog" = the jog surface alone with the jog pick-and-place skill, as before 2026-11-06. Per task, no deploy.
+export const PRIMITIVES = [
+  { id: "position", label: "new (position)" },
+  { id: "jog", label: "old (jog)" },
+] as const;
+export type Primitives = (typeof PRIMITIVES)[number]["id"];
 
 export interface AgentSettings {
   speed: number;
@@ -24,12 +34,13 @@ export interface AgentSettings {
   allowBase: boolean;
   recordEpisode: boolean;
   learn: boolean;                // the agent writes its end-of-run report into the robot's memory
+  primitives: Primitives;
 }
 
 // Budget defaults sized for a pick and place: real runs take 45-67 tool calls, the API's default of 30 ends them early.
 export const DEFAULT_SETTINGS: AgentSettings = {
   speed: 0.3, llmCalls: 80, seconds: 900, tableZ: "", depthModel: DEPTH_MODELS[0].id, worldMap: false, showThinking: true,
-  stopOnClose: true, homeFirst: true, allowBase: false, recordEpisode: true, learn: true,
+  stopOnClose: true, homeFirst: true, allowBase: false, recordEpisode: true, learn: true, primitives: "position",
 };
 
 const KEY = "nori_agent_settings";
@@ -38,7 +49,8 @@ const clamp = (v: number, r: { min: number; max: number }) => Math.min(r.max, Ma
 export function loadSettings(): AgentSettings {
   try {
     const s = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") } as AgentSettings;
-    return { ...s, speed: clamp(Number(s.speed) || DEFAULT_SETTINGS.speed, SPEED) };
+    const primitives = PRIMITIVES.some((p) => p.id === s.primitives) ? s.primitives : DEFAULT_SETTINGS.primitives;
+    return { ...s, primitives, speed: clamp(Number(s.speed) || DEFAULT_SETTINGS.speed, SPEED) };
   } catch { return DEFAULT_SETTINGS; }
 }
 
@@ -61,6 +73,7 @@ export function taskFields(s: AgentSettings): Pick<StartBody, "budget"> & { cons
     constraints: {
       operator_presence: s.stopOnClose, home: s.homeFirst, allow_base: s.allowBase, record_episode: s.recordEpisode, learn: s.learn,
       speed_factor: clamp(s.speed, SPEED), depth_model: s.depthModel, world_session: s.worldMap, show_thinking: s.showThinking,
+      primitives: s.primitives,
       ...(typeof table === "number" ? { table_z: table } : {}),
     },
   };

@@ -9,6 +9,8 @@ export const TABLE_Z = { min: 0.3, max: 1.2 };
 export const DEPTH_MODELS = [
   { id: "unidepth_v2_vits", label: "UniDepth ViT-S (fast)" },
   { id: "unidepth_v2_vitl", label: "UniDepth ViT-L" },
+  { id: "depth_anything_v2_large", label: "Depth Anything V2 L (metric)" },   // Apache-2.0; no intrinsics; 84 ms vs 55 ms on A10G
+  { id: "depth_anything_v2_small", label: "Depth Anything V2 S (metric)" },
 ] as const;
 // The agent's primitive set (worker: synthesis/real/position.py). "position" = the target-based tools (move_to as a jog
 // servo, locate_object, descend_until_contact, grasped, placed) next to the jog tools, with the position pick-and-place

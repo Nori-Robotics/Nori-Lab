@@ -8,6 +8,7 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { servoThermalThresholds, type ServoThermalThresholds } from "@/nori/robotModels";
 import { isPreparing, isStuck } from "@/nori/remote/armPhase";
+import { latchedDetail, useActivationLatch } from "@/nori/remote/activationLatch";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
@@ -203,24 +204,56 @@ export function EstopBanner({ status }: { status: DaemonStatus | null }) {
   );
 }
 
+//
+// Latched (2026-11-06): a refused arm drops the buses and the robot settles
+// back to "inactive" within ~2 s (physical_blocked -> disarming -> inactive,
+// measured on 0003), so gating on the live state alone showed the joint
+// sentence for under two seconds — the "message never shows" report. The
+// last stuck detail is kept (activationLatch.ts) until an arm succeeds, the
+// session ends or the operator dismisses it, and it renders as "blocked" for
+// the whole time the robot keeps naming it, through disarming AND inactive.
 export function ActivationBanner({ status }: { status: DaemonStatus | null }) {
   const activation = status?.activation ?? "";
-  const detail = status?.activation_detail;
+  const live = status?.activation_detail ?? "";
   const preparing = isPreparing(activation);
-  const stuck = isStuck(activation);
-  if (!detail || (!preparing && !stuck)) return null;
+  const stuckNow = isStuck(activation);
+  const [latch, dismiss] = useActivationLatch(status);
+  const held = latchedDetail(latch);
+  // The remembered blocker outranks a transitional headline: "Motion stack
+  // activating" over the parked-joint sentence (the disarming frame) read as
+  // progress when it was the failure.
+  const stuck = stuckNow || held !== "";
+  const detail = stuck ? (stuckNow && live ? live : held) : (preparing ? live : "");
+  if (!detail) return null;
   return (
     <div className={cn(
-      "rounded-md border px-4 py-3",
+      "flex items-start gap-3 rounded-md border px-4 py-3",
       stuck
         ? "border-nori-hd24a3d/35 bg-nori-hfde7e4 text-nori-ha3271c"
         : "border-nori-h14131a/12 bg-nori-hf3f1e8 text-nori-h14131a",
     )}>
-      <p className="font-mono text-[11px] uppercase tracking-[0.14em]">
-        {stuck ? "Motion activation blocked" : "Motion stack activating"}
-      </p>
-      {/* Verbatim, always: operators depend on it naming the offending joint. */}
-      <p className="mt-1 text-sm">{detail}</p>
+      <div className="min-w-0 flex-1">
+        <p className="font-mono text-[11px] uppercase tracking-[0.14em]">
+          {stuck ? "Motion activation blocked" : "Motion stack activating"}
+        </p>
+        {/* Verbatim, always: operators depend on it naming the offending joint. */}
+        <p className="mt-1 text-sm">{detail}</p>
+        {stuck && !stuckNow && (
+          <p className="mt-1 text-xs opacity-80">
+            The arm request was refused and the motors returned to disarmed. Clear the cause, then arm again.
+          </p>
+        )}
+      </div>
+      {/* Only the remembered cause is dismissable: while the robot is live-reporting
+          a stuck state there is nothing to dismiss — it is still true. */}
+      {stuck && !stuckNow && (
+        <button
+          type="button" onClick={dismiss} title="Hide this message until the robot names a different cause"
+          className="shrink-0 rounded px-2 py-0.5 font-mono text-[11px] uppercase tracking-[0.1em] hover:bg-nori-hd24a3d/10"
+        >
+          dismiss
+        </button>
+      )}
     </div>
   );
 }

@@ -1892,6 +1892,12 @@ def nori_aspire_answer(task_id: str, body: NoriAspireTextBody, request: Request)
     return _nori_proxy(lambda: client.aspire_answer(task_id, body.text))
 
 
+@app.post("/nori/aspire/tasks/{task_id}/comment", status_code=202)
+def nori_aspire_comment(task_id: str, body: NoriAspireTextBody, request: Request):
+    client = _nori_client(request)
+    return _nori_proxy(lambda: client.aspire_comment(task_id, body.text))
+
+
 @app.post("/nori/aspire/tasks/{task_id}/cancel", status_code=202)
 def nori_aspire_cancel(task_id: str, body: NoriAspireCancelBody, request: Request):
     """Stop: the executor zeroes motion and E-STOPs the robot before the task ends."""

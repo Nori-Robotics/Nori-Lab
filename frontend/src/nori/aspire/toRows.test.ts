@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAtBottom, toLogLines, toRows } from "@/nori/pages/agent";
+import { isAtBottom, pendingComments, toLogLines, toRows } from "@/nori/pages/agent";
 import type { TaskEvent } from "@/nori/aspire/api";
 
 const ev = (n: number, type: string, rest: Record<string, unknown> = {}): TaskEvent => ({ n, type, ...rest });
@@ -114,5 +114,22 @@ describe("toRows: the graded verdict and what the agent learned", () => {
     expect((rows[1] as { text: string }).text).toBe("nothing learned (ValueError: no JSON object)");
     expect((rows[2] as { text: string }).text).toBe("recording kept: e1 as uncertain (40 s)");
     expect((rows[3] as { text: string }).text).toBe("✓ goal reached — done");
+  });
+});
+
+describe("comments", () => {
+  it("shows a comment in the transcript when the agent read it", () => {
+    const rows = toRows("x", [ev(0, "comment", { text: "it's behind the box" })]);
+    expect(rows.map((r) => r.kind)).toEqual(["goal", "comment"]);
+    expect(rows[1]).toMatchObject({ kind: "comment", text: "it's behind the box" });
+  });
+
+  it("keeps a sent comment queued until the agent reads it, one per send", () => {
+    const sent = ["slowly", "behind the box", "slowly"];
+    expect(pendingComments(sent, [])).toEqual(sent);
+    expect(pendingComments(sent, [ev(0, "comment", { text: "slowly" })])).toEqual(["behind the box", "slowly"]);
+    // the worker answers an open question with the comments it took, joined with " / "
+    expect(pendingComments(sent, [ev(0, "comment", { text: "slowly" }), ev(1, "answered", { via: "comment", text: "behind the box / slowly" })])).toEqual([]);
+    expect(pendingComments(["the red one"], [ev(0, "answered", { text: "the red one" })])).toEqual(["the red one"]);   // a typed answer is not a comment
   });
 });

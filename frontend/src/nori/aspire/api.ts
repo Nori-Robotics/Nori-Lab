@@ -98,6 +98,10 @@ export function aspireApi(baseUrl: string, fetcher: Fetcher) {
       req<TaskEvent[]>(`/nori/aspire/tasks/${id}/events?since=${since}&follow=false`, { action: "Read the task's events" }),
     answer: (id: string, text: string) =>
       req<{ ok: boolean }>(`/nori/aspire/tasks/${id}/answer`, { method: "POST", body: { text }, action: "Answer the agent" }),
+    /** Context or a correction for a running task, any time (no question needs to be open). The agent reads it on its
+     * next step; a `comment` event says when it did. 409 once the task ended, 429 past the per-task cap. */
+    comment: (id: string, text: string) =>
+      req<{ ok: boolean; n: number }>(`/nori/aspire/tasks/${id}/comment`, { method: "POST", body: { text }, action: "Send the agent a comment" }),
     cancel: (id: string, reason: string) =>
       req<{ status: string }>(`/nori/aspire/tasks/${id}/cancel`, { method: "POST", body: { reason }, action: "Stop the agent" }),
     presence: (id: string) =>

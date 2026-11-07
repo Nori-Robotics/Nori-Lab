@@ -17,6 +17,7 @@ import { type ArmSide } from "@nori/sdk";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
 import { ArmControlView } from "@/nori/remote/ArmControl";
+import { ActivationBanner, EstopBanner } from "@/nori/remote/TeleopStatus";
 import { armPadAxes, basePad, liftPad, splitArmAxes, type PadAxis } from "@/nori/remote/mobilePads";
 import { FORCE_CONSOLE_KEY } from "@/nori/remote/mobileRoute";
 
@@ -197,6 +198,13 @@ const Mobile = () => {
           {latched ? "reset" : "e-stop"}
         </button>
       </div>
+
+      {/* The two banners that explain a dead arm button. The phone page never
+          rendered them (2026-11-06): a refused arm — joint parked past its limit —
+          left the operator with a button that would not stick and no reason. Above
+          the video for the same reason the E-STOP is. */}
+      <EstopBanner status={running ? daemonStatus : null} />
+      {running && <ActivationBanner status={daemonStatus} />}
 
       <video
         ref={videoRef} autoPlay playsInline muted

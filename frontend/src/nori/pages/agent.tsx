@@ -25,7 +25,7 @@ import { Play, Square, OctagonX, Bot, Send, ChevronDown, ChevronRight, ChevronUp
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
 import { useNori } from "@/nori/NoriContext";
 import { useApi } from "@/contexts/ApiContext";
-import { friendlyErrorMessage } from "@/lib/apiClient";
+import { ApiError, friendlyErrorMessage } from "@/lib/apiClient";
 import {
   aspireApi, RobotBusyError, TERMINAL,
   type TaskEvent, type TaskRecord, type TaskStatus,
@@ -52,6 +52,7 @@ type Row =
   | { kind: "frame"; tool: string; src: string }
   | { kind: "refused"; tool: string; reason: string }
   | { kind: "question"; text: string; answered?: string }
+  | { kind: "comment"; text: string }
   | { kind: "safety"; text: string }
   | { kind: "verdict"; confidence: number | null; label: string; summary: string; goals: { goal: string; met: string; observed: string }[] }
   | { kind: "learned"; text: string; titles: string[] }
@@ -61,7 +62,7 @@ type Row =
 // start_check/started/home/safety/record… — and that is exactly what the logs card shows: how the worker
 // got to the robot (claim → credentials → session → arming → table) and why it did not, when it did not.
 const TRANSCRIPT_TYPES = new Set([
-  "thought", "think", "say", "episode_started", "episode_done", "record_warning", "step_start", "step", "frame", "needs_input", "answered", "verdict", "advice", "done", "failed", "cancelled",
+  "thought", "think", "say", "episode_started", "episode_done", "record_warning", "step_start", "step", "frame", "needs_input", "answered", "comment", "verdict", "advice", "done", "failed", "cancelled",
 ]);
 
 /** One log line per non-transcript event: `HH:MM:SS type key=value …`, the payload compacted so an unknown
@@ -100,6 +101,24 @@ export function isAtBottom(el: { scrollHeight: number; scrollTop: number; client
 function settingsLine(s: Record<string, unknown>): string {
   const n = (v: unknown, unit = "") => (v == null ? "?" : `${String(v)}${unit}`);
   return `speed ${n(s.speed_factor)} · table ${n(s.table_z, " m")} · depth ${n(s.depth_model)} · map ${s.world_session ? "on" : "off"} · base ${s.allow_base ? "on" : "off"} · recording ${s.record_episode ? "on" : "off"}`;
+}
+
+export const COMMENT_MAX = 400;   // the backend keeps the first 400 characters (Nori-Backend repo.py COMMENT_MAX_CHARS)
+
+/** Comments this page sent that the agent has not read yet: each `comment` event (and an `answered` the worker took
+ * from comments, joined with " / ") consumes one sent text with the same wording. */
+export function pendingComments(sent: string[], events: TaskEvent[]): string[] {
+  const read = new Map<string, number>();
+  const bump = (t: string) => read.set(t, (read.get(t) ?? 0) + 1);
+  for (const e of events) {
+    if (e.type === "comment" && typeof e.text === "string") bump(e.text);
+    if (e.type === "answered" && e.via === "comment" && typeof e.text === "string") e.text.split(" / ").forEach(bump);
+  }
+  return sent.filter((t) => {
+    const n = read.get(t) ?? 0;
+    if (n > 0) { read.set(t, n - 1); return false; }
+    return true;
+  });
 }
 
 export function toRows(instruction: string, events: TaskEvent[]): Row[] {
@@ -177,6 +196,7 @@ export function toRows(instruction: string, events: TaskEvent[]): Row[] {
         }
         break;
       }
+      case "comment": rows.push({ kind: "comment", text: str(e.text, 400) }); break;   // emitted when the agent read it
       case "safety":
         if (e.ok === false) rows.push({ kind: "safety", text: `${str(e.check)}: ${str(e.reason)}` });
         break;
@@ -221,6 +241,11 @@ const Agent = () => {
   const [record, setRecord] = useState<TaskRecord | null>(null);
   const [events, setEvents] = useState<TaskEvent[]>([]);
   const [answer, setAnswer] = useState("");
+  const [comment, setComment] = useState("");
+  const [sentComments, setSentComments] = useState<string[]>([]);
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [sendingComment, setSendingComment] = useState(false);
+  useEffect(() => { setSentComments([]); setComment(""); setCommentError(null); }, [taskId]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -242,6 +267,7 @@ const Agent = () => {
   const rows = useMemo(() => toRows(record?.instruction ?? goal, events), [record?.instruction, goal, events]);
   const memoryRefresh = useMemo(() => events.filter((e) => e.type === "advice").length, [events]);
   const openQuestion = record?.waiting_for_answer && rows.some((r) => r.kind === "question" && !r.answered);
+  const queuedComments = useMemo(() => pendingComments(sentComments, events), [sentComments, events]);
 
   // Follow the transcript only while the reader is at the bottom: scrolling up holds the view, scrolling back down resumes.
   const followRef = useRef(true);
@@ -362,6 +388,20 @@ const Agent = () => {
   const sendAnswer = async () => {
     if (!taskId || !answer.trim()) return;
     try { await api.answer(taskId, answer.trim()); setAnswer(""); } catch (e) { setError(friendlyErrorMessage(e)); }
+  };
+
+  const sendComment = async () => {
+    const text = comment.trim().slice(0, COMMENT_MAX);
+    if (!taskId || !text || sendingComment) return;
+    setSendingComment(true); setCommentError(null);
+    try {
+      await api.comment(taskId, text);
+      setSentComments((s) => [...s, text]); setComment(""); note(`comment sent: ${text}`);
+    } catch (e) {
+      setCommentError(e instanceof ApiError && e.status === 404 ? "This backend does not take comments yet." : friendlyErrorMessage(e));
+    } finally {
+      setSendingComment(false);
+    }
   };
 
   const usage = record?.usage ?? {};
@@ -525,6 +565,34 @@ const Agent = () => {
               </div>
             )}
 
+            {/* While it runs, the operator can add context or correct it at any time ("the mug is behind the box"). The
+                agent reads it on its next step, so a move in progress finishes first; it never stops anything (that is
+                Stop / E-STOP). Hidden while a question is open: the answer box above is the one to use then. */}
+            {active && !openQuestion && (
+              <div className="flex flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
+                <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">{"// tell the agent"}</span>
+                <div className="flex items-center gap-2">
+                  <input value={comment} maxLength={COMMENT_MAX} onChange={(e) => setComment(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void sendComment(); }}
+                    placeholder="Add context or a correction, e.g. the mug is behind the box"
+                    aria-label="Comment for the agent"
+                    className="min-w-0 flex-1 rounded border border-nori-h14131a/12 bg-nori-hfffdf7 px-2 py-1 text-sm" />
+                  <Button size="sm" onClick={() => void sendComment()} disabled={!comment.trim() || sendingComment}
+                    className="rounded-md bg-nori-h8ab135 text-foreground hover:bg-nori-h799c2a">
+                    <Send className="mr-2 h-4 w-4" /> Send
+                  </Button>
+                </div>
+                {queuedComments.length > 0 && (
+                  <ul className="space-y-0.5 text-[11px] text-muted-foreground">
+                    {queuedComments.map((t, i) => <li key={i} className="truncate">queued for the next step: {t}</li>)}
+                  </ul>
+                )}
+                {commentError
+                  ? <div className="text-[11px] text-nori-h8a2f20">{commentError}</div>
+                  : <div className="text-[11px] text-muted-foreground">The agent reads it on its next step. To stop, use Stop.</div>}
+              </div>
+            )}
+
             {/* ASPIRE logs: how the worker reached the robot (claim → credentials → session → arming → table) and
                 what this page did. The transcript is for what the agent thinks; this is for why a run did or
                 did not get going. */}
@@ -623,6 +691,8 @@ const TranscriptRow = ({ row }: { row: Row }) => {
           ? {row.text}{row.answered ? <span className="block text-nori-h4d6a1e">↳ you: {row.answered}</span> : null}
         </div>
       );
+    case "comment":
+      return <div className="whitespace-pre-wrap break-words rounded border border-nori-h14131a/12 bg-nori-hfffdf7 px-2 py-1 text-nori-h4d6a1e">✎ you: {row.text}</div>;
     case "safety":
       return <div className="whitespace-pre-wrap break-words font-mono text-[11px] font-semibold text-nori-hb4442e">⚠ {row.text}</div>;
     case "verdict": {

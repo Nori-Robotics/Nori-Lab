@@ -556,6 +556,10 @@ class NoriClient:
     def aspire_answer(self, task_id: str, text: str) -> dict[str, Any]:
         return self._request("POST", f"{API}/aspire/tasks/{task_id}/answer", json={"text": text})
 
+    def aspire_comment(self, task_id: str, text: str) -> dict[str, Any]:
+        """Context or a correction for a running task, any time; the agent reads it on its next step."""
+        return self._request("POST", f"{API}/aspire/tasks/{task_id}/comment", json={"text": text})
+
     def aspire_cancel(self, task_id: str, reason: str) -> dict[str, Any]:
         """The executor stops the robot first, then the task ends `cancelled`."""
         return self._request("POST", f"{API}/aspire/tasks/{task_id}/cancel", json={"reason": reason})

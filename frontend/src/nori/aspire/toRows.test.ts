@@ -133,3 +133,21 @@ describe("comments", () => {
     expect(pendingComments(["the red one"], [ev(0, "answered", { text: "the red one" })])).toEqual(["the red one"]);   // a typed answer is not a comment
   });
 });
+
+describe("continued tasks", () => {
+  it("shows each instruction's end, the wait and the next instruction", () => {
+    const rows = toRows("pick up the cup", [
+      ev(0, "instruction_done", { index: 1, success_claim: true, summary: "Picked it up." }),
+      ev(1, "waiting", { seconds: 90 }),
+      ev(2, "continued", { index: 2, instruction: "now put it on the shelf" }),
+    ]);
+    expect(rows.map((r) => r.kind)).toEqual(["goal", "end", "info", "goal"]);
+    expect(rows[1]).toMatchObject({ text: "✓ instruction 1 done — Picked it up." });
+    expect(rows[2]).toMatchObject({ text: "holding the arms — waiting up to 90 s for the next instruction" });
+    expect(rows[3]).toMatchObject({ kind: "goal", text: "now put it on the shelf" });
+  });
+
+  it("clears comments a continued task took as its next instruction", () => {
+    expect(pendingComments(["now the shelf", "slowly"], [ev(0, "continued", { instruction: "now the shelf slowly" })])).toEqual([]);
+  });
+});

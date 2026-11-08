@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_SETTINGS, loadSettings, parseTableZ, taskFields } from "./settings";
+import { DEFAULT_SETTINGS, loadGoal, loadSettings, parseTableZ, saveGoal, taskFields } from "./settings";
 
 describe("agent settings", () => {
   it("sends the tunables as constraints and a budget a pick can finish in", () => {
@@ -21,10 +21,27 @@ describe("agent settings", () => {
   it("sends a table height only when one was typed", () => {
     expect(taskFields({ ...DEFAULT_SETTINGS, tableZ: "0.76" }).constraints.table_z).toBe(0.76);
     expect(taskFields(DEFAULT_SETTINGS).constraints).not.toHaveProperty("table_z");
+    expect(taskFields(DEFAULT_SETTINGS).constraints).not.toHaveProperty("continue_s");     // off unless asked
+    expect(taskFields({ ...DEFAULT_SETTINGS, continueS: 90 }).constraints.continue_s).toBe(90);
+    expect(taskFields({ ...DEFAULT_SETTINGS, continueS: 999 }).constraints.continue_s).toBe(300);
   });
   it("calls a bad table height invalid instead of guessing", () => {
     expect(parseTableZ("")).toBeNull();
     expect(parseTableZ("76")).toBe("invalid");
     expect(parseTableZ("abc")).toBe("invalid");
+  });
+
+  it("keeps the goal being typed for this tab, and forgets an empty one", () => {
+    const store: Record<string, string> = {};
+    vi.stubGlobal("sessionStorage", {
+      getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; },
+      removeItem: (k: string) => { delete store[k]; },
+    });
+    saveGoal("pick up the box");
+    expect(loadGoal()).toBe("pick up the box");
+    saveGoal("");
+    expect(loadGoal()).toBe("");
+    vi.unstubAllGlobals();
+    expect(loadGoal()).toBe("");                          // no storage at all: still works, just forgets
   });
 });

@@ -30,7 +30,7 @@ import {
   aspireApi, RobotBusyError, TERMINAL,
   type TaskEvent, type TaskRecord, type TaskStatus,
 } from "@/nori/aspire/api";
-import { DEPTH_MODELS, LLM_CALLS, SECONDS, SPEED, TABLE_Z, loadSettings, parseTableZ, saveSettings, taskFields, type AgentSettings, PRIMITIVES } from "@/nori/aspire/settings";
+import { CONTINUE_S, DEPTH_MODELS, LLM_CALLS, SECONDS, loadGoal, saveGoal, SPEED, TABLE_Z, loadSettings, parseTableZ, saveSettings, taskFields, type AgentSettings, PRIMITIVES } from "@/nori/aspire/settings";
 import { TuneSlider } from "@/nori/remote/TuneSlider";
 import { useAgentTask } from "@/nori/aspire/AgentTaskContext";
 import { RobotMemory } from "@/nori/aspire/RobotMemory";
@@ -60,7 +60,7 @@ type Row =
 // start_check/started/home/safety/record… — and that is exactly what the logs card shows: how the worker
 // got to the robot (claim → credentials → session → arming → table) and why it did not, when it did not.
 const TRANSCRIPT_TYPES = new Set([
-  "thought", "think", "say", "episode_started", "episode_done", "record_warning", "step_start", "step", "frame", "needs_input", "answered", "comment", "verdict", "advice", "done", "failed", "cancelled",
+  "thought", "think", "say", "episode_started", "episode_done", "record_warning", "step_start", "step", "frame", "needs_input", "answered", "comment", "instruction_done", "waiting", "continued", "verdict", "advice", "done", "failed", "cancelled",
 ]);
 
 /** One log line per non-transcript event: `HH:MM:SS type key=value …`, the payload compacted so an unknown
@@ -111,6 +111,11 @@ export function pendingComments(sent: string[], events: TaskEvent[]): string[] {
   for (const e of events) {
     if (e.type === "comment" && typeof e.text === "string") bump(e.text);
     if (e.type === "answered" && e.via === "comment" && typeof e.text === "string") e.text.split(" / ").forEach(bump);
+    // a continued task joins the comments that arrived while it waited into one instruction
+    if (e.type === "continued" && typeof e.instruction === "string") {
+      const instruction = e.instruction;
+      sent.filter((t) => instruction.includes(t)).forEach(bump);
+    }
   }
   return sent.filter((t) => {
     const n = read.get(t) ?? 0;
@@ -195,6 +200,12 @@ export function toRows(instruction: string, events: TaskEvent[]): Row[] {
         break;
       }
       case "comment": rows.push({ kind: "comment", text: str(e.text, 400) }); break;   // emitted when the agent read it
+      // a continued task (constraints.continue_s): one instruction finished, the task holds on for the next
+      case "instruction_done":
+        rows.push({ kind: "end", status: "done", text: `${e.success_claim === true ? "✓" : "✗"} instruction ${str(e.index)} done${e.summary ? ` — ${str(e.summary, 500)}` : ""}` });
+        break;
+      case "waiting": rows.push({ kind: "info", text: `holding the arms — waiting up to ${str(e.seconds)} s for the next instruction` }); break;
+      case "continued": rows.push({ kind: "goal", text: str(e.instruction, 400) }); break;
       case "safety":
         if (e.ok === false) rows.push({ kind: "safety", text: `${str(e.check)}: ${str(e.reason)}` });
         break;
@@ -230,7 +241,8 @@ const Agent = () => {
   const api = useMemo(() => aspireApi(baseUrl, fetchWithHeaders), [baseUrl, fetchWithHeaders]);
 
   const robot = activeRobotSerial ?? customer?.robot_serial_number ?? "";
-  const [goal, setGoal] = useState("");
+  const [goal, setGoal] = useState(loadGoal);
+  useEffect(() => { saveGoal(goal); }, [goal]);
   const [settings, setSettings] = useState<AgentSettings>(loadSettings);
   const [showSettings, setShowSettings] = useState(true);
   const tune = (patch: Partial<AgentSettings>) => setSettings((s) => { const n = { ...s, ...patch }; saveSettings(n); return n; });
@@ -266,6 +278,7 @@ const Agent = () => {
   const memoryRefresh = useMemo(() => events.filter((e) => e.type === "advice").length, [events]);
   const openQuestion = record?.waiting_for_answer && rows.some((r) => r.kind === "question" && !r.answered);
   const queuedComments = useMemo(() => pendingComments(sentComments, events), [sentComments, events]);
+  const waitingNext = active && record?.waiting_for_instruction === true;
 
   // Follow the transcript only while the reader is at the bottom: scrolling up holds the view, scrolling back down resumes.
   const followRef = useRef(true);
@@ -500,6 +513,12 @@ const Agent = () => {
                       <input type="checkbox" checked={settings.showThinking} onChange={(e) => tune({ showThinking: e.target.checked })} />
                       show thinking
                     </label>
+                    <label className="flex items-center gap-1.5" title="After done, keep the robot session and arms (and whatever they hold) this long, so the next instruction carries on in the same task. 0 ends at done.">
+                      hold for next
+                      <input type="number" min={CONTINUE_S.min} max={CONTINUE_S.max} step={15} value={settings.continueS}
+                        onChange={(e) => tune({ continueS: Math.max(CONTINUE_S.min, Math.min(CONTINUE_S.max, Number(e.target.value) || 0)) })}
+                        className="w-14 rounded border border-nori-h14131a/12 bg-nori-hfffdf7 px-1 py-0.5" aria-label="Seconds to hold for the next instruction" /> s
+                    </label>
                     <label className="flex items-center gap-1.5" title="At the end of the run the agent writes what it learned into this robot's memory (the card under the transcript) and reads it before the next task. Off runs the task without writing anything.">
                       <input type="checkbox" checked={settings.learn} onChange={(e) => tune({ learn: e.target.checked })} />
                       learn from this run
@@ -527,8 +546,9 @@ const Agent = () => {
                       <Play className="mr-2 h-4 w-4" /> Start
                     </Button>
                   ) : (
-                    <Button size="sm" variant="secondary" onClick={stop} title="Cancel the task; the executor stops the robot first">
-                      <Square className="mr-2 h-4 w-4" /> Stop
+                    <Button size="sm" variant="secondary" onClick={stop}
+                      title={waitingNext ? "End the task now and release the robot (anything held may drop)" : "Cancel the task; the executor stops the robot first"}>
+                      <Square className="mr-2 h-4 w-4" /> {waitingNext ? "Release robot" : "Stop"}
                     </Button>
                   )}
                   {/* Clearing a latch the previous task left is Start's job ("Clear latch and start"), so this slot is
@@ -574,16 +594,16 @@ const Agent = () => {
                 Stop / E-STOP). Hidden while a question is open: the answer box above is the one to use then. */}
             {active && !openQuestion && (
               <div className="flex flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
-                <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">{"// tell the agent"}</span>
+                <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">{waitingNext ? "// next instruction" : "// tell the agent"}</span>
                 <div className="flex items-center gap-2">
                   <input value={comment} maxLength={COMMENT_MAX} onChange={(e) => setComment(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") void sendComment(); }}
-                    placeholder="Add context or a correction, e.g. the mug is behind the box"
+                    placeholder={waitingNext ? "What next? e.g. now put it on the shelf" : "Add context or a correction, e.g. the mug is behind the box"}
                     aria-label="Comment for the agent"
                     className="min-w-0 flex-1 rounded border border-nori-h14131a/12 bg-nori-hfffdf7 px-2 py-1 text-sm" />
                   <Button size="sm" onClick={() => void sendComment()} disabled={!comment.trim() || sendingComment}
                     className="rounded-md bg-nori-h8ab135 text-foreground hover:bg-nori-h799c2a">
-                    <Send className="mr-2 h-4 w-4" /> Send
+                    <Send className="mr-2 h-4 w-4" /> {waitingNext ? "Continue" : "Send"}
                   </Button>
                 </div>
                 {queuedComments.length > 0 && (
@@ -593,7 +613,9 @@ const Agent = () => {
                 )}
                 {commentError
                   ? <div className="text-[11px] text-nori-h8a2f20">{commentError}</div>
-                  : <div className="text-[11px] text-muted-foreground">The agent reads it on its next step. To stop, use Stop.</div>}
+                  : <div className="text-[11px] text-muted-foreground">{waitingNext
+                      ? "The robot is holding still; the agent carries on from here, with what it holds and saw. Release robot ends the task."
+                      : "The agent reads it on its next step. To stop, use Stop."}</div>}
               </div>
             )}
 

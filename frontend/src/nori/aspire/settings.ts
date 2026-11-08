@@ -6,6 +6,7 @@ export const SPEED = { min: 0.1, max: 0.8 };
 export const LLM_CALLS = { min: 10, max: 80 };        // the backend's BUDGET_MAX
 export const SECONDS = { min: 60, max: 1800 };
 export const TABLE_Z = { min: 0.3, max: 1.2 };
+export const CONTINUE_S = { min: 0, max: 300 };   // worker: executor.py CONTINUE_MAX_S
 export const DEPTH_MODELS = [
   { id: "unidepth_v2_vits", label: "UniDepth ViT-S (fast)" },
   { id: "unidepth_v2_vitl", label: "UniDepth ViT-L" },
@@ -35,12 +36,13 @@ export interface AgentSettings {
   recordEpisode: boolean;
   learn: boolean;                // the agent writes its end-of-run report into the robot's memory
   primitives: Primitives;
+  continueS: number;             // after done, hold the session and arms this long for a follow-up (0 = end at done)
 }
 
 // Budget defaults sized for a pick and place: real runs take 45-67 tool calls, the API's default of 30 ends them early.
 export const DEFAULT_SETTINGS: AgentSettings = {
   speed: 0.3, llmCalls: 80, seconds: 900, tableZ: "", depthModel: DEPTH_MODELS[0].id, worldMap: false, showThinking: true,
-  stopOnClose: true, homeFirst: true, allowBase: false, recordEpisode: true, learn: true, primitives: "position",
+  stopOnClose: true, homeFirst: true, allowBase: false, recordEpisode: true, learn: true, primitives: "position", continueS: 0,
 };
 
 const KEY = "nori_agent_settings";
@@ -75,6 +77,20 @@ export function taskFields(s: AgentSettings): Pick<StartBody, "budget"> & { cons
       speed_factor: clamp(s.speed, SPEED), depth_model: s.depthModel, world_session: s.worldMap, show_thinking: s.showThinking,
       primitives: s.primitives,
       ...(typeof table === "number" ? { table_z: table } : {}),
+      ...(s.continueS > 0 ? { continue_s: clamp(Math.round(s.continueS), CONTINUE_S) } : {}),
     },
   };
+}
+
+// The goal being typed, kept for this browser tab: switching pages or reloading keeps it, closing the tab clears it.
+const GOAL_KEY = "nori_agent_goal";
+
+export function loadGoal(): string {
+  try { return sessionStorage.getItem(GOAL_KEY) ?? ""; } catch { return ""; }
+}
+
+export function saveGoal(text: string) {
+  try {
+    if (text) sessionStorage.setItem(GOAL_KEY, text); else sessionStorage.removeItem(GOAL_KEY);
+  } catch { /* a convenience: the page works without it */ }
 }

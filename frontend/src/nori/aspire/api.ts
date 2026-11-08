@@ -20,6 +20,7 @@ export interface TaskRecord {
   status: TaskStatus;
   outcome?: Record<string, unknown> | null;
   waiting_for_answer?: boolean;
+  waiting_for_instruction?: boolean;   // a continued task holding the arms for the next instruction
   usage?: { llm_calls?: number; input_tokens?: number; output_tokens?: number };
   budget?: { seconds?: number; llm_calls?: number };
   created?: number | null;

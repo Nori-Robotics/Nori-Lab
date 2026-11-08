@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAtBottom, pendingComments, toLogLines, toRows } from "@/nori/pages/agent";
+import { groupRows, isAtBottom, pendingComments, toLogLines, toRows } from "@/nori/pages/agent";
 import type { TaskEvent } from "@/nori/aspire/api";
 
 const ev = (n: number, type: string, rest: Record<string, unknown> = {}): TaskEvent => ({ n, type, ...rest });
@@ -149,5 +149,25 @@ describe("continued tasks", () => {
 
   it("clears comments a continued task took as its next instruction", () => {
     expect(pendingComments(["now the shelf", "slowly"], [ev(0, "continued", { instruction: "now the shelf slowly" })])).toEqual([]);
+  });
+});
+
+
+describe("groupRows", () => {
+  it("folds the grey thoughts under the next green call line and leaves the rest alone", () => {
+    const rows = toRows("x", [
+      ev(0, "say", { text: "Starting." }),
+      ev(1, "thought", { text: "Need to locate first." }),
+      ev(2, "think", { text: "long reasoning" }),
+      ev(3, "step_start", { tool: "locate", args: { view: "overhead", u: 1, v: 2 } }),
+      ev(4, "step", { tool: "locate", args: { view: "overhead", u: 1, v: 2 }, status: "ok", result: "{}" }),
+      ev(5, "thought", { text: "Done, nothing after me." }),
+      ev(6, "done", { success_claim: false, summary: "gave up" }),
+    ]);
+    const g = groupRows(rows);
+    expect(g.map((x) => ("row" in x ? x.row.kind : x.call ? "call:" + x.call.tool : "thoughts"))).toEqual(["goal", "say", "call:locate", "thoughts", "end"]);
+    const call = g[2] as Extract<ReturnType<typeof groupRows>[number], { call: unknown }>;
+    expect(call.thoughts.map((r) => r.kind)).toEqual(["thought", "think"]);
+    expect((g[3] as { thoughts: unknown[] }).thoughts).toHaveLength(1);
   });
 });

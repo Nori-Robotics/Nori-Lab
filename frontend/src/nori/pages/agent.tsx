@@ -649,7 +649,7 @@ const Agent = () => {
             <div ref={scrollRef} onScroll={onTranscriptScroll} className="h-[calc(100vh-16rem)] min-h-[24rem] min-w-0 space-y-2 overflow-y-auto overflow-x-hidden rounded-md border border-nori-h14131a/10 bg-nori-hf3f1e8 p-3 text-xs text-nori-h5a5346">
               {!taskId ? (
                 <span className="font-mono text-muted-foreground">The agent's thoughts, what it says, its tool calls, their results and the frames it looked at appear here.</span>
-              ) : rows.map((r, i) => <TranscriptRow key={i} row={r} />)}
+              ) : groupRows(rows).map((g, i) => ("row" in g ? <TranscriptRow key={i} row={g.row} /> : <Folded key={i} group={g} />))}
             </div>
             <RobotMemory api={api} robot={robot} refreshKey={memoryRefresh} />
           </div>
@@ -672,6 +672,50 @@ const Agent = () => {
         </AlertDialogContent>
       </AlertDialog>
     </section>
+  );
+};
+
+/** The transcript shows the GREEN lines (what the agent said, its tool calls) and keeps the GREY detail folded:
+ * the thoughts before a call and the call's result open only when that call line is clicked (2026-11-08).
+ * Thoughts with no call after them (the run ended, or a question came) fold under a "thoughts" line of their own. */
+export type RowGroup = { call: Row & { kind: "call" }; thoughts: Row[] } | { call: null; thoughts: Row[] } | { row: Row };
+
+export function groupRows(rows: Row[]): RowGroup[] {
+  const out: RowGroup[] = []; let pending: Row[] = [];
+  for (const r of rows) {
+    if (r.kind === "thought" || r.kind === "think") { pending.push(r); continue; }
+    if (r.kind === "call") { out.push({ call: r, thoughts: pending }); pending = []; continue; }
+    if (pending.length) { out.push({ call: null, thoughts: pending }); pending = []; }
+    out.push({ row: r });
+  }
+  if (pending.length) out.push({ call: null, thoughts: pending });
+  return out;
+}
+
+const Folded = ({ group }: { group: Exclude<RowGroup, { row: Row }> }) => {
+  const [open, setOpen] = useState(false);
+  const call = group.call; const n = group.thoughts.length;
+  const ok = call?.status === "ok";
+  const label = call
+    ? `${call.pending ? "… " : "→ "}${call.tool}(${compactArgs(call.args)})`
+    : `thoughts (${n})`;
+  const hasDetail = n > 0 || (!!call && !call.pending && !!call.result);
+  return (
+    <div className="break-all font-mono text-[11px]">
+      <button type="button" onClick={() => hasDetail && setOpen((o) => !o)}
+        className={"w-full text-left " + (call ? (call.pending ? "text-nori-h857b6b" : "text-nori-h4d6a1e") : "text-nori-h857b6b") + (hasDetail ? " cursor-pointer" : " cursor-default")}
+        title={hasDetail ? (open ? "hide the thoughts and result" : "show the thoughts and result") : undefined}>
+        {hasDetail ? (open ? "▾ " : "▸ ") : ""}{label}{!open && n ? <span className="text-nori-h857b6b"> · {n} thought{n === 1 ? "" : "s"}</span> : null}
+      </button>
+      {open && (
+        <div className="mt-1 space-y-1 border-l border-nori-h14131a/15 pl-2 font-sans text-xs">
+          {group.thoughts.map((t, i) => <TranscriptRow key={i} row={t} />)}
+          {call && !call.pending && call.result && (
+            <div className={"whitespace-pre-wrap font-mono text-[11px] " + (ok ? "text-nori-h857b6b" : "text-nori-hb4442e")}>{ok ? "↳ " : "✗ "}{call.result}</div>
+          )}
+        </div>
+      )}
+    </div>
   );
 };
 

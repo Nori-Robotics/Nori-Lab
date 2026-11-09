@@ -115,6 +115,8 @@ const Coding = () => {
   useEffect(() => { try { localStorage.setItem("nori_coding_mode", mode); } catch { /* ignore */ } }, [mode]);
   useEffect(() => { try { localStorage.setItem("nori_coding_flavor", flavor); } catch { /* ignore */ } }, [flavor]);
   const sessionRef = useRef<ScriptSession | null>(null);
+  const pyRunRef = useRef<{ runId: string | null; abort: AbortController } | null>(null); // active python/server run
+  const skillsRef = useRef<string | undefined>(undefined); // skill-library text fetched before a python generate
   const mockPerceptionRef = useRef<MockPerceptionHandle | null>(null);
   const outRef = useRef<HTMLDivElement>(null);
 
@@ -190,6 +192,7 @@ const Coding = () => {
       retry_note: retryNote,
       mode,
       flavor: mode === "python" ? flavor : undefined,
+      skills: mode === "python" ? skillsRef.current : undefined,
     };
     const res = isDirectBackend()
       ? await hostedGenerateStream(req)
@@ -219,6 +222,19 @@ const Coding = () => {
     if (!prompt.trim() || generating) return;
     setGenerating(true);
     try {
+      // Skill-library-first (python/primitives): fetch the trigger-matched skills so the model reads
+      // them before writing. Best-effort — never blocks generation if the runner is down.
+      skillsRef.current = undefined;
+      if (mode === "python" && flavor === "primitives") {
+        try {
+          const sres = await fetchWithHeaders(`${baseUrl}/nori/skills?prompt=${encodeURIComponent(prompt)}`);
+          if (sres.ok) {
+            const sj = await sres.json();
+            skillsRef.current = sj?.text || undefined;
+            if (sj?.names?.length) append(`📚 skills consulted: ${sj.names.join(", ")}`);
+          }
+        } catch { /* skills are optional grounding */ }
+      }
       // 9a — proprioceptive grounding: hand the model the CURRENT pose so it can plan relative to
       // where the arm actually is ("pan is at +20 → jog negative to center") instead of guessing.
       const robotState = Object.fromEntries(
@@ -260,12 +276,77 @@ const Coding = () => {
     }
   };
 
-  const run = () => {
-    if (sessionRef.current) return;
-    if (mode === "python") {
-      append("⚠ Python mode runs server-side on the robot's RealA3Task — the policy runner isn't wired yet (M3). For now, generate + review here; running comes with the backend runner.");
-      return;
+  // Python mode: run the policy on the server-side runner (M3), streaming its NDJSON trace into the
+  // output panel. target="sim" today; a real target is gated behind the runner's safety stack (M4).
+  const runPython = async () => {
+    if (scriptRunning || pyRunRef.current) return;
+    setOutput([]);
+    setScriptRunning(true);
+    append("▶ running policy (server-side runner, target=sim)…");
+    const abort = new AbortController();
+    pyRunRef.current = { runId: null, abort };
+    try {
+      const res = await fetchWithHeaders(`${baseUrl}/nori/policy/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: code, flavor, target: "sim" }),
+        signal: abort.signal,
+      });
+      if (!res.ok || !res.body) { append("⚠ policy run failed: " + res.statusText); return; }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let o: Record<string, unknown>;
+          try { o = JSON.parse(line); } catch { continue; }
+          if (o.type === "started") {
+            if (pyRunRef.current) pyRunRef.current.runId = o.run_id as string;
+            append(`▶ run ${o.run_id} (${o.target})`);
+          } else if (o.type === "event") {
+            if (o.api === "log") append("   log: " + String(o.line));
+            else append(`   [${o.seq}] ${o.api} → ${o.status} ${o.duration_ms ?? "?"}ms`);
+          } else if (o.type === "result") {
+            append(o.ok
+              ? `✓ done in ${o.elapsed_s}s${o.done ? " — " + JSON.stringify(o.done) : ""}`
+              : `⚠ ${o.stopped ? "stopped" : "error"}: ${o.error ?? ""}`);
+          }
+        }
+      }
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") append("⚠ policy run error: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setScriptRunning(false);
+      pyRunRef.current = null;
     }
+  };
+
+  const stopPython = async () => {
+    const r = pyRunRef.current;
+    if (!r) return;
+    r.abort.abort();
+    if (r.runId) {
+      try {
+        await fetchWithHeaders(`${baseUrl}/nori/policy/stop`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ run_id: r.runId }),
+        });
+      } catch { /* best-effort stop; the abort already closed the stream */ }
+    }
+    pyRunRef.current = null;
+    setScriptRunning(false);
+  };
+
+  const run = () => {
+    if (mode === "python") { void runPython(); return; }
+    if (sessionRef.current) return;
     if (!teleop || !connected) { append("⚠ not connected — press Connect (or connect on Remote) first"); return; }
     setOutput([]);
     const session = new ScriptSession({
@@ -282,6 +363,7 @@ const Coding = () => {
   };
 
   const stop = () => {
+    if (pyRunRef.current) { void stopPython(); return; }
     sessionRef.current?.stop();
     sessionRef.current = null;
     setScriptRunning(false);
@@ -290,6 +372,7 @@ const Coding = () => {
   // Real safety path: latch the daemon + kill the worker + zero motion, at once.
   const estop = () => {
     append("■ E-STOP");
+    if (pyRunRef.current) { void stopPython(); return; } // server-side run: /policy/stop + abort the stream
     sessionRef.current?.estop();
     if (!sessionRef.current) teleop?.command("estop");
     sessionRef.current = null;
@@ -460,11 +543,11 @@ const Coding = () => {
             />
           </div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] text-muted-foreground">{mode === "python" ? "Python policy · runs server-side on RealA3Task · runner not wired yet (M3)" : "moveTo reports arrival · timed jogs · half-speed limit · supervisor required"}</span>
+            <span className="text-[11px] text-muted-foreground">{mode === "python" ? "Python policy · runs on the server-side runner (target=sim) · E-STOP stops it" : "moveTo reports arrival · timed jogs · half-speed limit · supervisor required"}</span>
             <div className="flex items-center gap-2">
               {!scriptRunning ? (
-                <Button size="sm" onClick={run} disabled={!connected || mode === "python"}
-                  title={mode === "python" ? "Python mode runs server-side — the policy runner isn't wired yet (M3)" : undefined}
+                <Button size="sm" onClick={run} disabled={mode === "python" ? false : !connected}
+                  title={mode === "python" ? "Run the policy on the server-side runner (target=sim)" : undefined}
                   className="rounded-md bg-nori-h8ab135 text-foreground hover:bg-nori-h799c2a">
                   <Play className="mr-2 h-4 w-4" /> Run
                 </Button>

@@ -794,6 +794,72 @@ def nori_llm_generate_stream(body: NoriLlmGenerateBody, request: Request):
     return StreamingResponse(gen(), media_type="text/plain; charset=utf-8")
 
 
+# ---- Policy runner proxy (Python mode / M3) ---------------------------------
+# Forwards to the nori-policy-agent runner service (synthesis/policy_server.py), which owns the
+# primitives + the skill library. Local/desktop path: operator runs the runner alongside lelab.
+# target="sim" is safe here; a real target is gated behind the runner's own M4 safety stack.
+NORI_POLICY_RUNNER_URL = os.environ.get("NORI_POLICY_RUNNER_URL", "http://127.0.0.1:8771")
+
+
+class NoriPolicyRunBody(BaseModel):
+    source: str
+    flavor: str | None = None  # "primitives" (default) | "sdk"
+    target: str | None = None  # "sim" (default here) | <robotId> (gated to M4)
+    timeout_s: float | None = None
+    skills: str | None = None  # unused by the runner today; reserved
+
+
+@app.post("/nori/policy/run")
+def nori_policy_run(body: NoriPolicyRunBody):
+    """Stream a policy run from the runner service as NDJSON (started -> event* -> result)."""
+    import urllib.request
+
+    payload = json.dumps({k: v for k, v in body.model_dump().items() if v is not None}).encode()
+    req = urllib.request.Request(
+        f"{NORI_POLICY_RUNNER_URL}/policy/run", data=payload,
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+
+    def gen():
+        try:
+            with urllib.request.urlopen(req, timeout=600) as r:
+                for line in r:  # NDJSON, line-by-line as the runner flushes it
+                    yield line
+        except Exception as exc:  # noqa: BLE001 -- runner down / network: emit a terminal result line
+            yield (json.dumps({"type": "result", "ok": False,
+                               "error": f"policy runner unreachable ({NORI_POLICY_RUNNER_URL}): {exc}"}) + "\n").encode()
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson; charset=utf-8")
+
+
+@app.post("/nori/policy/stop")
+def nori_policy_stop(body: dict):
+    """Forward E-STOP (by run_id) to the runner."""
+    import urllib.request
+    try:
+        r = urllib.request.Request(
+            f"{NORI_POLICY_RUNNER_URL}/policy/stop", data=json.dumps(body or {}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with urllib.request.urlopen(r, timeout=10) as resp:
+            return json.loads(resp.read())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc)})
+
+
+@app.get("/nori/skills")
+def nori_skills(prompt: str = ""):
+    """Trigger-matched skill library text for the Python/primitives codegen (skill-library-first)."""
+    import urllib.request
+    import urllib.parse
+    try:
+        url = f"{NORI_POLICY_RUNNER_URL}/skills?prompt={urllib.parse.quote(prompt)}"
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            return json.loads(resp.read())
+    except Exception as exc:  # noqa: BLE001 -- skills are best-effort grounding, never a dependency
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc), "text": "", "names": []})
+
+
 # ---- Agentic vision loop (Tier-1.5) ------------------------------------------
 # A closed-loop agent that accomplishes a goal by look -> act -> re-look, using Claude's vision on
 # laptop-fetched frames (no on-Pi model). See docs/agentic_vision_loop.md. This endpoint is a THIN,

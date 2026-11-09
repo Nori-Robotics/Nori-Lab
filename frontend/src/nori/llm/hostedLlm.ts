@@ -64,6 +64,11 @@ export async function hostedGenerateStream(body: CodegenRequest): Promise<Respon
       system: systemFor(body),
       messages: [{ role: "user", content: buildCodegenContent(body) }],
       new_run: true, // each generation is its own run (matches LeLab)
+      // Hosted has no local skill library to fetch, so ask the gateway to splice the matching skills
+      // below the request, server-side (mirrors LeLab's desktop injection). Primitives codegen only.
+      ...(body.mode === "python" && body.flavor === "primitives"
+        ? { skills_for: body.prompt, skills_flavor: "primitives" }
+        : {}),
     }),
   });
 }

@@ -14,6 +14,7 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { javascript } from "@codemirror/lang-javascript";
+import { python } from "@codemirror/lang-python";
 import { EditorView } from "@codemirror/view";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,6 +29,19 @@ import { hostedGenerateStream } from "@/nori/llm/hostedLlm";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
 
 const CODE_EXTENSIONS = [javascript({ typescript: true }), EditorView.lineWrapping];
+const PY_EXTENSIONS = [python(), EditorView.lineWrapping];
+
+// Python-mode starter: a primitive policy (System-2 RealA3Task surface). Runs server-side (M3);
+// for now it is generate + review only (Python mode Run is disabled until the runner is wired).
+const PY_STARTER = `# Primitive policy — runs server-side on the robot's RealA3Task (not wired yet: M3).
+# Metric, closed-loop. Observe, locate, then grasp — never assume a coordinate.
+task.observe()
+loc = task.locate_object(view="overhead", xyz=[0.24, -0.16, 0.95])
+task.move_to([loc["xyz"][0], loc["xyz"][1], loc["grasp_hand_z"] + 0.04], fingers="down")
+task.descend_until_contact()
+task.gripper("close")
+task.done(task.grasped()["holding"], "picked (or not)")
+`;
 
 // Lenient client-side fence strip for the STREAMED output (the model is told not to fence, but
 // unwrap gracefully if it does — incrementally: drop a leading ```lang line, and a trailing ```).
@@ -89,11 +103,23 @@ const Coding = () => {
   });
   const [lastFrame, setLastFrame] = useState<string | null>(null); // data URL of the last attached frame
   const [mockPerception, setMockPerception] = useState(false); // dev: feed synthetic nori.perceive() frames
+  // Two SDK modes: "ts" = the JS teleop console (default, runs in the Worker); "python" = policies
+  // against the System-2 primitive surface / raw nori_sdk (runs server-side — M3, not wired yet).
+  const [mode, setMode] = useState<"ts" | "python">(() => {
+    try { return localStorage.getItem("nori_coding_mode") === "python" ? "python" : "ts"; } catch { return "ts"; }
+  });
+  const [flavor, setFlavor] = useState<"primitives" | "sdk">(() => {
+    try { return localStorage.getItem("nori_coding_flavor") === "sdk" ? "sdk" : "primitives"; } catch { return "primitives"; }
+  });
+  const [pySource, setPySource] = useState(PY_STARTER); // python-mode buffer (ts uses the shared scriptSource)
+  useEffect(() => { try { localStorage.setItem("nori_coding_mode", mode); } catch { /* ignore */ } }, [mode]);
+  useEffect(() => { try { localStorage.setItem("nori_coding_flavor", flavor); } catch { /* ignore */ } }, [flavor]);
   const sessionRef = useRef<ScriptSession | null>(null);
   const mockPerceptionRef = useRef<MockPerceptionHandle | null>(null);
   const outRef = useRef<HTMLDivElement>(null);
 
-  const code = scriptSource;
+  const code = mode === "python" ? pySource : scriptSource;
+  const setCode = mode === "python" ? setPySource : setScriptSource;
   const connected = connState === "connected";
   const status = connected
     ? `connected · ${Math.round(tel.loopHz)} Hz`
@@ -162,6 +188,8 @@ const Coding = () => {
       // they'll actually see data.
       perception_active: (teleop?.perceptionAgeMs() ?? Infinity) < 2000,
       retry_note: retryNote,
+      mode,
+      flavor: mode === "python" ? flavor : undefined,
     };
     const res = isDirectBackend()
       ? await hostedGenerateStream(req)
@@ -213,13 +241,16 @@ const Coding = () => {
       // #3 — validate the result parses as JS; auto-retry ONCE with a firmer hint if the model
       // slipped in uncommented prose. (Parse-check is client-side — the browser is the JS engine.)
       let generated = await runGeneration(robotState, imageB64);
-      if (!isValidScript(generated)) {
+      // The parse check is JS-only (the browser is the JS engine). In Python mode we can't parse
+      // here, so accept and let the server-side runner / review catch problems.
+      const looksValid = (s: string) => mode === "python" || isValidScript(s);
+      if (!looksValid(generated)) {
         append("⚠ generated code had a syntax error — regenerating once…");
         generated = await runGeneration(robotState, imageB64,
           "Your previous output had a JavaScript syntax error (often uncommented prose). Output ONLY valid JS; put any explanation in // comments.");
       }
-      setScriptSource(generated);
-      append(isValidScript(generated)
+      setCode(generated);
+      append(looksValid(generated)
         ? `✎ generated ${generated.split("\n").length} lines — review, then Run`
         : `⚠ generated ${generated.split("\n").length} lines but it still won't parse — review before Run`);
     } catch (e) {
@@ -231,6 +262,10 @@ const Coding = () => {
 
   const run = () => {
     if (sessionRef.current) return;
+    if (mode === "python") {
+      append("⚠ Python mode runs server-side on the robot's RealA3Task — the policy runner isn't wired yet (M3). For now, generate + review here; running comes with the backend runner.");
+      return;
+    }
     if (!teleop || !connected) { append("⚠ not connected — press Connect (or connect on Remote) first"); return; }
     setOutput([]);
     const session = new ScriptSession({
@@ -381,12 +416,41 @@ const Coding = () => {
 
         {/* Right: code editor + run / stop / e-stop */}
         <div className="flex h-full min-w-0 min-h-0 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
-          <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// code</span>
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// code</span>
+            <div className="flex items-center gap-1.5 text-[11px]">
+              {/* SDK mode: TypeScript (browser/teleop) vs Python (server-side primitives/SDK — M3) */}
+              {(["ts", "python"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  disabled={scriptRunning || generating}
+                  className={`rounded px-2 py-0.5 font-mono ${mode === m ? "bg-nori-hd98b3d text-foreground" : "bg-nori-h14131a/8 text-nori-h857b6b"}`}
+                  title={m === "python" ? "Python SDK — primitive policies / raw nori_sdk (runs server-side)" : "TypeScript SDK — the nori teleop console (runs in the browser)"}
+                >
+                  {m === "ts" ? "TypeScript" : "Python"}
+                </button>
+              ))}
+              {mode === "python" && (["primitives", "sdk"] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setFlavor(f)}
+                  disabled={scriptRunning || generating}
+                  className={`rounded px-2 py-0.5 font-mono ${flavor === f ? "bg-nori-h8ab135/30 text-nori-h4d6a1e" : "bg-nori-h14131a/8 text-nori-h857b6b"}`}
+                  title={f === "primitives" ? "System-2 primitives (RealA3Task)" : "raw nori_sdk"}
+                >
+                  {f === "primitives" ? "primitives" : "nori_sdk"}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="flex-1 min-h-0 overflow-hidden rounded-md border border-nori-h14131a/12">
             <CodeMirror
               value={generating ? streamBuffer : code}
-              onChange={setScriptSource}
-              extensions={CODE_EXTENSIONS}
+              onChange={setCode}
+              extensions={mode === "python" ? PY_EXTENSIONS : CODE_EXTENSIONS}
               theme={editorTheme}
               placeholder="// Write code here"
               height="100%"
@@ -396,10 +460,11 @@ const Coding = () => {
             />
           </div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] text-muted-foreground">moveTo reports arrival · timed jogs · half-speed limit · supervisor required</span>
+            <span className="text-[11px] text-muted-foreground">{mode === "python" ? "Python policy · runs server-side on RealA3Task · runner not wired yet (M3)" : "moveTo reports arrival · timed jogs · half-speed limit · supervisor required"}</span>
             <div className="flex items-center gap-2">
               {!scriptRunning ? (
-                <Button size="sm" onClick={run} disabled={!connected}
+                <Button size="sm" onClick={run} disabled={!connected || mode === "python"}
+                  title={mode === "python" ? "Python mode runs server-side — the policy runner isn't wired yet (M3)" : undefined}
                   className="rounded-md bg-nori-h8ab135 text-foreground hover:bg-nori-h799c2a">
                   <Play className="mr-2 h-4 w-4" /> Run
                 </Button>

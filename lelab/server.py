@@ -602,6 +602,50 @@ nori.log("done");
 If a request needs vision, is unsafe, or is unclear, generate the safest partial routine you can and nori.log(...) a short note on what you could not do."""
 
 
+# Python mode — the System-2 PRIMITIVE surface (RealA3Task), metric + closed-loop. Hand-written
+# like NORI_CODEGEN_SYSTEM; keep in sync with nori-policy-agent synthesis/real/task.py docstrings.
+NORI_PRIMITIVE_SYSTEM = """You generate a Python robot POLICY for the Nori A3 using the System-2 PRIMITIVE API, exposed as `task`. Output ONLY Python statements, no imports, no markdown fences, no prose outside # comments.
+
+THE PRIMITIVE API — metric, closed-loop, task-space. SI units: metres in the robot base frame (+x forward, +y the robot's LEFT, z world up; table top ~0.905 m). The right arm does the work; the base and the other arm are locked.
+
+  task.observe()                       Capture the cameras + telemetry. Call before locating.
+  task.locate_object(view="overhead", pixel=..|xyz=..)   Perceive an object at a pixel OR an expected point. Returns {xyz, top_z, support_z, height_m, grasp_hand_z, footprint_m}. Use grasp_hand_z as the hand z for a top-down grasp.
+  task.move_to([x,y,z], fingers="down"|"forward")   Closed-loop jog to a TCP position, KEEPING the finger orientation. Returns {status, achieved, error_m}. It does NOT reconfigure the arm — a target needing an arm-branch change stalls (status "stopped_short"); use the lift for big vertical moves.
+  task.move_pose([x,y,z], quat)        Move to a FULL TCP pose (position + attitude quaternion [x,y,z,w]) in ONE motion — translate AND rotate together. For reorienting a grasped object (e.g. standing a tipped object upright). The wrist-camera-above rule still applies.
+  task.descend_until_contact(max_dz=0.12)   Jog straight down until contact; returns the stop height.
+  task.lift(height)                    Set the torso lift (0.12..0.70). Raising while holding lifts the object straight up; lowering sets it down.
+  task.gripper("open"|"close")         Open / close the jaw.
+  task.grasped()                       Is the hand holding something? {holding, width_mm, ...}. Jaw + force only — there is NO weld on hardware, so do not trust a marginal grip.
+  task.placed(object_xyz, container)   Re-perceive and classify where the object ended up (inside | displaced, with an upright advisory).
+  task.done(success, note)             End the policy, reporting success HONESTLY.
+
+RULES:
+1. Observe, THEN locate before you grasp — never assume a world coordinate; get it from locate_object.
+2. Top-down grasp = move_to above the object (fingers="down") -> descend_until_contact (or lower the lift) -> gripper("close") -> check grasped().
+3. Stay within reach (roughly x 0.20-0.28, y -0.30..-0.10 at lift ~0.55) or the jog stalls. fingers is "down" or "forward" only; for any other attitude use move_pose with a quaternion.
+4. Verify success by RE-PERCEIVING (placed / locate_object), never by self-report; then call task.done honestly.
+5. Output ONLY Python; put every explanation, assumption or limitation inside a # comment."""
+
+
+# Python mode — the raw nori_sdk client (low-level; the gateway resolves motion onboard).
+NORI_PYSDK_SYSTEM = """You generate a Python robot program for the Nori A3 using the raw nori_sdk client, exposed as `robot`. Output ONLY Python statements, no imports, no markdown fences, no prose outside # comments.
+
+THE SDK — low-level, normalized units; the gateway resolves motion onboard.
+  robot.telemetry                      Latest state: {state:{...joint positions, lift, base...}, ...}.
+  robot.info.descriptor                The robot's joint/action descriptor (JogBuilder needs it).
+  robot.action({f"{side}_arm_<joint>.pos": value}, wait=True)   Command absolute joint targets (normalized), e.g. the gripper: {"right_arm_gripper.pos": 0}.
+  robot.jog(JogBuilder(robot.info.descriptor).arm(side, axis, rate).build(), duration=secs)   Velocity jog (task-space x/y/z/pitch/yaw or a joint), held `duration`, then zeroed. (JogBuilder is nori_sdk.motion.JogBuilder.)
+  robot.pose(side, [x,y,z], quat_xyzw, wait=True)   Cartesian pose move (onboard KDL IK).
+  robot.set_jog(JogBuilder(...).central_lift(rate).build())  /  robot.set_jog(None)   Lift-rail jog on / off.
+  robot.snapshot_raw(view)             One camera JPEG (view = "overhead" | "front" | ...).
+
+RULES:
+1. This is the LOW-LEVEL surface — for manipulation tasks PREFER the primitive API (RealA3Task); use the raw SDK for direct motor / jog control.
+2. Jogs are open-loop and timed; pose / action with wait=True block until the robot reports done.
+3. Keep moves gentle and within reach; the gateway clamps joint ranges and latches on stall / over-temp.
+4. Output ONLY Python; put every explanation inside a # comment."""
+
+
 class NoriLlmGenerateBody(BaseModel):
     prompt: str
     current_code: str | None = None  # lets the user say "make it slower" about existing code
@@ -610,6 +654,15 @@ class NoriLlmGenerateBody(BaseModel):
     camera_layout: str | None = None  # operator's description of which tile = which view/arm
     perception_active: bool | None = None  # is nori.perceive() receiving frames right now?
     retry_note: str | None = None  # appended on a client-side auto-retry (e.g. after a syntax error)
+    mode: str | None = None  # "ts" (default) | "python": picks the system prompt + code-fence language
+    flavor: str | None = None  # python only: "primitives" (default, RealA3Task) | "sdk" (raw nori_sdk)
+
+
+def _system_for(body: NoriLlmGenerateBody) -> str:
+    """Pick the codegen system prompt. Default (ts / None) is the JS teleop surface, unchanged."""
+    if (body.mode or "ts") != "python":
+        return NORI_CODEGEN_SYSTEM
+    return NORI_PYSDK_SYSTEM if body.flavor == "sdk" else NORI_PRIMITIVE_SYSTEM
 
 
 def _strip_code_fences(s: str) -> str:
@@ -629,7 +682,8 @@ def _llm_prepare(body: NoriLlmGenerateBody):
     model = os.environ.get("NORI_LLM_MODEL", "claude-sonnet-5")
     parts = []
     if body.current_code:
-        parts.append(f"Current code:\n```js\n{body.current_code}\n```")
+        lang = "python" if (body.mode or "ts") == "python" else "js"
+        parts.append(f"Current code:\n```{lang}\n{body.current_code}\n```")
     if body.robot_state:
         # 9a: ground the model in the current pose so "go to / raise / center" plan from reality.
         parts.append(
@@ -678,7 +732,7 @@ def nori_llm_generate(body: NoriLlmGenerateBody, request: Request):
         lambda: nori.llm_messages(
             model=model,
             max_tokens=1500,
-            system=NORI_CODEGEN_SYSTEM,
+            system=_system_for(body),
             messages=[{"role": "user", "content": content}],
             new_run=True,
         )
@@ -716,7 +770,7 @@ def nori_llm_generate_stream(body: NoriLlmGenerateBody, request: Request):
             yield from nori.llm_messages_stream(
                 model=model,
                 max_tokens=1500,
-                system=NORI_CODEGEN_SYSTEM,
+                system=_system_for(body),
                 messages=[{"role": "user", "content": content}],
                 new_run=True,
             )

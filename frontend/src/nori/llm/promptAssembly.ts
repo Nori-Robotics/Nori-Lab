@@ -21,6 +21,8 @@ export interface CodegenRequest {
   camera_layout?: string;
   perception_active?: boolean;
   retry_note?: string;
+  mode?: "ts" | "python"; // default "ts": picks the system prompt + code-fence language
+  flavor?: "primitives" | "sdk"; // python only: RealA3Task primitives (default) vs raw nori_sdk
 }
 
 export type ContentBlock =
@@ -38,7 +40,10 @@ export interface DailyBudget {
 // Build the codegen user message (text + optional leading image block). Mirror of `_llm_prepare`.
 export function buildCodegenContent(body: CodegenRequest): ContentBlock[] {
   const parts: string[] = [];
-  if (body.current_code) parts.push("Current code:\n```js\n" + body.current_code + "\n```");
+  if (body.current_code) {
+    const lang = body.mode === "python" ? "python" : "js";
+    parts.push("Current code:\n```" + lang + "\n" + body.current_code + "\n```");
+  }
   if (body.robot_state) {
     parts.push(
       "Current robot state (proprioceptive, normalized: arm joints ~[-100,100], grippers " +

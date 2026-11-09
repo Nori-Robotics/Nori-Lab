@@ -24,7 +24,7 @@ SERVER_PY = REPO / "lelab" / "server.py"
 TOOLS_JSON = REPO / "frontend" / "packages" / "nori-sdk" / "robot-tools.json"
 OUT = REPO / "frontend" / "src" / "nori" / "llm" / "prompts.generated.ts"
 
-WANT = {"NORI_CODEGEN_SYSTEM", "NORI_AGENT_SYSTEM"}
+WANT = {"NORI_CODEGEN_SYSTEM", "NORI_AGENT_SYSTEM", "NORI_PRIMITIVE_SYSTEM", "NORI_PYSDK_SYSTEM"}
 
 
 def extract_str_consts(py_path: Path, names: set[str]) -> dict[str, str]:
@@ -60,6 +60,8 @@ def main() -> None:
         "// Regenerate with `npm run gen:llm-prompts`. Committed because the Vercel build is\n"
         "// rooted at frontend/ and cannot see lelab/ at build time.\n\n"
         + emit("NORI_CODEGEN_SYSTEM", consts["NORI_CODEGEN_SYSTEM"])
+        + emit("NORI_PRIMITIVE_SYSTEM", consts["NORI_PRIMITIVE_SYSTEM"])
+        + emit("NORI_PYSDK_SYSTEM", consts["NORI_PYSDK_SYSTEM"])
         + emit("NORI_AGENT_SYSTEM", consts["NORI_AGENT_SYSTEM"])
         + emit("AGENT_TOOLS", tools)
     )

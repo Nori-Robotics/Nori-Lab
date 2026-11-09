@@ -16,7 +16,9 @@
 import { getAccessToken } from "@/nori/auth/session";
 import { getDirectBackendUrl } from "@/nori/api/client";
 import { AgentBudgetError, type AgentMessage, type AgentTurn } from "@/nori/remote/AgentSession";
-import { NORI_CODEGEN_SYSTEM, AGENT_TOOLS } from "./prompts.generated";
+import {
+  NORI_CODEGEN_SYSTEM, NORI_PRIMITIVE_SYSTEM, NORI_PYSDK_SYSTEM, AGENT_TOOLS,
+} from "./prompts.generated";
 import { buildAgentTools } from "@nori/sdk";
 import type { RobotDescriptor } from "@nori/sdk";
 import {
@@ -45,6 +47,13 @@ function backendBase(): string {
 
 /** Hosted codegen: POST to the backend streaming proxy and return the raw Response so the caller
  * reads `res.body` exactly as it does for the LeLab stream (both are text/plain). */
+// Mirror of lelab/server.py `_system_for`: ts -> JS teleop prompt (default), python -> the
+// primitive policy prompt (or the raw-SDK prompt for flavor "sdk").
+function systemFor(body: CodegenRequest): string {
+  if (body.mode !== "python") return NORI_CODEGEN_SYSTEM;
+  return body.flavor === "sdk" ? NORI_PYSDK_SYSTEM : NORI_PRIMITIVE_SYSTEM;
+}
+
 export async function hostedGenerateStream(body: CodegenRequest): Promise<Response> {
   return fetch(`${backendBase()}${LLM_BASE}/messages/stream`, {
     method: "POST",
@@ -52,7 +61,7 @@ export async function hostedGenerateStream(body: CodegenRequest): Promise<Respon
     body: JSON.stringify({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      system: NORI_CODEGEN_SYSTEM,
+      system: systemFor(body),
       messages: [{ role: "user", content: buildCodegenContent(body) }],
       new_run: true, // each generation is its own run (matches LeLab)
     }),

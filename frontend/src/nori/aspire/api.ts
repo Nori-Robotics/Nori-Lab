@@ -40,10 +40,13 @@ export interface TaskEvent {
 
 export interface StartBody {
   robot: string;
-  instruction: string;
+  instruction?: string;              // optional for mode "code_policy" (the source is the task)
   budget?: { seconds?: number; llm_calls?: number };
   constraints?: Record<string, unknown>;
   caller?: Record<string, string>;
+  mode?: "task" | "collect" | "code_policy";
+  source?: string;                   // mode "code_policy": the generated policy; runs in the worker's sandbox
+  flavor?: "primitives" | "sdk";     // mode "code_policy": which surface the source sees (task / robot)
 }
 
 /** One file of a robot's memory (backend migration 059): context, a topic, the changelog, or a run report. */

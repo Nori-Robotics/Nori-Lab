@@ -11,7 +11,7 @@
 // clamped/timeout). The robot's own clamps/watchdog are the real boundary (the daemon defends
 // itself), which is why this ships without a client-side gate.
 
-import { useContext, useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
@@ -21,6 +21,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { ThemeProviderContext } from "@/contexts/ThemeContext";
 import { Play, Square, OctagonX } from "lucide-react";
 import { useTeleopSession } from "@/nori/TeleopSessionContext";
+import { useNori } from "@/nori/NoriContext";
+import { aspireApi, TERMINAL, type TaskEvent } from "@/nori/aspire/api";
 import { ScriptSession } from "@/nori/remote/ScriptSession";
 import { startMockPerception, type MockPerceptionHandle } from "@/nori/remote/mockPerception";
 import { useApi } from "@/contexts/ApiContext";
@@ -87,9 +89,12 @@ nori.log("done");
 
 const Coding = () => {
   const {
-    teleop, connState, connecting, connect, tel, scriptSource, setScriptSource, setSessionBusy, heldNote,
+    teleop, connState, connecting, connect, tel, scriptSource, setScriptSource, setSessionBusy, heldNote, setYield,
   } = useTeleopSession();
   const { baseUrl, fetchWithHeaders } = useApi();
+  const { activeRobotSerial, customer } = useNori();
+  const robotSerial = activeRobotSerial ?? customer?.robot_serial_number ?? null;
+  const aspire = useMemo(() => aspireApi(baseUrl, fetchWithHeaders), [baseUrl, fetchWithHeaders]);
   const connectBlocked = useConnectGate();
 
   const [prompt, setPrompt] = useState("");
@@ -121,7 +126,7 @@ const Coding = () => {
   useEffect(() => { try { localStorage.setItem("nori_coding_flavor", flavor); } catch { /* ignore */ } }, [flavor]);
   useEffect(() => { try { localStorage.setItem("nori_coding_target", target); } catch { /* ignore */ } }, [target]);
   const sessionRef = useRef<ScriptSession | null>(null);
-  const pyRunRef = useRef<{ runId: string | null; abort: AbortController } | null>(null); // active python/server run
+  const pyRunRef = useRef<{ runId: string | null; taskId: string | null; abort: AbortController } | null>(null); // active python/server/task run
   const skillsRef = useRef<string | undefined>(undefined); // skill-library text fetched before a python generate
   const mockPerceptionRef = useRef<MockPerceptionHandle | null>(null);
   const outRef = useRef<HTMLDivElement>(null);
@@ -282,6 +287,58 @@ const Coding = () => {
     }
   };
 
+  // M5 — target="real": run the policy through the ASPIRE TASK pipeline (backend /aspire/tasks, mode
+  // "code_policy"). The worker claims the robot with a task grant, EVICTS this teleop app, runs the
+  // source in policy_runner's sandbox against RealA3Task, and streams `step` events. E-STOP = cancel.
+  // This is the production path (grant + eviction + arbitration + the executor's stop/E-STOP), unlike
+  // the sim target's direct server-side runner.
+  const runRobotTask = async () => {
+    if (!robotSerial) { append("⚠ no robot selected — pair or select a robot first"); return; }
+    setOutput([]);
+    setScriptRunning(true);
+    append(`▶ starting code-policy task on ${robotSerial}…`);
+    const abort = new AbortController();
+    pyRunRef.current = { runId: null, taskId: null, abort };
+    try {
+      const { task_id } = await aspire.start({
+        robot: robotSerial, mode: "code_policy", source: code, flavor, budget: { seconds: 120 },
+      });
+      if (pyRunRef.current) pyRunRef.current.taskId = task_id;
+      setYield("coding-task", `code policy running on ${robotSerial} (coding page)`);
+      append(`▶ task ${task_id} — the worker claims ${robotSerial}; this teleop session is evicted`);
+      let since = 0;
+      for (;;) {
+        if (abort.signal.aborted) break;
+        let evs: TaskEvent[] = [];
+        try { evs = await aspire.events(task_id, since); } catch { /* transient; retry next tick */ }
+        for (const ev of evs) {
+          since = (typeof ev.n === "number" ? ev.n : since) + 1;
+          if (ev.type === "step") {
+            if (ev.api === "log") append("   log: " + String(ev.line ?? ""));
+            else append(`   [${ev.seq ?? "?"}] ${String(ev.api ?? "")} → ${String(ev.status ?? "?")} ${ev.duration_ms ?? "?"}ms`);
+          } else if (ev.type === "started") {
+            append(`▶ ${String(ev.instruction ?? "code policy")} (grant ${String(ev.grant ?? "?")})`);
+          } else if (ev.type !== "done" && ev.type !== "failed" && ev.type !== "cancelled") {
+            append(`   · ${ev.type}`);   // armed / home / table / preflight / safety / operator_lost
+          }
+        }
+        let rec: Awaited<ReturnType<typeof aspire.task>> | null = null;
+        try { rec = await aspire.task(task_id); } catch { /* transient; retry */ }
+        if (rec && TERMINAL.has(rec.status)) {
+          append(`${rec.status === "done" ? "✓" : "⚠"} task ${rec.status}${rec.outcome ? " — " + JSON.stringify(rec.outcome) : ""}`);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    } catch (e) {
+      append("⚠ task error: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setScriptRunning(false);
+      setYield("coding-task", null);
+      pyRunRef.current = null;
+    }
+  };
+
   // Python mode: run the policy on the server-side runner (M3), streaming its NDJSON trace into the
   // output panel. target="sim" today; a real target is gated behind the runner's safety stack (M4).
   const runPython = async () => {
@@ -294,12 +351,14 @@ const Coding = () => {
         "handed to the policy. Make sure the robot is set up, a supervisor is present, and the E-STOP is " +
         "in reach.");
       if (!ok) { append("✋ real run cancelled"); return; }
+      await runRobotTask();   // M5: the real target goes through the ASPIRE task pipeline, not the sim runner
+      return;
     }
     setOutput([]);
     setScriptRunning(true);
     append(`▶ running policy (server-side runner, target=${target})…`);
     const abort = new AbortController();
-    pyRunRef.current = { runId: null, abort };
+    pyRunRef.current = { runId: null, taskId: null, abort };
     try {
       const res = await fetchWithHeaders(`${baseUrl}/nori/policy/run`, {
         method: "POST",
@@ -347,7 +406,10 @@ const Coding = () => {
     const r = pyRunRef.current;
     if (!r) return;
     r.abort.abort();
-    if (r.runId) {
+    if (r.taskId) {
+      // M5 robot run: cancel the task — the executor stops motion (zero jog + E-STOP) before it ends.
+      try { await aspire.cancel(r.taskId, "E-STOP from the coding page"); } catch { /* best-effort; the lease also expires */ }
+    } else if (r.runId) {
       try {
         await fetchWithHeaders(`${baseUrl}/nori/policy/stop`, {
           method: "POST", headers: { "Content-Type": "application/json" },

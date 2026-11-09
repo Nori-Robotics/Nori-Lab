@@ -87,7 +87,7 @@ nori.log("done");
 
 const Coding = () => {
   const {
-    teleop, connState, connecting, connect, tel, scriptSource, setScriptSource, setSessionBusy,
+    teleop, connState, connecting, connect, tel, scriptSource, setScriptSource, setSessionBusy, heldNote,
   } = useTeleopSession();
   const { baseUrl, fetchWithHeaders } = useApi();
   const connectBlocked = useConnectGate();
@@ -112,8 +112,14 @@ const Coding = () => {
     try { return localStorage.getItem("nori_coding_flavor") === "sdk" ? "sdk" : "primitives"; } catch { return "primitives"; }
   });
   const [pySource, setPySource] = useState(PY_STARTER); // python-mode buffer (ts uses the shared scriptSource)
+  // Python run target: "sim" (the SimSession runner) or "real" (the robot via the ASPIRE worker's TASK
+  // session — it EVICTS the teleop session when it runs; see M4).
+  const [target, setTarget] = useState<"sim" | "real">(() => {
+    try { return localStorage.getItem("nori_coding_target") === "real" ? "real" : "sim"; } catch { return "sim"; }
+  });
   useEffect(() => { try { localStorage.setItem("nori_coding_mode", mode); } catch { /* ignore */ } }, [mode]);
   useEffect(() => { try { localStorage.setItem("nori_coding_flavor", flavor); } catch { /* ignore */ } }, [flavor]);
+  useEffect(() => { try { localStorage.setItem("nori_coding_target", target); } catch { /* ignore */ } }, [target]);
   const sessionRef = useRef<ScriptSession | null>(null);
   const pyRunRef = useRef<{ runId: string | null; abort: AbortController } | null>(null); // active python/server run
   const skillsRef = useRef<string | undefined>(undefined); // skill-library text fetched before a python generate
@@ -280,16 +286,25 @@ const Coding = () => {
   // output panel. target="sim" today; a real target is gated behind the runner's safety stack (M4).
   const runPython = async () => {
     if (scriptRunning || pyRunRef.current) return;
+    if (target === "real") {
+      // M4c — confirm-before-first-motion: a real run moves the robot and takes the arm from teleop.
+      const ok = window.confirm(
+        "Run this policy on the REAL robot?\n\n" +
+        "It runs via the ASPIRE worker (task session) and will EVICT this teleop session — the arm is " +
+        "handed to the policy. Make sure the robot is set up, a supervisor is present, and the E-STOP is " +
+        "in reach.");
+      if (!ok) { append("✋ real run cancelled"); return; }
+    }
     setOutput([]);
     setScriptRunning(true);
-    append("▶ running policy (server-side runner, target=sim)…");
+    append(`▶ running policy (server-side runner, target=${target})…`);
     const abort = new AbortController();
     pyRunRef.current = { runId: null, abort };
     try {
       const res = await fetchWithHeaders(`${baseUrl}/nori/policy/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: code, flavor, target: "sim" }),
+        body: JSON.stringify({ source: code, flavor, target }),
         signal: abort.signal,
       });
       if (!res.ok || !res.body) { append("⚠ policy run failed: " + res.statusText); return; }
@@ -499,6 +514,11 @@ const Coding = () => {
 
         {/* Right: code editor + run / stop / e-stop */}
         <div className="flex h-full min-w-0 min-h-0 flex-col gap-2 rounded-md border border-nori-h14131a/10 bg-nori-hf6f4eb p-4 text-nori-h14131a shadow-sm">
+          {heldNote && (
+            <div className="rounded-md border border-nori-hd98b3d/50 bg-nori-hd98b3d/15 px-3 py-1.5 text-[11px] text-nori-hb06a1c">
+              ⚠ teleop {heldNote} — the robot is held by a policy / task run; this page is video-only until it ends.
+            </div>
+          )}
           <div className="flex items-center justify-between gap-2">
             <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// code</span>
             <div className="flex items-center gap-1.5 text-[11px]">
@@ -527,6 +547,19 @@ const Coding = () => {
                   {f === "primitives" ? "primitives" : "nori_sdk"}
                 </button>
               ))}
+              {mode === "python" && <span className="px-0.5 text-nori-h857b6b">·</span>}
+              {mode === "python" && (["sim", "real"] as const).map((tg) => (
+                <button
+                  key={tg}
+                  type="button"
+                  onClick={() => setTarget(tg)}
+                  disabled={scriptRunning || generating}
+                  className={`rounded px-2 py-0.5 font-mono ${target === tg ? (tg === "real" ? "bg-nori-hd98b3d text-foreground" : "bg-nori-h8ab135/30 text-nori-h4d6a1e") : "bg-nori-h14131a/8 text-nori-h857b6b"}`}
+                  title={tg === "real" ? "Run on the ROBOT via the ASPIRE worker (task session — it evicts the teleop session)" : "Run in the simulator (SimSession)"}
+                >
+                  {tg === "sim" ? "sim" : "robot"}
+                </button>
+              ))}
             </div>
           </div>
           <div className="flex-1 min-h-0 overflow-hidden rounded-md border border-nori-h14131a/12">
@@ -543,7 +576,7 @@ const Coding = () => {
             />
           </div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] text-muted-foreground">{mode === "python" ? "Python policy · runs on the server-side runner (target=sim) · E-STOP stops it" : "moveTo reports arrival · timed jogs · half-speed limit · supervisor required"}</span>
+            <span className="text-[11px] text-muted-foreground">{mode === "python" ? `Python policy · ${target === "real" ? "ROBOT via the ASPIRE worker (evicts teleop)" : "server-side runner (sim)"} · E-STOP stops it` : "moveTo reports arrival · timed jogs · half-speed limit · supervisor required"}</span>
             <div className="flex items-center gap-2">
               {!scriptRunning ? (
                 <Button size="sm" onClick={run} disabled={mode === "python" ? false : !connected}

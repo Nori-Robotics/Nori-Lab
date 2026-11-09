@@ -39,8 +39,8 @@ task.observe()
 loc = task.locate_object(view="overhead", xyz=[0.24, -0.16, 0.95])
 task.move_to([loc["xyz"][0], loc["xyz"][1], loc["grasp_hand_z"] + 0.04], fingers="down")
 task.descend_until_contact()
-task.gripper("close")
-task.done(task.grasped()["holding"], "picked (or not)")
+task.gripper("right", "close")
+task.done(task.grasped("right")["holding"], "picked (or not)")
 `;
 
 // Lenient client-side fence strip for the STREAMED output (the model is told not to fence, but

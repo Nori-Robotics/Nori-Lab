@@ -602,8 +602,11 @@ nori.log("done");
 If a request needs vision, is unsafe, or is unclear, generate the safest partial routine you can and nori.log(...) a short note on what you could not do."""
 
 
-# Python mode — the System-2 PRIMITIVE surface (RealA3Task), metric + closed-loop. Hand-written
-# like NORI_CODEGEN_SYSTEM; keep in sync with nori-policy-agent synthesis/real/task.py docstrings.
+# Python mode — the System-2 POSITION-PRIMITIVE surface (sim: synthesis/sim_real_tools.py; real:
+# synthesis/real/position.py — a line-for-line port), metric + closed-loop. Authoritative signatures
+# live there (locate_object / move_to / descend_until_contact / grasped / placed / move_pose /
+# lift / gripper(side, action)); this const is hand-written like NORI_CODEGEN_SYSTEM and must be
+# reconciled against them when the surface changes (cross-repo, so not auto-generated from docstrings).
 NORI_PRIMITIVE_SYSTEM = """You generate a Python robot POLICY for the Nori A3 using the System-2 PRIMITIVE API, exposed as `task`. Output ONLY Python statements, no imports, no markdown fences, no prose outside # comments.
 
 THE PRIMITIVE API — metric, closed-loop, task-space. SI units: metres in the robot base frame (+x forward, +y the robot's LEFT, z world up; table top ~0.905 m). The right arm does the work; the base and the other arm are locked.
@@ -614,12 +617,15 @@ THE PRIMITIVE API — metric, closed-loop, task-space. SI units: metres in the r
   task.move_pose([x,y,z], quat)        Move to a FULL TCP pose (position + attitude quaternion [x,y,z,w]) in ONE motion — translate AND rotate together. For reorienting a grasped object (e.g. standing a tipped object upright). The wrist-camera-above rule still applies.
   task.descend_until_contact(max_dz=0.12)   Jog straight down until contact; returns the stop height.
   task.lift(height)                    Set the torso lift (0.12..0.70). Raising while holding lifts the object straight up; lowering sets it down.
-  task.gripper("open"|"close")         Open / close the jaw.
-  task.grasped()                       Is the hand holding something? {holding, width_mm, ...}. Jaw + force only — there is NO weld on hardware, so do not trust a marginal grip.
+  task.gripper(side, "open"|"close")   Open / close the jaw. side is "right" (the working arm) or "left".
+  task.grasped(side="right")           Is the hand holding something? {holding, width_mm, ...}. Jaw + force only — there is NO weld on hardware, so do not trust a marginal grip.
   task.placed(object_xyz, container)   Re-perceive and classify where the object ended up (inside | displaced, with an upright advisory).
   task.done(success, note)             End the policy, reporting success HONESTLY.
 
+SKILL LIBRARY: a "Skill library" section may be given below the request. READ IT FIRST, before writing anything. Each skill has a trigger, a strategy and a code sketch — a verified, reusable pattern distilled from past successes. If a skill's trigger matches this task, FOLLOW its strategy and adapt its snippet; do NOT ignore it or reinvent the approach. If several match, prefer the most specific. If none matches, write the policy from the primitives below.
+
 RULES:
+0. If a relevant skill exists in the Skill library, build on it rather than starting from scratch.
 1. Observe, THEN locate before you grasp — never assume a world coordinate; get it from locate_object.
 2. Top-down grasp = move_to above the object (fingers="down") -> descend_until_contact (or lower the lift) -> gripper("close") -> check grasped().
 3. Stay within reach (roughly x 0.20-0.28, y -0.30..-0.10 at lift ~0.55) or the jog stalls. fingers is "down" or "forward" only; for any other attitude use move_pose with a quaternion.
@@ -656,6 +662,7 @@ class NoriLlmGenerateBody(BaseModel):
     retry_note: str | None = None  # appended on a client-side auto-retry (e.g. after a syntax error)
     mode: str | None = None  # "ts" (default) | "python": picks the system prompt + code-fence language
     flavor: str | None = None  # python only: "primitives" (default, RealA3Task) | "sdk" (raw nori_sdk)
+    skills: str | None = None  # python/primitives: relevant Skill library text; the agent reads it first
 
 
 def _system_for(body: NoriLlmGenerateBody) -> str:
@@ -709,6 +716,13 @@ def _llm_prepare(body: NoriLlmGenerateBody):
     parts.append(f"Request: {body.prompt}")
     if body.retry_note:
         parts.append(f"IMPORTANT: {body.retry_note}")
+    # Skill library (python/primitives): verified reusable patterns the agent reads BEFORE writing,
+    # following any whose trigger matches the task. Placed below the request, as the prompt says.
+    if body.skills:
+        parts.append(
+            "Skill library (verified, reusable patterns — read these FIRST and follow any whose "
+            f"trigger matches this task; adapt the snippet, don't reinvent it):\n{body.skills}"
+        )
     user = "\n\n".join(parts)
     # Part 3: an optional camera still gives the model spatial context ("go to the cup"). Send it as
     # an image block ahead of the text; without it the request is plain text as before.

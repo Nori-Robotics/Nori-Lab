@@ -23,6 +23,7 @@ export interface CodegenRequest {
   retry_note?: string;
   mode?: "ts" | "python"; // default "ts": picks the system prompt + code-fence language
   flavor?: "primitives" | "sdk"; // python only: RealA3Task primitives (default) vs raw nori_sdk
+  skills?: string; // python/primitives: relevant Skill library text, read before generating
 }
 
 export type ContentBlock =
@@ -66,6 +67,14 @@ export function buildCodegenContent(body: CodegenRequest): ContentBlock[] {
   }
   parts.push(`Request: ${body.prompt}`);
   if (body.retry_note) parts.push(`IMPORTANT: ${body.retry_note}`);
+  // Skill library (python/primitives): verified reusable patterns read before writing; mirror of
+  // the server-side injection in _llm_prepare.
+  if (body.skills) {
+    parts.push(
+      "Skill library (verified, reusable patterns — read these FIRST and follow any whose trigger " +
+        "matches this task; adapt the snippet, don't reinvent it):\n" + body.skills,
+    );
+  }
 
   const content: ContentBlock[] = [{ type: "text", text: parts.join("\n\n") }];
   if (body.image_b64) {

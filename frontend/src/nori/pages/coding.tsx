@@ -27,7 +27,7 @@ import { ScriptSession } from "@/nori/remote/ScriptSession";
 import { startMockPerception, type MockPerceptionHandle } from "@/nori/remote/mockPerception";
 import { useApi } from "@/contexts/ApiContext";
 import { isDirectBackend } from "@/nori/api/client";
-import { hostedGenerateStream } from "@/nori/llm/hostedLlm";
+import { hostedGenerateStream, hostedGenerateWithSkills } from "@/nori/llm/hostedLlm";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
 
 const CODE_EXTENSIONS = [javascript({ typescript: true }), EditorView.lineWrapping];
@@ -207,6 +207,13 @@ const Coding = () => {
       flavor: mode === "python" ? flavor : undefined,
       skills: mode === "python" ? skillsRef.current : undefined,
     };
+    // HOSTED primitive codegen: the model CHOOSES skills (index + read_skill tool loop), like the agent
+    // worker — not a pre-injected top-N. Non-streaming (the loop must see tool_use), so show read events.
+    if (isDirectBackend() && mode === "python" && flavor === "primitives") {
+      setStreamBuffer("");
+      const chosen = await hostedGenerateWithSkills(req, (name) => append(`📖 read skill: ${name}`));
+      return stripFences(chosen);
+    }
     const res = isDirectBackend()
       ? await hostedGenerateStream(req)
       : await fetchWithHeaders(`${baseUrl}/nori/llm/generate/stream`, {
@@ -235,10 +242,11 @@ const Coding = () => {
     if (!prompt.trim() || generating) return;
     setGenerating(true);
     try {
-      // Skill-library-first (python/primitives): fetch the trigger-matched skills so the model reads
-      // them before writing. Best-effort — never blocks generation if the runner is down.
+      // DESKTOP (python/primitives): fetch the trigger-matched skills (policy_server) so LeLab injects
+      // them. HOSTED uses the index + read_skill loop instead (the model chooses — see runGeneration),
+      // so skip this fetch there (it has no /nori/skills endpoint anyway). Best-effort.
       skillsRef.current = undefined;
-      if (mode === "python" && flavor === "primitives") {
+      if (!isDirectBackend() && mode === "python" && flavor === "primitives") {
         try {
           const sres = await fetchWithHeaders(`${baseUrl}/nori/skills?prompt=${encodeURIComponent(prompt)}`);
           if (sres.ok) {

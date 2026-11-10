@@ -64,13 +64,72 @@ export async function hostedGenerateStream(body: CodegenRequest): Promise<Respon
       system: systemFor(body),
       messages: [{ role: "user", content: buildCodegenContent(body) }],
       new_run: true, // each generation is its own run (matches LeLab)
-      // Hosted has no local skill library to fetch, so ask the gateway to splice the matching skills
-      // below the request, server-side (mirrors LeLab's desktop injection). Primitives codegen only.
-      ...(body.mode === "python" && body.flavor === "primitives"
-        ? { skills_for: body.prompt, skills_flavor: "primitives" }
-        : {}),
     }),
   });
+}
+
+// The read_skill tool (matches nori-backend aspire/skills.READ_SKILL_TOOL). Primitive codegen gets the
+// skill INDEX in the prompt + this tool, and CHOOSES which skills to read — the agent's `index` model,
+// not a pre-injected top-N. The loop serves read_skill from /aspire/skills/{name}.
+const READ_SKILL_TOOL = {
+  name: "read_skill",
+  description:
+    "Read one skill from the library (the SKILL LIBRARY list in your instructions) and get its full text: " +
+    "triggers, a sketch of which tools to call in which order, evidence and limits. Costs nothing. Read a " +
+    "skill when its triggers match the task.",
+  input_schema: {
+    type: "object",
+    properties: { name: { type: "string", description: "the skill's name from the list" } },
+    required: ["name"],
+  },
+};
+
+/** Hosted PRIMITIVE codegen where the model CHOOSES skills (index + read_skill), like the agent worker:
+ *  put the skill index in the system prompt, give it read_skill, and run a short tool loop (serving
+ *  read_skill from /aspire/skills/{name}) until it emits the policy. Non-streaming — the loop must see
+ *  tool_use. `onRead` reports each skill the model actually read. Returns the raw code (caller strips fences). */
+export async function hostedGenerateWithSkills(
+  body: CodegenRequest, onRead?: (name: string) => void,
+): Promise<string> {
+  const base = backendBase();
+  const headers = await authHeaders();
+  let indexText = "";
+  try {
+    const ir = await fetch(`${base}/api/v1/aspire/skills/index`, { headers });
+    if (ir.ok) indexText = ((await ir.json()) as { text?: string })?.text || "";
+  } catch { /* skills are optional grounding */ }
+  const system = systemFor(body) + indexText;
+  const messages: Array<Record<string, unknown>> = [{ role: "user", content: buildCodegenContent(body) }];
+  for (let round = 0; round < 6; round++) {
+    const res = await fetch(`${backendBase()}${LLM_BASE}/messages`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: MODEL, max_tokens: MAX_TOKENS, system, messages, tools: [READ_SKILL_TOOL], new_run: round === 0 }),
+    });
+    if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { detail?: string })?.detail || res.statusText);
+    const turn = (await res.json()) as { stop_reason?: string; content?: Array<Record<string, unknown>> };
+    const content = turn.content ?? [];
+    messages.push({ role: "assistant", content });
+    if (turn.stop_reason === "tool_use") {
+      const results: Array<Record<string, unknown>> = [];
+      for (const b of content) {
+        if (b.type === "tool_use" && (b as { name?: string }).name === "read_skill") {
+          const name = String(((b as { input?: { name?: unknown } }).input?.name) ?? "");
+          onRead?.(name);
+          let payload: unknown = { status: "error", reason: "fetch failed" };
+          try {
+            const r = await fetch(`${base}/api/v1/aspire/skills/${encodeURIComponent(name)}`, { headers });
+            if (r.ok) payload = await r.json();
+          } catch { /* served as an error tool_result below */ }
+          results.push({ type: "tool_result", tool_use_id: (b as { id?: string }).id, content: JSON.stringify(payload) });
+        }
+      }
+      messages.push({ role: "user", content: results });
+      continue;
+    }
+    return content.filter((b) => b.type === "text").map((b) => String((b as { text?: string }).text ?? "")).join("");
+  }
+  throw new Error("codegen exceeded the read_skill round limit");
 }
 
 /** Hosted depth fetch: POST one look-frame JPEG to the backend's depth endpoint and return the

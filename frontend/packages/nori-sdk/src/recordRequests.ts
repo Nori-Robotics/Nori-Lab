@@ -57,3 +57,45 @@ export class RecordRequests<T extends { ok: boolean; error?: string }> {
     }
   }
 }
+
+/** One-shot read-only status discovery. Legacy replies never acknowledge mutations. */
+export class RecordStatusProbe<T extends { ok: boolean; error?: string }> {
+  private pending: {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
+
+  constructor(private send: () => boolean) {}
+
+  request(timeoutMs = 1500): Promise<T> {
+    if (this.pending) return this.pending.promise;
+    let resolve!: (value: T) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+    this.pending = { promise, resolve, reject,
+      timer: setTimeout(() => this.fail("Recorder status unavailable; check the robot connection"), timeoutMs) };
+    if (!this.send()) this.fail("Recording connection unavailable");
+    return promise;
+  }
+
+  accept(status: T): void {
+    const pending = this.pending;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pending = null;
+    if (status.ok) pending.resolve(status);
+    else pending.reject(new Error(status.error || "Recorder unavailable"));
+  }
+
+  close(): void { this.fail("Recording connection closed"); }
+
+  private fail(message: string): void {
+    const pending = this.pending;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pending = null;
+    pending.reject(new Error(message));
+  }
+}

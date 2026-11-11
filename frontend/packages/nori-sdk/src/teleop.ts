@@ -13,7 +13,7 @@
 //     sends a room-token HMAC proof — it simply joins and handshakes
 //   * TURN is additive (STUN-direct preferred); forceRelay validates the relay path
 
-import { RecordRequests } from "./recordRequests";
+import { RecordRequests, RecordStatusProbe } from "./recordRequests";
 import type { SignalingTransport } from "./signaling";
 import { AudioLatencyProbe, audioLatencyEnabled } from "./audioLatency";
 import { VideoQualityLoop, type VideoNetState } from "./videoQuality";
@@ -1068,6 +1068,8 @@ export class RemoteTeleop {
   private cameraLayoutRaw: CameraLayout | null = null;
   private daemonStat: DaemonStatus | null = null;   // latest daemon_status (bridge health frame)
   private recordRequests = new RecordRequests<RecordState>((frame) => this.dcSend(frame));
+  private recordStatusProbe = new RecordStatusProbe<RecordState>(
+    () => this.dcSend({ type: "record", action: "status" }));
   private recStat: RecordState | null = null;       // latest record_status (W2.11 recorder reply)
   private psStat: PolicyStreamStatus | null = null; // latest policy_stream_status
   private psWaiters: Array<(s: PolicyStreamStatus) => void> = []; // FIFO, one per in-flight policyStream()
@@ -1757,6 +1759,14 @@ export class RemoteTeleop {
     return this.recordRequests.request(action, payload, timeoutMs);
   }
 
+  /** Fresh read-only capability discovery, including robots without request IDs.
+   * No retry or mutation is sent. Silence is a connection error, not evidence
+   * that review is unsupported. A valid legacy reply may omit reviewSupported.
+   */
+  recordStatus(timeoutMs = 1500): Promise<RecordState> {
+    return this.recordStatusProbe.request(timeoutMs);
+  }
+
 
 
   // Pause/resume the robot's video ENCODER (not just the DOM sink). "pause" gates frames before
@@ -2260,6 +2270,7 @@ export class RemoteTeleop {
     // Recorder knowledge is stale once disconnected (auto mode stops on camera
     // silence anyway) — a fresh session re-probes with record("status").
     this.recordRequests.close();
+    this.recordStatusProbe.close();
     this.recStat = null;
     // Drain the waiters BEFORE clearing the caches: the robot's last reported state is
     // exactly what an unreachable status carries forward, and it is most worth having
@@ -2974,6 +2985,7 @@ export class RemoteTeleop {
       ...(p.decision === "keep" || p.decision === "reject" ? { decision: p.decision } : {}) }));
     this.recStat = s;
     if (requestId) this.recordRequests.accept(requestId, s);
+    else this.recordStatusProbe.accept(s);
     this.log(s.error ? `recorder: ${s.error}`
       : s.recording ? `recording ${s.episode ?? ""} (${s.freeGb ?? "?"} GB free)`
       : "recorder idle");

@@ -127,6 +127,10 @@ const Coding = () => {
   useEffect(() => { try { localStorage.setItem("nori_coding_mode", mode); } catch { /* ignore */ } }, [mode]);
   useEffect(() => { try { localStorage.setItem("nori_coding_flavor", flavor); } catch { /* ignore */ } }, [flavor]);
   useEffect(() => { try { localStorage.setItem("nori_coding_target", target); } catch { /* ignore */ } }, [target]);
+  // Table height (m) for a robot run: passed as constraints.table_z so the worker anchors the monocular
+  // depth to the real table (else locate_object's heights drift). The robot's measured table height.
+  const [tableZ, setTableZ] = useState(() => { try { return localStorage.getItem("nori_coding_table_z") || "0.73"; } catch { return "0.73"; } });
+  useEffect(() => { try { localStorage.setItem("nori_coding_table_z", tableZ); } catch { /* ignore */ } }, [tableZ]);
   const sessionRef = useRef<ScriptSession | null>(null);
   const pyRunRef = useRef<{ runId: string | null; taskId: string | null; abort: AbortController } | null>(null); // active python/server/task run
   const skillsRef = useRef<string | undefined>(undefined); // skill-library text fetched before a python generate
@@ -312,6 +316,7 @@ const Coding = () => {
     try {
       const { task_id } = await aspire.start({
         robot: robotSerial, mode: "code_policy", source: code, flavor, budget: { seconds: 120 },
+        ...(Number(tableZ) > 0 ? { constraints: { table_z: Number(tableZ) } } : {}),
       });
       if (pyRunRef.current) pyRunRef.current.taskId = task_id;
       setYield("coding-task", `code policy running on ${robotSerial} (coding page)`);
@@ -638,6 +643,15 @@ const Coding = () => {
                   {tg === "sim" ? "sim" : "robot"}
                 </button>
               ))}
+              {mode === "python" && target === "real" && (
+                <label className="flex items-center gap-1 font-mono text-nori-h857b6b"
+                  title="Table height (m): anchors the robot's depth so locate_object heights are accurate">
+                  <span className="px-0.5">·</span>table_z
+                  <input type="number" step="0.01" min="0" value={tableZ}
+                    onChange={(e) => setTableZ(e.target.value)} disabled={scriptRunning || generating}
+                    className="w-14 rounded bg-nori-h14131a/8 px-1 py-0.5 text-foreground" />
+                </label>
+              )}
             </div>
           </div>
           <div className="flex-1 min-h-0 overflow-hidden rounded-md border border-nori-h14131a/12">

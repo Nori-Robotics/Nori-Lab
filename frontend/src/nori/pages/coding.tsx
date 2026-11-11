@@ -47,8 +47,6 @@ task.done(task.grasped("right")["holding"], "picked (or not)")
 
 // Lenient client-side fence strip for the STREAMED output (the model is told not to fence, but
 // unwrap gracefully if it does — incrementally: drop a leading ```lang line, and a trailing ```).
-const REAL_ACK_KEY = "nori_coding_real_ack";   // M4c: robot serial already confirmed for real runs this session
-
 function stripFences(s: string): string {
   let out = s;
   if (out.startsWith("```")) {
@@ -364,20 +362,9 @@ const Coding = () => {
   const runPython = async () => {
     if (scriptRunning || pyRunRef.current) return;
     if (target === "real") {
-      // M4c — confirm-before-first-motion: a real run moves the robot and takes the arm from teleop.
-      // Asked ONCE per browser session per robot (sessionStorage), not on every run; E-STOP stays live each run.
-      let acked = false;
-      try { acked = sessionStorage.getItem(REAL_ACK_KEY) === (robotSerial ?? "1"); } catch { /* ignore */ }
-      if (!acked) {
-        const ok = window.confirm(
-          "Run policies on the REAL robot this session?\n\n" +
-          "A real run goes through the ASPIRE worker (task session) and will EVICT this teleop session — the arm " +
-          "is handed to the policy. Make sure the robot is set up, a supervisor is present, and the E-STOP is in " +
-          "reach. (Asked once per session; E-STOP stays available on every run.)");
-        if (!ok) { append("✋ real run cancelled"); return; }
-        try { sessionStorage.setItem(REAL_ACK_KEY, robotSerial ?? "1"); } catch { /* ignore */ }
-      }
-      await runRobotTask();   // M5: the real target goes through the ASPIRE task pipeline, not the sim runner
+      // Real run → the ASPIRE task pipeline. No confirm dialog; the run is gated downstream by the task
+      // grant + the operator's E-STOP + supervisor presence (the robot button is already a deliberate choice).
+      await runRobotTask();
       return;
     }
     setOutput([]);

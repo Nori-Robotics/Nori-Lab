@@ -118,7 +118,12 @@ const Coding = () => {
   const [flavor, setFlavor] = useState<"primitives" | "sdk">(() => {
     try { return localStorage.getItem("nori_coding_flavor") === "sdk" ? "sdk" : "primitives"; } catch { return "primitives"; }
   });
-  const [pySource, setPySource] = useState(PY_STARTER); // python-mode buffer (ts uses the shared scriptSource)
+  // python-mode buffer (ts uses the shared scriptSource, which persists via the teleop context). Persist
+  // this to localStorage so it survives navigating to another Lab page + back, like the TS buffer does.
+  const [pySource, setPySource] = useState(() => {
+    try { return localStorage.getItem("nori_coding_py_source") ?? PY_STARTER; } catch { return PY_STARTER; }
+  });
+  useEffect(() => { try { localStorage.setItem("nori_coding_py_source", pySource); } catch { /* ignore */ } }, [pySource]);
   // Python run target: "sim" (the SimSession runner) or "real" (the robot via the ASPIRE worker's TASK
   // session — it EVICTS the teleop session when it runs; see M4).
   const [target, setTarget] = useState<"sim" | "real">(() => {

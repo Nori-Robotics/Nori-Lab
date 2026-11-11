@@ -40,8 +40,8 @@ else, that's a problem — see [When it goes wrong](#when-it-goes-wrong) below.
 Requires Python ≥ 3.12 and Node.
 
 ```bash
-git clone https://github.com/nori-robotics/NoriLeLab
-cd NoriLeLab
+git clone https://github.com/Nori-Robotics/Nori-Lab.git
+cd Nori-Lab
 pip install -e .
 lelab            # serves API + UI on :8000 and opens a browser
 ```

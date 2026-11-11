@@ -607,57 +607,66 @@ const Coding = () => {
               ⚠ teleop {heldNote} — the robot is held by a policy / task run; this page is video-only until it ends.
             </div>
           )}
-          <div className="flex items-center justify-between gap-2">
-            <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// code</span>
-            <div className="flex items-center gap-1.5 text-[11px]">
-              {/* SDK mode: TypeScript (browser/teleop) vs Python (server-side primitives/SDK — M3) */}
-              {(["ts", "python"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setMode(m)}
-                  disabled={scriptRunning || generating}
-                  className={`rounded px-2 py-0.5 font-mono ${mode === m ? "bg-nori-hd98b3d text-foreground" : "bg-nori-h14131a/8 text-nori-h857b6b"}`}
-                  title={m === "python" ? "Python SDK — primitive policies / raw nori_sdk (runs server-side)" : "TypeScript SDK — the nori teleop console (runs in the browser)"}
-                >
-                  {m === "ts" ? "TypeScript" : "Python"}
-                </button>
-              ))}
-              {mode === "python" && (["primitives", "sdk"] as const).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setFlavor(f)}
-                  disabled={scriptRunning || generating}
-                  className={`rounded px-2 py-0.5 font-mono ${flavor === f ? "bg-nori-h8ab135/30 text-nori-h4d6a1e" : "bg-nori-h14131a/8 text-nori-h857b6b"}`}
-                  title={f === "primitives" ? "System-2 primitives (RealA3Task)" : "raw nori_sdk"}
-                >
-                  {f === "primitives" ? "primitives" : "nori_sdk"}
-                </button>
-              ))}
-              {mode === "python" && <span className="px-0.5 text-nori-h857b6b">·</span>}
-              {mode === "python" && (["sim", "real"] as const).map((tg) => (
-                <button
-                  key={tg}
-                  type="button"
-                  onClick={() => setTarget(tg)}
-                  disabled={scriptRunning || generating}
-                  className={`rounded px-2 py-0.5 font-mono ${target === tg ? (tg === "real" ? "bg-nori-hd98b3d text-foreground" : "bg-nori-h8ab135/30 text-nori-h4d6a1e") : "bg-nori-h14131a/8 text-nori-h857b6b"}`}
-                  title={tg === "real" ? "Run on the ROBOT via the ASPIRE worker (task session — it evicts the teleop session)" : "Run in the simulator (SimSession)"}
-                >
-                  {tg === "sim" ? "sim" : "robot"}
-                </button>
-              ))}
-              {mode === "python" && target === "real" && (
-                <label className="flex items-center gap-1 font-mono text-nori-h857b6b"
-                  title="Table height (m): anchors the robot's depth so locate_object heights are accurate">
-                  <span className="px-0.5">·</span>table_z
-                  <input type="number" step="0.01" min="0" value={tableZ}
-                    onChange={(e) => setTableZ(e.target.value)} disabled={scriptRunning || generating}
-                    className="w-14 rounded bg-nori-h14131a/8 px-1 py-0.5 text-foreground" />
-                </label>
-              )}
+          <div className="flex flex-col gap-1.5">
+            {/* Row 1: section label + SDK language (TypeScript in-browser vs Python server-side) */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-nori-hb06a1c">// code</span>
+              <div className="flex items-center gap-1.5 text-[11px]">
+                {(["ts", "python"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMode(m)}
+                    disabled={scriptRunning || generating}
+                    className={`rounded px-2 py-0.5 font-mono ${mode === m ? "bg-nori-hd98b3d text-foreground" : "bg-nori-h14131a/8 text-nori-h857b6b"}`}
+                    title={m === "python" ? "Python SDK — primitive policies / raw nori_sdk (runs server-side)" : "TypeScript SDK — the nori teleop console (runs in the browser)"}
+                  >
+                    {m === "ts" ? "TypeScript" : "Python"}
+                  </button>
+                ))}
+              </div>
             </div>
+            {/* Row 2 (Python): surface + target + table height, wrapping so it stays inside the card */}
+            {mode === "python" && (
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+                <span className="font-mono uppercase tracking-wider text-nori-h857b6b">surface</span>
+                {(["primitives", "sdk"] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setFlavor(f)}
+                    disabled={scriptRunning || generating}
+                    className={`rounded px-2 py-0.5 font-mono ${flavor === f ? "bg-nori-h8ab135/30 text-nori-h4d6a1e" : "bg-nori-h14131a/8 text-nori-h857b6b"}`}
+                    title={f === "primitives" ? "System-2 primitives (RealA3Task)" : "raw nori_sdk"}
+                  >
+                    {f === "primitives" ? "primitives" : "nori_sdk"}
+                  </button>
+                ))}
+                <span className="ml-1 font-mono uppercase tracking-wider text-nori-h857b6b">target</span>
+                {(["sim", "real"] as const).map((tg) => (
+                  <button
+                    key={tg}
+                    type="button"
+                    onClick={() => setTarget(tg)}
+                    disabled={scriptRunning || generating}
+                    className={`rounded px-2 py-0.5 font-mono ${target === tg ? (tg === "real" ? "bg-nori-hd98b3d text-foreground" : "bg-nori-h8ab135/30 text-nori-h4d6a1e") : "bg-nori-h14131a/8 text-nori-h857b6b"}`}
+                    title={tg === "real" ? "Run on the ROBOT via the ASPIRE worker (task session — it evicts the teleop session)" : "Run in the simulator (SimSession)"}
+                  >
+                    {tg === "sim" ? "sim" : "robot"}
+                  </button>
+                ))}
+                {target === "real" && (
+                  <label className="flex items-center gap-1 font-mono text-nori-h857b6b"
+                    title="Table height in metres: anchors the robot's depth so locate_object heights are accurate">
+                    <span className="ml-1 uppercase tracking-wider">table_z</span>
+                    <input type="number" step="0.01" min="0" value={tableZ}
+                      onChange={(e) => setTableZ(e.target.value)} disabled={scriptRunning || generating}
+                      className="w-16 rounded border border-nori-h14131a/15 bg-nori-h14131a/8 px-1.5 py-0.5 text-foreground" />
+                    <span className="text-nori-h857b6b/70">m</span>
+                  </label>
+                )}
+              </div>
+            )}
           </div>
           <div className="flex-1 min-h-0 overflow-hidden rounded-md border border-nori-h14131a/12">
             <CodeMirror

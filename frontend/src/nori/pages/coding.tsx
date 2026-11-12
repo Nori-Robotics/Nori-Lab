@@ -319,7 +319,9 @@ const Coding = () => {
     try {
       const { task_id } = await aspire.start({
         robot: robotSerial, mode: "code_policy", source: code, flavor, budget: { seconds: 120 },
-        ...(Number(tableZ) > 0 ? { constraints: { table_z: Number(tableZ) } } : {}),
+        // Coding mode: the executor does NOT home the arm first (home:false) — the policy owns homing, so
+        // call task.home() yourself if you want the staging pose. (table_z anchors the depth when set.)
+        constraints: { home: false, ...(Number(tableZ) > 0 ? { table_z: Number(tableZ) } : {}) },
       });
       if (pyRunRef.current) pyRunRef.current.taskId = task_id;
       setYield("coding-task", `code policy running on ${robotSerial} (coding page)`);

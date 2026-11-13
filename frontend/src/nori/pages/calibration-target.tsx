@@ -288,7 +288,7 @@ export default function CameraCalibrationTarget() {
           <ul className="space-y-3 text-sm">
             <li className="flex gap-3"><Ruler size={20} className="shrink-0" /><span>Have a ruler with millimetre markings. You will check a 40 mm line in two directions.</span></li>
             <li className="flex gap-3"><Sun size={20} className="shrink-0" /><span>Clean the screen, keep its brightness steady, and turn off automatic brightness. Avoid reflections.</span></li>
-            <li className="flex gap-3"><Smartphone size={20} className="shrink-0" /><span>Hold the phone sideways. Keep browser zoom at its normal setting.</span></li>
+            <li className="flex gap-3"><Smartphone size={20} className="shrink-0" /><span>Turn the phone sideways and lock screen rotation in landscape, if your phone supports it. Keep it in landscape throughout calibration and leave browser zoom at its normal setting.</span></li>
           </ul>
           <label className="block text-sm font-medium">Your phone
             <select value={phone} onChange={event => { const id = event.target.value as PhoneProfileId; setPhone(id); setScale(estimatedScale(id, environment().dpr)); invalidate(); }}
@@ -333,6 +333,7 @@ export default function CameraCalibrationTarget() {
             : <p role="status" className="text-sm text-muted-foreground">There is not enough room in this view. Try full screen with Show checkerboard, or choose smaller squares.</p>}
           <ol className="list-decimal space-y-2 pl-5 text-sm">
             <li>Show the checkerboard and turn the screen toward the selected robot camera.</li>
+            <li>Keep landscape orientation locked while moving the board. If your phone cannot lock landscape, keep it sideways to prevent the screen rotating.</li>
             <li>Keep the whole board visible, hold still, and keep the screen awake. Follow the camera calibration instructions on your computer.</li>
             <li>Tap anywhere on the phone’s screen to return here. Download the target details for the calibration record.</li>
           </ol>

@@ -8,7 +8,7 @@ The target mounts independently of API, sign-in, WebRTC, and robot-control provi
 
 ## Operator procedure
 
-1. Have a millimetre ruler ready. Clean the phone's screen, set steady brightness, and avoid reflections. Turn the phone sideways and use normal browser zoom.
+1. Have a millimetre ruler ready. Clean the phone's screen, set steady brightness, and avoid reflections. Turn the phone sideways and lock screen rotation in landscape if supported. Keep that orientation throughout calibration; if the phone cannot lock landscape, keep it sideways to prevent rotation. Use normal browser zoom.
 2. Select **Google Pixel 6**, or **Another phone or tablet**. Pixel 6's nominal 411 ppi is an initial estimate only; browser DPR does not establish millimetres.
 3. Adjust the horizontal line until the distance between its end ticks measures **40 mm** against the ruler. Confirm.
 4. Verify that the vertical line, at the same scale, also measures **40 mm**. If it does not, go back and repeat; do not independently stretch one axis.

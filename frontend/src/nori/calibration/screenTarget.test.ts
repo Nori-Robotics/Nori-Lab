@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  blackCell, boardFits, boardGeometry, estimatedScale, isTargetPath, readSavedProfile,
+  blackCell, boardFits, boardGeometry, calibrationToolValues, estimatedScale, fitBoardGeometry, isTargetPath, readSavedProfile,
   sameEnvironment, targetManifest, type ScreenEnvironment, type VerifiedScreenProfile,
 } from "./screenTarget";
 
@@ -65,5 +65,50 @@ describe("screen checkerboard physical geometry", () => {
   it("recognizes only the standalone route", () => {
     expect(isTargetPath("/nori/calibration-target/")).toBe(true);
     expect(isTargetPath("/nori/calibration-target-extra")).toBe(false);
+  });
+  it("uses a much wider phone grid without changing the measured square spacing", () => {
+    const fixed = boardGeometry(5, profile.cssPixelsPerMm, environment.dpr);
+    const fitted = fitBoardGeometry(5, profile.cssPixelsPerMm, environment.dpr, 915, 412)!;
+    expect(fitted.squareDevicePixels).toBe(fixed.squareDevicePixels);
+    expect(fitted.actualSquareMm).toBe(fixed.actualSquareMm);
+    expect(fitted.widthCssPixels).toBeGreaterThan(915 * .9);
+    expect(fitted.innerColumns).toBeGreaterThan(fixed.innerColumns);
+    expect(boardFits(fitted, 915, 412)).toBe(true);
+    expect(fitted.squareColumns % 2).not.toBe(fitted.squareRows % 2);
+    const grid = { columns: fitted.innerColumns, rows: fitted.innerRows };
+    for (let y = 0; y < fitted.outerRows; y++) for (let x = 0; x < fitted.outerColumns; x++) {
+      const border = x === 0 || y === 0 || x === fitted.outerColumns - 1 || y === fitted.outerRows - 1;
+      expect(blackCell(x, y, grid)).toBe(!border && (x + y) % 2 === 0);
+    }
+  });
+  it("records the exact displayed grid and supplies matching calibration tool inputs", () => {
+    for (const role of ["front", "overhead"] as const) {
+      const fitted = fitBoardGeometry(8, profile.cssPixelsPerMm, environment.dpr, 915, 412)!;
+      const grid = { columns: fitted.innerColumns, rows: fitted.innerRows };
+      const manifest = targetManifest(profile, 8, role, environment, "wide-target", grid);
+      const values = calibrationToolValues(manifest);
+      expect(manifest.inner_corners).toEqual(grid);
+      expect(manifest.render.canvas_width).toBe(fitted.widthDevicePixels);
+      expect(manifest.render.canvas_height).toBe(fitted.heightDevicePixels);
+      expect(manifest.pattern_size_m.width).toBe(fitted.squareColumns * fitted.actualSquareMm / 1000);
+      expect(values.size).toBe(`${grid.columns}x${grid.rows}`);
+      expect(Number(values.square)).toBe(fitted.actualSquareMm / 1000);
+      expect(values.defaultCameraName).toBe(`${role}_camera`);
+      expect(values.imageTopic).toBe(`/camera/${role}/image_decoded`);
+      expect(values.boardArguments).toBe(`--size ${values.size} --square ${values.square}`);
+    }
+  });
+  it("selects a fresh grid only for a new display and refuses views too small for useful corners", () => {
+    const large = fitBoardGeometry(5, 6, 2, 915, 412)!;
+    const smaller = fitBoardGeometry(5, 6, 2, 700, 300)!;
+    expect(smaller.innerColumns).toBeLessThan(large.innerColumns);
+    expect(smaller.innerRows).toBeLessThan(large.innerRows);
+    expect(boardFits(large, 700, 300)).toBe(false);
+    expect(fitBoardGeometry(5, 6, 2, 150, 150)).toBeNull();
+    expect(fitBoardGeometry(5, 6, 2, NaN, 412)).toBeNull();
+    expect(fitBoardGeometry(5, 6, 2, 915, Infinity)).toBeNull();
+    for (const grid of [{ columns: 2, rows: 7 }, { columns: 4.5, rows: 7 }, { columns: 9, rows: 101 }]) {
+      expect(() => boardGeometry(5, 6, 2, grid)).toThrow();
+    }
   });
 });

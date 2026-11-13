@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { ArrowLeft, ArrowRight, Check, Download, Ruler, Smartphone, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  blackCell, boardFits, boardGeometry, estimatedScale, PHONE_PROFILES, PROFILE_STORAGE_KEY,
+  blackCell, boardFits, calibrationToolValues, fitBoardGeometry, estimatedScale, PHONE_PROFILES, PROFILE_STORAGE_KEY,
   readSavedProfile, REFERENCE_MM, sameEnvironment, targetManifest,
   type BoardGeometry, type CameraRole, type PhoneProfileId, type ScreenEnvironment, type VerifiedScreenProfile,
 } from "@/nori/calibration/screenTarget";
@@ -63,8 +63,8 @@ function DisplayTarget({ run, onPause }: { run: Run; onPause: (reason: string, i
     context.imageSmoothingEnabled = false;
     context.fillStyle = "#ffffff"; context.fillRect(0, 0, element.width, element.height);
     context.fillStyle = "#000000";
-    for (let row = 0; row < 10; row++) for (let col = 0; col < 12; col++) {
-      if (blackCell(col, row)) context.fillRect(col * g.squareDevicePixels, row * g.squareDevicePixels, g.squareDevicePixels, g.squareDevicePixels);
+    for (let row = 0; row < g.outerRows; row++) for (let col = 0; col < g.outerColumns; col++) {
+      if (blackCell(col, row, { columns: g.innerColumns, rows: g.innerRows })) context.fillRect(col * g.squareDevicePixels, row * g.squareDevicePixels, g.squareDevicePixels, g.squareDevicePixels);
     }
     const check = () => {
       if (!sameEnvironment(run.environment, environment())) {
@@ -130,6 +130,7 @@ export default function CameraCalibrationTarget() {
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState(false);
   const [sharedUrl, setSharedUrl] = useState("");
+  const [toolCopyStatus, setToolCopyStatus] = useState("");
   const verificationEnvironment = useRef<ScreenEnvironment | null>(null);
   const ownsFullscreen = useRef(false);
   const landscape = layout.width > layout.height;
@@ -152,7 +153,7 @@ export default function CameraCalibrationTarget() {
   }, []);
 
   const invalidate = useCallback(() => {
-    setRun(null); setProfile(null); setLastManifest(null); verificationEnvironment.current = null;
+    setRun(null); setProfile(null); setLastManifest(null); setToolCopyStatus(""); verificationEnvironment.current = null;
     try { localStorage.removeItem(PROFILE_STORAGE_KEY); } catch { /* Continue without persistence. */ }
     if (ownsFullscreen.current && document.fullscreenElement === document.documentElement) {
       ownsFullscreen.current = false;
@@ -216,14 +217,14 @@ export default function CameraCalibrationTarget() {
     if (!sameEnvironment(profile.environment, e) || Math.abs(e.zoom - 1) >= .005) {
       pause("Display settings changed. Check the screen size again.", true); return;
     }
-    const geometry = boardGeometry(squareMm, profile.cssPixelsPerMm, e.dpr);
     const available = viewport();
-    if (!boardFits(geometry, available.width, available.height)) {
+    const geometry = fitBoardGeometry(squareMm, profile.cssPixelsPerMm, e.dpr, available.width, available.height);
+    if (!geometry) {
       pause("This board is too large for the available screen. Choose smaller squares; the board will keep its measured size."); return;
     }
     const id = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Array.from(crypto.getRandomValues(new Uint32Array(2)), n => n.toString(36)).join("")}`;
-    const manifest = targetManifest(profile, squareMm, role, e, `screen-${id}`);
-    setLastManifest(manifest); setRun({ geometry, environment: e, manifest });
+    const manifest = targetManifest(profile, squareMm, role, e, `screen-${id}`, { columns: geometry.innerColumns, rows: geometry.innerRows });
+    setToolCopyStatus(""); setLastManifest(manifest); setRun({ geometry, environment: e, manifest });
   };
   const download = () => {
     if (!lastManifest || !profile || !sameEnvironment(profile.environment, environment())) return;
@@ -231,13 +232,21 @@ export default function CameraCalibrationTarget() {
     const link = document.createElement("a"); link.href = url;
     link.download = `${lastManifest.target_id}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  const changeBoard = (value: number) => { setSquareMm(value); setLastManifest(null); };
+  const changeBoard = (value: number) => { setSquareMm(value); setLastManifest(null); setToolCopyStatus(""); };
+  const copyToolValues = async () => {
+    if (!lastManifest) return;
+    try {
+      await navigator.clipboard.writeText(calibrationToolValues(lastManifest).boardArguments);
+      setToolCopyStatus("Board arguments copied.");
+    } catch { setToolCopyStatus("Copy is unavailable in this browser. Select the board arguments below and copy them manually."); }
+  };
   const share = async () => {
     const url = new URL("/nori/calibration-target", window.location.href).href;
     try { await navigator.clipboard.writeText(url); setCopied(true); }
     catch { setSharedUrl(url); }
   };
-  const geometry = profile ? boardGeometry(squareMm, profile.cssPixelsPerMm, environment().dpr) : null;
+  const geometry = profile ? fitBoardGeometry(squareMm, profile.cssPixelsPerMm, environment().dpr, layout.width, layout.height) : null;
+  const toolValues = lastManifest ? calibrationToolValues(lastManifest) : null;
   const steps: Step[] = ["phone", "width", "height", "ready"];
   const stepIndex = steps.indexOf(step);
 
@@ -304,13 +313,15 @@ export default function CameraCalibrationTarget() {
           </div>
         </section>}
 
-        {step === "ready" && profile && geometry && <section aria-labelledby="ready-heading" className="space-y-5">
+        {step === "ready" && profile && <section aria-labelledby="ready-heading" className="space-y-5">
           <h2 id="ready-heading" className="text-xl font-semibold">Your screen is ready.</h2>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block text-sm font-medium">Camera you are checking<select value={role} onChange={event => { setRole(event.target.value as CameraRole); setLastManifest(null); }} className="mt-2 min-h-12 w-full rounded-lg border bg-background px-3 text-base"><option value="overhead">Overhead</option><option value="front">Front</option></select></label>
-            <label className="block text-sm font-medium">Square size<select value={squareMm} onChange={event => changeBoard(Number(event.target.value))} className="mt-2 min-h-12 w-full rounded-lg border bg-background px-3 text-base">{[4, 5, 6].map(n => <option key={n} value={n}>{n} mm{n === 5 ? " · starting size" : ""}</option>)}</select></label>
+            <label className="block text-sm font-medium">Camera you are checking<select value={role} onChange={event => { setRole(event.target.value as CameraRole); setLastManifest(null); setToolCopyStatus(""); }} className="mt-2 min-h-12 w-full rounded-lg border bg-background px-3 text-base"><option value="overhead">Overhead</option><option value="front">Front</option></select></label>
+            <label className="block text-sm font-medium">Square size<select value={squareMm} onChange={event => changeBoard(Number(event.target.value))} className="mt-2 min-h-12 w-full rounded-lg border bg-background px-3 text-base">{[4, 5, 6, 8, 10].map(n => <option key={n} value={n}>{n} mm{n === 5 ? " · starting size" : ""}</option>)}</select></label>
           </div>
-          <p className="text-sm text-muted-foreground">9 × 7 inner corners, with a full white border. The board is approximately {geometry.outerWidthMm.toFixed(1)} × {geometry.outerHeightMm.toFixed(1)} mm including the border.</p>
+          <p className="text-sm text-muted-foreground">The grid automatically fills the available screen with whole squares and a full white border. Your measured square size stays the same.</p>
+          {geometry ? <p className="text-sm text-muted-foreground">In this view: {geometry.squareColumns} × {geometry.squareRows} squares ({geometry.innerColumns} × {geometry.innerRows} inner corners), approximately {geometry.outerWidthMm.toFixed(1)} × {geometry.outerHeightMm.toFixed(1)} mm including the border. Full screen may fit more squares.</p>
+            : <p role="status" className="text-sm text-muted-foreground">There is not enough room in this view. Try full screen with Show checkerboard, or choose smaller squares.</p>}
           <ol className="list-decimal space-y-2 pl-5 text-sm">
             <li>Show the checkerboard and turn the screen toward the selected robot camera.</li>
             <li>Keep the whole board visible, hold still, and keep the screen awake. Follow the camera calibration instructions on your computer.</li>
@@ -319,7 +330,23 @@ export default function CameraCalibrationTarget() {
           <p className="rounded-xl bg-muted p-4 text-sm">A phone-sized board may be too small at longer distances. If the camera cannot see its corners clearly, use a larger measured board or tablet.</p>
           <Button size="lg" className="min-h-12 w-full" disabled={!landscape || !normalZoom} onClick={() => void start()}>Show checkerboard <ArrowRight className="ml-2 h-4 w-4" /></Button>
           <div className="flex flex-wrap gap-3"><Button variant="outline" className="min-h-11" onClick={goToWidth}>Check screen size again</Button><Button variant="outline" className="min-h-11" disabled={!lastManifest} onClick={download}><Download className="mr-2 h-4 w-4" /> Download target details</Button></div>
-          {lastManifest && <details className="rounded-lg border p-3 text-sm"><summary className="cursor-pointer font-medium">Target details for the calibration record</summary><p className="mt-3 break-all font-mono text-xs">Square edge: {lastManifest.square_size_m.toFixed(9)} m · target {lastManifest.target_id}</p><p className="mt-2 text-muted-foreground">The file records the verified size and pixel rounding. It contains target information, not a completed camera calibration.</p></details>}
+          <section aria-labelledby="tool-values-heading" className="space-y-4 rounded-xl border p-4">
+            <h3 id="tool-values-heading" className="text-lg font-semibold">Calibration tool values</h3>
+            {toolValues ? <>
+              <p className="text-sm text-muted-foreground">These values match the last checkerboard shown. Keep this phone in the same orientation and use the same board while collecting images.</p>
+              <dl className="grid gap-4 text-sm sm:grid-cols-2">
+                <div><dt className="text-muted-foreground">Inner corners across × down · --size</dt><dd className="mt-1 break-all font-mono font-semibold">{toolValues.size}</dd></div>
+                <div><dt className="text-muted-foreground">Square edge in metres · --square</dt><dd className="mt-1 break-all font-mono font-semibold">{toolValues.square}</dd></div>
+                <div><dt className="text-muted-foreground">Default camera name · --camera_name</dt><dd className="mt-1 break-all font-mono">{toolValues.defaultCameraName}</dd></div>
+                <div><dt className="text-muted-foreground">Decoded image topic</dt><dd className="mt-1 break-all font-mono">{toolValues.imageTopic}</dd></div>
+              </dl>
+              <p className="text-sm text-muted-foreground">Count the inside intersections, not the boxes. If the corner counts change, start a new calibration with the new values. Confirm the camera name on the robot; this page cannot read its settings.</p>
+              <label className="block text-sm font-medium">Board arguments<textarea readOnly value={toolValues.boardArguments} onFocus={event => event.target.select()} rows={2} className="mt-2 w-full resize-none rounded-lg border bg-background p-3 font-mono text-sm" /></label>
+              <Button variant="outline" className="min-h-11" onClick={() => void copyToolValues()}>Copy board arguments</Button>
+              {toolCopyStatus && <p role="status" className="text-sm text-muted-foreground">{toolCopyStatus}</p>}
+            </> : <p className="text-sm text-muted-foreground">Show the checkerboard once, then tap it to return here. The exact corner counts and square size will appear here for your calibration tool.</p>}
+          </section>
+          {lastManifest && <details className="rounded-lg border p-3 text-sm"><summary className="cursor-pointer font-medium">Target details for the calibration record</summary><p className="mt-3 break-all font-mono text-xs">Inner corners: {lastManifest.inner_corners.columns} × {lastManifest.inner_corners.rows} · square edge: {lastManifest.square_size_m.toFixed(9)} m · target {lastManifest.target_id}</p><p className="mt-2 text-muted-foreground">The file records the exact grid shown, verified size, and pixel rounding. Use its corner counts when calibrating. It contains target information, not a completed camera calibration.</p></details>}
         </section>}
         <footer className="mt-8 border-t pt-4 text-xs text-muted-foreground">Front and overhead monocular cameras · Nori calibration pilot</footer>
       </div>

@@ -12,12 +12,12 @@ The target mounts independently of API, sign-in, WebRTC, and robot-control provi
 2. Select **Google Pixel 6**, or **Another phone or tablet**. Pixel 6's nominal 411 ppi is an initial estimate only; browser DPR does not establish millimetres.
 3. Adjust the horizontal line until the distance between its end ticks measures **40 mm** against the ruler. Confirm.
 4. Verify that the vertical line, at the same scale, also measures **40 mm**. If it does not, go back and repeat; do not independently stretch one axis.
-5. Choose **Overhead** or **Front**, then a requested square edge of **4, 5, or 6 mm**. Start at 5 mm. These are target sizes to evaluate, not a claim that every size is detectable across the full work volume.
+5. Choose **Overhead** or **Front**, then a requested square edge of **4, 5, 6, 8, or 10 mm**. Start at 5 mm. These are target sizes to evaluate, not a claim that every size is detectable across the full work volume.
 6. Select **Show checkerboard**. The page attempts fullscreen and uses screen wake lock where supported. If fullscreen is unavailable, it displays only when the complete target fits. Keep the screen awake manually if necessary.
 7. Hold the whole target toward the selected camera. Follow the existing camera-calibration procedure on the computer. This first milestone supplies no automated capture or movement guidance.
-8. Tap anywhere on the target, or press Escape, to return to setup. Select **Download target details** and preserve the JSON beside the camera observations.
+8. Tap anywhere on the target, or press Escape, to return to setup. Read **Calibration tool values** for the exact `--size` (inner corners across × down) and `--square` (metres), or copy its board arguments. Confirm the default camera name against the robot’s actual settings. Select **Download target details** and preserve the JSON beside the camera observations.
 
-The displayed target has **10 × 8 squares**, **9 × 7 inner corners**, and a white border one square wide on every side. There are no controls or text on the displayed target. All squares use one integer number of canvas backing pixels; both spacing and origin align to that grid. The page never resizes the target to fit.
+The displayed target uses as many whole rows and columns as fit the available screen, with a white border one square wide on every side and 16 CSS pixels of extra clearance. Square counts have opposite parity to distinguish the board axes. Counts are chosen after attempting fullscreen and frozen for that display run; any subsequent clipping pauses the target. Showing it again in a different viewport may produce different counts, so restart the calibration tool if the counts change. There are no controls or text on the displayed target. All squares use one integer number of canvas backing pixels; both spacing and origin align to that grid. The page never stretches or shrinks squares to fit; it adds whole rows and columns instead.
 
 ## Rechecking and interrupted display
 
@@ -27,7 +27,7 @@ Stored profiles are operator assertions, not metrology certificates. Repeat the 
 
 ## Target details contract
 
-`screenTarget.ts` defines the version-1 `nori_screen_checkerboard` JSON artifact. The record is generated when the board is shown and retained for download after display stops. Changing role, square size, or verified screen mapping clears the record.
+`screenTarget.ts` defines the version-1 `nori_screen_checkerboard` JSON artifact. The record is generated when the board is shown and retained for download after display stops. The visible Calibration tool values and copyable board arguments come from that same frozen record, rather than the potentially different setup preview. Changing role, square size, or verified screen mapping clears the record.
 
 Important fields:
 
@@ -35,7 +35,7 @@ Important fields:
 |---|---|
 | `target_id` | Identifier for that display run |
 | `camera_role` | `front` or `overhead`, as selected by the operator |
-| `inner_corners` | `{columns: 9, rows: 7}` |
+| `inner_corners` | Actual inner intersections across/down for that display run; use these for `--size`, not square counts |
 | `square_size_m` | Actual square edge after rounding to whole backing pixels; use this for fitting and pose estimation |
 | `requested_square_size_m` | Operator's requested edge before pixel rounding |
 | `pattern_size_m` | Dimensions of the black-and-white pattern |
@@ -54,7 +54,7 @@ Future wizard/SDK/gateway work must keep the phone target distinct from the lapt
 
 ## Validation
 
-Run `npm test -- src/nori/calibration/screenTarget.test.ts` and `npm run build` from `frontend`. Unit checks cover dimensions/rounding, corner and border geometry, corrupt/stale profiles, scaling changes, and refusing to shrink the target.
+Run `npm test -- src/nori/calibration/screenTarget.test.ts` and `npm run build` from `frontend`. Unit checks cover dimensions/rounding, corner and border geometry, corrupt/stale profiles, scaling changes, filling a wide phone viewport, matching variable grid counts to calibration arguments, and refusing to shrink or reflow an active target.
 
 Browser checks must cover normal and blocked storage, unsupported fullscreen/wake lock, portrait and landscape, zoom/orientation invalidation, target clipping, plain-HTTP LAN display, and manifest download. Physical Pixel 6 validation remains separate: verify dimensions with a ruler, capture front/overhead views at required distances and tilts, inspect screen artifacts, and compare calibration against a measured printed reference target. Software checks cannot establish physical size or optical accuracy.
 

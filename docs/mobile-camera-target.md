@@ -12,7 +12,7 @@ The target mounts independently of API, sign-in, WebRTC, and robot-control provi
 2. Select **Google Pixel 6**, or **Another phone or tablet**. Pixel 6's nominal 411 ppi is an initial estimate only; browser DPR does not establish millimetres.
 3. Adjust the horizontal line until the distance between its end ticks measures **40 mm** against the ruler. Confirm.
 4. Verify that the vertical line, at the same scale, also measures **40 mm**. If it does not, go back and repeat; do not independently stretch one axis.
-5. Choose **Overhead** or **Front**, then a requested square edge of **4, 5, 6, 8, or 10 mm**. Start at 5 mm. These are target sizes to evaluate, not a claim that every size is detectable across the full work volume.
+5. Choose **Overhead** or **Front**, then a requested square edge of **4, 5, 6, 8, or 10 mm**. The default is 6 mm. These are target sizes to evaluate, not a claim that every size is detectable across the full work volume.
 6. Select **Show checkerboard**. The page attempts fullscreen and uses screen wake lock where supported. If fullscreen is unavailable, it displays only when the complete target fits. Keep the screen awake manually if necessary.
 7. Hold the whole target toward the selected camera. Follow the existing camera-calibration procedure on the computer. This first milestone supplies no automated capture or movement guidance.
 8. Tap anywhere on the target, or press Escape, to return to setup. Read **Calibration tool values** for the exact `--size` (inner corners across × down) and `--square` (metres), or copy its board arguments. Confirm the default camera name against the robot’s actual settings. Select **Download target details** and preserve the JSON beside the camera observations.

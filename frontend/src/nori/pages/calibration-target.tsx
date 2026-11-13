@@ -132,7 +132,7 @@ export default function CameraCalibrationTarget() {
   const [layout, setLayout] = useState(viewport);
   const [zoom, setZoom] = useState(() => environment().zoom);
   const [referenceFits, setReferenceFits] = useState(false);
-  const [squareMm, setSquareMm] = useState(5);
+  const [squareMm, setSquareMm] = useState(6);
   const [role, setRole] = useState<CameraRole>("overhead");
   const [run, setRun] = useState<Run | null>(null);
   const [lastManifest, setLastManifest] = useState<Manifest | null>(null);
@@ -326,7 +326,7 @@ export default function CameraCalibrationTarget() {
           <h2 id="ready-heading" className="text-xl font-semibold">Your screen is ready.</h2>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block text-sm font-medium">Camera you are checking<select value={role} onChange={event => { setRole(event.target.value as CameraRole); setLastManifest(null); setToolCopyStatus(""); }} className="mt-2 min-h-12 w-full rounded-lg border bg-background px-3 text-base"><option value="overhead">Overhead</option><option value="front">Front</option></select></label>
-            <label className="block text-sm font-medium">Square size<select value={squareMm} onChange={event => changeBoard(Number(event.target.value))} className="mt-2 min-h-12 w-full rounded-lg border bg-background px-3 text-base">{[4, 5, 6, 8, 10].map(n => <option key={n} value={n}>{n} mm{n === 5 ? " · starting size" : ""}</option>)}</select></label>
+            <label className="block text-sm font-medium">Square size<select value={squareMm} onChange={event => changeBoard(Number(event.target.value))} className="mt-2 min-h-12 w-full rounded-lg border bg-background px-3 text-base">{[4, 5, 6, 8, 10].map(n => <option key={n} value={n}>{n} mm{n === 6 ? " · starting size" : ""}</option>)}</select></label>
           </div>
           <p className="text-sm text-muted-foreground">The grid automatically fills the available screen with whole squares and a full white border. Tool values stay visible in a separate strip below the board. Your measured square size stays the same.</p>
           {geometry ? <p className="text-sm text-muted-foreground">In this view: {geometry.squareColumns} × {geometry.squareRows} squares ({geometry.innerColumns} × {geometry.innerRows} inner corners), approximately {geometry.outerWidthMm.toFixed(1)} × {geometry.outerHeightMm.toFixed(1)} mm including the border. Full screen may fit more squares.</p>

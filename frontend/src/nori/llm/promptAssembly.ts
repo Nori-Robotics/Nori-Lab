@@ -24,6 +24,7 @@ export interface CodegenRequest {
   mode?: "ts" | "python"; // default "ts": picks the system prompt + code-fence language
   flavor?: "primitives" | "sdk"; // python only: RealA3Task primitives (default) vs raw nori_sdk
   skills?: string; // python/primitives: relevant Skill library text, read before generating
+  advice?: string; // python/primitives: the robot's learned advice/context (aspire_robot_notes), injected like the agent (P2)
 }
 
 export type ContentBlock =

@@ -61,7 +61,7 @@ export async function hostedGenerateStream(body: CodegenRequest): Promise<Respon
     body: JSON.stringify({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      system: systemFor(body),
+      system: systemFor(body) + (body.advice ? `\n\n${body.advice}` : ""),
       messages: [{ role: "user", content: buildCodegenContent(body) }],
       new_run: true, // each generation is its own run (matches LeLab)
     }),
@@ -98,7 +98,7 @@ export async function hostedGenerateWithSkills(
     const ir = await fetch(`${base}/api/v1/aspire/skills/index`, { headers });
     if (ir.ok) indexText = ((await ir.json()) as { text?: string })?.text || "";
   } catch { /* skills are optional grounding */ }
-  const system = systemFor(body) + indexText;
+  const system = systemFor(body) + (body.advice ? `\n\n${body.advice}` : "") + indexText;
   const messages: Array<Record<string, unknown>> = [{ role: "user", content: buildCodegenContent(body) }];
   for (let round = 0; round < 6; round++) {
     const res = await fetch(`${backendBase()}${LLM_BASE}/messages`, {
@@ -130,6 +130,34 @@ export async function hostedGenerateWithSkills(
     return content.filter((b) => b.type === "text").map((b) => String((b as { text?: string }).text ?? "")).join("");
   }
   throw new Error("codegen exceeded the read_skill round limit");
+}
+
+/** Hosted advice INJECTION (agent-parity P2): fetch the robot's learned advice/context (aspire_robot_notes
+ *  via /aspire/robots/{robot}/notes) and render it like the agent's advice.render — CONTEXT facts + topic
+ *  entries. This is the channel that actually drives the live agent (measured grasp heights, reach walls,
+ *  real-perception deltas, what the primitives' outputs really do). Best-effort: "" on any failure.
+ *  See docs/codegen-agent-parity-design.md P2. (Raw topic bodies may include retracted entries until the
+ *  code-tied invalidation of P6 lands.) */
+export async function hostedRobotAdvice(robot: string): Promise<string> {
+  if (!robot) return "";
+  const base = backendBase();
+  const headers = await authHeaders();
+  let files: Array<{ kind?: string; key?: string; body?: string }> = [];
+  try {
+    const r = await fetch(`${base}/api/v1/aspire/robots/${encodeURIComponent(robot)}/notes`, { headers });
+    if (r.ok) files = (((await r.json()) as { files?: typeof files }).files) || [];
+  } catch { return ""; }
+  const ctx = files.filter((f) => f.kind === "context").map((f) => (f.body || "").trim()).filter(Boolean);
+  const topics = files.filter((f) => f.kind === "topic" && (f.body || "").trim());
+  if (!ctx.length && !topics.length) return "";
+  const parts = [
+    "ADVICE — what the agent has learned on THIS robot from real runs (measured deltas, reach limits, grasp "
+    + "heights, what the primitives' outputs really do). Prefer these concrete numbers over generic guidance; "
+    + "when a live tool result disagrees, the result wins.",
+  ];
+  if (ctx.length) parts.push(`## CONTEXT\n${ctx.join("\n")}`);
+  for (const t of topics) parts.push(`## ${t.key}\n${(t.body || "").trim()}`);
+  return parts.join("\n\n");
 }
 
 /** Hosted depth fetch: POST one look-frame JPEG to the backend's depth endpoint and return the

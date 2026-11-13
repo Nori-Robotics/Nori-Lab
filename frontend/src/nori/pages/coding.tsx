@@ -27,7 +27,7 @@ import { ScriptSession } from "@/nori/remote/ScriptSession";
 import { startMockPerception, type MockPerceptionHandle } from "@/nori/remote/mockPerception";
 import { useApi } from "@/contexts/ApiContext";
 import { isDirectBackend } from "@/nori/api/client";
-import { hostedGenerateStream, hostedGenerateWithSkills } from "@/nori/llm/hostedLlm";
+import { hostedGenerateStream, hostedGenerateWithSkills, hostedRobotAdvice } from "@/nori/llm/hostedLlm";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
 
 const CODE_EXTENSIONS = [javascript({ typescript: true }), EditorView.lineWrapping];
@@ -137,6 +137,7 @@ const Coding = () => {
   const sessionRef = useRef<ScriptSession | null>(null);
   const pyRunRef = useRef<{ runId: string | null; taskId: string | null; abort: AbortController } | null>(null); // active python/server/task run
   const skillsRef = useRef<string | undefined>(undefined); // skill-library text fetched before a python generate
+  const adviceRef = useRef<string | undefined>(undefined); // robot advice/context (aspire_robot_notes), injected like the agent (P2)
   const mockPerceptionRef = useRef<MockPerceptionHandle | null>(null);
   const outRef = useRef<HTMLDivElement>(null);
 
@@ -213,6 +214,7 @@ const Coding = () => {
       mode,
       flavor: mode === "python" ? flavor : undefined,
       skills: mode === "python" ? skillsRef.current : undefined,
+      advice: mode === "python" ? adviceRef.current : undefined,
     };
     // HOSTED primitive codegen: the model CHOOSES skills (index + read_skill tool loop), like the agent
     // worker — not a pre-injected top-N. Non-streaming (the loop must see tool_use), so show read events.
@@ -262,6 +264,17 @@ const Coding = () => {
             if (sj?.names?.length) append(`📚 skills consulted: ${sj.names.join(", ")}`);
           }
         } catch { /* skills are optional grounding */ }
+      }
+      // HOSTED (python/primitives): inject the robot's LEARNED ADVICE (aspire_robot_notes) — the channel
+      // that actually drives the live agent (grasp heights, reach walls, real-perception deltas). This is
+      // the parity step; skills stay index+read_skill like the agent. See docs/codegen-agent-parity-design.md P2.
+      adviceRef.current = undefined;
+      if (isDirectBackend() && mode === "python" && flavor === "primitives" && robotSerial) {
+        try {
+          const adv = await hostedRobotAdvice(robotSerial);
+          adviceRef.current = adv || undefined;
+          if (adv) append(`🧠 advice injected: ${robotSerial}'s learned context`);
+        } catch { /* advice is optional grounding */ }
       }
       // 9a — proprioceptive grounding: hand the model the CURRENT pose so it can plan relative to
       // where the arm actually is ("pan is at +20 → jog negative to center") instead of guessing.

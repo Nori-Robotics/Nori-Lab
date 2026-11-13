@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, Check, Download, Ruler, Smartphone, Sun } from "
 import { Button } from "@/components/ui/button";
 import {
   blackCell, boardFits, calibrationToolValues, fitBoardGeometry, estimatedScale, PHONE_PROFILES, PROFILE_STORAGE_KEY,
-  readSavedProfile, REFERENCE_MM, sameEnvironment, targetManifest,
+  readSavedProfile, REFERENCE_MM, sameEnvironment, targetManifest, TARGET_VALUES_HEIGHT_PX,
   type BoardGeometry, type CameraRole, type PhoneProfileId, type ScreenEnvironment, type VerifiedScreenProfile,
 } from "@/nori/calibration/screenTarget";
 
@@ -54,6 +54,7 @@ function ReferenceGauge({ scale, vertical, onFits }: { scale: number; vertical: 
 function DisplayTarget({ run, onPause }: { run: Run; onPause: (reason: string, invalidate?: boolean) => void }) {
   const stage = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
+  const values = calibrationToolValues(run.manifest);
   useLayoutEffect(() => {
     const element = canvas.current;
     const context = element?.getContext("2d");
@@ -72,7 +73,8 @@ function DisplayTarget({ run, onPause }: { run: Run; onPause: (reason: string, i
       }
       const bounds = stage.current?.getBoundingClientRect();
       const available = viewport();
-      const width = Math.min(bounds?.width ?? 0, available.width), height = Math.min(bounds?.height ?? 0, available.height);
+      const width = Math.min(bounds?.width ?? 0, available.width);
+      const height = Math.min(bounds?.height ?? 0, available.height - TARGET_VALUES_HEIGHT_PX);
       if (!boardFits(g, width, height)) {
         onPause("The whole board no longer fits. Use a smaller square size or make more screen space available."); return;
       }
@@ -103,13 +105,20 @@ function DisplayTarget({ run, onPause }: { run: Run; onPause: (reason: string, i
     };
   }, [run, onPause]);
   return (
-    <div ref={stage} className="fixed inset-0 z-[200] cursor-pointer touch-manipulation overflow-hidden bg-white"
+    <div className="fixed inset-0 z-[200] cursor-pointer touch-manipulation overflow-hidden bg-white"
       style={{ colorScheme: "only light", forcedColorAdjust: "none" }}
-      role="button" tabIndex={0} aria-label="Checkerboard displayed. Tap anywhere or press Escape to return to setup."
+      role="button" tabIndex={0} aria-label={`Checkerboard displayed. ${values.boardArguments}. Default camera name: ${values.defaultCameraName}. Image topic: ${values.imageTopic}. Tap anywhere or press Escape to return to setup.`}
       onClick={() => onPause("Target paused. You can download its details below.")}
       onKeyDown={event => { if (["Escape", "Enter", " "].includes(event.key)) { event.preventDefault(); onPause("Target paused."); } }}>
-      <canvas ref={canvas} aria-hidden="true" data-testid="checkerboard-canvas" className="absolute block"
-        style={{ width: run.geometry.widthCssPixels, height: run.geometry.heightCssPixels, imageRendering: "pixelated" }} />
+      <div ref={stage} data-testid="checkerboard-area" className="absolute inset-x-0 top-0 overflow-hidden" style={{ bottom: TARGET_VALUES_HEIGHT_PX }}>
+        <canvas ref={canvas} aria-hidden="true" data-testid="checkerboard-canvas" className="absolute block"
+          style={{ width: run.geometry.widthCssPixels, height: run.geometry.heightCssPixels, imageRendering: "pixelated" }} />
+      </div>
+      <div data-testid="checkerboard-tool-values" className="absolute inset-x-0 bottom-0 flex flex-col justify-center gap-1 overflow-hidden bg-slate-900 px-4 py-2 font-mono text-[clamp(10px,1.4vw,12px)] leading-4 text-white"
+        style={{ height: TARGET_VALUES_HEIGHT_PX }}>
+        <div className="flex flex-wrap gap-x-5 gap-y-1"><span className="whitespace-nowrap">--size {values.size}</span><span className="whitespace-nowrap">--square {values.square}</span></div>
+        <div className="flex flex-wrap gap-x-5 gap-y-1 text-[clamp(10px,1.3vw,11px)] leading-4"><span className="whitespace-nowrap">--camera_name {values.defaultCameraName} (default)</span><span className="whitespace-nowrap">image: {values.imageTopic}</span></div>
+      </div>
     </div>
   );
 }
@@ -218,7 +227,7 @@ export default function CameraCalibrationTarget() {
       pause("Display settings changed. Check the screen size again.", true); return;
     }
     const available = viewport();
-    const geometry = fitBoardGeometry(squareMm, profile.cssPixelsPerMm, e.dpr, available.width, available.height);
+    const geometry = fitBoardGeometry(squareMm, profile.cssPixelsPerMm, e.dpr, available.width, available.height - TARGET_VALUES_HEIGHT_PX);
     if (!geometry) {
       pause("This board is too large for the available screen. Choose smaller squares; the board will keep its measured size."); return;
     }
@@ -245,7 +254,7 @@ export default function CameraCalibrationTarget() {
     try { await navigator.clipboard.writeText(url); setCopied(true); }
     catch { setSharedUrl(url); }
   };
-  const geometry = profile ? fitBoardGeometry(squareMm, profile.cssPixelsPerMm, environment().dpr, layout.width, layout.height) : null;
+  const geometry = profile ? fitBoardGeometry(squareMm, profile.cssPixelsPerMm, environment().dpr, layout.width, layout.height - TARGET_VALUES_HEIGHT_PX) : null;
   const toolValues = lastManifest ? calibrationToolValues(lastManifest) : null;
   const steps: Step[] = ["phone", "width", "height", "ready"];
   const stepIndex = steps.indexOf(step);
@@ -319,7 +328,7 @@ export default function CameraCalibrationTarget() {
             <label className="block text-sm font-medium">Camera you are checking<select value={role} onChange={event => { setRole(event.target.value as CameraRole); setLastManifest(null); setToolCopyStatus(""); }} className="mt-2 min-h-12 w-full rounded-lg border bg-background px-3 text-base"><option value="overhead">Overhead</option><option value="front">Front</option></select></label>
             <label className="block text-sm font-medium">Square size<select value={squareMm} onChange={event => changeBoard(Number(event.target.value))} className="mt-2 min-h-12 w-full rounded-lg border bg-background px-3 text-base">{[4, 5, 6, 8, 10].map(n => <option key={n} value={n}>{n} mm{n === 5 ? " · starting size" : ""}</option>)}</select></label>
           </div>
-          <p className="text-sm text-muted-foreground">The grid automatically fills the available screen with whole squares and a full white border. Your measured square size stays the same.</p>
+          <p className="text-sm text-muted-foreground">The grid automatically fills the available screen with whole squares and a full white border. Tool values stay visible in a separate strip below the board. Your measured square size stays the same.</p>
           {geometry ? <p className="text-sm text-muted-foreground">In this view: {geometry.squareColumns} × {geometry.squareRows} squares ({geometry.innerColumns} × {geometry.innerRows} inner corners), approximately {geometry.outerWidthMm.toFixed(1)} × {geometry.outerHeightMm.toFixed(1)} mm including the border. Full screen may fit more squares.</p>
             : <p role="status" className="text-sm text-muted-foreground">There is not enough room in this view. Try full screen with Show checkerboard, or choose smaller squares.</p>}
           <ol className="list-decimal space-y-2 pl-5 text-sm">

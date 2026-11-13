@@ -8,6 +8,7 @@ export const SQUARE_COLUMNS = INNER_COLUMNS + 1;
 export const SQUARE_ROWS = INNER_ROWS + 1;
 export const BORDER_SQUARES = 1;
 export const VIEW_MARGIN_PX = 16;
+export const TARGET_VALUES_HEIGHT_PX = 72;
 export interface GridSize { columns: number; rows: number }
 const DEFAULT_GRID: GridSize = { columns: INNER_COLUMNS, rows: INNER_ROWS };
 

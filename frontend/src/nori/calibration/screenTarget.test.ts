@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   blackCell, boardFits, boardGeometry, calibrationToolValues, estimatedScale, fitBoardGeometry, isTargetPath, readSavedProfile,
-  sameEnvironment, targetManifest, type ScreenEnvironment, type VerifiedScreenProfile,
+  sameEnvironment, targetManifest, TARGET_VALUES_HEIGHT_PX, type ScreenEnvironment, type VerifiedScreenProfile,
 } from "./screenTarget";
 
 const environment: ScreenEnvironment = { screenWidth: 915, screenHeight: 412, dpr: 2.625, zoom: 1, orientation: "landscape-primary" };
@@ -110,5 +110,17 @@ describe("screen checkerboard physical geometry", () => {
     for (const grid of [{ columns: 2, rows: 7 }, { columns: 4.5, rows: 7 }, { columns: 9, rows: 101 }]) {
       expect(() => boardGeometry(5, 6, 2, grid)).toThrow();
     }
+  });
+  it("fits the complete white border above the tool-value strip without changing square size", () => {
+    const width = 915, height = 412;
+    const areaHeight = height - TARGET_VALUES_HEIGHT_PX;
+    const full = fitBoardGeometry(5, profile.cssPixelsPerMm, environment.dpr, width, height)!;
+    const withValues = fitBoardGeometry(5, profile.cssPixelsPerMm, environment.dpr, width, areaHeight)!;
+    expect(withValues.squareDevicePixels).toBe(full.squareDevicePixels);
+    expect(withValues.widthCssPixels).toBeGreaterThan(width * .9);
+    expect(withValues.heightCssPixels + TARGET_VALUES_HEIGHT_PX + 32).toBeLessThanOrEqual(height);
+    expect(withValues.innerRows).toBeLessThan(full.innerRows);
+    expect(boardFits(withValues, width, areaHeight)).toBe(true);
+    expect(boardFits(withValues, width, areaHeight - 100)).toBe(false);
   });
 });

@@ -27,7 +27,7 @@ import { ScriptSession } from "@/nori/remote/ScriptSession";
 import { startMockPerception, type MockPerceptionHandle } from "@/nori/remote/mockPerception";
 import { useApi } from "@/contexts/ApiContext";
 import { isDirectBackend } from "@/nori/api/client";
-import { hostedGenerateStream, hostedGenerateWithSkills } from "@/nori/llm/hostedLlm";
+import { hostedGenerateStream, hostedRelevantSkills } from "@/nori/llm/hostedLlm";
 import { useConnectGate } from "@/nori/components/ConnectionPanel";
 
 const CODE_EXTENSIONS = [javascript({ typescript: true }), EditorView.lineWrapping];
@@ -214,13 +214,9 @@ const Coding = () => {
       flavor: mode === "python" ? flavor : undefined,
       skills: mode === "python" ? skillsRef.current : undefined,
     };
-    // HOSTED primitive codegen: the model CHOOSES skills (index + read_skill tool loop), like the agent
-    // worker — not a pre-injected top-N. Non-streaming (the loop must see tool_use), so show read events.
-    if (isDirectBackend() && mode === "python" && flavor === "primitives") {
-      setStreamBuffer("");
-      const chosen = await hostedGenerateWithSkills(req, (name) => append(`📖 read skill: ${name}`));
-      return stripFences(chosen);
-    }
+    // HOSTED primitive codegen now INJECTS the matched skill bodies (req.skills, fetched in generate())
+    // into the system prompt and streams — the agent-parity path, not the read_skill loop the model
+    // skipped in practice (see docs/codegen-agent-parity-design.md P1).
     const res = isDirectBackend()
       ? await hostedGenerateStream(req)
       : await fetchWithHeaders(`${baseUrl}/nori/llm/generate/stream`, {
@@ -253,15 +249,25 @@ const Coding = () => {
       // them. HOSTED uses the index + read_skill loop instead (the model chooses — see runGeneration),
       // so skip this fetch there (it has no /nori/skills endpoint anyway). Best-effort.
       skillsRef.current = undefined;
-      if (!isDirectBackend() && mode === "python" && flavor === "primitives") {
-        try {
-          const sres = await fetchWithHeaders(`${baseUrl}/nori/skills?prompt=${encodeURIComponent(prompt)}`);
-          if (sres.ok) {
-            const sj = await sres.json();
-            skillsRef.current = sj?.text || undefined;
-            if (sj?.names?.length) append(`📚 skills consulted: ${sj.names.join(", ")}`);
-          }
-        } catch { /* skills are optional grounding */ }
+      if (mode === "python" && flavor === "primitives") {
+        if (isDirectBackend()) {
+          // HOSTED: fetch the trigger-matched skill BODIES and inject them (P1). Best-effort grounding.
+          try {
+            const { text, names } = await hostedRelevantSkills(prompt, (n) => append(`📖 skill: ${n}`));
+            skillsRef.current = text || undefined;
+            if (names.length) append(`📚 skills injected: ${names.join(", ")}`);
+          } catch { /* skills are optional grounding */ }
+        } else {
+          // DESKTOP: LeLab's /nori/skills (policy_server relevant_skills) injects the same way.
+          try {
+            const sres = await fetchWithHeaders(`${baseUrl}/nori/skills?prompt=${encodeURIComponent(prompt)}`);
+            if (sres.ok) {
+              const sj = await sres.json();
+              skillsRef.current = sj?.text || undefined;
+              if (sj?.names?.length) append(`📚 skills consulted: ${sj.names.join(", ")}`);
+            }
+          } catch { /* skills are optional grounding */ }
+        }
       }
       // 9a — proprioceptive grounding: hand the model the CURRENT pose so it can plan relative to
       // where the arm actually is ("pan is at +20 → jog negative to center") instead of guessing.

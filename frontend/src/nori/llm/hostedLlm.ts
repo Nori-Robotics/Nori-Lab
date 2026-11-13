@@ -62,10 +62,55 @@ export async function hostedGenerateStream(body: CodegenRequest): Promise<Respon
       model: MODEL,
       max_tokens: MAX_TOKENS,
       system: systemFor(body),
+      // buildCodegenContent injects body.skills (the trigger-matched bodies, fetched in generate()) into
+      // the user content — the agent-parity "inject, don't rely on read_skill" path (read_skill fired in
+      // 0/12 agent runs). See docs/codegen-agent-parity-design.md P1.
       messages: [{ role: "user", content: buildCodegenContent(body) }],
       new_run: true, // each generation is its own run (matches LeLab)
     }),
   });
+}
+
+/** Hosted skill INJECTION (agent-parity P1): fetch the relevant skill BODIES and return them as text to
+ *  inject into the codegen system prompt — instead of the index + read_skill loop the model rarely calls.
+ *  Uses the live /aspire/skills endpoints (index for names + summaries, {name} for the body); relevance is
+ *  client-side keyword overlap over the small library. Best-effort: returns {"",[]} on any failure. */
+export async function hostedRelevantSkills(
+  prompt: string, onPick?: (name: string) => void,
+): Promise<{ text: string; names: string[] }> {
+  const base = backendBase();
+  const headers = await authHeaders();
+  let idxText = "";
+  let names: string[] = [];
+  try {
+    const ir = await fetch(`${base}/api/v1/aspire/skills/index`, { headers });
+    if (ir.ok) {
+      const j = (await ir.json()) as { text?: string; names?: string[] };
+      idxText = j.text || ""; names = j.names || [];
+    }
+  } catch { return { text: "", names: [] }; }
+  if (!names.length) return { text: "", names: [] };
+  const words = new Set((prompt || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2));
+  const lines = idxText.split("\n");
+  const score = (n: string): number => {
+    const line = lines.find((l) => l.toLowerCase().includes(n.toLowerCase())) || "";
+    const hay = `${line} ${n}`.toLowerCase();
+    return [...words].filter((w) => hay.includes(w)).length;
+  };
+  const ranked = names.map((n) => ({ n, s: score(n) })).sort((a, b) => b.s - a.s);
+  const pick = (ranked[0]?.s ? ranked.filter((x) => x.s > 0) : ranked).slice(0, 2).map((x) => x.n);
+  const blocks: string[] = [];
+  for (const n of pick) {
+    onPick?.(n);
+    try {
+      const r = await fetch(`${base}/api/v1/aspire/skills/${encodeURIComponent(n)}`, { headers });
+      if (r.ok) {
+        const sk = (await r.json()) as { name?: string; text?: string };
+        if (sk.text) blocks.push(`### ${sk.name || n}\n${sk.text}`);
+      }
+    } catch { /* skip a skill that fails to load */ }
+  }
+  return { text: blocks.join("\n\n---\n\n"), names: pick };
 }
 
 // The read_skill tool (matches nori-backend aspire/skills.READ_SKILL_TOOL). Primitive codegen gets the

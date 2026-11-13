@@ -1,7 +1,9 @@
-/** Physical geometry contract for nori_ws#52. Device estimates never count as verification. */
+/** Physical geometry contract for nori_ws#52. Only the ruler check establishes screen scale. */
 export const TARGET_PATH = "/nori/calibration-target";
 export const PROFILE_STORAGE_KEY = "nori:screen-target-profile:v1";
 export const REFERENCE_MM = 40;
+// Generic starting line length only; this is not a physical screen measurement.
+export const INITIAL_SCREEN_SCALE = 96 / 25.4;
 export const INNER_COLUMNS = 9;
 export const INNER_ROWS = 7;
 export const SQUARE_COLUMNS = INNER_COLUMNS + 1;
@@ -12,14 +14,6 @@ export const TARGET_VALUES_HEIGHT_PX = 72;
 export interface GridSize { columns: number; rows: number }
 const DEFAULT_GRID: GridSize = { columns: INNER_COLUMNS, rows: INNER_ROWS };
 
-export const PHONE_PROFILES = [
-  {
-    id: "pixel-6", name: "Google Pixel 6", ppi: 411,
-    source: "https://support.google.com/pixelphone/answer/7158570?hl=en",
-  },
-  { id: "other", name: "Another phone or tablet", ppi: null, source: null },
-] as const;
-export type PhoneProfileId = typeof PHONE_PROFILES[number]["id"];
 export type CameraRole = "front" | "overhead";
 
 export interface ScreenEnvironment {
@@ -32,7 +26,6 @@ export interface ScreenEnvironment {
 
 export interface VerifiedScreenProfile {
   version: 1;
-  phone: PhoneProfileId;
   cssPixelsPerMm: number;
   verifiedAt: string;
   environment: ScreenEnvironment;
@@ -54,21 +47,15 @@ export function sameEnvironment(a: ScreenEnvironment, b: ScreenEnvironment): boo
     && a.orientation === b.orientation;
 }
 
-/** Browser DPR is only an estimate of panel mapping; the ruler check is still mandatory. */
-export function estimatedScale(phone: PhoneProfileId, dpr: number): number {
-  const ppi = PHONE_PROFILES.find(p => p.id === phone)?.ppi;
-  const estimate = ppi && Number.isFinite(dpr) && dpr > 0 ? ppi / 25.4 / dpr : 96 / 25.4;
-  return Math.max(1, Math.min(30, estimate));
-}
-
 export function readSavedProfile(raw: string | null, environment: ScreenEnvironment): VerifiedScreenProfile | null {
   try {
     const p = JSON.parse(raw ?? "null") as VerifiedScreenProfile | null;
-    if (!p || p.version !== 1 || !PHONE_PROFILES.some(item => item.id === p.phone)
+    if (!p || p.version !== 1
       || !Number.isFinite(p.cssPixelsPerMm) || p.cssPixelsPerMm < 1 || p.cssPixelsPerMm > 30
       || typeof p.verifiedAt !== "string" || !Number.isFinite(Date.parse(p.verifiedAt))
       || !sameEnvironment(p.environment, environment)) return null;
-    return p;
+    // Keep existing ruler measurements, without retaining legacy phone-model labels.
+    return { version: 1, cssPixelsPerMm: p.cssPixelsPerMm, verifiedAt: p.verifiedAt, environment: p.environment };
   } catch { return null; }
 }
 
@@ -146,7 +133,6 @@ export function targetManifest(profile: VerifiedScreenProfile, requestedSquareMm
     outer_size_m: { width: g.outerWidthMm / 1000, height: g.outerHeightMm / 1000 },
     render: { square_device_pixels: g.squareDevicePixels, canvas_width: g.widthDevicePixels, canvas_height: g.heightDevicePixels },
     screen: {
-      phone_profile: profile.phone,
       css_pixels_per_mm: profile.cssPixelsPerMm,
       verified_at: profile.verifiedAt,
       verification: { method: "operator_ruler_check", horizontal_mm: REFERENCE_MM, vertical_mm: REFERENCE_MM },

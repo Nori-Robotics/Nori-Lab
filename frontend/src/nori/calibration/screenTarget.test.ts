@@ -1,20 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
-  blackCell, boardFits, boardGeometry, calibrationToolValues, estimatedScale, fitBoardGeometry, isTargetPath, readSavedProfile,
+  blackCell, boardFits, boardGeometry, calibrationToolValues, fitBoardGeometry, INITIAL_SCREEN_SCALE, isTargetPath, readSavedProfile,
   sameEnvironment, targetManifest, TARGET_VALUES_HEIGHT_PX, type ScreenEnvironment, type VerifiedScreenProfile,
 } from "./screenTarget";
 
 const environment: ScreenEnvironment = { screenWidth: 915, screenHeight: 412, dpr: 2.625, zoom: 1, orientation: "landscape-primary" };
 const profile: VerifiedScreenProfile = {
-  version: 1, phone: "pixel-6", cssPixelsPerMm: estimatedScale("pixel-6", environment.dpr),
+  version: 1, cssPixelsPerMm: 6.2,
   environment, verifiedAt: "2026-11-13T12:00:00Z",
 };
 
 describe("screen checkerboard physical geometry", () => {
-  it("treats Pixel 6 data as an estimate and requires explicit operator verification", () => {
-    expect(estimatedScale("pixel-6", 2.625)).toBeCloseTo(411 / 25.4 / 2.625);
+  it("requires ruler verification rather than a phone model or generic starting scale", () => {
+    expect(readSavedProfile(JSON.stringify({ cssPixelsPerMm: INITIAL_SCREEN_SCALE, environment }), environment)).toBeNull();
     expect(readSavedProfile(JSON.stringify({ phone: "pixel-6" }), environment)).toBeNull();
     expect(readSavedProfile(JSON.stringify(profile), environment)).toEqual(profile);
+  });
+  it("retains legacy ruler measurements without carrying a phone-model claim into new records", () => {
+    const restored = readSavedProfile(JSON.stringify({ ...profile, phone: "pixel-6" }), environment)!;
+    expect(restored).toEqual(profile);
+    expect(restored).not.toHaveProperty("phone");
+    expect(targetManifest(restored, 6, "overhead", environment, "generic-target").screen).not.toHaveProperty("phone_profile");
   });
   it("exports the actual rounded cell spacing, in metres, rather than requested spacing", () => {
     const g = boardGeometry(5, profile.cssPixelsPerMm, environment.dpr);

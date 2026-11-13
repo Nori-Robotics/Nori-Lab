@@ -2,12 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { ArrowLeft, ArrowRight, Check, Download, Ruler, Smartphone, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  blackCell, boardFits, calibrationToolValues, fitBoardGeometry, estimatedScale, PHONE_PROFILES, PROFILE_STORAGE_KEY,
+  blackCell, boardFits, calibrationToolValues, fitBoardGeometry, INITIAL_SCREEN_SCALE, PROFILE_STORAGE_KEY,
   readSavedProfile, REFERENCE_MM, sameEnvironment, targetManifest, TARGET_VALUES_HEIGHT_PX,
-  type BoardGeometry, type CameraRole, type PhoneProfileId, type ScreenEnvironment, type VerifiedScreenProfile,
+  type BoardGeometry, type CameraRole, type ScreenEnvironment, type VerifiedScreenProfile,
 } from "@/nori/calibration/screenTarget";
 
-type Step = "phone" | "width" | "height" | "ready";
+type Step = "setup" | "width" | "height" | "ready";
 type Manifest = ReturnType<typeof targetManifest>;
 type Run = { geometry: BoardGeometry; environment: ScreenEnvironment; manifest: Manifest };
 
@@ -125,9 +125,8 @@ function DisplayTarget({ run, onPause }: { run: Run; onPause: (reason: string, i
 
 /** Standalone target: intentionally mounts without API/auth, robot sessions, or app overlays. */
 export default function CameraCalibrationTarget() {
-  const [step, setStep] = useState<Step>("phone");
-  const [phone, setPhone] = useState<PhoneProfileId>("pixel-6");
-  const [scale, setScale] = useState(() => estimatedScale("pixel-6", window.devicePixelRatio || 1));
+  const [step, setStep] = useState<Step>("setup");
+  const [scale, setScale] = useState(INITIAL_SCREEN_SCALE);
   const [profile, setProfile] = useState<VerifiedScreenProfile | null>(null);
   const [layout, setLayout] = useState(viewport);
   const [zoom, setZoom] = useState(() => environment().zoom);
@@ -137,8 +136,6 @@ export default function CameraCalibrationTarget() {
   const [run, setRun] = useState<Run | null>(null);
   const [lastManifest, setLastManifest] = useState<Manifest | null>(null);
   const [notice, setNotice] = useState("");
-  const [copied, setCopied] = useState(false);
-  const [sharedUrl, setSharedUrl] = useState("");
   const [toolCopyStatus, setToolCopyStatus] = useState("");
   const verificationEnvironment = useRef<ScreenEnvironment | null>(null);
   const ownsFullscreen = useRef(false);
@@ -155,7 +152,7 @@ export default function CameraCalibrationTarget() {
     try {
       const saved = readSavedProfile(localStorage.getItem(PROFILE_STORAGE_KEY), environment());
       if (saved && Math.abs(environment().zoom - 1) < .005) {
-        setProfile(saved); setPhone(saved.phone); setScale(saved.cssPixelsPerMm); setStep("ready");
+        setProfile(saved); setScale(saved.cssPixelsPerMm); setStep("ready");
         setNotice("Your saved screen size is ready. Recheck it if the phone or browser settings have changed.");
       }
     } catch { /* A blocked storage API must not block fresh setup. */ }
@@ -172,7 +169,7 @@ export default function CameraCalibrationTarget() {
 
   const pause = useCallback((reason: string, invalid = false) => {
     setRun(null); setNotice(reason);
-    if (invalid) { invalidate(); setStep("phone"); }
+    if (invalid) { invalidate(); setStep("setup"); }
     if (ownsFullscreen.current && document.fullscreenElement === document.documentElement) {
       ownsFullscreen.current = false;
       void document.exitFullscreen().catch(() => {});
@@ -184,7 +181,7 @@ export default function CameraCalibrationTarget() {
       const e = environment(); setLayout(viewport()); setZoom(e.zoom);
       const expected = profile?.environment ?? verificationEnvironment.current;
       if (expected && !sameEnvironment(expected, e)) {
-        invalidate(); setStep("phone");
+        invalidate(); setStep("setup");
         setNotice("Screen scaling or orientation changed. Please check the screen size again.");
       }
     };
@@ -207,9 +204,9 @@ export default function CameraCalibrationTarget() {
     const e = environment();
     if (!landscape || !normalZoom || !referenceFits || !verificationEnvironment.current
       || !sameEnvironment(verificationEnvironment.current, e)) {
-      invalidate(); setStep("phone"); setNotice("Keep the phone sideways at normal zoom, then repeat the size check."); return;
+      invalidate(); setStep("setup"); setNotice("Keep the phone sideways at normal zoom, then repeat the size check."); return;
     }
-    const p: VerifiedScreenProfile = { version: 1, phone, cssPixelsPerMm: scale, verifiedAt: new Date().toISOString(), environment: e };
+    const p: VerifiedScreenProfile = { version: 1, cssPixelsPerMm: scale, verifiedAt: new Date().toISOString(), environment: e };
     setProfile(p); setStep("ready"); setNotice("Screen size checked in both directions. Choose a board size below.");
     try { localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(p)); }
     catch { setNotice("Screen size is checked for this visit. Your browser could not save it for next time."); }
@@ -249,14 +246,9 @@ export default function CameraCalibrationTarget() {
       setToolCopyStatus("Board arguments copied.");
     } catch { setToolCopyStatus("Copy is unavailable in this browser. Select the board arguments below and copy them manually."); }
   };
-  const share = async () => {
-    const url = new URL("/nori/calibration-target", window.location.href).href;
-    try { await navigator.clipboard.writeText(url); setCopied(true); }
-    catch { setSharedUrl(url); }
-  };
   const geometry = profile ? fitBoardGeometry(squareMm, profile.cssPixelsPerMm, environment().dpr, layout.width, layout.height - TARGET_VALUES_HEIGHT_PX) : null;
   const toolValues = lastManifest ? calibrationToolValues(lastManifest) : null;
-  const steps: Step[] = ["phone", "width", "height", "ready"];
+  const steps: Step[] = ["setup", "width", "height", "ready"];
   const stepIndex = steps.indexOf(step);
 
   if (run) return <DisplayTarget run={run} onPause={pause} />;
@@ -270,7 +262,7 @@ export default function CameraCalibrationTarget() {
         <p className="mt-3 max-w-xl text-base text-muted-foreground">Use a ruler to check its size, then hold the screen toward your robot’s camera. This page displays the board; it does not move or calibrate the robot.</p>
 
         <ol aria-label="Screen setup progress" className="my-7 grid grid-cols-4 gap-2">
-          {["Phone", "Width", "Height", "Ready"].map((label, index) => (
+          {["Setup", "Width", "Height", "Ready"].map((label, index) => (
             <li key={label} aria-current={index === stepIndex ? "step" : undefined}
               className={`border-t-2 pt-2 text-sm ${index <= stepIndex ? "border-primary text-foreground" : "border-border text-muted-foreground"}`}>
               <span className="font-mono text-xs">{index < stepIndex ? "✓" : `${index + 1}.`}</span> {label}
@@ -283,26 +275,14 @@ export default function CameraCalibrationTarget() {
           {!landscape ? "Turn your phone sideways to landscape before checking the size." : "Return to normal browser zoom before checking the size. The checkerboard cannot be used while zoomed in."}
         </p>}
 
-        {step === "phone" && <section aria-labelledby="phone-heading" className="space-y-5">
-          <h2 id="phone-heading" className="text-xl font-semibold">First, get your screen ready.</h2>
+        {step === "setup" && <section aria-labelledby="setup-heading" className="space-y-5">
+          <h2 id="setup-heading" className="text-xl font-semibold">First, get your screen ready.</h2>
           <ul className="space-y-3 text-sm">
             <li className="flex gap-3"><Ruler size={20} className="shrink-0" /><span>Have a ruler with millimetre markings. You will check a 40 mm line in two directions.</span></li>
             <li className="flex gap-3"><Sun size={20} className="shrink-0" /><span>Clean the screen, keep its brightness steady, and turn off automatic brightness. Avoid reflections.</span></li>
             <li className="flex gap-3"><Smartphone size={20} className="shrink-0" /><span>Turn the phone sideways and lock screen rotation in landscape, if your phone supports it. Keep it in landscape throughout calibration and leave browser zoom at its normal setting.</span></li>
           </ul>
-          <label className="block text-sm font-medium">Your phone
-            <select value={phone} onChange={event => { const id = event.target.value as PhoneProfileId; setPhone(id); setScale(estimatedScale(id, environment().dpr)); invalidate(); }}
-              className="mt-2 min-h-12 w-full rounded-lg border border-input bg-background px-3 text-base">
-              {PHONE_PROFILES.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </label>
-          <p className="text-sm text-muted-foreground">The phone profile gives us a starting size. The ruler check confirms the size on your actual screen.</p>
           <Button size="lg" className="min-h-12 w-full sm:w-auto" disabled={!landscape || !normalZoom} onClick={goToWidth}>Check screen size <ArrowRight className="ml-2 h-4 w-4" /></Button>
-          <div className="border-t pt-5 text-sm">
-            <Button variant="outline" className="min-h-11" onClick={() => void share()}>{copied ? "Link copied" : "Copy link to open on a phone"}</Button>
-            {sharedUrl && <label className="mt-3 block">Copy this link<input readOnly value={sharedUrl} onFocus={event => event.target.select()} className="mt-1 w-full rounded border bg-background p-2 text-base" /></label>}
-            {["localhost", "127.0.0.1", "::1", "[::1]"].includes(window.location.hostname) && <p className="mt-2 text-muted-foreground">This local address works only on this computer. On your phone, open the hosted Nori Lab address or a reachable development-server address.</p>}
-          </div>
         </section>}
 
         {(step === "width" || step === "height") && <section aria-labelledby="measure-heading">
@@ -315,7 +295,7 @@ export default function CameraCalibrationTarget() {
             <div className="flex gap-3"><Button variant="outline" className="min-h-11 flex-1" onClick={() => setScale(s => Math.max(1, s - .005))}>A little shorter</Button><Button variant="outline" className="min-h-11 flex-1" onClick={() => setScale(s => Math.min(30, s + .005))}>A little longer</Button></div>
           </div>}
           <div className="mt-6 flex flex-wrap gap-3">
-            <Button variant="outline" size="lg" className="min-h-12" onClick={() => { setNotice(""); setStep(step === "height" ? "width" : "phone"); }}>Back</Button>
+            <Button variant="outline" size="lg" className="min-h-12" onClick={() => { setNotice(""); setStep(step === "height" ? "width" : "setup"); }}>Back</Button>
             <Button size="lg" className="min-h-12 flex-1" disabled={!referenceFits || !landscape || !normalZoom} onClick={() => { if (step === "width") setStep("height"); else verify(); }}>
               {step === "width" ? "The width measures 40 mm" : "The height measures 40 mm"} <Check className="ml-2 h-4 w-4" />
             </Button>

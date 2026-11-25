@@ -352,11 +352,11 @@ const Agent = () => {
   }, [appSessionUp, appSessionJoining, teleop, closeAppSession, robot, note]);
 
   // -- actions ---------------------------------------------------------------------------------------------------
-  const attach = useCallback((id: string) => {
+  const attach = (id: string, presence: boolean) => {
     sinceRef.current = 0;
-    setEvents([]); setRecord(null); setError(null); track(id, settings.stopOnClose);
+    setEvents([]); setRecord(null); setError(null); track(id, presence);
     note(`following task ${id.slice(0, 8)}`);
-  }, [note]);
+  };
 
   const start = async (clearFirst = false) => {
     if (busy || !goal.trim() || !robot || badTable) return;
@@ -382,7 +382,7 @@ const Agent = () => {
         constraints: fields.constraints,
         caller: { kind: "lab_agent_page" },
       });
-      attach(r.task_id);
+      attach(r.task_id, fields.constraints.operator_presence === true);
       if (settings.harness === "authored" && customer) {
         try { rememberHarnessTask(customer.id, r.task_id); }
         catch { setError("Local storage is unavailable. Keep this tab open to save the harness when storage is available."); }
@@ -391,7 +391,11 @@ const Agent = () => {
       note(`start failed: ${friendlyErrorMessage(e)}`);
       if (e instanceof RobotBusyError) {
         setError("This robot already has a task running" + (e.running ? " — showing it." : "."));
-        if (e.running) { await yieldRobot(); attach(e.running); }
+        if (e.running) {
+          await yieldRobot();
+          // The backend enforces presence only when the original task requested it.
+          attach(e.running, true);
+        }
       } else setError(friendlyErrorMessage(e));
     } finally { setBusy(false); }
   };

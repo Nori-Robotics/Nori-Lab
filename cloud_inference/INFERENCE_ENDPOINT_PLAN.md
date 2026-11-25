@@ -16,7 +16,7 @@
 > Verified foundations (2026-07-21/22 research — do not re-derive):
 > custom-container Endpoints bypass the `transformers==4.51.3` toolkit pin
 > entirely; `create_inference_endpoint(custom_image=…, min/max_replica,
-> scaling_metric, scale_to_zero_timeout, secrets, env)` is all in the API;
+scaling_metric, scale_to_zero_timeout, secrets, env)` is all in the API;
 > live catalog: **L4 24GB $0.70/hr (gcp us-east4)**, A10G $1.00/hr (aws
 > us-east-1), L40S 48GB $1.80/hr; weights should come from the platform's
 > `/repository` mount, not baked or Hub-fetched at boot.
@@ -39,9 +39,10 @@ pi05_base` ships NO normalization stats — it cannot run zero-shot, full stop
 (verified: empty `"features"`; every LeRobot base card says "fine-tune on
 your use case"). Session 2 confirms the landscape: π-series has ZERO SO-101
 coverage in pretraining (UR5e/Franka/Trossen/ARX only); no stats-bearing
-SO-100 pi0.5 checkpoint exists anywhere; π*0.6 has no released weights; and
+SO-100 pi0.5 checkpoint exists anywhere; π\*0.6 has no released weights; and
 even on its OWN platform, `pi05_droid` true zero-shot measures 39.2% —
 below MolmoAct2's 56.7% unseen-objects ceiling on SO-100. Verdict:
+
 1. **There is no zero-shot pi0.5 for our robot.** MolmoAct2 stays the
    zero-shot baseline (only open model with SO-101 in pretraining + best
    published random-camera-pose robustness, 87.1% vs π0.5-DROID's 45.2%).
@@ -60,9 +61,9 @@ below MolmoAct2's 56.7% unseen-objects ceiling on SO-100. Verdict:
    (`--policy.type=groot`, v3 datasets). The Phase-B `MODEL_KIND` adapter
    pattern should plan for a third `groot` adapter (inference fits A10G).
    N1.7 ONLY — N1.5/1.6 are noncommercial-licensed.
-The serving architecture below is checkpoint-independent; Phase B's first
-real payload is whichever finetune lands first (3-way on-robot A/B:
-MolmoAct2 zero-shot vs GR00T-N1.7-FT vs pi05-FT is the target experiment).
+   The serving architecture below is checkpoint-independent; Phase B's first
+   real payload is whichever finetune lands first (3-way on-robot A/B:
+   MolmoAct2 zero-shot vs GR00T-N1.7-FT vs pi05-FT is the target experiment).
 
 ## 1. Prerequisite (user action, blocks everything)
 
@@ -127,7 +128,7 @@ the above.
 3. **Per-policy chunk semantics.** The client already parameterizes
    `chunk_hz`/stride (built for MolmoAct2's 30 Hz×30). `/load` gains a
    `policy_kind` that maps to per-policy `{chunk_hz, horizon, joint contract,
-   camera contract}` — pi0.5-DROID's action space/rate differs and MUST NOT
+camera contract}` — pi0.5-DROID's action space/rate differs and MUST NOT
    inherit MolmoAct2's constants silently.
 4. **Topology: separate endpoint per model** (not multiplexed): independent
    scaling and failure domains, and the pi0.5 endpoint CAN use
@@ -140,15 +141,15 @@ the above.
 
 ## 4. Order of work
 
-| # | step | needs |
-|---|---|---|
-| 1 | Mint Endpoints-scoped token | user |
-| 2 | Throwaway L4 endpoint; measure MolmoAct2 latency (Gate A) | token |
-| 3 | Server deltas: `/repository` weights, port decl, `X-Nori-Token` | nothing |
-| 4 | ✅ DONE 2026-07-23 — `molmoact2-l4` (L4 gcp us-east4, authenticated, min1/max2) live; validated (auth matrix + 315ms compute + observe-only robot run); `NORI_INFER_URL` flipped; Space PAUSED | 1–3 |
-| 5 | Adapter refactor (`MODEL_KIND`) + pi05 adapter | Gate B checkpoint |
-| 6 | pi0.5 endpoint (scale-to-zero OK) + `/load policy_kind` client wiring | 5 |
-| 7 | Retire Space permanently once endpoint has a week of runs | 4 |
+| #   | step                                                                                                                                                                                           | needs             |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| 1   | Mint Endpoints-scoped token                                                                                                                                                                    | user              |
+| 2   | Throwaway L4 endpoint; measure MolmoAct2 latency (Gate A)                                                                                                                                      | token             |
+| 3   | Server deltas: `/repository` weights, port decl, `X-Nori-Token`                                                                                                                                | nothing           |
+| 4   | ✅ DONE 2026-07-23 — `molmoact2-l4` (L4 gcp us-east4, authenticated, min1/max2) live; validated (auth matrix + 315ms compute + observe-only robot run); `NORI_INFER_URL` flipped; Space PAUSED | 1–3               |
+| 5   | Adapter refactor (`MODEL_KIND`) + pi05 adapter                                                                                                                                                 | Gate B checkpoint |
+| 6   | pi0.5 endpoint (scale-to-zero OK) + `/load policy_kind` client wiring                                                                                                                          | 5                 |
+| 7   | Retire Space permanently once endpoint has a week of runs                                                                                                                                      | 4                 |
 
 ## 5. Open items / unverified
 

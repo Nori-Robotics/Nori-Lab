@@ -79,13 +79,13 @@ should be the thing they'd type into search ("Stuck at `connecting`"), not the m
 
 Its own Vercel project — **not** the same one as the app.
 
-| Setting | Value |
-|---|---|
-| Root directory | `docs` |
-| Framework preset | VitePress (or Other) |
-| Build command | `npm run build` |
-| Output directory | `.vitepress/dist` |
-| Domain | `docs.norirobotics.com` (matching the `app.` / `vr.` subdomain pattern) |
+| Setting          | Value                                                                   |
+| ---------------- | ----------------------------------------------------------------------- |
+| Root directory   | `docs`                                                                  |
+| Framework preset | VitePress (or Other)                                                    |
+| Build command    | `npm run build`                                                         |
+| Output directory | `.vitepress/dist`                                                       |
+| Domain           | `docs.norirobotics.com` (matching the `app.` / `vr.` subdomain pattern) |
 
 Then point the app at it by setting `VITE_DOCS_URL` in the **frontend** Vercel project and in
 `frontend/vercel.json`. It falls back to `https://docs.norirobotics.com` if unset.

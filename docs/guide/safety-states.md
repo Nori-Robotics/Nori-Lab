@@ -5,20 +5,20 @@ it will tell you which of these it's in.
 
 Read `telemetry.safety`:
 
-| State | What it means | How it clears |
-|---|---|---|
-| `ok` | Normal operation. | — |
-| `safe_hold` | Refusing motion to protect itself: the Pi is too hot, **or** your control frames went silent past the watchdog stop threshold. **Not a latch.** | **Clears itself** once you fix the cause — let it cool, or restore your control stream. |
-| `latched` | Something latched: a **software E-STOP** operator command, **or** the robot protecting a motor from over-temperature or sustained over-current. Motion blocked. | **Only** `command("reset_latch")`. Deliberate, by design. |
+| State       | What it means                                                                                                                                                   | How it clears                                                                           |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `ok`        | Normal operation.                                                                                                                                               | —                                                                                       |
+| `safe_hold` | Refusing motion to protect itself: the Pi is too hot, **or** your control frames went silent past the watchdog stop threshold. **Not a latch.**                 | **Clears itself** once you fix the cause — let it cool, or restore your control stream. |
+| `latched`   | Something latched: a **software E-STOP** operator command, **or** the robot protecting a motor from over-temperature or sustained over-current. Motion blocked. | **Only** `command("reset_latch")`. Deliberate, by design.                               |
 
-Then read `latch_reason` — it tells you *which*:
+Then read `latch_reason` — it tells you _which_:
 
-| `latch_reason` | What happened |
-|---|---|
-| `estop:<reason>` | A human stopped it. |
-| `overtemp:<motor>` | That servo got too hot. Its torque was cut. |
-| `overcurrent:<motor>` | That joint pulled too much current for too long. Its torque was cut. |
-| `stall:<motor>` | That joint is pressed into an obstruction. **This one does not set `safety: latched`** — a stall reports a reason while `safety` stays `ok`. |
+| `latch_reason`        | What happened                                                                                                                                |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `estop:<reason>`      | A human stopped it.                                                                                                                          |
+| `overtemp:<motor>`    | That servo got too hot. Its torque was cut.                                                                                                  |
+| `overcurrent:<motor>` | That joint pulled too much current for too long. Its torque was cut.                                                                         |
+| `stall:<motor>`       | That joint is pressed into an obstruction. **This one does not set `safety: latched`** — a stall reports a reason while `safety` stays `ok`. |
 
 ## "It stopped and won't start again"
 
@@ -71,7 +71,7 @@ byte. The **hex is authoritative**; the names are best-effort decoding. The app 
 red. Expect it alongside an over-temp or over-current latch.
 
 **The exact string `"no response"`** — the motor stopped answering the bus for several reads. It
-was dropped, unplugged, or lost power. The app shows these in amber. This is a *cabling* problem,
+was dropped, unplugged, or lost power. The app shows these in amber. This is a _cabling_ problem,
 not a thermal one, and it's why the distinction exists: a dead motor used to look identical to a
 healthy one.
 
@@ -95,7 +95,7 @@ physical control has cut.
 
 **The robot got too hot.** It shed load until it cooled.
 
-**Your control frames went quiet.** This is the one people trip over. Jog is a *stream* — if you
+**Your control frames went quiet.** This is the one people trip over. Jog is a _stream_ — if you
 stop sending, the watchdog escalates:
 
 `ok` → `warn` (frames quiet past `t_warn_ms`) → `stop` (quiet past `t_stop_ms`; motion blocked

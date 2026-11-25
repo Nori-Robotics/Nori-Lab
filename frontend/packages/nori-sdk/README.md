@@ -66,17 +66,18 @@ const teleop = new RemoteTeleop({
   // TURN is optional and currently not issued by default (see "Connectivity" below).
   // If we've sent you relay credentials, add: turnUrls: [TURN_URL], turnUser, turnCred.
   forceRelay: false,
-  arm: "right",             // which arm keyboard/jog drives
+  arm: "right", // which arm keyboard/jog drives
   onLog: (m) => console.log(m),
   onConnState: (s) => console.log("conn:", s),
-  onTelemetry: (t) => {     // live: loopHz, safety, tempC, batteryPercent, per-joint state{}, lift height mm…
+  onTelemetry: (t) => {
+    // live: loopHz, safety, tempC, batteryPercent, per-joint state{}, lift height mm…
     console.log("safety:", t.safety, "state:", t.state);
   },
   onMode: (mode) => console.log("mode:", mode),
   onControlActive: (a) => console.log("control:", a),
 });
 
-await teleop.start();       // subscribes, answers the robot's offer, opens the control channel
+await teleop.start(); // subscribes, answers the robot's offer, opens the control channel
 ```
 
 Video now flows into your `<video>` element and `onTelemetry` fires ~50×/s.
@@ -100,18 +101,24 @@ by changing one line:
 import { RemoteTeleop } from "@nori/sdk";
 import { createMockRobot } from "@nori/sdk/mock";
 
-const robot = createMockRobot();          // the fake robot, living in your page
+const robot = createMockRobot(); // the fake robot, living in your page
 const teleop = new RemoteTeleop({
-  signaling: robot.signaling,             // <- the ONLY line that differs from production
+  signaling: robot.signaling, // <- the ONLY line that differs from production
   videoEl: document.querySelector("video")!,
-  stun: "", turnUrls: [], turnUser: "", turnCred: "", forceRelay: false,
+  stun: "",
+  turnUrls: [],
+  turnUser: "",
+  turnCred: "",
+  forceRelay: false,
   arm: "right",
   onLog: console.log,
   onConnState: (s) => console.log("conn:", s),
-  onTelemetry: (t) => console.log(t.safety, t.state["right_arm_shoulder_pan.pos"]),
-  onMode: () => {}, onControlActive: () => {},
+  onTelemetry: (t) =>
+    console.log(t.safety, t.state["right_arm_shoulder_pan.pos"]),
+  onMode: () => {},
+  onControlActive: () => {},
 });
-await teleop.start();                     // connects in ~a second, telemetry + video flowing
+await teleop.start(); // connects in ~a second, telemetry + video flowing
 // later: robot.restart() simulates a robot reboot; robot.stop() tears it down.
 ```
 
@@ -144,7 +151,9 @@ Robots advertising `named_navigation` expose map-bound destinations through `Rem
 await teleop.rememberWaypoint("charging station");
 const started = await teleop.navigateToWaypoint("charging station");
 if (!started.ok || !started.goalId) throw new Error(started.error);
-const result = await teleop.awaitNavigation(started.goalId, { timeoutMs: 120_000 });
+const result = await teleop.awaitNavigation(started.goalId, {
+  timeoutMs: 120_000,
+});
 ```
 
 The remaining methods are `listWaypoints()`, `deleteWaypoint()`,
@@ -183,7 +192,7 @@ robot restarts and network blips, with link-quality metrics exposed on the sessi
 headless/ML tooling (env wrapper, policy runner, CLI diagnostics) lands Python-first in
 `nori-sdk` on PyPI.
 
-Honest limits (v1): no audio tracks (`joinCall()` degrades to local-only), no perception frames (use `injectPerception()`), motion is *plausible, not kinematically true* — cylindrical dofs nudge a fixed joint mapping so telemetry visibly responds. Never use mock trajectories to validate motion or train anything. `createMockRobot()` needs a browser (WebRTC + canvas); `MockDaemonSim` alone runs anywhere.
+Honest limits (v1): no audio tracks (`joinCall()` degrades to local-only), no perception frames (use `injectPerception()`), motion is _plausible, not kinematically true_ — cylindrical dofs nudge a fixed joint mapping so telemetry visibly responds. Never use mock trajectories to validate motion or train anything. `createMockRobot()` needs a browser (WebRTC + canvas); `MockDaemonSim` alone runs anywhere.
 
 One gotcha worth knowing (it applies to real robots too, so the mock reproduces it):
 
@@ -206,7 +215,7 @@ How the media/control connection is established, and what you need for each situ
   the one case that needs a **TURN relay** (`turnUrls`/`turnUser`/`turnCred`). We do not issue
   TURN credentials by default yet — **if you hit this, tell us and we'll provision relay
   credentials for you**; they slot into the three options above with no other change.
-  (`forceRelay: true` then forces all traffic through the relay — useful to *verify* the TURN
+  (`forceRelay: true` then forces all traffic through the relay — useful to _verify_ the TURN
   path, not something to leave on.)
 - **A VPN or overlay network on YOUR machine** (Tailscale, WireGuard, corporate VPN): disable
   it — or exclude its interface — while driving robots. ICE can pick the tunnel path even when
@@ -232,28 +241,34 @@ or subscribe with the `onReady` option:
 const teleop = new RemoteTeleop({
   /* ...options as above... */
   onReady: (info) => {
-    if (!info.accepted) { console.error("robot refused session:", info.error); return; }
+    if (!info.accepted) {
+      console.error("robot refused session:", info.error);
+      return;
+    }
     console.log("protocol v" + info.protocolVersion, "units:", info.normMode);
     console.log("joints:", info.descriptor?.joints);
-    console.log("cameras:", info.descriptor?.cameras);   // same roles as the CameraLayout tiles
-    console.log("gripper range:", info.descriptor?.ranges?.["right_arm_gripper.pos"]);
+    console.log("cameras:", info.descriptor?.cameras); // same roles as the CameraLayout tiles
+    console.log(
+      "gripper range:",
+      info.descriptor?.ranges?.["right_arm_gripper.pos"],
+    );
   },
 });
 ```
 
 What's in a `RobotInfo`:
 
-| Field | Meaning |
-|---|---|
-| `accepted` | `false` = the daemon refused the session (`error` says why). The connection stays up so you can see logs/telemetry, but control frames are ignored. |
-| `protocolVersion` | The daemon's nori-protocol major. Compared against this SDK's `NORI_PROTOCOL_VERSION`; a difference sets `versionMismatch`. |
-| `normMode` | Units of every `.pos` value in state/action: `"range_m100_100"` (normalized) or `"degrees"`. |
-| `watchdogProfile` | `{ t_warn_ms, t_stop_ms }` — control-frame silence beyond these slows, then stops, the robot. **Disclosure, not negotiation**: the daemon picks it from the measured link; you can't change it. |
-| `descriptor` | What the robot is: `joints` (every drivable `<motor>.pos` key), `base`, `aux` (e.g. lifts), `cameras` (roles, matching the composite layout tiles), `ranges` — the authoritative `[min, max]` per key (out-of-range values are **clamped robot-side, never rejected**, so use `ranges` to scale your inputs, not to pre-validate) — and two optional maps: `jog_scale`, the nominal commanded scale of a full-deflection jog per namespace (never achieved velocity; absent on the frozen L2 fleet forever — its `task` table now names `yaw` as the canonical angular-z verb, with `shoulder_pan` kept as a deprecated alias), and `ranges_si`, the calibrated SI bounds per normalized key (radians/metres; bounds may be inverted where calibration reverses an axis — interpolate as written, never sort; absent means unknown, don't substitute a guess). |
-| `initialState` | The joint pose at session start. |
-| `versionMismatch` | **Advisory.** Mixed daemon versions exist across the fleet, so the SDK warns and proceeds — unknown frame types are ignored by both sides, so a mismatch means vocabulary gaps, never unsafe behavior. |
-| `model` | **Advisory label** ("L2", "A3") for logs and dataset provenance. Don't branch on it — branch on `descriptor` and `capabilities` (nori-protocol MODELS.md) — with ONE sanctioned exception the SDK already handles internally: the frozen L2 fleet's base-angular wire sign (see "Driving the robot → Base"). Deployed L2 daemons predate this field and never send it, so absence is not evidence of a non-L2 robot. |
-| `capabilities` | Optional verbs this robot honours beyond the core (`"task_jog"`, `"pose_targets"`, `"record"`, …). **Three-valued** — check with `supportsCapability(info, cap)`, which returns `true`/`false` when declared and `undefined` when the ack predates the field; `undefined` means *unknown, probe or assume legacy*, never *no*. An explicitly empty `[]` means none. |
+| Field             | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accepted`        | `false` = the daemon refused the session (`error` says why). The connection stays up so you can see logs/telemetry, but control frames are ignored.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `protocolVersion` | The daemon's nori-protocol major. Compared against this SDK's `NORI_PROTOCOL_VERSION`; a difference sets `versionMismatch`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `normMode`        | Units of every `.pos` value in state/action: `"range_m100_100"` (normalized) or `"degrees"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `watchdogProfile` | `{ t_warn_ms, t_stop_ms }` — control-frame silence beyond these slows, then stops, the robot. **Disclosure, not negotiation**: the daemon picks it from the measured link; you can't change it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `descriptor`      | What the robot is: `joints` (every drivable `<motor>.pos` key), `base`, `aux` (e.g. lifts), `cameras` (roles, matching the composite layout tiles), `ranges` — the authoritative `[min, max]` per key (out-of-range values are **clamped robot-side, never rejected**, so use `ranges` to scale your inputs, not to pre-validate) — and two optional maps: `jog_scale`, the nominal commanded scale of a full-deflection jog per namespace (never achieved velocity; absent on the frozen L2 fleet forever — its `task` table now names `yaw` as the canonical angular-z verb, with `shoulder_pan` kept as a deprecated alias), and `ranges_si`, the calibrated SI bounds per normalized key (radians/metres; bounds may be inverted where calibration reverses an axis — interpolate as written, never sort; absent means unknown, don't substitute a guess). |
+| `initialState`    | The joint pose at session start.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `versionMismatch` | **Advisory.** Mixed daemon versions exist across the fleet, so the SDK warns and proceeds — unknown frame types are ignored by both sides, so a mismatch means vocabulary gaps, never unsafe behavior.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `model`           | **Advisory label** ("L2", "A3") for logs and dataset provenance. Don't branch on it — branch on `descriptor` and `capabilities` (nori-protocol MODELS.md) — with ONE sanctioned exception the SDK already handles internally: the frozen L2 fleet's base-angular wire sign (see "Driving the robot → Base"). Deployed L2 daemons predate this field and never send it, so absence is not evidence of a non-L2 robot.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `capabilities`    | Optional verbs this robot honours beyond the core (`"task_jog"`, `"pose_targets"`, `"record"`, …). **Three-valued** — check with `supportsCapability(info, cap)`, which returns `true`/`false` when declared and `undefined` when the ack predates the field; `undefined` means _unknown, probe or assume legacy_, never _no_. An explicitly empty `[]` means none.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 Old daemons may send a bare ack — every field except `accepted` is optional, so null-check what
 you read. The ack is re-sent on every daemon (re)connect (a robot restart mid-session refreshes
@@ -273,8 +288,10 @@ identical regardless of source):
 **Keyboard** — hand key events to the client (see `keybindLegend(mode)` for the live key map):
 
 ```ts
-window.addEventListener("keydown", (e) => { if (teleop.onKeyDown(e)) e.preventDefault(); });
-window.addEventListener("keyup",   (e) => teleop.onKeyUp(e));
+window.addEventListener("keydown", (e) => {
+  if (teleop.onKeyDown(e)) e.preventDefault();
+});
+window.addEventListener("keyup", (e) => teleop.onKeyUp(e));
 ```
 
 **Programmatic jog** — push normalized rates in `[-1, 1]` per DOF (streamed at 50 Hz):
@@ -282,7 +299,7 @@ window.addEventListener("keyup",   (e) => teleop.onKeyUp(e));
 ```ts
 teleop.setExternalJog({
   right_arm: { shoulder_pan: 0.5, elbow_flex: -0.3 },
-  right_lift: 0.2,        // per-arm lift velocity
+  right_lift: 0.2, // per-arm lift velocity
 });
 teleop.setExternalJog(null); // stop
 ```
@@ -306,16 +323,16 @@ the quirk by omission.
 **Commands & mode:**
 
 ```ts
-teleop.command("estop");        // also: "reset_latch" | "reset"
-teleop.setArm("left");          // switch which arm is driven
-teleop.toggleMode();            // task-space <-> per-joint (label reads "cartesian" on
-                                // robots advertising jog_scale.task, "cylindrical" otherwise)
+teleop.command("estop"); // also: "reset_latch" | "reset"
+teleop.setArm("left"); // switch which arm is driven
+teleop.toggleMode(); // task-space <-> per-joint (label reads "cartesian" on
+// robots advertising jog_scale.task, "cylindrical" otherwise)
 ```
 
 **Teardown:**
 
 ```ts
-await teleop.stop();            // tells the robot to restart cleanly, tears down the peer
+await teleop.stop(); // tells the robot to restart cleanly, tears down the peer
 ```
 
 ## The safety contract
@@ -332,11 +349,11 @@ What the robot enforces, and how you see it in telemetry:
 
 **`telemetry.safety`** (typed as `SafetyState`):
 
-| Value | What the robot is doing | What you do |
-|---|---|---|
-| `"ok"` | Normal operation. | Carry on. |
+| Value         | What the robot is doing                                                                                                                        | What you do                                                                  |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `"ok"`        | Normal operation.                                                                                                                              | Carry on.                                                                    |
 | `"safe_hold"` | Refusing motion to protect itself — either the Pi is too hot or your control frames went silent past the watchdog stop threshold. Not a latch. | Fix the cause (let it cool / restore your control stream); it clears itself. |
-| `"latched"` | **E-STOP is latched** (operator command or the robot's physical button). Motion blocked, motors torque-limited. | Clear deliberately with `command("reset_latch")` once the situation is safe. |
+| `"latched"`   | **E-STOP is latched** (operator command or the robot's physical button). Motion blocked, motors torque-limited.                                | Clear deliberately with `command("reset_latch")` once the situation is safe. |
 
 **`telemetry.watchdog`** (typed as `WatchdogState`): `"ok"` → `"warn"` (your control frames
 went quiet past `t_warn_ms`, or the robot is shedding thermal load) → `"stop"` (quiet past
@@ -345,17 +362,17 @@ arrive in the handshake — you can read them, not set them.
 
 **Stalls are deliberately NOT a safety state.** When a joint is pushed against something, the
 robot cuts torque **on that joint only** and keeps everything else running; it self-clears when
-you jog the stalled joint *away* from the obstruction. You'll see it as an `action_status`
+you jog the stalled joint _away_ from the obstruction. You'll see it as an `action_status`
 with `reason: "stall:<joint>"`, not as a global stop. Reason strings follow the
 pattern `"<cause>:<detail>"` — e.g. `"stall:right_arm_elbow_flex"`, `"estop:button"`.
 
 **The three commands** (`command(...)` on `RemoteTeleop`, also bound to keys):
 
-| Command | Effect |
-|---|---|
-| `"estop"` | Trip the E-STOP latch now (safety → `"latched"`). Always available; never rate-limited. |
+| Command         | Effect                                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------------------ |
+| `"estop"`       | Trip the E-STOP latch now (safety → `"latched"`). Always available; never rate-limited.                      |
 | `"reset_latch"` | Clear the E-STOP and any stall latches, restore normal torque. Deliberate act — nothing else clears a latch. |
-| `"reset"` | Return the arm(s) to their neutral pose (a motion command, not a latch operation — refused while latched). |
+| `"reset"`       | Return the arm(s) to their neutral pose (a motion command, not a latch operation — refused while latched).   |
 
 One more disclosure: **out-of-range targets are clamped, never rejected.** Sending a `.pos`
 beyond `descriptor.ranges` moves the joint to the boundary and (for tagged actions) reports
@@ -368,17 +385,17 @@ The robot's inbound video is one media track on the peer connection. You can att
 long-lived session renders on different pages:
 
 ```ts
-teleop.setVideoEl(myVideoEl);   // point the live stream at this element (null to detach)
-teleop.setAudioEl(myAudioEl);   // same for the robot's inbound audio sink
+teleop.setVideoEl(myVideoEl); // point the live stream at this element (null to detach)
+teleop.setAudioEl(myAudioEl); // same for the robot's inbound audio sink
 ```
 
-Detaching with `null` stops *rendering* but the robot keeps encoding + sending. On a Pi 5 (no
+Detaching with `null` stops _rendering_ but the robot keeps encoding + sending. On a Pi 5 (no
 hardware H.264 encoder — video is software x264, often the biggest power draw) that's wasteful when
 nothing is watching. Pause the **encoder itself**, not just the sink:
 
 ```ts
-teleop.pauseVideo();            // robot drops frames BEFORE the encoder -> it goes idle (power saved)
-teleop.resumeVideo();           // re-enable; the robot forces a keyframe so video reappears at once
+teleop.pauseVideo(); // robot drops frames BEFORE the encoder -> it goes idle (power saved)
+teleop.resumeVideo(); // re-enable; the robot forces a keyframe so video reappears at once
 ```
 
 Notes: pause/resume ride the control data channel (no renegotiation, fast resume) and are safe to
@@ -390,17 +407,17 @@ video never affects jog/telemetry. A fresh session starts flowing at the default
 track directly:
 
 ```ts
-const blob = await teleop.captureFrame();   // JPEG Blob, or null if no video is arriving
+const blob = await teleop.captureFrame(); // JPEG Blob, or null if no video is arriving
 // If the encoder may be paused, use snapshot(): it resumes, waits for a frame, grabs, re-pauses:
-const still = await teleop.snapshot();       // JPEG Blob, or null
+const still = await teleop.snapshot(); // JPEG Blob, or null
 ```
 
 **Per-camera stills.** Both take an optional camera `role` (from the layout — see "Per-camera
 views" below) to crop one tile out of the composite; this is what a per-camera LLM `look` maps to:
 
 ```ts
-const wrist = await teleop.snapshot(500, "left_wrist");     // one tile, or null
-const over  = await teleop.captureFrame("image/jpeg", 0.7, "overhead");
+const wrist = await teleop.snapshot(500, "left_wrist"); // one tile, or null
+const over = await teleop.captureFrame("image/jpeg", 0.7, "overhead");
 ```
 
 ⚠️ **Unknown role -> `null`, never the full composite.** Deliberate: if your caller labeled the
@@ -414,7 +431,7 @@ unit-tested) if you need the same math elsewhere.
 `MediaRecorder`:
 
 ```ts
-const stream = teleop.videoStream();        // MediaStream | null (null until the track arrives)
+const stream = teleop.videoStream(); // MediaStream | null (null until the track arrives)
 // e.g. record it:
 const rec = new MediaRecorder(stream!);
 // Do NOT stop() its tracks — they belong to the peer connection. Just drop your reference.
@@ -426,12 +443,12 @@ see "What to expect" below). The bridge announces which camera is in which tile
 `MediaStream` so you never do quadrant math:
 
 ```ts
-teleop.cameraLayoutInfo();                       // {cols, rows, tiles} | null (also: onCameraLayout)
-const view = teleop.cameraView("left_wrist");    // CameraViewHandle | null
+teleop.cameraLayoutInfo(); // {cols, rows, tiles} | null (also: onCameraLayout)
+const view = teleop.cameraView("left_wrist"); // CameraViewHandle | null
 if (view) {
-  myVideoEl.srcObject = view.stream;             // or feed it to CV / MediaRecorder
+  myVideoEl.srcObject = view.stream; // or feed it to CV / MediaRecorder
   // later:
-  view.stop();                                   // ends the crop loop (composite unaffected)
+  view.stop(); // ends the crop loop (composite unaffected)
 }
 ```
 
@@ -451,11 +468,19 @@ import { SupabaseSignaling } from "@nori/sdk/supabase";
 const teleop = new RemoteTeleop({
   signaling: new SupabaseSignaling(supabase, room, console.log),
   videoEl: document.querySelector("video")!,
-  stun, turnUrls, turnUser, turnCred, forceRelay: false,
-  arm: "right", onLog: console.log, onConnState: console.log,
-  onTelemetry: () => {}, onMode: () => {}, onControlActive: () => {},
+  stun,
+  turnUrls,
+  turnUser,
+  turnCred,
+  forceRelay: false,
+  arm: "right",
+  onLog: console.log,
+  onConnState: console.log,
+  onTelemetry: () => {},
+  onMode: () => {},
+  onControlActive: () => {},
 });
-teleop.start();                                  // video appears in the element when connected
+teleop.start(); // video appears in the element when connected
 // teleop.stop() to tear down.
 ```
 
@@ -480,11 +505,11 @@ teleop.start();                                  // video appears in the element
 ## Perception — structured world-state
 
 Separate from the video track (human eyes) and the one-shot LLM-vision still: `perceive()` returns
-the latest **structured** detections from the daemon's on-Pi perception process, so a *running*
+the latest **structured** detections from the daemon's on-Pi perception process, so a _running_
 program can react to what the robot sees.
 
 ```ts
-const world = teleop.perceive();               // PerceptionView | null (null = no frame yet)
+const world = teleop.perceive(); // PerceptionView | null (null = no frame yet)
 const cup = world?.objects.find((o) => o.label === "cup");
 if (cup?.xyz && (teleop.perceptionAgeMs() ?? Infinity) < 500) {
   // cup.xyz is [x,y,z] in robot-base meters; cup.bbox is normalized [x,y,w,h]. Both optional —
@@ -504,12 +529,12 @@ nori-protocol `perception.json`).
 ## Action completion
 
 Tag an absolute move with an `action_id` and the daemon reports its lifecycle back
-(`accepted → active → done | clamped | blocked | timeout`), so a script can await what *actually*
+(`accepted → active → done | clamped | blocked | timeout`), so a script can await what _actually_
 happened instead of guessing from telemetry:
 
 ```ts
 const id = teleop.nextActionId();
-teleop.sendAction({ "right_arm_shoulder_pan.pos": 30 }, id);   // tag the frame(s)
+teleop.sendAction({ "right_arm_shoulder_pan.pos": 30 }, id); // tag the frame(s)
 const status = await teleop.awaitAction(id, { timeoutMs: 5000 });
 // status.state: "done" | "clamped" | "blocked" | "timeout" (+ status.reason for blocked/timeout)
 ```
@@ -552,7 +577,7 @@ if (supportsCapability(teleop.robotInfo(), "pose_targets")) {
 Three contracts worth knowing:
 
 - **Capability-gated, three-valued.** A robot without `pose_targets` ignores the frame
-  *silently*, so `sendPose` **throws** on an explicitly missing capability rather than letting
+  _silently_, so `sendPose` **throws** on an explicitly missing capability rather than letting
   a script hang to its timeout. A legacy ack (no capabilities field at all) passes through —
   probe-or-assume-legacy is the ack contract. The mock **advertises `pose_targets` and serves
   it** (its default capability set matches a healthy A3 gateway), so `sendPose` against mock
@@ -601,7 +626,8 @@ For a supporting robot, opt into durable review and target the stable ID:
 ```ts
 await teleop.recordConfirmed("session_start", { task: "fold the towel" });
 const take = await teleop.recordConfirmed("episode_start", {
-  task: "fold the towel", reviewRequired: true,
+  task: "fold the towel",
+  reviewRequired: true,
 });
 if (!take.episodeId) throw new Error("Robot omitted the review episode ID");
 // ...drive a demonstration...
@@ -665,14 +691,20 @@ you supply the `MediaStreamTrack`; the SDK does not fetch, decode, or set levels
 // MediaStream sink only, never ctx.destination), and CAP THE LEVEL (see the caveat):
 const ctx = new AudioContext();
 const buf = await ctx.decodeAudioData(await (await fetch(url)).arrayBuffer());
-const src = ctx.createBufferSource(); src.buffer = buf;
-const gain = ctx.createGain(); gain.gain.value = 0.7;     // ← cap output level (see below)
+const src = ctx.createBufferSource();
+src.buffer = buf;
+const gain = ctx.createGain();
+gain.gain.value = 0.7; // ← cap output level (see below)
 const dest = ctx.createMediaStreamDestination();
-src.connect(gain); gain.connect(dest);
+src.connect(gain);
+gain.connect(dest);
 
 await teleop.sendClipAudio(dest.stream.getAudioTracks()[0]); // reserve uplink + start
 src.start();
-src.onended = () => { void teleop.sendClipAudio(null); ctx.close(); }; // hand uplink back / detach
+src.onended = () => {
+  void teleop.sendClipAudio(null);
+  ctx.close();
+}; // hand uplink back / detach
 ```
 
 **Requirements & caveats — read before you ship audio:**
@@ -694,10 +726,10 @@ src.onended = () => { void teleop.sendClipAudio(null); ctx.close(); }; // hand u
   the robot clamps downlink playback to `NORI_SPEAKER_GAIN` (default **0.7**) with a `volume`
   element before the sink, so no track you send can overdrive the speaker. This exists because a
   near-full-scale clip drives the speaker amp far harder than call speech and can brown out some
-  USB speaker hardware mid-stream. You *may* still attenuate client-side (defense-in-depth), but
+  USB speaker hardware mid-stream. You _may_ still attenuate client-side (defense-in-depth), but
   the guarantee lives on the robot; for loud playback also prefer a powered USB hub + a robust speaker.
 - **Speaker device must be name-stable** — set `NORI_SPEAKER` to a **dmix alias (`nori_out`) or
-  `hw:CARD=<name>`, never `hw:<number>`**. A device that re-enumerates comes back as a *new*
+  `hw:CARD=<name>`, never `hw:<number>`**. A device that re-enumerates comes back as a _new_
   card number, so a numbered device is unrecoverable after any reset.
 
 > The code sample above is the reference pattern (fetch/decode, gain-cap at `0.7`, and uplink
@@ -713,15 +745,15 @@ import { VrSession, DEFAULT_BINDINGS } from "@nori/sdk/vr";
 
 if (await VrSession.isSupported()) {
   const session = new VrSession({
-    teleop,                     // a started RemoteTeleop
-    videoEl: video,             // same element the robot stream is attached to
+    teleop, // a started RemoteTeleop
+    videoEl: video, // same element the robot stream is attached to
     onLog: (m) => console.log(m),
     onEnd: () => console.log("VR ended"),
   });
   // feed telemetry/currents in for the in-VR HUD + haptics:
   //   teleop options onTelemetry -> session.setTelemetry(t)
   //   teleop options onCurrents  -> session.setCurrents(c)
-  await session.start();        // enters immersive-vr
+  await session.start(); // enters immersive-vr
 }
 ```
 
@@ -740,26 +772,36 @@ class MySignaling implements SignalingTransport {
   async connect(h: SignalingHandlers) {
     // wire your transport to: h.onSdp, h.onIce, h.onRobotHere, h.onOpen
   }
-  sendReady(p: { mac?: string }) { /* broadcast 'ready' */ }
-  sendSdp(p) { /* broadcast our SDP answer */ }
-  sendIce(p) { /* broadcast a local ICE candidate */ }
-  sendBye() { /* best-effort 'leaving'; never throw */ }
-  async close() { /* tear down; idempotent */ }
+  sendReady(p: { mac?: string }) {
+    /* broadcast 'ready' */
+  }
+  sendSdp(p) {
+    /* broadcast our SDP answer */
+  }
+  sendIce(p) {
+    /* broadcast a local ICE candidate */
+  }
+  sendBye() {
+    /* best-effort 'leaving'; never throw */
+  }
+  async close() {
+    /* tear down; idempotent */
+  }
 }
 ```
 
 The robot side (`webrtc_robot.py`) must exchange the same named events (`sdp`, `ice`,
-`robot_here`, `ready`, `bye`). The event *shapes* are the `SdpPayload` / `IcePayload` /
+`robot_here`, `ready`, `bye`). The event _shapes_ are the `SdpPayload` / `IcePayload` /
 `RobotHerePayload` types exported from `@nori/sdk`.
 
 ## Entry points
 
-| Import | Contains | Extra dep |
-|---|---|---|
-| `@nori/sdk` | `RemoteTeleop`, navigation/telemetry/jog/keybind types, `SignalingTransport` contract, `NORI_PROTOCOL_VERSION` | none |
-| `@nori/sdk/vr` | `VrJogMapper`, `VrSession`, `DEFAULT_BINDINGS`, VR types | `three` |
-| `@nori/sdk/supabase` | `SupabaseSignaling` (reference transport) | `@supabase/supabase-js` |
-| `@nori/sdk/mock` | `createMockRobot`, `MockDaemonSim`, `createLoopbackSignaling` (dev/CI fake robot) | none |
+| Import               | Contains                                                                                                       | Extra dep               |
+| -------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| `@nori/sdk`          | `RemoteTeleop`, navigation/telemetry/jog/keybind types, `SignalingTransport` contract, `NORI_PROTOCOL_VERSION` | none                    |
+| `@nori/sdk/vr`       | `VrJogMapper`, `VrSession`, `DEFAULT_BINDINGS`, VR types                                                       | `three`                 |
+| `@nori/sdk/supabase` | `SupabaseSignaling` (reference transport)                                                                      | `@supabase/supabase-js` |
+| `@nori/sdk/mock`     | `createMockRobot`, `MockDaemonSim`, `createLoopbackSignaling` (dev/CI fake robot)                              | none                    |
 
 ## License & lineage
 

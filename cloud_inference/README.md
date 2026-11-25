@@ -6,12 +6,14 @@ prove the model runs on AWS and returns SO-101 actions. Milestone 2 (wire it int
 `lelab`'s rollout) follows once `/act` returns sane actions.
 
 ## 0. GPU quota (do this FIRST — it can gate "today")
+
 New AWS accounts default to **0** for G instances. In **Service Quotas → EC2 →
 "Running On-Demand G and VT instances"**, request **≥ 4 vCPU** (a `g5.xlarge` is
 4 vCPU). Pick a region with stock (`us-east-1` / `us-west-2`). Approval is often
 minutes, sometimes hours.
 
 ## 1. Launch the instance
+
 - **`g5.xlarge`** (A10G, 24 GB — fits bf16 <16 GB) with the **AWS Deep Learning
   AMI (PyTorch)** so CUDA/drivers are preinstalled. (`g6.xlarge`/L4 is cheaper;
   `g6e.xlarge`/L40S if you want lower latency or fp32.)
@@ -19,6 +21,7 @@ minutes, sometimes hours.
   never 0.0.0.0.
 
 ## 2. Install + run
+
 ```bash
 # on the instance
 git clone <this repo> && cd Nori-Lab/cloud_inference   # or scp this dir up
@@ -33,6 +36,7 @@ uvicorn molmoact2_server:app --host 0.0.0.0 --port 8000
 ```
 
 ## 3. Smoke-test with curl
+
 ```bash
 IMG=$(base64 -w0 test_top.jpg)     # any RGB image; send 2 views ideally
 curl -s https://<instance>:8000/health
@@ -46,9 +50,11 @@ curl -s -X POST http://<instance>:8000/act \
        \"num_steps\":10}"
 # -> {"actions": [[...6...], [...], ... 10-30 rows ...]}   ROBOT SCALE
 ```
+
 If you get a 10–30 x 6 chunk of finite numbers, milestone 1 is done.
 
 ## Contract / gotchas
+
 - **State is 6-dim** (single SO-100/101 arm). If your session is bimanual (12-dim),
   the spike targets ONE arm — send that arm's 6 joints.
 - **≥2 camera views** recommended (`images=[top, side]`; order doesn't matter).
@@ -62,6 +68,7 @@ If you get a 10–30 x 6 chunk of finite numbers, milestone 1 is done.
   video rule still applies. Use test footage for the spike.
 
 ## Milestone 2 (next, not in this file)
+
 Add a cloud-inference mode to `lelab`'s `/nori/rollout` that maintains a **chunk
 queue**: on each per-tick `/act`, serve the next action from the queue; when it
 drains, POST `{images, state, instruction}` here, refill, continue. Keep the

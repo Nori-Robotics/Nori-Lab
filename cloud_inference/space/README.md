@@ -17,12 +17,14 @@ Inference-Endpoint toolkit, which is incompatible with the transformers version
 this model needs.
 
 ## Endpoints
+
 - `GET /health` → `{"ok", "status": "loading|ready|error", "error", "repo", "dtype"}`
 - `POST /act` (Bearer `NORI_INFER_TOKEN`) →
   `{ images:[b64...], state:[6 floats], instruction:str, num_steps? }`
   → `{ actions: [[...6 DOF...], ... up to 30 moves] }` (robot scale).
 
 ## Required setup (Space **Settings**)
+
 1. **Hardware**: a GPU tier — `a10g-small` (A10G 24GB, ~$1/hr) is enough (bf16 <16GB).
 2. **Secrets**:
    - `NORI_INFER_TOKEN` — the bearer token the rollout client sends (required).

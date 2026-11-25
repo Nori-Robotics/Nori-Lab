@@ -1,7 +1,7 @@
 # Nori Plan — LeLab Fork Implementation
 
 > ⚠️ **STATUS IS NOT TRACKED HERE — this doc is stale for progress.** The checkboxes
-> below are *not* kept current and under-report what's built (M1 remote teleop and most of
+> below are _not_ kept current and under-report what's built (M1 remote teleop and most of
 > Phase 7 are done but still show unchecked here). For the authoritative, up-to-date status
 > see **[`todos.md`](todos.md)**. Treat this file as the "what / why / rationale" reference
 > only; treat `todos.md` as the source of truth for "what's done."
@@ -9,6 +9,7 @@
 This document is the concrete plan for adapting upstream LeLab (huggingface/leLab) into Nori's laptop application. It lives in the fork (`NoriLeLab`) and tracks decisions, open questions, and the implementation sequence.
 
 **Read alongside:**
+
 - [`CLAUDE.md`](CLAUDE.md) — upstream's architecture (still mostly valid; inherited)
 - [`../Nori-Backend/LAPTOP_APP.md`](../Nori-Backend/LAPTOP_APP.md) — full design rationale + open-question discussion
 - [`../Nori-Backend/plan.md`](../Nori-Backend/plan.md) — broader Nori architecture (Items 0, 3, 3.5)
@@ -74,12 +75,13 @@ Worth scanning before deciding what to keep vs. replace:
 
 The hardware integration alone is months of work that you're getting for free.
 
-**[NEW] Caveat (realigned against the C++ Pi daemon, 2026-06-16; protocol/recording reconciled 2026-06-24):** three of the "free" pieces above are *partly superseded* because the Pi now runs a native C++ daemon with its own **versioned JSON** protocol (see `onboard_pi_plan.md` §f / R8 — the wire format is JSON, *not* binary C-structs):
+**[NEW] Caveat (realigned against the C++ Pi daemon, 2026-06-16; protocol/recording reconciled 2026-06-24):** three of the "free" pieces above are _partly superseded_ because the Pi now runs a native C++ daemon with its own **versioned JSON** protocol (see `onboard_pi_plan.md` §f / R8 — the wire format is JSON, _not_ binary C-structs):
+
 - **Hardware integration** — the Robot class no longer drives motors over serial/ZMQ; it's a thin-client (TCP/JSON control + WebRTC video) to the daemon, on LAN or — for remote teleop — via the WAN relay. See Phase 5.
 - **Recording → LeRobotDataset pipeline** — frames **stream live to the laptop, which writes the dataset**; the Pi persists no video (`onboard_pi_plan.md` R5). See Phase 4.
 - **Camera capture** — replaced by a WebRTC/OpenCV video sink in the FastAPI layer. See Phase 5.
 
-The dataset *assembly format* (Parquet + mp4 LeRobotDataset) and the *local inference* path (`rollout.py`) are still reused — they just consume laptop-parsed / WebRTC-decoded inputs instead of locally-captured ones.
+The dataset _assembly format_ (Parquet + mp4 LeRobotDataset) and the _local inference_ path (`rollout.py`) are still reused — they just consume laptop-parsed / WebRTC-decoded inputs instead of locally-captured ones.
 
 ---
 
@@ -137,12 +139,12 @@ Both paths submit the same `POST /api/v1/customers/me/pair {robot_serial_number}
 - **Lift into the LeLab fork** (declarative `XLerobot2Wheels` class): DOF count + names, motor mapping, kinematic profile, calibration interface, camera enumeration. This is the static descriptor that LeLab's existing flows (calibrate, teleop, record, rollout) need to function.
 - **Stays on the Pi**: real-time control loop (50 Hz motor commands), the full local safety stack (dead-man, stall-soften, current/torque limits, E-STOP), camera capture, the thin-client LAN protocol.
 
-The fork's Robot class is a thin wrapper that *describes* the robot and connects over LAN; it does not own real-time control or safety.
+The fork's Robot class is a thin wrapper that _describes_ the robot and connects over LAN; it does not own real-time control or safety.
 
 **[NEW] Thin-client transport (realigned against the C++ Pi daemon, 2026-06-16; protocol reconciled 2026-06-24):** the Pi now runs a native C++20 `NoriCoreAgent` daemon (see `onboard_pi_plan.md`) that owns the 50 Hz control loop, the safety stack, and camera capture, and exposes a **versioned JSON-line control protocol + WebRTC media** — **not** a binary C-struct protocol, and **not** the legacy Python `scservo_sdk` serial path or custom ZMQ-over-Wi-Fi ports. Consequences for the fork's Robot class:
 
 - The `XLerobot2Wheels` constructor does **not** open low-level serial connections (`scservo_sdk`) or ZMQ sockets. Instead it opens **a single control socket** (TCP/JSON-line, the versioned protocol the daemon speaks; TLS over the WAN relay) **plus a WebRTC client channel** (for video) to the Pi — `xlerobot.local` on LAN, or via the Supabase relay for remote teleop.
-- The class is therefore purely a *network client + static descriptor*: DOF/names, motor mapping, kinematic profile, calibration interface, and camera enumeration, talking to the daemon over LAN. All real-time and safety behavior lives in the C++ daemon on the Pi.
+- The class is therefore purely a _network client + static descriptor_: DOF/names, motor mapping, kinematic profile, calibration interface, and camera enumeration, talking to the daemon over LAN. All real-time and safety behavior lives in the C++ daemon on the Pi.
 
 ### Distribution (deferred decision)
 
@@ -173,12 +175,14 @@ This is the most important non-negotiable architectural property. Documented in 
 **The customer's laptop never holds, sees, or uses a Hugging Face access token.**
 
 This means:
+
 - `lelab/datasets.py` cannot have `HfApi(token=...).upload_folder(...)` calls in its production code path
 - `lelab/jobs.py` and `lelab/train.py` cannot call `huggingface_hub.run_job(...)` directly
 - The downloaded policies for installation come from Nori-Backend's streaming endpoint, never from a `hf_hub_download(token=customer_token, ...)` call
 - The laptop's `.env` (if any) does NOT contain `HF_TOKEN` or equivalent
 
 **Why:**
+
 - Per-customer HF tokens require per-customer HF accounts/seats → cost scales linearly with customers
 - HF doesn't expose programmatic per-repo scoped tokens → no way to limit blast radius per customer
 - Nori-Backend HOLDS one org-admin token (in its secret manager) and is the only entity that uses it for HF writes
@@ -291,7 +295,7 @@ For each change, tag the modified block with `# NORI:` comments.
   2. On recording finish, the React frontend fires a completion event to the FastAPI backend.
   3. The backend runs **`tools/export_lerobot_dataset.py` locally on the laptop CPU** to assemble the captured streams into high-fidelity **Apache Parquet** files + synchronized **`.mp4`** video (a standard LeRobotDataset).
   4. Only then does the assembled dataset get routed to Supabase/HF via `nori_client.upload_dataset(...)` (backend-mediated, per the HF-token invariant).
-  - **New file required:** `tools/export_lerobot_dataset.py` (laptop-side stream → Parquet/mp4 assembler). This replaces the assumption that LeLab's in-process recording pipeline produces the dataset directly. *(Note: a Pi-side original-quality buffer is only considered for WAN recording, and even then tmpfs/RAM, never SD — R5.)*
+  - **New file required:** `tools/export_lerobot_dataset.py` (laptop-side stream → Parquet/mp4 assembler). This replaces the assumption that LeLab's in-process recording pipeline produces the dataset directly. _(Note: a Pi-side original-quality buffer is only considered for WAN recording, and even then tmpfs/RAM, never SD — R5.)_
 - [ ] **`lelab/jobs.py`** / **`lelab/train.py`** — training dispatch:
   - Replace `huggingface_hub.run_job(...)` with `nori_client.dispatch_training(timeout_seconds=...)`.
   - Backend returns `{internal_job_uuid, hf_job_id, ...}` (the existing dispatch response shape).
@@ -321,7 +325,7 @@ The C++ Pi daemon streams camera video as **ZMQ JPEG on LAN** (reusing the prove
 - [ ] **Inference tap:** the decoded raw frame array is passed directly into the local model inference loops (ACT / Diffusion Policy vectors in `lelab/rollout.py`) — the same frames feed the policy.
 - [ ] **Live view mirror:** the live frame matrix is mirrored straight to the React frontend canvas component **without lagging the execution engine** (keep decode/inference and UI mirroring decoupled so neither stalls the other).
 - [ ] **Supersedes:** the plan's earlier assumption that teleop/inference visuals are inherited unchanged from upstream LeLab. Upstream's camera-capture path is replaced by this WebRTC/OpenCV sink.
-- [ ] **[2026-06-30, rev 2026-07-01] Bidirectional (telepresence), staged:** this sink now also *sends* — the operator's **mic** is a WebRTC send track and the robot's mic is a recv track played on the laptop (M3, two-way audio). The operator's **camera** send track is built-but-gated (M6). See Phase 7; reserve all m-lines up front (no mid-call renegotiation). Control data channel unchanged.
+- [ ] **[2026-06-30, rev 2026-07-01] Bidirectional (telepresence), staged:** this sink now also _sends_ — the operator's **mic** is a WebRTC send track and the robot's mic is a recv track played on the laptop (M3, two-way audio). The operator's **camera** send track is built-but-gated (M6). See Phase 7; reserve all m-lines up front (no mid-call renegotiation). Control data channel unchanged.
 
 Tag any changes to existing LeLab files with `# NORI:`. Where possible, isolate the new robot class as its own module so upstream merges don't touch it.
 
@@ -366,26 +370,26 @@ Goal: the laptop half of the voice call (audio two-way; operator **video deferre
 
 Phase work depends on Nori-Backend endpoints. **Status re-verified against `../Nori-Backend/README.md` on 2026-06-16 — all required endpoints now exist.** The remaining work is fork-side integration, not backend gaps.
 
-| Endpoint | Phase | Status |
-|---|---|---|
-| `GET /health` | 0 | ✅ exists — **note: mounted at `/health`, NOT `/api/v1/health`** |
-| `GET /api/v1/marketplace/policies` (`?source=own\|first_party\|community`) | 3 | ✅ exists |
-| `POST /api/v1/marketplace/policies/{listing_id}/acquire` | 3 | ✅ exists |
-| `GET /api/v1/marketplace/policies/{ref}/download` | 3 | ✅ exists — `ref` = `jobs.id` (own) or `marketplace_listings.id` |
-| `GET /api/v1/marketplace/datasets/public` | 3 | ✅ exists — auth-optional |
-| `POST /api/v1/training/dispatch` | 4 | ✅ exists — body `{timeout_seconds: 60..3600}` |
-| `POST /api/v1/customers/me/provision` | 2 | ✅ exists |
-| `POST /api/v1/customers/me/pair` | 6 | ✅ exists — 409 on re-pair to a different serial |
-| `GET /api/v1/customers/me` | 2 | ✅ exists — returns `{provisioned: false, ...}` if not provisioned |
-| `POST /api/v1/consents` + `/consents/{id}/revoke` + `GET /consents` | 6 | ✅ exists |
-| `GET /api/v1/training/jobs` + `{job_id}` | 6 | ✅ exists |
-| `GET /api/v1/training/jobs/{job_id}/logs?since=<offset>` | 4 | ✅ exists — returns `{lines, next_offset, job_status, is_terminal}` |
-| **Dataset upload (4-step S3 flow — replaces the assumed single `POST .../upload`)** | 4 | ✅ exists — see note below |
-| ↳ `POST /api/v1/datasets/upload/start` | 4 | ✅ exists |
-| ↳ `POST /api/v1/datasets/upload/{session_id}/finalize` | 4 | ✅ exists |
-| ↳ `GET /api/v1/datasets/upload/{session_id}` | 4 | ✅ exists — poll during finalize |
-| ↳ `POST /api/v1/datasets/upload/{session_id}/cancel` | 4 | ✅ exists |
-| `POST /api/v1/deletion-requests` | 6 | ⚠️ exists — but the purge sweeper is **not yet wired** (status row only) |
+| Endpoint                                                                            | Phase | Status                                                                   |
+| ----------------------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------ |
+| `GET /health`                                                                       | 0     | ✅ exists — **note: mounted at `/health`, NOT `/api/v1/health`**         |
+| `GET /api/v1/marketplace/policies` (`?source=own\|first_party\|community`)          | 3     | ✅ exists                                                                |
+| `POST /api/v1/marketplace/policies/{listing_id}/acquire`                            | 3     | ✅ exists                                                                |
+| `GET /api/v1/marketplace/policies/{ref}/download`                                   | 3     | ✅ exists — `ref` = `jobs.id` (own) or `marketplace_listings.id`         |
+| `GET /api/v1/marketplace/datasets/public`                                           | 3     | ✅ exists — auth-optional                                                |
+| `POST /api/v1/training/dispatch`                                                    | 4     | ✅ exists — body `{timeout_seconds: 60..3600}`                           |
+| `POST /api/v1/customers/me/provision`                                               | 2     | ✅ exists                                                                |
+| `POST /api/v1/customers/me/pair`                                                    | 6     | ✅ exists — 409 on re-pair to a different serial                         |
+| `GET /api/v1/customers/me`                                                          | 2     | ✅ exists — returns `{provisioned: false, ...}` if not provisioned       |
+| `POST /api/v1/consents` + `/consents/{id}/revoke` + `GET /consents`                 | 6     | ✅ exists                                                                |
+| `GET /api/v1/training/jobs` + `{job_id}`                                            | 6     | ✅ exists                                                                |
+| `GET /api/v1/training/jobs/{job_id}/logs?since=<offset>`                            | 4     | ✅ exists — returns `{lines, next_offset, job_status, is_terminal}`      |
+| **Dataset upload (4-step S3 flow — replaces the assumed single `POST .../upload`)** | 4     | ✅ exists — see note below                                               |
+| ↳ `POST /api/v1/datasets/upload/start`                                              | 4     | ✅ exists                                                                |
+| ↳ `POST /api/v1/datasets/upload/{session_id}/finalize`                              | 4     | ✅ exists                                                                |
+| ↳ `GET /api/v1/datasets/upload/{session_id}`                                        | 4     | ✅ exists — poll during finalize                                         |
+| ↳ `POST /api/v1/datasets/upload/{session_id}/cancel`                                | 4     | ✅ exists                                                                |
+| `POST /api/v1/deletion-requests`                                                    | 6     | ⚠️ exists — but the purge sweeper is **not yet wired** (status row only) |
 
 **⚠️ Dataset upload shape changed.** The plan originally assumed a single `POST /api/v1/datasets/{customer_id}/upload` that takes a local path. The backend instead implements a **presigned-S3 multi-file flow** (full design in `../Nori-Backend/DATASET_UPLOAD_DESIGN.md`):
 
@@ -402,19 +406,20 @@ See `../Nori-Backend/README.md` (API reference) and `../Nori-Backend/todos.md` f
 
 ## [NEW] Pi daemon LAN contract matrix
 
-These are the **robot-side** dependencies — channels the C++ `NoriCoreAgent` daemon (see `onboard_pi_plan.md`) must expose for the fork to function. Distinct from the Nori-Backend matrix above. On **LAN** they are spoken directly to `xlerobot.local`; for **WAN remote teleop** the *same* channels ride the Supabase relay/TLS tunnel (only the network/security layer changes — `onboard_pi_plan.md` §e/§f). Status as of 2026-06-16 (transport reconciled to JSON + WAN 2026-06-24; daemon is a parallel track owned by the robotics/systems engineer).
+These are the **robot-side** dependencies — channels the C++ `NoriCoreAgent` daemon (see `onboard_pi_plan.md`) must expose for the fork to function. Distinct from the Nori-Backend matrix above. On **LAN** they are spoken directly to `xlerobot.local`; for **WAN remote teleop** the _same_ channels ride the Supabase relay/TLS tunnel (only the network/security layer changes — `onboard_pi_plan.md` §e/§f). Status as of 2026-06-16 (transport reconciled to JSON + WAN 2026-06-24; daemon is a parallel track owned by the robotics/systems engineer).
 
-| Channel | Transport | Used by (fork side) | Phase | Status |
-|---|---|---|---|---|
-| Control / state stream | TCP socket, **JSON-line** (versioned, timestamped); TLS on WAN | `XLerobot2Wheels` constructor + calibrate/teleop/record/rollout | 5 | ❌ depends on daemon |
-| Live video feed | **ZMQ JPEG (LAN) / WebRTC H.264 (WAN)** | WebRTC/ZMQ video sink → `rollout.py` inference + React canvas | 5 | ❌ depends on daemon |
-| WebRTC signaling exchange | HTTP/WS handshake (SDP/ICE); brokered via the relay on WAN | FastAPI signaling host in `lelab/` | 5 | ❌ depends on daemon |
-| Recording stream | **live frames over the same control/video session** (no Pi-side flash buffer — R5) → laptop writes the dataset | `lelab/datasets.py` ingest → `tools/export_lerobot_dataset.py` | 4 | ❌ depends on daemon |
-| mDNS presence advertisement | mDNS (`xlerobot.local`) — LAN only | LAN discovery for pairing UX | 6 | ⚠️ specified in `onboard_pi_plan.md` 2c |
-| Pairing handshake / token auth | HTTP over captive-portal/LAN (LAN); scoped token via Supabase (WAN) | Pairing flow (`POST /api/v1/customers/me/pair`) | 6 | ⚠️ specified in `onboard_pi_plan.md` 2c |
-| Safety E-STOP reset | control command (clears the C++ `e_stop_latched` hard latch) | UI "reset" action after an obstruction latch | 5 | ❌ depends on daemon |
+| Channel                        | Transport                                                                                                      | Used by (fork side)                                             | Phase | Status                                  |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ----- | --------------------------------------- |
+| Control / state stream         | TCP socket, **JSON-line** (versioned, timestamped); TLS on WAN                                                 | `XLerobot2Wheels` constructor + calibrate/teleop/record/rollout | 5     | ❌ depends on daemon                    |
+| Live video feed                | **ZMQ JPEG (LAN) / WebRTC H.264 (WAN)**                                                                        | WebRTC/ZMQ video sink → `rollout.py` inference + React canvas   | 5     | ❌ depends on daemon                    |
+| WebRTC signaling exchange      | HTTP/WS handshake (SDP/ICE); brokered via the relay on WAN                                                     | FastAPI signaling host in `lelab/`                              | 5     | ❌ depends on daemon                    |
+| Recording stream               | **live frames over the same control/video session** (no Pi-side flash buffer — R5) → laptop writes the dataset | `lelab/datasets.py` ingest → `tools/export_lerobot_dataset.py`  | 4     | ❌ depends on daemon                    |
+| mDNS presence advertisement    | mDNS (`xlerobot.local`) — LAN only                                                                             | LAN discovery for pairing UX                                    | 6     | ⚠️ specified in `onboard_pi_plan.md` 2c |
+| Pairing handshake / token auth | HTTP over captive-portal/LAN (LAN); scoped token via Supabase (WAN)                                            | Pairing flow (`POST /api/v1/customers/me/pair`)                 | 6     | ⚠️ specified in `onboard_pi_plan.md` 2c |
+| Safety E-STOP reset            | control command (clears the C++ `e_stop_latched` hard latch)                                                   | UI "reset" action after an obstruction latch                    | 5     | ❌ depends on daemon                    |
 
 **Notes:**
+
 - The JSON control + telemetry schema is owned by the daemon and **shared via the `nori-protocol` git submodule** (one source of truth, golden-fixture tests in both repos). The fork parses/serializes against it and **asserts `protocol_version`** on connect (`onboard_pi_plan.md` R8).
 - The watchdog is **tiered and per-mode** on the Pi — LAN {T_warn 150 ms / T_stop 500 ms}, WAN {300 / 1000 ms} — and **auto-recovers** (it does not hard-latch). The fork just keeps the control stream fed; see `onboard_pi_plan.md` §b.
 - On LAN these channels bypass the cloud entirely; on WAN they traverse the Supabase relay. The cloud touchpoint in the recording path is still only the final dataset upload.
@@ -426,24 +431,29 @@ These are the **robot-side** dependencies — channels the C++ `NoriCoreAgent` d
 The fork must keep pulling upstream LeLab changes — LeRobot moves fast and LeLab gains features.
 
 **Setup (done):**
+
 ```bash
 git remote add upstream https://github.com/huggingface/leLab.git
 ```
 
 **Periodic merge:**
+
 ```bash
 git fetch upstream
 git merge upstream/main
 ```
+
 Cadence: weekly during early dev, monthly once stable.
 
 **Conflict-handling rules:**
+
 1. **`# NORI:`-tagged in-place changes**: when conflicts hit those lines, the marker makes the Nori-specific edit easy to identify. Re-apply by hand if upstream rewrote the surrounding code.
 2. **Additive files (`frontend/src/nori/`, `lelab/nori_client.py`)**: merge cleanly forever; no conflict possible.
 3. **Hardware extension**: keep `XLerobot2Wheels` in its own module/file if possible; minimizes conflict surface with upstream changes to LeLab's robot abstractions.
 4. **Drift threshold**: if upstream rewrites a file you've edited 3+ times across recent merges, that file may have meaningfully diverged. Consider whether to hard-fork it (own that file entirely; stop merging upstream changes for it).
 
 **Contributing back:**
+
 - Hardware extension (XLerobot2Wheels) may be generally useful — consider upstream PR.
 - UI improvements that aren't Nori-branding may upstream cleanly.
 - Anything that calls Nori-Backend (`lelab/nori_client.py`, the `# NORI:` reroutes, account/pairing/marketplace UI) stays in our fork.
@@ -484,13 +494,14 @@ Cadence: weekly during early dev, monthly once stable.
 
 Add to a `.env` or environment configuration (do not commit secrets):
 
-| Var | Purpose | Where to find |
-|---|---|---|
-| `NORI_BACKEND_URL` | Base URL for Nori-Backend API | `http://localhost:8000` for local; `https://api.nori.com` for prod (TBD) |
-| `SUPABASE_URL` | Supabase project URL | Supabase dashboard → Project Settings → API |
-| `SUPABASE_ANON_KEY` | Anon key (safe to ship in client bundle) | Supabase dashboard → Project Settings → API → anon |
+| Var                 | Purpose                                  | Where to find                                                            |
+| ------------------- | ---------------------------------------- | ------------------------------------------------------------------------ |
+| `NORI_BACKEND_URL`  | Base URL for Nori-Backend API            | `http://localhost:8000` for local; `https://api.nori.com` for prod (TBD) |
+| `SUPABASE_URL`      | Supabase project URL                     | Supabase dashboard → Project Settings → API                              |
+| `SUPABASE_ANON_KEY` | Anon key (safe to ship in client bundle) | Supabase dashboard → Project Settings → API → anon                       |
 
 **Do NOT** add to this laptop app:
+
 - `HF_TOKEN` / `HF_ORG_ADMIN_TOKEN` — never; backend handles all HF access
 - `SUPABASE_SERVICE_ROLE_KEY` — never on the client; backend-only
 

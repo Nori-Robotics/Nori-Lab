@@ -1,12 +1,14 @@
 # MolmoAct2 → Nori finetune plan (joints + cameras)
 
 ## Why finetune (and why calibration isn't enough)
+
 The live check (`scratchpad/livecheck.py`, `move_red_left` ep0) showed MolmoAct2
 out-of-box has an open-loop error of ~20.9° that a **per-joint affine calibration**
 cuts to ~2.1° — so **~90% of the gap is a linear joint-convention difference**, not
 a deep domain gap. Calibration (`derive_calibration.py` → `NORI_INFER_CALIB`) is a
 good **stopgap** and is now wired into the rollout. But it has real limits:
-- It's fit from ONE capture's distribution; it assumes a *linear* convention map
+
+- It's fit from ONE capture's distribution; it assumes a _linear_ convention map
   and can drift on poses/tasks outside that distribution.
 - It does **nothing** for the **camera domain gap** — MolmoAct2 trained on RealSense
   top/side rigs; Nori's `overhead`/`front` differ in mount, intrinsics, lighting.
@@ -17,6 +19,7 @@ Nori's camera viewpoints, so no calibration layer is needed. The checkpoint is
 explicitly "intended for both inference and **further fine-tuning**."
 
 ## What we already have (assets)
+
 - **Captures in the right shape**: `move_red_left`, `new_test`, `asdfghj` (LeRobot
   v3.0, 15fps, `observation.images.{overhead,front,left_wrist,right_wrist}`,
   **absolute joint pose in degrees**, per-camera H.264 preview sidecars).
@@ -28,7 +31,9 @@ explicitly "intended for both inference and **further fine-tuning**."
 - **Compute path**: HF Jobs / AWS GPU (see the AWS migration, task #39).
 
 ## Data prep (Nori capture → MolmoAct2 finetune format)
+
 Per episode, emit exactly what `predict_action` consumes:
+
 1. **State/action**: the single arm's 6 joints in the model's canonical order
    (`shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper`),
    absolute pose, degrees. Use `policy_scope` to select the arm; reorder to model
@@ -46,6 +51,7 @@ Per episode, emit exactly what `predict_action` consumes:
    code is a starting point.
 
 ## Finetune procedure
+
 1. **Code**: `github.com/allenai/molmoact2` (confirm the finetune entrypoint + config).
    Start from `allenai/MolmoAct2-SO100_101` (not the base) to keep SO-100/101 priors.
 2. **Regime**: LoRA / adapter finetune FIRST (cheap, fast, low forgetting risk).
@@ -59,6 +65,7 @@ Per episode, emit exactly what `predict_action` consumes:
    target task. VLAs finetune reasonably on small in-domain sets.
 
 ## Camera setup (for replicability + a better finetune)
+
 - **Mount `overhead` + `front` on fixed rigs** and keep them stable across capture
   and deployment — the model keys off consistent external viewpoints.
 - Positioning them to loosely resemble the training **top/side** framing helps both
@@ -68,6 +75,7 @@ Per episode, emit exactly what `predict_action` consumes:
   the finetune cameras (a viewpoint change post-finetune reintroduces the gap).
 
 ## Eval + rollout gating
+
 1. **Offline**: `dryrun_cloud.py --dataset` per-joint error on a HELD-OUT episode;
    target < ~5° across all joints (from the ~2° calibrated baseline, better).
 2. **Sim/bench**: replay predicted chunks against held-out demos before hardware.
@@ -75,7 +83,8 @@ Per episode, emit exactly what `predict_action` consumes:
    (bounds/watchdog/e-stop), short chunks first.
 
 ## Phasing
-- **A (done/now)** — calibration stopgap wired in; enables a first *cautious* real
+
+- **A (done/now)** — calibration stopgap wired in; enables a first _cautious_ real
   test with `NORI_INFER_CALIB` set.
 - **B** — collect + instruction-annotate a Nori finetune set (existing captures +
   targeted new ones); build the format-export (policy_scope + 2 views + norm_stats).

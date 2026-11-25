@@ -8,21 +8,21 @@ Attach it to a `<video>` element at construction (`videoEl`) **or** re-point it 
 useful when one long-lived session renders on different pages:
 
 ```ts
-teleop.setVideoEl(myVideoEl);   // point the live stream at this element (null to detach)
-teleop.setAudioEl(myAudioEl);   // same for the robot's inbound audio sink
+teleop.setVideoEl(myVideoEl); // point the live stream at this element (null to detach)
+teleop.setAudioEl(myAudioEl); // same for the robot's inbound audio sink
 ```
 
 ## Pause the encoder to save robot power
 
-Detaching with `null` stops *rendering*, but the robot keeps encoding and sending. On a Pi 5 —
+Detaching with `null` stops _rendering_, but the robot keeps encoding and sending. On a Pi 5 —
 no hardware H.264 encoder, so video is software x264 and often the biggest power draw — that's
 wasteful when nothing is watching.
 
 Pause the **encoder itself**, not just the sink:
 
 ```ts
-teleop.pauseVideo();    // robot drops frames BEFORE the encoder -> it goes idle (power saved)
-teleop.resumeVideo();   // re-enable; the robot forces a keyframe so video reappears at once
+teleop.pauseVideo(); // robot drops frames BEFORE the encoder -> it goes idle (power saved)
+teleop.resumeVideo(); // re-enable; the robot forces a keyframe so video reappears at once
 ```
 
 Pause/resume ride the control data channel (no renegotiation, so resume is fast) and are safe to
@@ -44,9 +44,9 @@ SDK's adaptive-bitrate loop re-asserts its own measured target every second, so 
 Without a `<video>` element — reads the live track directly:
 
 ```ts
-const blob = await teleop.captureFrame();   // JPEG Blob, or null if no video is arriving
+const blob = await teleop.captureFrame(); // JPEG Blob, or null if no video is arriving
 // If the encoder may be paused, use snapshot(): it resumes, waits for a frame, grabs, re-pauses:
-const still = await teleop.snapshot();      // JPEG Blob, or null
+const still = await teleop.snapshot(); // JPEG Blob, or null
 ```
 
 ### Per-camera stills
@@ -55,8 +55,8 @@ Both take an optional camera `role` (from the layout — see below) to crop one 
 composite. This is what a per-camera LLM `look` maps to:
 
 ```ts
-const wrist = await teleop.snapshot(500, "left_wrist");     // one tile, or null
-const over  = await teleop.captureFrame("image/jpeg", 0.7, "overhead");
+const wrist = await teleop.snapshot(500, "left_wrist"); // one tile, or null
+const over = await teleop.captureFrame("image/jpeg", 0.7, "overhead");
 ```
 
 ::: warning Unknown role → `null`, never the full composite
@@ -75,7 +75,7 @@ you need the same math elsewhere.
 For canvas pipelines, ML/CV consumers, or `MediaRecorder`:
 
 ```ts
-const stream = teleop.videoStream();        // MediaStream | null (null until the track arrives)
+const stream = teleop.videoStream(); // MediaStream | null (null until the track arrives)
 const rec = new MediaRecorder(stream!);
 // Do NOT stop() its tracks — they belong to the peer connection. Just drop your reference.
 ```
@@ -87,12 +87,12 @@ which camera is in which tile (`cameraLayoutInfo()` / `onCameraLayout`), and `ca
 crops a tile into its own `MediaStream`, so you never do quadrant math:
 
 ```ts
-teleop.cameraLayoutInfo();                       // {cols, rows, tiles} | null (also: onCameraLayout)
-const view = teleop.cameraView("left_wrist");    // CameraViewHandle | null
+teleop.cameraLayoutInfo(); // {cols, rows, tiles} | null (also: onCameraLayout)
+const view = teleop.cameraView("left_wrist"); // CameraViewHandle | null
 if (view) {
-  myVideoEl.srcObject = view.stream;             // or feed it to CV / MediaRecorder
+  myVideoEl.srcObject = view.stream; // or feed it to CV / MediaRecorder
   // later:
-  view.stop();                                   // ends the crop loop (composite unaffected)
+  view.stop(); // ends the crop loop (composite unaffected)
 }
 ```
 

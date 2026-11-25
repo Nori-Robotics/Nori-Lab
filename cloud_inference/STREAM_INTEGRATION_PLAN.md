@@ -22,14 +22,14 @@
   blobs** over TCP.
 - **Blob 0** — JSON preamble:
   `{"kind":"policy_stream_meta", serial, mono_epoch, wall_epoch, cameras:[...],
-  fps, calibration:<robot.json contents|null>}`. Unknown fields must be ignored.
+fps, calibration:<robot.json contents|null>}`. Unknown fields must be ignored.
 - **Blob 1..N** — one camera-PUB payload verbatim:
   `b"<name> <capture_monotonic_seconds>\n" + <jpeg>` (sensor-quality JPEG,
   no re-encode under the default passthrough).
 - **Control** rides the existing WebRTC data channel:
   `{type:"policy_stream","action":"start"|"stop"|"status"[,"dest","target"]}`
   → reply `{type:"policy_stream_status", ok, streaming, dest, fps_out,
-  frames_sent, dropped, error?}`. `start` may take up to ~8 s (robot-side sink
+frames_sent, dropped, error?}`. `start` may take up to ~8 s (robot-side sink
   connect + preamble).
 - Robot behaviour we rely on: bounded newest-wins buffer (drop-oldest, honest
   `dropped` counter), frame-silence auto-stop (~5 s), dead-sink auto-stop
@@ -82,13 +82,13 @@ Pure-Python TCP listener, testable with no robot.
   (`TeleopSessionContext`; the SDK itself does not know the serial) — arms a
   listener and returns `{host, port}`. `POST .../stream/close`.
   `/stream/status` exposes `{connected, serial, preamble_received,
-  calibration_present}` for the start-sequence poll. Status folded into
+calibration_present}` for the start-sequence poll. Status folded into
   the existing rollout `status()` (`frame_source`, per-camera ages, streamer
   counters when known).
 - Source preference in `_cloud_act`: **stream > deprecated direct-SUB (only if
   explicitly configured; warns) > composite (deprecated legacy fallback —
   logs a deprecation warning every time it engages)**. `frame_source ∈
-  {"stream","zmq","composite"}`.
+{"stream","zmq","composite"}`.
 - Host auto-detection: default-route private address (UDP-connect trick),
   `NORI_STREAM_HOST` override for multi-NIC laptops.
 - View mapping: `observation.images.<role>` → preamble camera name. If a
@@ -159,17 +159,17 @@ The browser catcher (`datasetCapture.ts` → `lelab/browser_capture.py` →
 
 ## 6. Phases
 
-| # | What | Needs robot? |
-|---|---|---|
-| P0 | Deprecate option B (done in this commit) | no |
-| P1 | Receiver + tests against a fake streamer speaking their wire (their `test_policy_streamer.py` FakeSink is the reference decoder — ours is the mirror image) | no |
-| P2 | lelab endpoints + cloud-path wiring + status | no |
-| P3 | SDK + policyRun orchestration; skip composite upload while the stream is live (+ dist rebuild, localhost checklist) | no |
-| P4 | Live bench: robot build deployed, `NORI_POLICY_ENABLED=1`, `NORI_POLICY_CAMERAS=left_wrist,overhead` — coordinate w/ NoriTelop (their own Pi bench §7.5 is still pending) | **yes** |
-| P5 | Units conversion derived from the streamed `robot.json` (scale = `(max−min)×360/(200×4096)` per joint, ≤1.8 sanity bound, gripper passthrough; A/B against the fitted affine in `dryrun_cloud` before replacing `NORI_INFER_CALIB`) | file only |
-| P6 | Local-ACT provenance gating + `capture_source` stamp | no |
-| P6b | Browser-capture recording deprecation (§5b) | no |
-| P7 | Polish: client live-view bitrate downshift during runs; RTC `delay` from true capture age instead of the RTT EWMA | no |
+| #   | What                                                                                                                                                                                                                                | Needs robot? |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| P0  | Deprecate option B (done in this commit)                                                                                                                                                                                            | no           |
+| P1  | Receiver + tests against a fake streamer speaking their wire (their `test_policy_streamer.py` FakeSink is the reference decoder — ours is the mirror image)                                                                         | no           |
+| P2  | lelab endpoints + cloud-path wiring + status                                                                                                                                                                                        | no           |
+| P3  | SDK + policyRun orchestration; skip composite upload while the stream is live (+ dist rebuild, localhost checklist)                                                                                                                 | no           |
+| P4  | Live bench: robot build deployed, `NORI_POLICY_ENABLED=1`, `NORI_POLICY_CAMERAS=left_wrist,overhead` — coordinate w/ NoriTelop (their own Pi bench §7.5 is still pending)                                                           | **yes**      |
+| P5  | Units conversion derived from the streamed `robot.json` (scale = `(max−min)×360/(200×4096)` per joint, ≤1.8 sanity bound, gripper passthrough; A/B against the fitted affine in `dryrun_cloud` before replacing `NORI_INFER_CALIB`) | file only    |
+| P6  | Local-ACT provenance gating + `capture_source` stamp                                                                                                                                                                                | no           |
+| P6b | Browser-capture recording deprecation (§5b)                                                                                                                                                                                         | no           |
+| P7  | Polish: client live-view bitrate downshift during runs; RTC `delay` from true capture age instead of the RTT EWMA                                                                                                                   | no           |
 
 ## 6b. P4 bench runbook (the first robot-dependent step)
 
@@ -179,15 +179,17 @@ real receiver → real endpoints → real chunk queue, incl. the stream-death �
 with the real robot.
 
 Robot side (Shanying's deployment, no code changes):
+
 1. Deploy a build containing `675aa3c`+ (policy streamer).
 2. `NORI_POLICY_ENABLED=1`, `NORI_POLICY_CAMERAS=left_wrist,overhead` in
    `media.env` (bandwidth re-check per their §7.5 bench — still pending their
    side).
 
 Laptop side, from the Remote page (everything is already wired):
+
 1. Connect the session as usual, open the cloud deploy card, Observe-only ON.
 2. Start. Expected console: `[policyRun] policy stream live — cameras:
-   ["left_wrist","overhead"]`. If it warns `composite fallback`, the robot
+["left_wrist","overhead"]`. If it warns `composite fallback`, the robot
    refused/unreachable — check `NORI_POLICY_ENABLED` and the LAN route.
 3. `curl -s localhost:8000/nori/rollout/status | python3 -m json.tool`:
    `frame_source` must read `"stream"`, `stream.age_s` under ~0.2 s per
@@ -207,7 +209,7 @@ Abort criteria: teleop loop_hz or live-view degradation while streaming
 ## 7. Answers to NoriTelop §9 open questions (handoff — already established)
 
 - **State vector**: 6 floats, ONE arm, order `shoulder_pan, shoulder_lift,
-  elbow_flex, wrist_flex, wrist_roll, gripper`. Joints 0-4 in **degrees from the
+elbow_flex, wrist_flex, wrist_roll, gripper`. Joints 0-4 in **degrees from the
   calibration midpoint** (`deg = (ticks − (range_min+range_max)/2) × 360/4096`;
   proven — the model card's example state sits exactly on the encoder tick
   grid). Gripper is **0–100 % of calibrated travel**, not degrees. A 12-dim

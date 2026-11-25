@@ -28,13 +28,13 @@ do today; only the delivery vehicle changes.
 
 ## Files
 
-| File | Role |
-|---|---|
-| `backend_entry.py` | Frozen entry: `_child` module dispatch, else boot uvicorn (headless). |
-| `lelab_desktop.spec` | PyInstaller spec — collects lerobot, **excludes** rerun/wandb/cmake. |
-| `build.sh` | Fresh venv → CPU torch → freeze → smoke test → stage into Tauri. |
-| `tauri/` | Rust shell: `src/main.rs`, `Cargo.toml`, `build.rs`, `tauri.conf.json`. |
-| `../lelab/utils/child_process.py` | `module_cmd()` — the frozen/source subprocess shim. |
+| File                              | Role                                                                    |
+| --------------------------------- | ----------------------------------------------------------------------- |
+| `backend_entry.py`                | Frozen entry: `_child` module dispatch, else boot uvicorn (headless).   |
+| `lelab_desktop.spec`              | PyInstaller spec — collects lerobot, **excludes** rerun/wandb/cmake.    |
+| `build.sh`                        | Fresh venv → CPU torch → freeze → smoke test → stage into Tauri.        |
+| `tauri/`                          | Rust shell: `src/main.rs`, `Cargo.toml`, `build.rs`, `tauri.conf.json`. |
+| `../lelab/utils/child_process.py` | `module_cmd()` — the frozen/source subprocess shim.                     |
 
 ## Build (run on each target OS — PyInstaller can't cross-compile)
 
@@ -54,9 +54,9 @@ cargo tauri build          # -> src-tauri/target/release/bundle/{dmg,nsis,appima
 
 ## Expected size
 
-| Strategy | On disk | ~Download |
-|---|---|---|
-| Naive (CUDA torch, everything) | ~3 GB | ~1 GB |
+| Strategy                                                | On disk | ~Download       |
+| ------------------------------------------------------- | ------- | --------------- |
+| Naive (CUDA torch, everything)                          | ~3 GB   | ~1 GB           |
 | **This config** (CPU torch + exclude rerun/wandb/cmake) | ~1.0 GB | **~350–450 MB** |
 
 `build.sh` prints the final `du -sh` so you can track it. If a build regresses,

@@ -25,17 +25,18 @@ const teleop = new RemoteTeleop({
   // turnUrls / turnUser / turnCred. Static credentials no longer authenticate.
   // See "Connectivity".
   forceRelay: false,
-  arm: "right",             // which arm keyboard/jog drives
+  arm: "right", // which arm keyboard/jog drives
   onLog: (m) => console.log(m),
   onConnState: (s) => console.log("conn:", s),
-  onTelemetry: (t) => {     // live: loopHz, safety, tempC, per-joint state{}, lift height mm…
+  onTelemetry: (t) => {
+    // live: loopHz, safety, tempC, per-joint state{}, lift height mm…
     console.log("safety:", t.safety, "state:", t.state);
   },
   onMode: (mode) => console.log("mode:", mode),
   onControlActive: (a) => console.log("control:", a),
 });
 
-await teleop.start();       // subscribes, answers the robot's offer, opens the control channel
+await teleop.start(); // subscribes, answers the robot's offer, opens the control channel
 ```
 
 Video now flows into your `<video>` element and `onTelemetry` fires ~50×/s.
@@ -51,11 +52,19 @@ import { SupabaseSignaling } from "@nori/sdk/supabase";
 const teleop = new RemoteTeleop({
   signaling: new SupabaseSignaling(supabase, room, console.log),
   videoEl: document.querySelector("video")!,
-  stun, turnUrls, turnUser, turnCred, forceRelay: false,
-  arm: "right", onLog: console.log, onConnState: console.log,
-  onTelemetry: () => {}, onMode: () => {}, onControlActive: () => {},
+  stun,
+  turnUrls,
+  turnUser,
+  turnCred,
+  forceRelay: false,
+  arm: "right",
+  onLog: console.log,
+  onConnState: console.log,
+  onTelemetry: () => {},
+  onMode: () => {},
+  onControlActive: () => {},
 });
-teleop.start();                                  // video appears in the element when connected
+teleop.start(); // video appears in the element when connected
 // teleop.stop() to tear down.
 ```
 
@@ -70,7 +79,9 @@ import { RemoteTeleop } from "@nori/sdk";
 import { createMockRobot } from "@nori/sdk/mock";
 
 const robot = createMockRobot();
-const teleop = new RemoteTeleop({ signaling: robot.signaling /* ...options as usual... */ });
+const teleop = new RemoteTeleop({
+  signaling: robot.signaling /* ...options as usual... */,
+});
 await teleop.start();
 ```
 

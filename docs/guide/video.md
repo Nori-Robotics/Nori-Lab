@@ -19,7 +19,7 @@ one encode is far cheaper than N.
 That also means resolution and frame rate are capped by the robot's **power budget**, not by the
 protocol or your network.
 
-Two things that are *not* the lever you want:
+Two things that are _not_ the lever you want:
 
 - `setVideoQuality("low" | "normal")` changes **bitrate only** — bandwidth, not robot CPU.
 - There is no way to request a higher resolution today.
@@ -49,8 +49,6 @@ is re-enumerating. See [Brownouts and throttling](/guide/l2#brownouts).
 A camera that is **missing from the start of a session** (or two views swapped) is different: the
 saved port→role mapping is stale and the camera needs re-identifying. See
 [If some cameras aren't found](/guide/l2#camera-identification).
-
-
 
 <!-- TODO-DOCS (hidden from the live site; uncomment to restore)
 

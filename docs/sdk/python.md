@@ -87,7 +87,7 @@ reason each time — a failure that could be mistaken for success is worse than 
 
 `estop()` **raises `TeleopError`** when the control channel is known-dead, because a silently
 dropped E-STOP must never read as success — and `estop_confirmed(timeout=...)` goes further,
-awaiting the robot *reporting* the latch in telemetry before returning. Delivery is not
+awaiting the robot _reporting_ the latch in telemetry before returning. Delivery is not
 execution; unattended scripts should use the confirmed form.
 
 A correlated request the robot never answers **raises `RobotUnreachable`** (a `TeleopError`)
@@ -95,7 +95,7 @@ rather than returning a status, where the TypeScript client returns one flagged
 `unreachable`. Returning one here would mean inventing `state` and `active`, and for
 `navigate_to_waypoint()` — the one call that makes the robot drive itself — a caller reading
 `active=False` off an invented status would read a lost reply as a halted robot. The
-exception carries the robot's last real snapshot on `.last_known`. A *refusal* (`ok=False`)
+exception carries the robot's last real snapshot on `.last_known`. A _refusal_ (`ok=False`)
 is still returned, not raised: "waypoint not found" is an answer, not a failure.
 
 ## Reference

@@ -17,11 +17,11 @@ parameter.
 
 ### `telemetry.safety` (`SafetyState`)
 
-| Value | What the robot is doing | What you do |
-|---|---|---|
-| `"ok"` | Normal operation. | Carry on. |
-| `"safe_hold"` | Refusing motion to protect itself — either the Pi is too hot, or your control frames went silent past the watchdog stop threshold. **Not a latch.** | Fix the cause (let it cool / restore your control stream); it clears itself. |
-| `"latched"` | Something latched. A **software E-STOP** operator command, **or** a motor-protection trip — an over-temperature or sustained-over-current joint cut. Motion blocked. | Clear deliberately with `command("reset_latch")` once the situation is safe. |
+| Value         | What the robot is doing                                                                                                                                              | What you do                                                                  |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `"ok"`        | Normal operation.                                                                                                                                                    | Carry on.                                                                    |
+| `"safe_hold"` | Refusing motion to protect itself — either the Pi is too hot, or your control frames went silent past the watchdog stop threshold. **Not a latch.**                  | Fix the cause (let it cool / restore your control stream); it clears itself. |
+| `"latched"`   | Something latched. A **software E-STOP** operator command, **or** a motor-protection trip — an over-temperature or sustained-over-current joint cut. Motion blocked. | Clear deliberately with `command("reset_latch")` once the situation is safe. |
 
 ::: warning `latched` is no longer synonymous with E-STOP
 A robot can latch on its own to protect a motor. Read `latch_reason` before you assume a human
@@ -32,13 +32,13 @@ pressed something — see [Motor protection](#motor-protection) below.
 
 Reason strings follow `"<cause>:<detail>"`:
 
-| Value | Meaning |
-|---|---|
-| `estop:<reason>` | A human used the app or SDK `command("estop")`. `safety` = `latched`. |
-| `overtemp:<motor>` | That servo's case temperature crossed the over-temp threshold. Torque cut on that joint. `safety` = `latched`. |
+| Value                 | Meaning                                                                                                                                                |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `estop:<reason>`      | A human used the app or SDK `command("estop")`. `safety` = `latched`.                                                                                  |
+| `overtemp:<motor>`    | That servo's case temperature crossed the over-temp threshold. Torque cut on that joint. `safety` = `latched`.                                         |
 | `overcurrent:<motor>` | That joint drew too much current for too long (a sustained-load integral, not an instantaneous spike). Torque cut on that joint. `safety` = `latched`. |
-| `stall:<motor>` | That joint is pressing into an obstruction. **`safety` stays `ok`** — a stall is not a global stop. |
-| `null` | Nothing latched and nothing stalled. |
+| `stall:<motor>`       | That joint is pressing into an obstruction. **`safety` stays `ok`** — a stall is not a global stop.                                                    |
+| `null`                | Nothing latched and nothing stalled.                                                                                                                   |
 
 ::: warning `latch_reason` can be set while `safety` is `ok`
 A stall reports itself through `latch_reason` — and as an `action_status` with
@@ -53,13 +53,13 @@ A stall reports itself through `latch_reason` — and as an `action_status` with
 Beyond E-STOP, the daemon runs three independent motor guards. Two of them **latch**, which is
 the behavior change most likely to surprise a client written before them:
 
-| Guard | Trips on | Effect | Recovery |
-|---|---|---|---|
-| **Stall detector** | A joint pressing into an obstruction. | That joint's torque is capped low and its goal parked at the present position — it holds at the obstacle instead of cranking into it. Everything else keeps running. | **Self-clears**: jog that joint to a new target. Or `reset_latch`. |
-| **Sustained-current trip** | A joint drawing above the current floor for long enough that the integral exceeds its budget. Higher current trips faster (a hard stall in seconds, a mild cook in tens of seconds). Grippers exempt. | That joint's torque is **cut and latched off**. `safety` → `latched`, `latch_reason` → `overcurrent:<motor>`. | **`reset_latch` only.** |
-| **Over-temp latch** | A servo's case temperature crossing the threshold (read ~1 Hz). | That joint's torque is **cut and latched off**. `safety` → `latched`, `latch_reason` → `overtemp:<motor>`. | **`reset_latch` only**, and only once it has cooled — it will re-trip otherwise. |
+| Guard                      | Trips on                                                                                                                                                                                              | Effect                                                                                                                                                               | Recovery                                                                         |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **Stall detector**         | A joint pressing into an obstruction.                                                                                                                                                                 | That joint's torque is capped low and its goal parked at the present position — it holds at the obstacle instead of cranking into it. Everything else keeps running. | **Self-clears**: jog that joint to a new target. Or `reset_latch`.               |
+| **Sustained-current trip** | A joint drawing above the current floor for long enough that the integral exceeds its budget. Higher current trips faster (a hard stall in seconds, a mild cook in tens of seconds). Grippers exempt. | That joint's torque is **cut and latched off**. `safety` → `latched`, `latch_reason` → `overcurrent:<motor>`.                                                        | **`reset_latch` only.**                                                          |
+| **Over-temp latch**        | A servo's case temperature crossing the threshold (read ~1 Hz).                                                                                                                                       | That joint's torque is **cut and latched off**. `safety` → `latched`, `latch_reason` → `overtemp:<motor>`.                                                           | **`reset_latch` only**, and only once it has cooled — it will re-trip otherwise. |
 
-The current and temperature guards exist because a joint can *cook* while drawing too little to
+The current and temperature guards exist because a joint can _cook_ while drawing too little to
 look like a stall. They are deliberately not tunable from a client.
 
 ::: tip Software and physical E-stops affect torque differently
@@ -79,11 +79,11 @@ them.**
 
 ## The three commands
 
-| Command | Effect |
-|---|---|
-| `"estop"` | Trip the software E-STOP latch now (safety → `"latched"`). Always available; never rate-limited. Torque stays engaged. This does not operate the physical motor-power cutoff. |
-| `"reset_latch"` | Clear **every** latch — E-STOP, stall, over-temp, over-current — and re-engage torque on any joint that was cut. A deliberate act; nothing else clears a latch. |
-| `"reset"` | Return the arm(s) to their neutral pose. A motion command, not a latch operation — so it's refused while latched. |
+| Command         | Effect                                                                                                                                                                        |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"estop"`       | Trip the software E-STOP latch now (safety → `"latched"`). Always available; never rate-limited. Torque stays engaged. This does not operate the physical motor-power cutoff. |
+| `"reset_latch"` | Clear **every** latch — E-STOP, stall, over-temp, over-current — and re-engage torque on any joint that was cut. A deliberate act; nothing else clears a latch.               |
+| `"reset"`       | Return the arm(s) to their neutral pose. A motion command, not a latch operation — so it's refused while latched.                                                             |
 
 ## Out-of-range targets are clamped, never rejected
 

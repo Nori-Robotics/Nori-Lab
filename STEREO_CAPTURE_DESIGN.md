@@ -80,8 +80,8 @@ Extrinsics file (operator-provided, per robot — schema v1):
 ```yaml
 schema_version: 1
 pair: [front, overhead]
-baseline_meters: 0.412        # distance between optical centers
-angle_degrees: 38.5           # relative pitch between optical axes
+baseline_meters: 0.412 # distance between optical centers
+angle_degrees: 38.5 # relative pitch between optical axes
 measured_at: "2026-08-16"
 method: "tape measure + inclinometer"
 # room for a future full 6-DoF pose (translation_m: [x,y,z], rpy_deg: [r,p,y])
@@ -99,10 +99,10 @@ Behavior:
   - Require both pair cameras' topics to be live (the existing required-topics
     gate, extended) — refuse the episode loudly otherwise.
   - Enforce equal **stored** rate: `enforced_fps = min(front.fps,
-    overhead.fps)` and set both cameras' fps caps to it, reusing the existing
+overhead.fps)` and set both cameras' fps caps to it, reusing the existing
     phase-preserving decimation. This deliberately does NOT touch the camera
     drivers (no relaunch mid-session; the U20s free-run anyway). Equality of
-    the *stored* streams is what training and stereo pairing consume; source
+    the _stored_ streams is what training and stereo pairing consume; source
     rates are still recorded per camera in `meta.cameras`.
 
 **Upload needs zero new transport**: `meta.json` already travels in the

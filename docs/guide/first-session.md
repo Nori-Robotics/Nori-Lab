@@ -6,6 +6,7 @@ number's position — are L2. See [Nori A3](/guide/a3) if that's what you have.
 :::
 
 ## Setting up and Driving
+
 1. Power on the robot with the switch on the back. Expect the screen to light up and a chime to play. Booting up will take around 30s, at the end of which your Nori's eyes will show up.
 2. First step is always to connect to Wifi: find it by tapping on Nori's face, navigating to Settings, Wifi, then wait as local networks are discovered. Select your one and enter the password.
 3. Sign up/in on the Nori app, and pair the robot at the Pairing page, using your secret pair code and the serial number (found on the back of Nori's head just above the neck). You may also grant your Nori a nickname on this page.
@@ -33,16 +34,18 @@ That joint goes **limp**, so a raised arm can drop. Read `latch_reason` to tell 
 Full behavior in [the safety contract](/sdk/safety) and [safety states](/guide/safety-states).
 
 ## Understanding the kiosk
+
 Nori's face is an easy way to see and diagnose errors:
+
 - The top right indicator dot has several states: white for ready, red for a motor control error, and green for connected. Tap on the dot at any time to see a text reminder.
 - Nori's face, beyond having interactive expressions, will also change to indicate errors such as high temperature warning, or weak network signal.
 
 The settings dashboard also exposes useful controls:
+
 - Wifi setup and picking nicknames (as covered above)
 - Full LAN access for developers
 - Default allow mic on / auto-accept calls from operator
 - Arm recalibration, which is needed only if you swapped out a motor and need to resweep joints. Read more [here](/guide/l2#leader-arms).
-
 
 ## If it doesn't connect
 

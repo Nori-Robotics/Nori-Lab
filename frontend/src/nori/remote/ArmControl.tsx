@@ -119,4 +119,3 @@ export const ArmControlView = ({ teleop, running, daemonStatus, compact = false 
     </div>
   );
 };
-

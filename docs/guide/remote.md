@@ -7,7 +7,7 @@ anywhere with a network.
 
 There is almost nothing in it, on purpose.
 
-**The robot is chosen by pairing, then connecting.**  
+**The robot is chosen by pairing, then connecting.**
 
 **STUN is still editable**, and you should still never need to touch it.
 See [Connectivity](/sdk/connectivity) for more info.
@@ -32,17 +32,17 @@ legend on the page is the source of truth rather than anything written here.
 
 Three commands, always available:
 
-| Command | Effect |
-|---|---|
+| Command             | Effect                                                                                                                                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Software E-STOP** | Trips the software latch immediately. Motion blocked; torque **stays engaged**, because dropping a raised arm is worse than holding it. Never rate-limited. This is separate from the physical E-stop, which cuts motor power. |
-| **Reset latch** | Clears every latch — E-STOP, stall, and the over-temp / over-current motor cuts — and re-engages torque on any joint that was cut. The only thing that clears a latch. |
-| **Reset** | Returns the arms to their neutral pose. It's a motion command, so it's refused while latched. |
+| **Reset latch**     | Clears every latch — E-STOP, stall, and the over-temp / over-current motor cuts — and re-engages torque on any joint that was cut. The only thing that clears a latch.                                                         |
+| **Reset**           | Returns the arms to their neutral pose. It's a motion command, so it's refused while latched.                                                                                                                                  |
 
 ## When a joint stops but everything else keeps working
 
 That's a **stall**, and it's working as designed. When a joint is pushed against something, the
 robot cuts torque **on that joint only** — everything else keeps running. Jog the stalled joint
-*away* from the obstruction and it self-clears.
+_away_ from the obstruction and it self-clears.
 
 A stall is deliberately not a global safety stop. See [safety states](/guide/safety-states).
 
@@ -100,7 +100,7 @@ nothing is rendering it.
 **Black or freezing on a weak network (hotspots).** Check `TelemetryView.videoNet` (the **net**
 chip in the app): `degraded`/`bad` means the link is dropping packets and the SDK's adaptive
 bitrate loop is actively cutting the robot's encoder rate to keep frames flowing — expect a
-softer picture, not a black one. If the feed is black *and* `videoNet` shows heavy loss that
+softer picture, not a black one. If the feed is black _and_ `videoNet` shows heavy loss that
 never recovers, the link can't sustain even the ~150 kbps floor; move either end to a better
 network or a TURN relay path.
 

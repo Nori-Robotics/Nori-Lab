@@ -97,7 +97,7 @@ completely empty logs. This bit us before; don't reorder it.
 whose defaults are incompatible with embedded CPython and torch (JIT, ctypes
 trampolines, `dlopen` of third-party libraries, `DYLD_*` from the PyInstaller
 bootloader). See the annotated reasoning in `tauri/entitlements.plist`. Don't
-remove an entitlement without re-testing a *signed* build end to end — the
+remove an entitlement without re-testing a _signed_ build end to end — the
 failures are load-time kills, not exceptions.
 
 **No App Sandbox.** A sandboxed app can't open arbitrary USB serial devices,

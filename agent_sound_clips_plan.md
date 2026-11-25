@@ -11,17 +11,18 @@
 > "Sound clips" section) lands in `docs/sdk/audio.md` at build time — see §7.
 
 The user-facing gap this closes: on the Agent page (`frontend/src/nori/pages/agent.tsx`)
-the model already *has* a `play_audio` tool, but it can only play audio from a
+the model already _has_ a `play_audio` tool, but it can only play audio from a
 URL it has no way to obtain. A user cannot hand it "my success chime" and say
 "play it when you finish." This design adds a **per-machine clip library** (upload
-+ describe) and wires the descriptions into the agent's prompt so it can choose
-**which** clip to play and **when**, from the words the user wrote.
+
+- describe) and wires the descriptions into the agent's prompt so it can choose
+  **which** clip to play and **when**, from the words the user wrote.
 
 ---
 
 ## 0. What already exists (reused unchanged)
 
-This feature is mostly *wiring*, not new machinery. The audio path is already
+This feature is mostly _wiring_, not new machinery. The audio path is already
 shipped and verified:
 
 - **Transport** — `frontend/src/nori/remote/audioClip.ts` `playAudioUrl()` fetches
@@ -50,7 +51,7 @@ shipped and verified:
 
 1. `play_audio` takes a raw `url` the model cannot invent.
 2. Playback **blocks the agent loop** until the clip ends (`ScriptDriver.ts:424`
-   `await clip.done`) — so today the robot plays, *then* acts; it never acts *during*.
+   `await clip.done`) — so today the robot plays, _then_ acts; it never acts _during_.
 3. No upload / description / storage for a user's own clips.
 
 Everything below closes exactly those three.
@@ -68,6 +69,7 @@ endpoint + storage path is a large lift with zero reuse. The proven pattern
 no network** (a `blob:` URL from `URL.createObjectURL(file)`).
 
 Consequences of per-machine storage (call them out to the user, don't hide them):
+
 - Clips live on the operator's machine/browser profile. They do **not** sync across
   machines and are **not** visible to other users. That is acceptable for "my sound
   effects" and keeps the whole feature hardware- and backend-free.
@@ -83,14 +85,14 @@ An `IndexedDB` object store `clips`, each record:
 
 API:
 
-| fn | purpose |
-|---|---|
-| `listClips(): Promise<ClipMeta[]>` | all clips (no bytes) for the UI list |
-| `addClip(file, name, description): Promise<ClipMeta>` | validate + store |
-| `updateClip(id, {name?, description?}): Promise<void>` | edit metadata |
-| `deleteClip(id): Promise<void>` | remove |
-| `getClipBlobUrl(id): Promise<{url, revoke}>` | fresh `blob:` URL + revoke fn, for playback |
-| `getClipCatalog(): Promise<{id, description}[]>` | the list handed to the model (§4) |
+| fn                                                     | purpose                                     |
+| ------------------------------------------------------ | ------------------------------------------- |
+| `listClips(): Promise<ClipMeta[]>`                     | all clips (no bytes) for the UI list        |
+| `addClip(file, name, description): Promise<ClipMeta>`  | validate + store                            |
+| `updateClip(id, {name?, description?}): Promise<void>` | edit metadata                               |
+| `deleteClip(id): Promise<void>`                        | remove                                      |
+| `getClipBlobUrl(id): Promise<{url, revoke}>`           | fresh `blob:` URL + revoke fn, for playback |
+| `getClipCatalog(): Promise<{id, description}[]>`       | the list handed to the model (§4)           |
 
 Guardrails (all rejected loudly): non-`audio/*` MIME; per-clip size cap (**5 MB** —
 it all rides one WebRTC uplink); a total count cap (e.g. 20). `id` is a stable
@@ -114,9 +116,9 @@ and **delete**. Adding a clip: a file picker (`<input type="file" accept="audio/
 same as `remote.tsx:631`) + name + description fields.
 
 **The description is the entire interface between the user and the model** — it is
-what the agent reads to decide *when* to play the clip. The field's placeholder must
-coach that: e.g. *"describe when to play this — 'a cheerful chime when a task
-succeeds'"*, not *"description"*.
+what the agent reads to decide _when_ to play the clip. The field's placeholder must
+coach that: e.g. _"describe when to play this — 'a cheerful chime when a task
+succeeds'"_, not _"description"_.
 
 **Preview** plays the clip on the **robot** (not the laptop) by calling the existing
 `playAudioFile(teleop, file)` / `playAudioUrl(teleop, blobUrl)` directly against the
@@ -180,6 +182,7 @@ Changes in `lelab/server.py`:
    ```
 
    Empty/absent → omit the block entirely (no clips, no mention).
+
 3. Add one `play_audio` line to the hand-written `NORI_AGENT_SYSTEM` prose
    (`server.py:691`) noting clip ids come from the "Available sound clips" context
    and playback is fire-and-forget.
@@ -200,7 +203,7 @@ The browser supplies the catalog. Thread it through:
 This is the one piece of genuinely new behavior. `ScriptDriver.playAudio`
 (`ScriptDriver.ts:415`) currently `await clip.done` — resolves only when the clip
 ends. Since `execTool` awaits `driver.exec` and the agent loop is strictly serial,
-a 5 s clip means the model sits blind for 5 s and only *then* gets a result. It
+a 5 s clip means the model sits blind for 5 s and only _then_ gets a result. It
 drives **after**, never **during**.
 
 Extend the op to `playAudio(url, opts?)` with `opts.awaitEnd` (**default `true`**, so
@@ -222,6 +225,7 @@ resolve-when-done semantics) and optional `opts.gain`:
 `opts` arg. Cleanup is unchanged — `stop()`/E-STOP already kill `activeClip` (§0).
 
 ### `audioClip.ts` touch
+
 Add `duration: number` (seconds, from `buffer.duration`) to the returned
 `ClipHandle` so the driver can report it. No behavior change.
 
@@ -258,7 +262,7 @@ Rewrite the `play_audio` case in `execTool`:
   guard must stay green.
 - **Docs (user-facing slice)** — add a short **"Sound clips"** section to
   `docs/sdk/audio.md` (it already documents the clip/downlink path): how to upload,
-  that the description drives *when* the agent plays it, and the per-machine/5 MB
+  that the description drives _when_ the agent plays it, and the per-machine/5 MB
   limits. Add the `await_end` parameter to the `playAudio` script-API reference in
   the same file. No new nav entry needed — it lives under the existing
   Media & sensing → Audio page (`docs/.vitepress/config.ts`).
@@ -267,18 +271,18 @@ Rewrite the `play_audio` case in `execTool`:
 
 ## 8. Touch list
 
-| File | Change | New? |
-|---|---|---|
-| `frontend/src/nori/remote/clipLibrary.ts` | IndexedDB clip store + catalog | **new** |
-| `frontend/src/nori/pages/agent.tsx` | Sound-clips panel; thread `clips` into `postTurn` | edit |
-| `frontend/packages/nori-sdk/src/robot-ops.ts` | `play_audio` gains `clip` + `await_end`; then regen | edit |
-| `frontend/packages/nori-sdk/robot-tools.json` | regenerated — **do not hand-edit** | generated |
-| `frontend/src/nori/remote/AgentSession.ts` | `PostTurn` gains `clips`; clip resolution + `await_end` in dispatch | edit |
-| `frontend/src/nori/remote/ScriptDriver.ts` | `playAudio(url, opts)` non-blocking path + overlap stop | edit |
-| `frontend/src/nori/remote/audioClip.ts` | expose `duration` on `ClipHandle` | edit |
-| `lelab/server.py` | `clips` in body + system-suffix catalog + one prompt line | edit |
-| `AgentSession.test.ts`, `ScriptDriver` test | clip dispatch + overlap + non-blocking coverage | edit |
-| `docs/sdk/audio.md` | user "Sound clips" section + `await_end` param | edit |
+| File                                          | Change                                                              | New?      |
+| --------------------------------------------- | ------------------------------------------------------------------- | --------- |
+| `frontend/src/nori/remote/clipLibrary.ts`     | IndexedDB clip store + catalog                                      | **new**   |
+| `frontend/src/nori/pages/agent.tsx`           | Sound-clips panel; thread `clips` into `postTurn`                   | edit      |
+| `frontend/packages/nori-sdk/src/robot-ops.ts` | `play_audio` gains `clip` + `await_end`; then regen                 | edit      |
+| `frontend/packages/nori-sdk/robot-tools.json` | regenerated — **do not hand-edit**                                  | generated |
+| `frontend/src/nori/remote/AgentSession.ts`    | `PostTurn` gains `clips`; clip resolution + `await_end` in dispatch | edit      |
+| `frontend/src/nori/remote/ScriptDriver.ts`    | `playAudio(url, opts)` non-blocking path + overlap stop             | edit      |
+| `frontend/src/nori/remote/audioClip.ts`       | expose `duration` on `ClipHandle`                                   | edit      |
+| `lelab/server.py`                             | `clips` in body + system-suffix catalog + one prompt line           | edit      |
+| `AgentSession.test.ts`, `ScriptDriver` test   | clip dispatch + overlap + non-blocking coverage                     | edit      |
+| `docs/sdk/audio.md`                           | user "Sound clips" section + `await_end` param                      | edit      |
 
 Tagging: in-place edits to existing (upstream-LeLab) files get a `# NORI:` /
 `// NORI:` comment per `todos.md:22`; the additive `clipLibrary.ts` under
@@ -302,4 +306,7 @@ Tagging: in-place edits to existing (upstream-LeLab) files get a `# NORI:` /
    wall-clock cap, not a cron) and is out of scope here.
 4. **One clip at a time, last call wins.** Overlap stops the prior clip rather than
    mixing — a single WebRTC audio uplink, and mixing is not worth the complexity.
+
+```
+
 ```

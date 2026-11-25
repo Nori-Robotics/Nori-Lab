@@ -8,10 +8,10 @@ side, which had no deployment plan before.
 
 The app has two halves with opposite hosting needs, so they ship as two things:
 
-| Vehicle | For | Delivery | Needs a local LeLab? |
-|---|---|---|---|
-| **Full NoriLeLab app** | The operator's main surface: setup, pairing, marketplace, training, keyboard teleop, leader-arm | **Tauri desktop app** (`desktop/`) — double-click, frozen LeLab backend inside | Yes — bundled |
-| **VR counterpart** | Easy headset access, no laptop | **Hosted static page** (Vercel / Cloudflare Pages), LeLab-free | No |
+| Vehicle                | For                                                                                             | Delivery                                                                       | Needs a local LeLab? |
+| ---------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | -------------------- |
+| **Full NoriLeLab app** | The operator's main surface: setup, pairing, marketplace, training, keyboard teleop, leader-arm | **Tauri desktop app** (`desktop/`) — double-click, frozen LeLab backend inside | Yes — bundled        |
+| **VR counterpart**     | Easy headset access, no laptop                                                                  | **Hosted static page** (Vercel / Cloudflare Pages), LeLab-free                 | No                   |
 
 > **REVISED 2026-07-13 — the hosted page is no longer VR-only.** The Vercel
 > deploy (lab.norirobotics.com) now runs the FULL app in **direct-backend
@@ -35,17 +35,18 @@ desktop-app hint.
 
 ## 1. Topology
 
-| Part | What it is | Where it runs |
-|---|---|---|
-| **Operator app** (`frontend/`) | Vite/React SPA. WebRTC + WebXR run *in the browser*. | Quest browser / desktop webview |
+| Part                                 | What it is                                                                                                                                                   | Where it runs                                 |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
+| **Operator app** (`frontend/`)       | Vite/React SPA. WebRTC + WebXR run _in the browser_.                                                                                                         | Quest browser / desktop webview               |
 | **LeLab server** (`lelab/server.py`) | FastAPI. `/nori/config` (Supabase creds from env), `/nori/*` proxy → Nori-Backend (attaches JWT), local hardware (`/nori/leader/*`), serves `frontend/dist`. | Bundled in the desktop app (`127.0.0.1:8000`) |
-| **Nori-Backend** | Cloud services (datasets/training/marketplace). | Railway |
+| **Nori-Backend**                     | Cloud services (datasets/training/marketplace).                                                                                                              | Railway                                       |
 
 Signaling (Supabase Realtime) and media (WebRTC, Quest↔Pi via STUN/TURN) are
 peer/cloud-direct — they do **not** pass through LeLab. LeLab is only on the
 bootstrap + account/marketplace/pairing paths.
 
 Key code facts:
+
 - `src/contexts/ApiContext.tsx` — `baseUrl` defaults to `http://localhost:8000`,
   overridable with `?api=<url>`.
 - `src/nori/NoriContext.tsx` → tries `GET /nori/config`; **on failure or when
@@ -79,7 +80,7 @@ The enabling change (**done**): `NoriContext` falls back to `VITE_SUPABASE_URL` 
 safe — it already ships to every browser via `/nori/config`. See `.env.example`.
 
 The surface itself is **`/nori/vr`** (`src/nori/pages/vr.tsx`): a standalone route
-registered in `App.tsx` as a *sibling* of `/nori`, so it gets the NoriProvider +
+registered in `App.tsx` as a _sibling_ of `/nori`, so it gets the NoriProvider +
 TeleopSessionProvider but **not** NoriLayout's nav or its auth redirect. It reuses the
 same `TeleopSessionContext.connect()` + `VrSession` as the Remote page (no parallel
 control path) — just trimmed to a headset-first room/token → Connect → Enter VR flow.
@@ -103,7 +104,7 @@ recorded in `../../NoriTeleop/docs/sdk_v1_finalization.md` item 5; the load-bear
   `GET /api/v1/turn/credentials`: `VITE_NORI_BACKEND_URL` is already committed in
   `vercel.json`, so verify it points at the live backend for this deploy (if unset, the
   JWT never reaches the mint endpoint and cross-network silently falls back to STUN).
-- **Token still persists in localStorage plaintext** (Decision 2, *deferred hardening*):
+- **Token still persists in localStorage plaintext** (Decision 2, _deferred hardening_):
   reuses the shared `nori_remote_settings` blob for the crunch; acceptable for the current
   small named-team audience, revisit before wider release.
 
@@ -120,7 +121,7 @@ SPA catch-all rewrite.
    auto-detects Vite and reads `vercel.json`.
 4. **Environment Variables** — add the two PUBLIC values (see `.env.example`):
    `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`. ⚠️ Public only — never a service-role
-   key or any server secret; VITE_ vars ship in the client bundle.
+   key or any server secret; VITE\_ vars ship in the client bundle.
 5. **Deploy** → `https://<project>.vercel.app` (valid HTTPS ⇒ WebXR secure context).
 6. Open `https://<project>.vercel.app/nori/vr` in the **Meta Quest browser** — the
    standalone headset landing (`src/nori/pages/vr.tsx`): no app nav, no login, just a
@@ -137,14 +138,14 @@ Put the app on a **subdomain of the main root domain** (e.g. `app.nori.com` or
 `vr.nori.com`) as its **own Vercel project**, separate from the NoriWebsite project.
 
 - ✅ **Subdomain (recommended).** Brand-consistent, but independent deploys, rollbacks,
-  and env vars. No routing collisions. On Vercel: add the domain to *this* project;
+  and env vars. No routing collisions. On Vercel: add the domain to _this_ project;
   point a CNAME at Vercel. WebXR just needs HTTPS, which any subdomain gets.
 - ⚠️ **Same apex + subpath** (`nori.com/app`). Avoid. This app is a catch-all SPA (the
   `/(.*) → index.html` rewrite); sharing the apex means that rewrite fights the
   marketing site's routes, and the two deploys become entangled. Only worth it with a
   deliberate path-prefix reverse proxy, which is more moving parts than a subdomain.
 
-So: same *brand domain*, different *subdomain*. Keep NoriWebsite and the app as two
+So: same _brand domain_, different _subdomain_. Keep NoriWebsite and the app as two
 Vercel projects under one root domain.
 
 ### The laptop → headset handoff (the "Enter VR" link)
@@ -206,6 +207,7 @@ Vercel deploy behaves correctly, but a **local tool-installed `lelab`** still ru
 the old buggy behavior. Root cause and the general lesson:
 
 **`frontend/dist/` is committed, and the two vehicles get it differently.**
+
 - **Vercel** runs `npm run build` on every deploy (`vercel.json buildCommand`) →
   always builds from current source → a merged source fix is live immediately.
 - **The local/desktop vehicle** serves the **committed** `frontend/dist/` bundle
@@ -217,17 +219,18 @@ completely absent from what a tool install actually serves. When in doubt, the
 served bundle — not the source — is the truth.
 
 ### What to check, in order
+
 1. **Which bundle is actually served?** `curl -s localhost:8000/ | grep -o
-   'index-[A-Za-z0-9_-]*\.js'`. The bundle is content-hashed, so its filename
+'index-[A-Za-z0-9_-]*\.js'`. The bundle is content-hashed, so its filename
    changes on every rebuild — that hash IS the version identity. Compare against
    `frontend/dist/index.html` and the installed tool's copy.
    - ⚠️ **Do NOT grep the minified bundle for a function name** to check "is the
      fix in here." Minification renames identifiers → false negatives every time.
      Use the hashed filename, not the symbol.
 2. **Is the committed `dist/` current?** If `git`'s `frontend/dist/index.html`
-   references an *old* hash, the fix was never built into the committed bundle.
+   references an _old_ hash, the fix was never built into the committed bundle.
    Rebuild and commit it: `cd frontend && npm run build` → `git add -f
-   frontend/dist && git commit`. (This is what the `build_frontend` CI *should*
+frontend/dist && git commit`. (This is what the `build_frontend` CI _should_
    do automatically on `main` — if it didn't, that CI is broken and this trap
    will recur.)
 3. **`uv tool install` packages COMMITTED git state, not your working tree.** A
@@ -240,6 +243,7 @@ served bundle — not the source — is the truth.
    hashed JS cached and a soft refresh may reuse the page shell.
 
 ### Two real bugs found underneath, worth knowing
+
 - **Hard-refresh auth race** (fixed, `20038af`): refreshing directly onto an
   authenticated page raced the Supabase bootstrap; `getAccessToken()` returned
   `null` before init, so the request went out with no auth header and the backend
@@ -247,14 +251,15 @@ served bundle — not the source — is the truth.
   Fix: token lookups now await a bootstrap gate. If you see that 401 only on
   refresh (never on in-app nav), it's this class of race.
 - **`.env` discovery for tool installs** (fixed, `e82b5f7`): bare `load_dotenv()`
-  searches from the *calling file's* dir (the tool venv), never a repo `.env`, so
+  searches from the _calling file's_ dir (the tool venv), never a repo `.env`, so
   the Nori config came up empty ("Nori auth is not configured") and
   `NORI_BACKEND_URL` fell back to `localhost:8001`. Fix: `find_dotenv(usecwd=True)`.
 
 ### "Same backend, different catalog" is NOT a bug
+
 Two sessions showing different policy counts against the same backend = they're
 signed into **different accounts**. The marketplace catalog is per-customer
-(`own` policies are `customer_id`-scoped) + shared first-party. Check *who* is
+(`own` policies are `customer_id`-scoped) + shared first-party. Check _who_ is
 logged in before suspecting the backend link.
 
 See `Nori-Backend/lessons.md (Lesson 1)` for the backend half (org swap, token,

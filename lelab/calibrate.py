@@ -114,9 +114,7 @@ class CalibrationManager:
 
     def get_status(self) -> CalibrationStatus:
         """Get current calibration status"""
-        should_read_positions = (
-            self.status.status == "recording" and self.device and self.device.is_connected
-        )
+        should_read_positions = self.status.status == "recording" and self.device and self.device.is_connected
         if should_read_positions:
             try:
                 positions = self._read_positions(num_retry=2, retry_delay=0.005)
@@ -643,14 +641,9 @@ class CalibrationManager:
             result = run_so101_auto_calibration(
                 self.device.bus,
                 io_lock=self._device_io_lock,
-                status_callback=lambda message: self._update_status(
-                    auto_calibration_message=message
-                ),
-                position_callback=lambda positions: self._record_positions(
-                    positions, update_ranges=False
-                ),
-                stop_requested=lambda: self._auto_calibration_stop.is_set()
-                or self.stop_calibration,
+                status_callback=lambda message: self._update_status(auto_calibration_message=message),
+                position_callback=lambda positions: self._record_positions(positions, update_ranges=False),
+                stop_requested=lambda: self._auto_calibration_stop.is_set() or self.stop_calibration,
             )
 
             if self._auto_calibration_stop.is_set() or self.stop_calibration:
@@ -693,9 +686,7 @@ class CalibrationManager:
             self._auto_calibration_motor = None
             self._auto_calibration_range_guard_motors.clear()
 
-    def _apply_so101_auto_calibration_result(
-        self, result: SO101AutoCalibrationResult
-    ) -> None:
+    def _apply_so101_auto_calibration_result(self, result: SO101AutoCalibrationResult) -> None:
         for motor, calibration in result.calibration.items():
             self._mins[motor] = int(calibration.range_min)
             self._maxes[motor] = int(calibration.range_max)
@@ -720,8 +711,7 @@ class CalibrationManager:
 
     def _is_expected_auto_calibration_motion(self, motor: str) -> bool:
         return self.status.auto_calibration_active and (
-            motor == self._auto_calibration_motor
-            or motor in self._auto_calibration_range_guard_motors
+            motor == self._auto_calibration_motor or motor in self._auto_calibration_range_guard_motors
         )
 
 

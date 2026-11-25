@@ -60,27 +60,31 @@ def main(argv: list[str] | None = None) -> None:
 
     # Probe the dataset for action_dim before building the model.
     probe_cfg = PatchPolicyConfig(
-        action_dim=1, cameras=tuple(args.cameras),
-        obs_window=args.obs_window, chunk_size=args.chunk, encoder=args.encoder,
+        action_dim=1,
+        cameras=tuple(args.cameras),
+        obs_window=args.obs_window,
+        chunk_size=args.chunk,
+        encoder=args.encoder,
     )
     dataset = PatchPolicyDataset(probe_cfg, args.repo_id, root=args.root)
     mean, std = dataset.action_stats()
-    cfg = dataclasses.replace(
-        probe_cfg, action_dim=len(mean), action_mean=tuple(mean), action_std=tuple(std)
-    )
+    cfg = dataclasses.replace(probe_cfg, action_dim=len(mean), action_mean=tuple(mean), action_std=tuple(std))
     dataset.cfg = cfg
 
     policy = PatchPolicy(cfg).to(device)
     trainable = sum(p.numel() for p in policy.trainable_parameters())
-    print(f"device={device} trainable_params={trainable/1e6:.1f}M action_dim={cfg.action_dim}")
+    print(f"device={device} trainable_params={trainable / 1e6:.1f}M action_dim={cfg.action_dim}")
 
     loader = DataLoader(
-        dataset, batch_size=args.batch, shuffle=True, drop_last=True,
-        num_workers=args.workers, pin_memory=device.type == "cuda", persistent_workers=args.workers > 0,
+        dataset,
+        batch_size=args.batch,
+        shuffle=True,
+        drop_last=True,
+        num_workers=args.workers,
+        pin_memory=device.type == "cuda",
+        persistent_workers=args.workers > 0,
     )
-    optim = torch.optim.AdamW(
-        policy.trainable_parameters(), lr=args.lr, weight_decay=args.weight_decay
-    )
+    optim = torch.optim.AdamW(policy.trainable_parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scaler = torch.amp.GradScaler(enabled=device.type == "cuda")
 
     def save(step: int) -> None:
@@ -107,7 +111,7 @@ def main(argv: list[str] | None = None) -> None:
             step += 1
             if step % args.log_every == 0:
                 rate = args.log_every / (time.time() - t0)
-                print(f"step {step}/{args.steps} loss {running/args.log_every:.4f} ({rate:.1f} it/s)")
+                print(f"step {step}/{args.steps} loss {running / args.log_every:.4f} ({rate:.1f} it/s)")
                 running, t0 = 0.0, time.time()
             if step % args.save_every == 0 or step == args.steps:
                 save(step)

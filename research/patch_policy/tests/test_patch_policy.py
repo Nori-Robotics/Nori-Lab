@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import torch
 
@@ -18,19 +19,19 @@ from patch_policy.model import PatchPolicy, PatchPolicyConfig, block_causal_mask
 
 
 def tiny_config(**overrides) -> PatchPolicyConfig:
-    defaults = dict(
-        action_dim=12,
-        cameras=("front", "wrist"),
-        obs_window=2,
-        chunk_size=5,
-        image_size=32,
-        patches_per_image=16,   # 4x4 grid
-        encoder_dim=24,
-        encoder="fake",
-        embed_dim=24,
-        depth=2,
-        heads=2,
-    )
+    defaults: dict[str, Any] = {
+        "action_dim": 12,
+        "cameras": ("front", "wrist"),
+        "obs_window": 2,
+        "chunk_size": 5,
+        "image_size": 32,
+        "patches_per_image": 16,  # 4x4 grid
+        "encoder_dim": 24,
+        "encoder": "fake",
+        "embed_dim": 24,
+        "depth": 2,
+        "heads": 2,
+    }
     defaults.update(overrides)
     return PatchPolicyConfig(**defaults)
 

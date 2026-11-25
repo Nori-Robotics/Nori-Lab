@@ -29,13 +29,12 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import rtc as rtcmod
 import torch
 from fastapi import FastAPI, Header, HTTPException
 from PIL import Image
 from pydantic import BaseModel
 from transformers import AutoModelForImageTextToText, AutoProcessor
-
-import rtc as rtcmod
 
 REPO_ID = os.environ.get("MOLMOACT_REPO", "allenai/MolmoAct2-SO100_101")
 # Inference Endpoints mount the endpoint's model repo at /repository (platform
@@ -60,12 +59,12 @@ _lock = threading.Lock()  # single GPU: serialize predict_action calls
 # the guidance target is per-CLIENT — two rollouts sharing a server would otherwise
 # steer each other's arms. Inference is already serialized behind _lock, so we keep
 # one state and swap the cached chunk in/out per session under that same lock.
-ACTION_HORIZON = 30            # this checkpoint's chunk length
+ACTION_HORIZON = 30  # this checkpoint's chunk length
 _rtc_state = rtcmod.RTCState()
-_rtc_prev: dict = {}           # session id -> previous chunk (normalized, on-device)
-_RTC_SESSION_CAP = 8           # bound the cache; robot sessions are few and long-lived
-_load_error: Optional[str] = None  # set if the background load failed
-_model_source: Optional[str] = None  # /repository mount or the Hub repo id
+_rtc_prev: dict = {}  # session id -> previous chunk (normalized, on-device)
+_RTC_SESSION_CAP = 8  # bound the cache; robot sessions are few and long-lived
+_load_error: str | None = None  # set if the background load failed
+_model_source: str | None = None  # /repository mount or the Hub repo id
 
 
 def _resolve_model_source() -> str:
@@ -92,14 +91,14 @@ def _load_model() -> None:
     global _model, _processor, _load_error, _model_source
     try:
         _model_source = _resolve_model_source()
-        print(f"[molmoact2] loading from {_model_source} "
-              f"({'mounted /repository' if _model_source != REPO_ID else 'Hub download'})",
-              flush=True)
+        print(
+            f"[molmoact2] loading from {_model_source} "
+            f"({'mounted /repository' if _model_source != REPO_ID else 'Hub download'})",
+            flush=True,
+        )
         proc = AutoProcessor.from_pretrained(_model_source, trust_remote_code=True)
         model = (
-            AutoModelForImageTextToText.from_pretrained(
-                _model_source, trust_remote_code=True, dtype=DTYPE
-            )
+            AutoModelForImageTextToText.from_pretrained(_model_source, trust_remote_code=True, dtype=DTYPE)
             .to("cuda")
             .eval()
         )
@@ -124,7 +123,7 @@ def _startup() -> None:
     threading.Thread(target=_load_model, name="molmoact2-load", daemon=True).start()
 
 
-def _require_auth(x_nori_token: Optional[str], authorization: Optional[str]) -> None:
+def _require_auth(x_nori_token: str | None, authorization: str | None) -> None:
     """App-level auth for /act and /point. `X-Nori-Token` is the PRIMARY
     credential: on a *protected* Inference Endpoint HF's edge consumes the
     `Authorization` header (it must carry an HF token to get past the proxy), so
@@ -140,10 +139,10 @@ def _require_auth(x_nori_token: Optional[str], authorization: Optional[str]) -> 
 
 
 class ActRequest(BaseModel):
-    images: list[str]      # base64 JPEG/PNG (optionally a data: URL), 2+ camera views
-    state: list[float]     # robot joint state (6 for a single SO-100/101 arm)
-    instruction: str       # natural-language task, e.g. "pick up the red cup"
-    num_steps: int = 10    # flow-matching integration steps (latency <-> quality)
+    images: list[str]  # base64 JPEG/PNG (optionally a data: URL), 2+ camera views
+    state: list[float]  # robot joint state (6 for a single SO-100/101 arm)
+    instruction: str  # natural-language task, e.g. "pick up the red cup"
+    num_steps: int = 10  # flow-matching integration steps (latency <-> quality)
     # RTC FEASIBILITY PROBE (see cloud_inference/rtc.py). RTC's per-step PiGDM
     # correction is a VJP, so it needs (a) autograd enabled and (b) the CUDA-graph
     # fast path off. Both are optimisations we currently rely on, and latency is
@@ -172,9 +171,9 @@ class ActResponse(BaseModel):
     # Server-side compute time, so the client can separate GPU cost from network
     # RTT. Additive + optional: existing clients that read only `actions` are
     # unaffected.
-    compute_ms: Optional[float] = None
+    compute_ms: float | None = None
     # None when RTC wasn't requested; otherwise why it did or didn't apply.
-    rtc: Optional[dict] = None
+    rtc: dict | None = None
 
 
 def _decode(b64: str) -> np.ndarray:
@@ -186,8 +185,14 @@ def _decode(b64: str) -> np.ndarray:
 
 def _status() -> dict:
     status = "ready" if _model is not None else ("error" if _load_error else "loading")
-    return {"ok": _model is not None, "status": status, "error": _load_error,
-            "repo": REPO_ID, "source": _model_source, "dtype": str(DTYPE)}
+    return {
+        "ok": _model is not None,
+        "status": status,
+        "error": _load_error,
+        "repo": REPO_ID,
+        "source": _model_source,
+        "dtype": str(DTYPE),
+    }
 
 
 @app.get("/")
@@ -219,20 +224,21 @@ def ready() -> dict:
 
 
 class PointRequest(BaseModel):
-    image: str             # base64 JPEG/PNG, one camera view
+    image: str  # base64 JPEG/PNG, one camera view
     query: str = "the red cup"
     max_new_tokens: int = 96
 
 
 class PointResponse(BaseModel):
-    raw: str                       # the VLM's verbatim generation
-    points: list[list[float]]      # parsed [[x, y], ...] in PERCENT of image size
-    compute_ms: Optional[float] = None
+    raw: str  # the VLM's verbatim generation
+    points: list[list[float]]  # parsed [[x, y], ...] in PERCENT of image size
+    compute_ms: float | None = None
 
 
 @app.post("/point", response_model=PointResponse)
-def point(req: PointRequest, authorization: Optional[str] = Header(None),
-          x_nori_token: Optional[str] = Header(None)) -> PointResponse:
+def point(
+    req: PointRequest, authorization: str | None = Header(None), x_nori_token: str | None = Header(None)
+) -> PointResponse:
     """Perception probe (diagnostic, not on the control path): ask the Molmo2-ER
     backbone — a pixel-accurate pointing model — to point at `query` in ONE
     frame. Separates "does the model SEE the target in our camera domain" from
@@ -253,34 +259,41 @@ def point(req: PointRequest, authorization: Optional[str] = Header(None),
             # underlying ImageTextToText model can generate from.
             try:
                 inputs = _processor.apply_chat_template(
-                    [{"role": "user",
-                      "content": [{"type": "image", "image": img},
-                                  {"type": "text", "text": prompt}]}],
-                    add_generation_prompt=True, tokenize=True,
-                    return_dict=True, return_tensors="pt")
+                    [
+                        {
+                            "role": "user",
+                            "content": [{"type": "image", "image": img}, {"type": "text", "text": prompt}],
+                        }
+                    ],
+                    add_generation_prompt=True,
+                    tokenize=True,
+                    return_dict=True,
+                    return_tensors="pt",
+                )
             except Exception:
                 inputs = _processor.process(images=[img], text=prompt)
-                inputs = {k: (v.unsqueeze(0) if hasattr(v, "dim") and v.dim() in (1, 3) else v)
-                          for k, v in inputs.items()}
-            inputs = {k: (v.to(_model.device) if hasattr(v, "to") else v)
-                      for k, v in inputs.items()}
+                inputs = {
+                    k: (v.unsqueeze(0) if hasattr(v, "dim") and v.dim() in (1, 3) else v)
+                    for k, v in inputs.items()
+                }
+            inputs = {k: (v.to(_model.device) if hasattr(v, "to") else v) for k, v in inputs.items()}
             out = _model.generate(**inputs, max_new_tokens=int(req.max_new_tokens))
             n_in = inputs["input_ids"].shape[1] if "input_ids" in inputs else 0
             text = _processor.tokenizer.decode(out[0][n_in:], skip_special_tokens=False)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"pointing failed: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=500, detail=f"pointing failed: {type(exc).__name__}: {exc}") from exc
     # Parse Molmo point markup: <point x="53.1" y="42.2" ...> (single) and the
     # <points x1=".." y1=".." x2=".." ...> multi-point form. Percent coordinates.
     import re
-    pts = [[float(x), float(y)] for x, y in
-           re.findall(r'x\d*="([0-9.]+)"\s+y\d*="([0-9.]+)"', text)]
-    return PointResponse(raw=text, points=pts,
-                         compute_ms=round((time.time() - t0) * 1000.0, 1))
+
+    pts = [[float(x), float(y)] for x, y in re.findall(r'x\d*="([0-9.]+)"\s+y\d*="([0-9.]+)"', text)]
+    return PointResponse(raw=text, points=pts, compute_ms=round((time.time() - t0) * 1000.0, 1))
 
 
 @app.post("/act", response_model=ActResponse)
-def act(req: ActRequest, authorization: Optional[str] = Header(None),
-        x_nori_token: Optional[str] = Header(None)) -> ActResponse:
+def act(
+    req: ActRequest, authorization: str | None = Header(None), x_nori_token: str | None = Header(None)
+) -> ActResponse:
     _require_auth(x_nori_token, authorization)
     if _model is None:
         detail = f"model load failed: {_load_error}" if _load_error else "model not loaded yet"
@@ -305,8 +318,9 @@ def act(req: ActRequest, authorization: Optional[str] = Header(None),
         if rtc_horizon is None:
             # d > H/2: frozen prefix and free tail would overlap. Serve a normal
             # chunk rather than a silently ill-defined one.
-            rtc_note = (f"skipped: delay {rtc_req.delay} too large for horizon "
-                        f"{ACTION_HORIZON} (needs d <= H/2)")
+            rtc_note = (
+                f"skipped: delay {rtc_req.delay} too large for horizon {ACTION_HORIZON} (needs d <= H/2)"
+            )
     use_rtc = rtc_req is not None and rtc_horizon is not None
     cuda_graph = False if use_rtc else bool(req.enable_cuda_graph)
     grad_ctx = torch.enable_grad() if (use_rtc or req.enable_grad) else torch.no_grad()
@@ -337,22 +351,23 @@ def act(req: ActRequest, authorization: Optional[str] = Header(None),
                 if len(_rtc_prev) >= _RTC_SESSION_CAP and rtc_req.session not in _rtc_prev:
                     _rtc_prev.pop(next(iter(_rtc_prev)))
                 _rtc_prev[rtc_req.session] = _rtc_state.prev
-                rtc_note = {"guided_steps": _rtc_state.applied,
-                            "execution_horizon": rtc_horizon,
-                            "delay": _rtc_state.delay,
-                            "consumed": _rtc_state.consumed,
-                            "had_target": bool(_rtc_state.enabled)}
-                _rtc_state.prev = None      # don't leak one session's chunk to the next
+                rtc_note = {
+                    "guided_steps": _rtc_state.applied,
+                    "execution_horizon": rtc_horizon,
+                    "delay": _rtc_state.delay,
+                    "consumed": _rtc_state.consumed,
+                    "had_target": bool(_rtc_state.enabled),
+                }
+                _rtc_state.prev = None  # don't leak one session's chunk to the next
                 _rtc_state.enabled = False
     except torch.cuda.OutOfMemoryError as e:
         torch.cuda.empty_cache()
         raise HTTPException(
             status_code=507,
-            detail=f"CUDA OOM (enable_grad={req.enable_grad}, "
-                   f"cuda_graph={req.enable_cuda_graph}): {e}",
+            detail=f"CUDA OOM (enable_grad={req.enable_grad}, cuda_graph={req.enable_cuda_graph}): {e}",
         ) from e
     if torch.cuda.is_available():
-        torch.cuda.synchronize()   # predict_action is async; time the real compute
+        torch.cuda.synchronize()  # predict_action is async; time the real compute
     compute_ms = (time.perf_counter() - t0) * 1000.0
     acts = out.actions
     if torch.is_tensor(acts):  # predict_action returns a CUDA tensor — move to host first
@@ -360,6 +375,8 @@ def act(req: ActRequest, authorization: Optional[str] = Header(None),
     acts = np.asarray(acts, dtype=np.float32)
     if acts.ndim == 3 and acts.shape[0] == 1:  # (1, chunk, DOF) -> (chunk, DOF)
         acts = acts[0]
-    return ActResponse(actions=acts.tolist(), compute_ms=round(compute_ms, 1),
-                       rtc=(rtc_note if isinstance(rtc_note, dict)
-                            else ({"skipped": rtc_note} if rtc_note else None)))
+    return ActResponse(
+        actions=acts.tolist(),
+        compute_ms=round(compute_ms, 1),
+        rtc=(rtc_note if isinstance(rtc_note, dict) else ({"skipped": rtc_note} if rtc_note else None)),
+    )

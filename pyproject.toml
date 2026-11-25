@@ -89,6 +89,36 @@ ignore = [
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
 "src/lerobot/policies/wall_x/**" = ["N801", "N812", "SIM102", "SIM108", "SIM210", "SIM211", "B006", "B007", "SIM118"] # Supprese these as they are coming from original Qwen2_5_vl code TODO(pepijn): refactor original
 
+# ---- Nori additions ----------------------------------------------------------
+# N806/N803 (non-lowercase variable/argument) is wrong for the calibration and
+# DSP code below. These modules implement a per-joint affine map written
+# everywhere in this repo, in its docstrings and in its on-disk calibration
+# JSON, as `A * s + B` -- `A`, `B`, `A_inverse`, `Ac`, `Bv` and friends ARE the
+# names of the quantities. The RTC files use `W`/`H`/`A` for the window, Hann
+# and amplitude arrays for the same reason. Lowercasing them would decouple the
+# code from the maths and the file format it reads, which is a net loss in
+# readability, so the rule is switched off per file rather than obeyed.
+"lelab/nori_units.py" = ["N806"]
+"lelab/nori_cloud_rollout.py" = [
+    "N806",
+    # N818: CloudEndpointWaking is a control-flow signal (the endpoint is cold,
+    # retry) that serve() catches by type, not a failure. "...Error" would
+    # misdescribe it.
+    "N818",
+]
+"cloud_inference/derive_calibration.py" = ["N806"]
+"cloud_inference/extract_convention.py" = ["N806", "N803"]
+"cloud_inference/rtc.py" = ["N806"]
+"cloud_inference/serve/rtc.py" = ["N806"]
+"cloud_inference/space/rtc.py" = ["N806"]
+"tests/test_nori_units.py" = ["N806"]
+# N812: `import torch.nn.functional as F` is the universal PyTorch spelling;
+# every reference and every example uses it.
+"research/patch_policy/patch_policy/*.py" = ["N812"]
+# E402: these standalone test scripts must set env + importlib.reload(server)
+# BEFORE importing anything that reads module-level config at import time.
+"cloud_inference/serve/test_v11_caps.py" = ["E402"]
+
 [tool.ruff.lint.isort]
 combine-as-imports = true
 known-first-party = ["lerobot"]
@@ -122,6 +152,8 @@ skips = ["B101", "B110", "B112", "B311", "B404", "B603", "B607", "B615"]
 python_version = "3.12"
 ignore_missing_imports = true
 follow_imports = "skip"
+# NOTE: the duplicate-`rtc` exclusion lives in .pre-commit-config.yaml, because
+# mypy ignores this `exclude` for paths named on the command line.
 
 [[tool.mypy.overrides]]
 module = "lelab.*"

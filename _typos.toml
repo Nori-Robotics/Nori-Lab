@@ -1,0 +1,39 @@
+# Vocabulary for the `typos` pre-commit hook.
+#
+# When this hook first ran against the tree (2026-11-25) it reported 59 findings
+# and every single one was a false positive -- there were no actual misspellings
+# to fix. Each entry below is a real identifier, API field name or term of art
+# that happens to look like a typo to a dictionary. Mapping a word to ITSELF is
+# how `typos` is told to accept it.
+#
+# Add to this list only for the same reason: a name the code or an external API
+# genuinely uses. A plain English misspelling gets fixed in the source instead.
+
+[files]
+# Nothing but git pathspecs and filter names. `*.ot` (OpenType) reads as a typo
+# for "to"/"of", and whitelisting a two-letter word globally would blind the
+# hook everywhere else, so skip the file instead.
+extend-exclude = [".gitattributes"]
+
+[default.extend-words]
+# Hyphenated prefix in prose ("mis-steer", "mis-ordered", "mis-scale"); `typos`
+# tokenises on the hyphen and sees a bare `mis`.
+mis = "mis"
+# pyserial handle: `self.ser = serial.Serial(...)`, the conventional name.
+ser = "ser"
+# PyInstaller .spec API: `Analysis(datas=[...])`, `a.datas`. Not ours to rename.
+datas = "datas"
+# three.js MeshStandardMaterial property name.
+metalness = "metalness"
+# three.js: an Object3D with no parent in the scene graph.
+unparented = "unparented"
+# Additive Increase / Multiplicative Decrease -- the congestion-control scheme
+# the adaptive video-quality controller implements.
+aimd = "aimd"
+# Deliberate prefix so one marker matches "promote"/"promoting"/"promoted":
+# `_SUCCESS_MARKERS = (..., "promot", ...)`.
+promot = "promot"
+# A CSS class name in a design mock: `.schem` = schematic panel.
+schem = "schem"
+# Both spellings are standard; this one is the repo's.
+unparseable = "unparseable"

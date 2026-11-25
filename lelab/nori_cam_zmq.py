@@ -36,11 +36,11 @@
 # reachable, the rollout transparently falls back to the browser's composite crops.
 
 import base64
+import contextlib
 import logging
 import os
 import threading
 import time
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ STALE_AFTER_S = 1.0
 RECV_POLL_MS = 200
 
 
-def _env_roles() -> Optional[list[str]]:
+def _env_roles() -> list[str] | None:
     """Camera roles in cameras.json ORDER (that order fixes the port numbers).
     e.g. NORI_CAM_ROLES=left_wrist,right_wrist,overhead,front"""
     raw = (os.environ.get("NORI_CAM_ROLES") or "").strip()
@@ -59,7 +59,7 @@ def _env_roles() -> Optional[list[str]]:
     return parsed or None
 
 
-def zmq_host() -> Optional[str]:
+def zmq_host() -> str | None:
     """Robot IP/host publishing the camera sockets. Unset -> feature off."""
     h = (os.environ.get("NORI_CAM_ZMQ_HOST") or "").strip()
     return h or None
@@ -97,8 +97,13 @@ class ZmqCameraSource:
             t = threading.Thread(target=self._rx, args=(role, port), name=f"zmqcam-{role}", daemon=True)
             t.start()
             self._threads.append(t)
-        logger.info("[CAM-ZMQ] subscribing %s -> %s ports %d..%d",
-                    self.roles, host, self.base_port, self.base_port + len(self.roles) - 1)
+        logger.info(
+            "[CAM-ZMQ] subscribing %s -> %s ports %d..%d",
+            self.roles,
+            host,
+            self.base_port,
+            self.base_port + len(self.roles) - 1,
+        )
 
     def _rx(self, role: str, port: int) -> None:
         import zmq
@@ -130,12 +135,10 @@ class ZmqCameraSource:
         except Exception as e:
             logger.warning("[CAM-ZMQ] %s receiver stopped: %s", role, e)
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 sock.close(0)
-            except Exception:
-                pass
 
-    def latest_jpeg(self, role: str) -> Optional[bytes]:
+    def latest_jpeg(self, role: str) -> bytes | None:
         with self._lock:
             got = self._latest.get(role)
         if not got:
@@ -143,7 +146,7 @@ class ZmqCameraSource:
         jpeg, ts = got
         return None if (time.monotonic() - ts) > STALE_AFTER_S else jpeg
 
-    def frames_b64(self, view_keys: list[str]) -> Optional[dict[str, str]]:
+    def frames_b64(self, view_keys: list[str]) -> dict[str, str] | None:
         """base64 JPEG per requested view, or None if ANY view is missing/stale —
         the caller then falls back rather than sending the model a partial obs."""
         out: dict[str, str] = {}
@@ -158,8 +161,11 @@ class ZmqCameraSource:
         with self._lock:
             fresh = {r: round(time.monotonic() - ts, 2) for r, (_, ts) in self._latest.items()}
         return {
-            "host": self.host, "base_port": self.base_port, "roles": self.roles,
-            "age_s": fresh, "frames_seen": self.frames_seen,
+            "host": self.host,
+            "base_port": self.base_port,
+            "roles": self.roles,
+            "age_s": fresh,
+            "frames_seen": self.frames_seen,
             "name_mismatch": self.name_mismatch or None,
         }
 
@@ -169,7 +175,7 @@ class ZmqCameraSource:
             t.join(timeout=1.0)
 
 
-def build_source(view_keys: list[str]) -> Optional[ZmqCameraSource]:
+def build_source(view_keys: list[str]) -> ZmqCameraSource | None:
     """Create a source for the rollout's views, or None (feature off / unavailable).
     Never raises: a missing pyzmq, a bad host, or an unset NORI_CAM_ZMQ_HOST all
     degrade to the browser-composite path."""
@@ -179,8 +185,10 @@ def build_source(view_keys: list[str]) -> Optional[ZmqCameraSource]:
     roles = _env_roles()
     if not roles:
         # Without the cameras.json order we can't map roles->ports reliably.
-        logger.warning("[CAM-ZMQ] NORI_CAM_ZMQ_HOST set but NORI_CAM_ROLES is not "
-                       "(need cameras.json order) — staying on the composite path")
+        logger.warning(
+            "[CAM-ZMQ] NORI_CAM_ZMQ_HOST set but NORI_CAM_ROLES is not "
+            "(need cameras.json order) — staying on the composite path"
+        )
         return None
     missing = [role_of(v) for v in view_keys if role_of(v) not in roles]
     if missing:
@@ -188,9 +196,11 @@ def build_source(view_keys: list[str]) -> Optional[ZmqCameraSource]:
         return None
     try:
         base = int(os.environ.get("NORI_CAM_BASE_PORT", str(DEFAULT_BASE_PORT)))
-        logger.warning("[CAM-ZMQ] DEPRECATED direct-SUB camera path active — "
-                       "superseded by the robot's policy streamer (see "
-                       "cloud_inference/STREAM_INTEGRATION_PLAN.md)")
+        logger.warning(
+            "[CAM-ZMQ] DEPRECATED direct-SUB camera path active — "
+            "superseded by the robot's policy streamer (see "
+            "cloud_inference/STREAM_INTEGRATION_PLAN.md)"
+        )
         return ZmqCameraSource(host, roles, base_port=base)
     except Exception as e:  # pyzmq missing, bad host, etc.
         logger.warning("[CAM-ZMQ] unavailable (%s) — falling back to the composite path", e)

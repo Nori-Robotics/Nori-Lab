@@ -20,13 +20,17 @@ SERIAL = "NORI-L2-0007"
 JPEG = b"\xff\xd8\xff\xe0FAKEJPEG\xff\xd9"
 
 
-def preamble(serial=SERIAL, calibration=None, cameras=("overhead", "left_wrist"),
-             mono_epoch=None, **extra):
-    d = {"kind": "policy_stream_meta", "serial": serial,
-         "mono_epoch": time.monotonic() if mono_epoch is None else mono_epoch,
-         "wall_epoch": time.time(), "cameras": list(cameras), "fps": 20,
-         "calibration": calibration}
-    d.update(extra)   # forward-compat: receivers must ignore unknown fields
+def preamble(serial=SERIAL, calibration=None, cameras=("overhead", "left_wrist"), mono_epoch=None, **extra):
+    d = {
+        "kind": "policy_stream_meta",
+        "serial": serial,
+        "mono_epoch": time.monotonic() if mono_epoch is None else mono_epoch,
+        "wall_epoch": time.time(),
+        "cameras": list(cameras),
+        "fps": 20,
+        "calibration": calibration,
+    }
+    d.update(extra)  # forward-compat: receivers must ignore unknown fields
     return d
 
 
@@ -79,10 +83,10 @@ def test_preamble_then_frames_served(rx):
     s.send_frame("overhead")
     s.send_frame("left_wrist")
     assert wait_for(lambda: rx.frames_seen >= 2)
-    got = rx.frames_b64(["observation.images.overhead",
-                         "observation.images.left_wrist"])
+    got = rx.frames_b64(["observation.images.overhead", "observation.images.left_wrist"])
     assert got is not None
     import base64
+
     assert base64.b64decode(got["observation.images.overhead"]) == JPEG
     st = rx.status()
     assert st["connected"] and st["preamble_received"]
@@ -96,8 +100,7 @@ def test_all_or_nothing_missing_view(rx):
     s.send_frame("overhead")
     assert wait_for(lambda: rx.frames_seen >= 1)
     # left_wrist never arrived -> the WHOLE request returns None
-    assert rx.frames_b64(["observation.images.overhead",
-                          "observation.images.left_wrist"]) is None
+    assert rx.frames_b64(["observation.images.overhead", "observation.images.left_wrist"]) is None
     s.close()
 
 
@@ -109,7 +112,7 @@ def test_stale_frames_read_as_missing(rx):
     assert wait_for(lambda: rx.frames_seen >= 1)
     assert rx.frames_b64(["observation.images.overhead"]) is None
     st = rx.status()
-    assert st["age_s"]["overhead"] > 50   # capture-time age, not arrival-time
+    assert st["age_s"]["overhead"] > 50  # capture-time age, not arrival-time
     s.close()
 
 
@@ -124,7 +127,7 @@ def test_serial_mismatch_drops_connection(rx):
         s.send_frame("overhead")
         s.send_frame("overhead")
     except OSError:
-        pass                              # peer already closed on us — equally fine
+        pass  # peer already closed on us — equally fine
     time.sleep(0.2)
     assert rx.frames_seen == 0
     s.close()
@@ -140,7 +143,7 @@ def test_garbage_preamble_dropped(rx):
 
 def test_wrong_kind_dropped(rx):
     s = FakeStreamer("127.0.0.1", rx.port)
-    s.send_preamble(kind_override=None)   # extra ignored; now break the kind:
+    s.send_preamble(kind_override=None)  # extra ignored; now break the kind:
     s.close()
     # (separate connection attempt would be refused; use a fresh listener)
     lst = StreamListener(SERIAL, host="127.0.0.1")
@@ -184,17 +187,22 @@ def test_arming_window_expires(tmp_path, monkeypatch):
     lst = StreamListener(SERIAL, host="127.0.0.1", arm_window_s=0.3)
     lst.open()
     try:
-        assert wait_for(lambda: "arming window expired" in (lst.status()["error"] or ""),
-                        timeout=2.0)
+        assert wait_for(lambda: "arming window expired" in (lst.status()["error"] or ""), timeout=2.0)
         assert lst.status()["armed"] is False or lst.status()["error"]
     finally:
         lst.close()
 
 
 def test_calibration_persisted(rx, tmp_path):
-    calib = {"left_arm_shoulder_pan": {"id": 1, "drive_mode": 0,
-                                       "homing_offset": 3, "range_min": 700,
-                                       "range_max": 3350}}
+    calib = {
+        "left_arm_shoulder_pan": {
+            "id": 1,
+            "drive_mode": 0,
+            "homing_offset": 3,
+            "range_min": 700,
+            "range_max": 3350,
+        }
+    }
     s = FakeStreamer("127.0.0.1", rx.port)
     s.send_preamble(calibration=calib)
     assert wait_for(lambda: rx.status()["calibration_present"])
@@ -230,34 +238,38 @@ def test_v10_token_match_accepted(tmp_path, monkeypatch):
     s.send_preamble(token="s3cr3t-sink-token")
     s.send_frame("overhead")
     assert wait_for(lambda: rx.status()["preamble_received"])
-    s.close(); rx.close()
+    s.close()
+    rx.close()
 
 
 def test_v10_token_mismatch_dropped(tmp_path, monkeypatch):
     rx = _tokened_rx(tmp_path, monkeypatch)
     s = FakeStreamer("127.0.0.1", rx.port)
-    s.send_preamble(token="WRONG-TOKEN")   # forged: right serial, wrong token
+    s.send_preamble(token="WRONG-TOKEN")  # forged: right serial, wrong token
     s.send_frame("overhead")
     # never accepts the connection — the forged stream is dropped
     assert not wait_for(lambda: rx.status()["preamble_received"], timeout=1.0)
-    s.close(); rx.close()
+    s.close()
+    rx.close()
 
 
 def test_v10_token_absent_transition_tolerated(tmp_path, monkeypatch):
     # An un-updated robot sends no token; default (require off) accepts on serial.
     rx = _tokened_rx(tmp_path, monkeypatch, require=False)
     s = FakeStreamer("127.0.0.1", rx.port)
-    s.send_preamble()   # no token field
+    s.send_preamble()  # no token field
     s.send_frame("overhead")
     assert wait_for(lambda: rx.status()["preamble_received"])
-    s.close(); rx.close()
+    s.close()
+    rx.close()
 
 
 def test_v10_token_absent_required_dropped(tmp_path, monkeypatch):
     # With NORI_STREAM_REQUIRE_TOKEN=1 a token-less preamble is fail-closed.
     rx = _tokened_rx(tmp_path, monkeypatch, require=True)
     s = FakeStreamer("127.0.0.1", rx.port)
-    s.send_preamble()   # no token field
+    s.send_preamble()  # no token field
     s.send_frame("overhead")
     assert not wait_for(lambda: rx.status()["preamble_received"], timeout=1.0)
-    s.close(); rx.close()
+    s.close()
+    rx.close()

@@ -67,8 +67,8 @@ from .utils import config
 logger = logging.getLogger(__name__)
 
 COOKIE_NAME = "lelab_token"
-TOKEN_QUERY_PARAM = "token"
-TOKEN_HEADER = "x-lelab-token"
+TOKEN_QUERY_PARAM = "token"  # nosec B105 -- the query-parameter NAME, not a secret
+TOKEN_HEADER = "x-lelab-token"  # nosec B105 -- the header NAME, not a secret
 COOKIE_MAX_AGE = 30 * 24 * 3600  # re-minted on every launcher-opened page load
 
 # Hostnames that are always trusted (loopback only — matches the bind address).

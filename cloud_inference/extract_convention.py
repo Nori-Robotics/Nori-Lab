@@ -29,6 +29,7 @@ After extracting: commit the output file, delete ~/.nori_joint_calib.json on
 every laptop, and the composed zero-touch path takes over (load_calibration ->
 nori_units.load_composed_calibration). Validate once with an observe-only run.
 """
+
 import argparse
 import json
 import sys
@@ -42,13 +43,20 @@ from lelab.nori_units import JOINTS, affine_from_robot_json  # noqa: E402
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--calib", default=str(Path.home() / ".nori_joint_calib.json"),
-                    help="hardware-validated quantile calibration")
-    ap.add_argument("--robot-json", default=str(Path.home() / ".nori_robot_calib.json"),
-                    help="robot.json of the SAME robot the calib was derived on")
+    ap.add_argument(
+        "--calib",
+        default=str(Path.home() / ".nori_joint_calib.json"),
+        help="hardware-validated quantile calibration",
+    )
+    ap.add_argument(
+        "--robot-json",
+        default=str(Path.home() / ".nori_robot_calib.json"),
+        help="robot.json of the SAME robot the calib was derived on",
+    )
     ap.add_argument("--arm", default="left", choices=["left", "right"])
-    ap.add_argument("--out", default=str(_HERE.parent / "lelab" / "model_conventions"
-                                         / "molmoact2_so100.json"))
+    ap.add_argument(
+        "--out", default=str(_HERE.parent / "lelab" / "model_conventions" / "molmoact2_so100.json")
+    )
     args = ap.parse_args()
 
     v = json.loads(Path(args.calib).read_text())
@@ -59,32 +67,50 @@ def main() -> int:
         return 1
 
     def factor(Av, Bv):
-        Ac = [av / a for av, a in zip(Av, exact["A"])]
-        Bc = [bv - ac * b for bv, ac, b in zip(Bv, Ac, exact["B"])]
+        Ac = [av / a for av, a in zip(Av, exact["A"], strict=True)]
+        Bc = [bv - ac * b for bv, ac, b in zip(Bv, Ac, exact["B"], strict=True)]
         return Ac, Bc
 
     A, B = factor([float(x) for x in v["A"]], [float(x) for x in v["B"]])
-    A_inv, B_inv = factor([float(x) for x in v.get("A_inverse", v["A"])],
-                          [float(x) for x in v.get("B_inverse", v["B"])])
+    A_inv, B_inv = factor(
+        [float(x) for x in v.get("A_inverse", v["A"])], [float(x) for x in v.get("B_inverse", v["B"])]
+    )
 
     print(f"{'joint':14} {'conv A':>10} {'conv B':>10}   sanity")
-    for j, ac, bc in zip(JOINTS, A, B):
-        note = "ok" if 0.5 <= abs(ac) <= 2.0 else \
-            "FLAG: far from +-1 — behaviour-tuned gain or a units problem; verify on hardware"
+    for j, ac, bc in zip(JOINTS, A, B, strict=True):
+        note = (
+            "ok"
+            if 0.5 <= abs(ac) <= 2.0
+            else "FLAG: far from +-1 — behaviour-tuned gain or a units problem; verify on hardware"
+        )
         print(f"{j:14} {ac:10.4f} {bc:10.2f}   {note}")
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({
-        "model": "MolmoAct2-SO100_101",
-        "joints": JOINTS,
-        "A": A, "B": B, "A_inverse": A_inv, "B_inverse": B_inv,
-        "source": {"calib": str(args.calib), "robot_json": str(args.robot_json),
-                   "arm": args.arm,
-                   "validated_source_note": v.get("source", "")},
-    }, indent=2) + "\n")
-    print(f"\nwrote {out}\ncommit it; laptops can then delete ~/.nori_joint_calib.json "
-          f"— the composed zero-touch path takes over. Validate observe-only first.")
+    out.write_text(
+        json.dumps(
+            {
+                "model": "MolmoAct2-SO100_101",
+                "joints": JOINTS,
+                "A": A,
+                "B": B,
+                "A_inverse": A_inv,
+                "B_inverse": B_inv,
+                "source": {
+                    "calib": str(args.calib),
+                    "robot_json": str(args.robot_json),
+                    "arm": args.arm,
+                    "validated_source_note": v.get("source", ""),
+                },
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    print(
+        f"\nwrote {out}\ncommit it; laptops can then delete ~/.nori_joint_calib.json "
+        f"— the composed zero-touch path takes over. Validate observe-only first."
+    )
     return 0
 
 

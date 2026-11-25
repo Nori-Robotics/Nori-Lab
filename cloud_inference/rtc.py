@@ -37,14 +37,11 @@ COSTS (measured/reported, worth knowing before enabling):
 """
 
 import math
-from typing import Optional
 
 import torch
 
 
-def prefix_weights(
-    delay: int, execution_horizon: int, total: int, schedule: str = "exp"
-) -> torch.Tensor:
+def prefix_weights(delay: int, execution_horizon: int, total: int, schedule: str = "exp") -> torch.Tensor:
     """Per-timestep guidance weights (port of LeRobot's get_prefix_weights).
 
     `delay` (d) actions are pinned at 1.0; weights decay to 0 by `execution_horizon`
@@ -79,7 +76,7 @@ def guidance_weight(tau: float, max_weight: float) -> float:
     one_minus = 1.0 - tau
     if tau <= 0.0 or one_minus <= 0.0:
         return float(max_weight)
-    w = ((one_minus ** 2) + (tau ** 2)) / (tau * one_minus)
+    w = ((one_minus**2) + (tau**2)) / (tau * one_minus)
     return float(min(w, max_weight))
 
 
@@ -90,7 +87,7 @@ def feasible(delay: int, horizon: int, execution_horizon: int) -> bool:
     return 0 <= delay <= execution_horizon <= horizon - delay
 
 
-def pick_execution_horizon(delay: int, horizon: int) -> Optional[int]:
+def pick_execution_horizon(delay: int, horizon: int) -> int | None:
     """Smallest feasible s that leaves the guided band some room, or None if the
     delay is too large for this horizon (d > H/2)."""
     s = min(max(delay + 4, delay), horizon - delay)
@@ -106,21 +103,21 @@ class RTCState:
     a joint calibration). Caching the model's own output sidesteps both."""
 
     def __init__(self) -> None:
-        self.prev: Optional[torch.Tensor] = None  # (B, H, A) normalized
+        self.prev: torch.Tensor | None = None  # (B, H, A) normalized
         self.enabled = False
-        self.consumed = 0        # actions executed since `prev` was produced (= alignment shift)
-        self.delay = 0           # d: actions that will execute during THIS inference
+        self.consumed = 0  # actions executed since `prev` was produced (= alignment shift)
+        self.delay = 0  # d: actions that will execute during THIS inference
         self.execution_horizon = 10
         self.max_guidance_weight = 10.0
         self.schedule = "exp"
-        self.applied = 0         # count of guided steps, for observability
+        self.applied = 0  # count of guided steps, for observability
 
-    def target(self, like: torch.Tensor) -> Optional[torch.Tensor]:
+    def target(self, like: torch.Tensor) -> torch.Tensor | None:
         """Previous chunk aligned to the new chunk's timeline: drop the `consumed`
         actions that already executed, then zero-pad to the new chunk's shape."""
         if not self.enabled or self.prev is None:
             return None
-        left = self.prev[:, self.consumed:, :]
+        left = self.prev[:, self.consumed :, :]
         if left.shape[1] == 0:
             return None
         out = torch.zeros_like(like)
@@ -173,8 +170,7 @@ def install_rtc(model, state: RTCState):
         dt = 1.0 / steps
         pad = inputs.action_dim_is_pad
         mask_enabled = owner.config.mask_action_dim_padding
-        W = prefix_weights(state.delay, state.execution_horizon,
-                           trajectory.shape[1], state.schedule)
+        W = prefix_weights(state.delay, state.execution_horizon, trajectory.shape[1], state.schedule)
         W = W.to(trajectory.device, trajectory.dtype).view(1, -1, 1)
 
         for idx in range(steps):
@@ -190,8 +186,8 @@ def install_rtc(model, state: RTCState):
                 velocity = owner._mask_action_dim_tensor(
                     velocity, action_dim_is_pad=pad, enabled=mask_enabled
                 )
-                x1 = x_t + (1.0 - tau) * velocity          # predicted clean sample
-                err = ((target - x1) * W).detach()          # weighted pull toward prev
+                x1 = x_t + (1.0 - tau) * velocity  # predicted clean sample
+                err = ((target - x1) * W).detach()  # weighted pull toward prev
                 corr = torch.autograd.grad(x1, x_t, err, retain_graph=False)[0]
 
             w = guidance_weight(tau, state.max_guidance_weight)
@@ -232,7 +228,7 @@ def selftest_guidance_direction() -> dict:
                     err = ((prev - x1) * W).detach()
                     corr = torch.autograd.grad(x1, xt, err, retain_graph=False)[0]
                     v = v + guidance_weight(tau, 10.0) * corr
-            x = (x.detach() + (1.0 / steps) * v.detach())
+            x = x.detach() + (1.0 / steps) * v.detach()
         return x
 
     plain, rtc = run(False), run(True)

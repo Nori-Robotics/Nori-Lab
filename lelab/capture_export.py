@@ -75,12 +75,14 @@ def _episode_windows(events: list[dict]) -> list[dict]:
         if idx in discarded:
             continue
         if idx in stops and stops[idx]["t_ms"] > starts[idx]["t_ms"]:
-            out.append({
-                "index": idx,
-                "t0": float(starts[idx]["t_ms"]),
-                "t1": float(stops[idx]["t_ms"]),
-                "task": starts[idx].get("task") or "teleop session",
-            })
+            out.append(
+                {
+                    "index": idx,
+                    "t0": float(starts[idx]["t_ms"]),
+                    "t1": float(stops[idx]["t_ms"]),
+                    "task": starts[idx].get("task") or "teleop session",
+                }
+            )
     return out
 
 
@@ -120,7 +122,9 @@ def _views_from_layout(meta, w, h):
             for i, role in enumerate(tiles):
                 if not role:
                     continue
-                key = "observation.images." + (re.sub(r"[^a-z0-9_]+", "_", str(role).lower()).strip("_") or f"cam{i}")
+                key = "observation.images." + (
+                    re.sub(r"[^a-z0-9_]+", "_", str(role).lower()).strip("_") or f"cam{i}"
+                )
                 x0, y0 = (i % cols) * tw, (i // cols) * th
                 views.append((key, (y0, y0 + th, x0, x0 + tw)))
             if views:
@@ -146,7 +150,9 @@ def _open_previews(preview_dir, ep_idx, views, fps):
         st.width, st.height, st.pix_fmt = (x1 - x0), (y1 - y0), "yuv420p"
         st.options = {"crf": "30", "preset": "veryfast"}
         ws[key] = {
-            "c": c, "st": st, "tmp": tmp,
+            "c": c,
+            "st": st,
+            "tmp": tmp,
             "final": out / f"ep{ep_idx}.mp4",
             "jpg": out / f"ep{ep_idx}.jpg",  # first-frame thumbnail sidecar
             "n": 0,
@@ -156,6 +162,7 @@ def _open_previews(preview_dir, ep_idx, views, fps):
 
 def _preview_add(ws, key, img, fps):
     from fractions import Fraction
+
     import av
 
     w = ws.get(key)
@@ -261,9 +268,7 @@ def export_capture(
                 + " — record it into a new dataset instead"
             )
         if int(dataset.fps) != int(fps):
-            logger.info(
-                "[EXPORT] appending at dataset fps %s (requested %s)", dataset.fps, fps
-            )
+            logger.info("[EXPORT] appending at dataset fps %s (requested %s)", dataset.fps, fps)
             fps = int(dataset.fps)
         # Frame geometry contract comes from the dataset, not this capture's
         # probe — the resize path below normalizes any drift.
@@ -384,10 +389,7 @@ def export_capture(
                     "task": ep["task"],
                 }
                 for _key, (_y0, _y1, _x0, _x1) in views:
-                    frame_out[_key] = (
-                        img if len(views) == 1
-                        else np.ascontiguousarray(img[_y0:_y1, _x0:_x1])
-                    )
+                    frame_out[_key] = img if len(views) == 1 else np.ascontiguousarray(img[_y0:_y1, _x0:_x1])
                 dataset.add_frame(frame_out)
                 if previews is not None:
                     try:

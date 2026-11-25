@@ -44,8 +44,8 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 class PatchPolicyConfig:
     action_dim: int
     cameras: tuple[str, ...] = ("front",)
-    obs_window: int = 2          # T — frames of history (paper real-world: 2)
-    chunk_size: int = 5          # actions predicted per frame (paper: 5-10)
+    obs_window: int = 2  # T — frames of history (paper real-world: 2)
+    chunk_size: int = 5  # actions predicted per frame (paper: 5-10)
     image_size: int = 224
     # ViT-S/14 on 224x224 -> (224/14)^2 = 256 patches, 384-dim features.
     patches_per_image: int = 256
@@ -86,7 +86,7 @@ class FakePatchEncoder(nn.Module):
 
     def __init__(self, image_size: int, patches_per_image: int, dim: int):
         super().__init__()
-        grid = int(patches_per_image ** 0.5)
+        grid = int(patches_per_image**0.5)
         if grid * grid != patches_per_image:
             raise ValueError("patches_per_image must be a perfect square")
         if image_size % grid:
@@ -104,7 +104,10 @@ class DinoV2Encoder(nn.Module):
 
     def __init__(self, variant: str):
         super().__init__()
-        self.backbone = torch.hub.load("facebookresearch/dinov2", variant)
+        # B614: torch.hub.load fetches and executes hubconf.py from the
+        # named GitHub repo by design; that is how DINOv2 is published. Research
+        # code, run by us against a known upstream, never on user input.
+        self.backbone = torch.hub.load("facebookresearch/dinov2", variant)  # nosec B614
         self.backbone.eval()
         for p in self.backbone.parameters():
             p.requires_grad_(False)
@@ -157,8 +160,7 @@ class PatchPolicy(nn.Module):
         self.cfg = cfg
         self.encoder = build_encoder(cfg)
         self.proj = (
-            nn.Identity() if cfg.encoder_dim == cfg.embed_dim
-            else nn.Linear(cfg.encoder_dim, cfg.embed_dim)
+            nn.Identity() if cfg.encoder_dim == cfg.embed_dim else nn.Linear(cfg.encoder_dim, cfg.embed_dim)
         )
         self.pos_embed = nn.Parameter(torch.zeros(1, cfg.seq_len, cfg.embed_dim))
         nn.init.trunc_normal_(self.pos_embed, std=0.02)
@@ -217,7 +219,7 @@ class PatchPolicy(nn.Module):
     def loss(
         self,
         images: dict[str, torch.Tensor],
-        target_actions: torch.Tensor,   # (B, T, chunk, action_dim) RAW (unnormalized)
+        target_actions: torch.Tensor,  # (B, T, chunk, action_dim) RAW (unnormalized)
         target_pad: torch.Tensor | None = None,  # (B, T, chunk) True = padded step
     ) -> torch.Tensor:
         pred = self.forward(images)

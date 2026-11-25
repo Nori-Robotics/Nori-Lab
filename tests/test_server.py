@@ -266,7 +266,9 @@ def _aspire_client(monkeypatch, calls):
             def call(*a, **k):
                 calls.append((name, a, k))
                 return {"name": name, "args": a}
+
             return call
+
     monkeypatch.setattr(server, "NoriClient", Fake)
 
 
@@ -276,20 +278,49 @@ def test_aspire_proxy_forwards_the_jwt_and_the_bodies(client: TestClient, monkey
     c = client
     if True:  # keep the block indented like the other route tests
         h = {"X-Nori-JWT": "jwt-1"}
-        r = c.post("/nori/aspire/tasks", json={"robot": "NORI-A3-0003", "instruction": "pick up the can",
-                                               "constraints": {"operator_presence": True}}, headers=h)
+        r = c.post(
+            "/nori/aspire/tasks",
+            json={
+                "robot": "NORI-A3-0003",
+                "instruction": "pick up the can",
+                "constraints": {"operator_presence": True},
+            },
+            headers=h,
+        )
         assert r.status_code == 202 and r.json()["name"] == "aspire_start_task"
-        assert ("aspire_start_task", ({"robot": "NORI-A3-0003", "instruction": "pick up the can",
-                                       "constraints": {"operator_presence": True}},), {}) in calls
+        assert (
+            "aspire_start_task",
+            (
+                {
+                    "robot": "NORI-A3-0003",
+                    "instruction": "pick up the can",
+                    "constraints": {"operator_presence": True},
+                },
+            ),
+            {},
+        ) in calls
         assert ("jwt", "jwt-1") in calls
         assert c.get("/nori/aspire/tasks/t1/events?since=4", headers=h).json()["args"] == ["t1", 4]
         assert c.post("/nori/aspire/tasks/t1/cancel", json={"reason": "E-STOP"}, headers=h).status_code == 202
         assert ("aspire_cancel", ("t1", "E-STOP"), {}) in calls
         assert c.post("/nori/aspire/tasks/t1/presence", headers=h).json()["name"] == "aspire_presence"
-        assert c.post("/nori/aspire/tasks/t1/answer", json={"text": "the red one"}, headers=h).json()["args"] == ["t1", "the red one"]
+        assert c.post("/nori/aspire/tasks/t1/answer", json={"text": "the red one"}, headers=h).json()[
+            "args"
+        ] == ["t1", "the red one"]
         r = c.post("/nori/aspire/tasks/t1/comment", json={"text": "it's behind the box"}, headers=h)
         assert r.status_code == 202 and r.json()["args"] == ["t1", "it's behind the box"]
         # the robot's memory (migration 059): read, and one entry action
-        assert c.get("/nori/aspire/robots/NORI-A3-0003/notes", headers=h).json()["name"] == "aspire_robot_notes"
-        r = c.post("/nori/aspire/robots/NORI-A3-0003/notes/entries/reach/Right%20arm%20inward%20edge", json={"action": "edit", "field": "what", "text": "x"}, headers=h)
-        assert r.json()["args"] == ["NORI-A3-0003", "reach", "Right arm inward edge", {"action": "edit", "field": "what", "text": "x"}]
+        assert (
+            c.get("/nori/aspire/robots/NORI-A3-0003/notes", headers=h).json()["name"] == "aspire_robot_notes"
+        )
+        r = c.post(
+            "/nori/aspire/robots/NORI-A3-0003/notes/entries/reach/Right%20arm%20inward%20edge",
+            json={"action": "edit", "field": "what", "text": "x"},
+            headers=h,
+        )
+        assert r.json()["args"] == [
+            "NORI-A3-0003",
+            "reach",
+            "Right arm inward edge",
+            {"action": "edit", "field": "what", "text": "x"},
+        ]

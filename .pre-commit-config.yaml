@@ -105,7 +105,20 @@ repos:
     hooks:
       - id: mypy
         args: [--config-file=pyproject.toml]
-        exclude: ^(examples|benchmarks|tests)/
+        # cloud_inference/ holds three flat deployment roots that each get copied to
+        # a machine on their own, so each does a bare `import rtc`. rtc.py is
+        # byte-identical in all three, which mypy reports as a duplicate module -- a
+        # hard error that aborts the run before it checks ANYTHING, which is why this
+        # hook had never actually analysed the tree. serve/ is the canonical copy, so
+        # the original spike (cloud_inference/*.py) and the HF Space mirror (space/)
+        # are skipped. This must stay in the HOOK: mypy's own `exclude` is ignored for
+        # paths named on the command line, and pre-commit always names them.
+        exclude: |
+          (?x)^(
+            (examples|benchmarks|tests)/
+            |cloud_inference/space/
+            |cloud_inference/(rtc|molmoact2_server)\.py$
+          )
 
   ##### Docstring Checks #####
   # - repo: https://github.com/akaihola/darglint2

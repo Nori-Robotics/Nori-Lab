@@ -21,13 +21,19 @@ import pytest
 
 import lelab.nori_cloud_rollout as cr
 import lelab.nori_rollout as nr
-import lelab.policy_stream_rx as rx
 
 SERIAL = "NORI-L2-0007"
 VIEWS = ["observation.images.left_wrist", "observation.images.overhead"]
 JPEGS = {"left_wrist": b"\xff\xd8WRIST\xff\xd9", "overhead": b"\xff\xd8OVERHEAD\xff\xd9"}
-CALIB = {"left_arm_shoulder_pan": {"id": 1, "drive_mode": 0, "homing_offset": 3,
-                                   "range_min": 700, "range_max": 3350}}
+CALIB = {
+    "left_arm_shoulder_pan": {
+        "id": 1,
+        "drive_mode": 0,
+        "homing_offset": 3,
+        "range_min": 700,
+        "range_max": 3350,
+    }
+}
 
 
 class FakeRobotStreamer:
@@ -38,10 +44,19 @@ class FakeRobotStreamer:
         self.sock.sendall(struct.pack(">I", len(raw)) + raw)
 
     def preamble(self):
-        self.blob(json.dumps({
-            "kind": "policy_stream_meta", "serial": SERIAL,
-            "mono_epoch": time.monotonic(), "wall_epoch": time.time(),
-            "cameras": list(JPEGS), "fps": 20, "calibration": CALIB}).encode())
+        self.blob(
+            json.dumps(
+                {
+                    "kind": "policy_stream_meta",
+                    "serial": SERIAL,
+                    "mono_epoch": time.monotonic(),
+                    "wall_epoch": time.time(),
+                    "cameras": list(JPEGS),
+                    "fps": 20,
+                    "calibration": CALIB,
+                }
+            ).encode()
+        )
 
     def frames(self):
         for name, jpeg in JPEGS.items():
@@ -69,24 +84,43 @@ def chain(tmp_path, monkeypatch):
     chunk = [[float(i)] * 6 for i in range(30)]
     calls = []
 
-    def fake_cloud(images, state):        # what the HF Space would do
+    def fake_cloud(images, state):  # what the HF Space would do
         calls.append((list(images), list(state)))
         return [list(a) for a in chunk]
 
-    roll = cr.CloudRollout(endpoint="http://fake", token="t", instruction="smoke",
-                           action_keys=cr.arm_keys("left"), fps=15, caller=fake_cloud)
+    roll = cr.CloudRollout(
+        endpoint="http://fake",
+        token="t",
+        instruction="smoke",
+        action_keys=cr.arm_keys("left"),
+        fps=15,
+        caller=fake_cloud,
+    )
     nr._session.clear()
-    nr._session.update({"mode": "cloud", "ref": "smoke",
-                        "lanes": [{"arm": "left", "roll": roll, "views": list(VIEWS),
-                                   "arm_keys": cr.arm_keys("left"), "calibrated": False}],
-                        "views": VIEWS, "cam": None})
+    nr._session.update(
+        {
+            "mode": "cloud",
+            "ref": "smoke",
+            "lanes": [
+                {
+                    "arm": "left",
+                    "roll": roll,
+                    "views": list(VIEWS),
+                    "arm_keys": cr.arm_keys("left"),
+                    "calibrated": False,
+                }
+            ],
+            "views": VIEWS,
+            "cam": None,
+        }
+    )
     yield calls, tmp_path
     nr._session.clear()
     nr.stream_close()
 
 
 def act(images):
-    state = {k: 1.0 for k in cr.arm_keys("left")}
+    state = dict.fromkeys(cr.arm_keys("left"), 1.0)
     return nr._cloud_act(nr.ActBody(state=state, images=images))
 
 
@@ -125,7 +159,7 @@ def test_full_chain_stream_then_death_then_composite(chain):
     assert out["action"] is not None
     assert nr._session["frame_source"] == "stream"
     sent = calls[0][0]
-    assert base64.b64decode(sent[0]) == JPEGS["left_wrist"]     # view order kept
+    assert base64.b64decode(sent[0]) == JPEGS["left_wrist"]  # view order kept
     assert base64.b64decode(sent[1]) == JPEGS["overhead"]
 
     # 4. calibration from the preamble persisted — the P5 unblock
@@ -138,6 +172,7 @@ def test_full_chain_stream_then_death_then_composite(chain):
     # empty-image ticks must now 422 — the browser's re-attach signal.
     # (drain the queue first: buffered actions serve without a refill/obs)
     from fastapi import HTTPException
+
     got_422 = False
     for _ in range(80):
         try:

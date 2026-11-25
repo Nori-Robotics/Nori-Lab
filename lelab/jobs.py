@@ -831,9 +831,7 @@ class JobRegistry:
             elif target.runner == "nori_cloud":
                 from .runners.nori_cloud import NoriCloudJobRunner
 
-                runner = NoriCloudJobRunner(
-                    record.metrics, log_path, target.timeout_seconds, nori_jwt
-                )
+                runner = NoriCloudJobRunner(record.metrics, log_path, target.timeout_seconds, nori_jwt)
             else:
                 runner = HfCloudJobRunner(record.metrics, log_path, target.flavor)
 

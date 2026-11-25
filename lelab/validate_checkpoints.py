@@ -60,7 +60,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger("lelab.validate_checkpoints")
@@ -116,8 +116,7 @@ def discover_checkpoints(paths: list[str]) -> list[tuple[int, Path]]:
         # a container of numeric step dirs (the `checkpoints/` dir); zero-padded
         # names like 0005000 are fine — require the name to be all digits and
         # skip lerobot's `last` symlink (it duplicates the newest numeric dir)
-        step_dirs = [d for d in sorted(p.iterdir())
-                     if d.is_dir() and not d.is_symlink() and d.name.isdigit()]
+        step_dirs = [d for d in sorted(p.iterdir()) if d.is_dir() and not d.is_symlink() and d.name.isdigit()]
         hits = 0
         for d in step_dirs:
             pm = d / PRETRAINED_MODEL_DIR
@@ -126,8 +125,7 @@ def discover_checkpoints(paths: list[str]) -> list[tuple[int, Path]]:
                 hits += 1
         if hits == 0:
             raise FileNotFoundError(
-                f"no checkpoints found under {p} "
-                f"(looked for */{PRETRAINED_MODEL_DIR}/{MODEL_FILE})"
+                f"no checkpoints found under {p} (looked for */{PRETRAINED_MODEL_DIR}/{MODEL_FILE})"
             )
 
     for path in paths:
@@ -204,8 +202,8 @@ def _build_val_dataset(dataset: str, cfg, episodes: list[int] | None, tolerance_
     its obs/action horizons — identical to make_dataset().
     """
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.datasets.factory import resolve_delta_timestamps
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     repo_id, root = _resolve_dataset_location(dataset)
     ds_meta = LeRobotDatasetMetadata(repo_id, root=root)
@@ -232,9 +230,7 @@ def _resolve_dataset_location(dataset: str) -> tuple[str, str | None]:
     if p.exists() and (p / "meta" / "info.json").is_file():
         return p.name, str(p)
     if p.exists() and p.is_dir():
-        raise FileNotFoundError(
-            f"{p} exists but is not a LeRobotDataset (no meta/info.json)"
-        )
+        raise FileNotFoundError(f"{p} exists but is not a LeRobotDataset (no meta/info.json)")
     # treat as a hub repo_id
     return dataset, None
 
@@ -318,8 +314,9 @@ def _evaluate_checkpoint(
             n += bs
 
     if n == 0:
-        return CheckpointResult(step, str(bundle), 0, float("nan"),
-                                error="validation dataset produced 0 samples")
+        return CheckpointResult(
+            step, str(bundle), 0, float("nan"), error="validation dataset produced 0 samples"
+        )
 
     mean_total = tot_loss / n
     mean_l1 = (tot_l1 / n) if has_l1 else None
@@ -327,8 +324,12 @@ def _evaluate_checkpoint(
     # select on the behavioral term (ACT l1) when available, else total loss
     primary = mean_l1 if mean_l1 is not None else mean_total
     return CheckpointResult(
-        step=step, path=str(bundle), n_samples=n,
-        total_loss=mean_total, l1_loss=mean_l1, kld_loss=mean_kld,
+        step=step,
+        path=str(bundle),
+        n_samples=n,
+        total_loss=mean_total,
+        l1_loss=mean_l1,
+        kld_loss=mean_kld,
         primary=primary,
     )
 
@@ -386,16 +387,21 @@ def validate_checkpoints(
 
     first_cfg = PreTrainedConfig.from_pretrained(str(ckpts[0][1]))
     ds = _build_val_dataset(dataset, first_cfg, val_episodes, tolerance_s)
-    logger.info("val dataset: %d frames across %d episode(s)",
-                ds.num_frames, ds.num_episodes)
+    logger.info("val dataset: %d frames across %d episode(s)", ds.num_frames, ds.num_episodes)
 
     results: list[CheckpointResult] = []
     for step, bundle in ckpts:
         logger.info("evaluating step=%s (%s)", step, bundle)
         try:
             res = _evaluate_checkpoint(
-                bundle, step, ds, device, batch_size, num_workers,
-                diffusion_passes, seed,
+                bundle,
+                step,
+                ds,
+                device,
+                batch_size,
+                num_workers,
+                diffusion_passes,
+                seed,
             )
         except Exception as e:  # noqa: BLE001 — one bad ckpt shouldn't sink the sweep
             logger.exception("checkpoint step=%s failed", step)
@@ -437,8 +443,7 @@ def _print_table(report: ValidationReport):
             continue
         l1 = f"{r['l1_loss']:.5f}" if r["l1_loss"] is not None else "—"
         kld = f"{r['kld_loss']:.5f}" if r["kld_loss"] is not None else "—"
-        print(f"{r['step']:>8}  {r['n_samples']:>8}  {r['total_loss']:>10.5f}  "
-              f"{l1:>10}  {kld:>10}{star}")
+        print(f"{r['step']:>8}  {r['n_samples']:>8}  {r['total_loss']:>10.5f}  {l1:>10}  {kld:>10}{star}")
     print("-" * 72)
     print(f"BEST checkpoint: step {report.best_step}")
     print(f"  -> {report.best_path}")
@@ -449,26 +454,40 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Select the best training checkpoint by validation loss on a held-out dataset.",
     )
-    ap.add_argument("--checkpoints", nargs="+", required=True,
-                    help="checkpoint path(s): a checkpoints/ dir, a train output dir, "
-                         "a <step>/ dir, or a pretrained_model/ dir")
-    ap.add_argument("--dataset", required=True,
-                    help="validation dataset: HF repo_id (org/name) or a local "
-                         "LeRobotDataset dir (with meta/info.json)")
-    ap.add_argument("--val-episodes", default=None,
-                    help="comma-separated episode indices to use as validation "
-                         "(default: all episodes in the dataset)")
+    ap.add_argument(
+        "--checkpoints",
+        nargs="+",
+        required=True,
+        help="checkpoint path(s): a checkpoints/ dir, a train output dir, "
+        "a <step>/ dir, or a pretrained_model/ dir",
+    )
+    ap.add_argument(
+        "--dataset",
+        required=True,
+        help="validation dataset: HF repo_id (org/name) or a local LeRobotDataset dir (with meta/info.json)",
+    )
+    ap.add_argument(
+        "--val-episodes",
+        default=None,
+        help="comma-separated episode indices to use as validation (default: all episodes in the dataset)",
+    )
     ap.add_argument("--device", default="auto", help="auto|mps|cuda|cpu")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--num-workers", type=int, default=0)
-    ap.add_argument("--diffusion-passes", type=int, default=3,
-                    help="averaged forward passes for stochastic diffusion loss")
-    ap.add_argument("--tolerance-s", type=float, default=1e-4,
-                    help="timestamp sync tolerance (matches training default)")
+    ap.add_argument(
+        "--diffusion-passes",
+        type=int,
+        default=3,
+        help="averaged forward passes for stochastic diffusion loss",
+    )
+    ap.add_argument(
+        "--tolerance-s", type=float, default=1e-4, help="timestamp sync tolerance (matches training default)"
+    )
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--report", default=None, help="write the JSON report to this path")
-    ap.add_argument("--list-only", action="store_true",
-                    help="just list discovered checkpoints and exit (no loading)")
+    ap.add_argument(
+        "--list-only", action="store_true", help="just list discovered checkpoints and exit (no loading)"
+    )
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
 
@@ -482,10 +501,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"step={step:>8}  {d}")
         return 0
 
-    val_eps = (
-        [int(x) for x in args.val_episodes.split(",") if x.strip() != ""]
-        if args.val_episodes else None
-    )
+    val_eps = [int(x) for x in args.val_episodes.split(",") if x.strip() != ""] if args.val_episodes else None
 
     report = validate_checkpoints(
         checkpoints=args.checkpoints,

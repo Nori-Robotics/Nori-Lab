@@ -44,6 +44,7 @@
 # model a partial observation.
 
 import base64
+import contextlib
 import json
 import logging
 import os
@@ -53,9 +54,9 @@ import struct
 import threading
 import time
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
+
 
 # Staleness is a LIVENESS bound (how old vision may be before falling back
 # beats acting on it), not a frame-period assumption — the receiver is
@@ -91,8 +92,7 @@ def role_of(view_key: str) -> str:
 
 
 def _calib_path() -> Path:
-    return Path(os.environ.get("NORI_STREAM_CALIB_PATH",
-                               str(Path.home() / ".nori_robot_calib.json")))
+    return Path(os.environ.get("NORI_STREAM_CALIB_PATH", str(Path.home() / ".nori_robot_calib.json")))
 
 
 class StreamListener:
@@ -103,16 +103,29 @@ class StreamListener:
     ever raises into the rollout: failures surface as status()/None and the
     caller falls back."""
 
-    def __init__(self, expected_serial: str, host: str = "", port: int = 0,
-                 arm_window_s: float = ARM_WINDOW_S,
-                 stale_after_s: float | None = None, expected_token: str = ""):
+    def __init__(
+        self,
+        expected_serial: str,
+        host: str = "",
+        port: int = 0,
+        arm_window_s: float = ARM_WINDOW_S,
+        stale_after_s: float | None = None,
+        expected_token: str = "",  # nosec B107 -- "" means legacy serial-only mode
+        # (see self.expected_token below); it is an absent token, not a default one.
+    ):
         self.expected_serial = str(expected_serial)
         # Per-session sink token (pentest V10). Empty = legacy serial-only mode.
         self.expected_token = str(expected_token)
         # Fail-closed once the robot streamer echoes the token; default tolerant
         # so a not-yet-updated robot (token-less preamble) still connects.
         self.require_token = os.environ.get("NORI_STREAM_REQUIRE_TOKEN", "0").strip() == "1"
-        self.host = host or "0.0.0.0"
+        # B104: binding 0.0.0.0 is the point: the ROBOT dials in to this
+        # sink over the LAN/Tailscale, so loopback would make the stream path
+        # unusable. It is not an open door: the listener exists only for the
+        # duration of one rollout session (open() arms, close() tears down),
+        # refuses any peer whose preamble serial != expected_serial, and with
+        # NORI_STREAM_REQUIRE_TOKEN=1 also requires the per-session token.
+        self.host = host or "0.0.0.0"  # nosec B104
         self.port = int(port)
         self.arm_window_s = float(arm_window_s)
         # Resolved at CONSTRUCTION (env read here, not at class definition —
@@ -120,23 +133,23 @@ class StreamListener:
         # the exact silent-no-op the e2e test once tripped on).
         self.stale_after_s = float(stale_after_s) if stale_after_s else _stale_after_default()
 
-        self._srv: Optional[socket.socket] = None
-        self._conn: Optional[socket.socket] = None
+        self._srv: socket.socket | None = None
+        self._conn: socket.socket | None = None
         self._lock = threading.Lock()
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
         # preamble-derived state
-        self.meta: Optional[dict] = None
-        self.calibration: Optional[dict] = None
-        self._mono_offset: Optional[float] = None  # local_mono - pi_mono
+        self.meta: dict | None = None
+        self.calibration: dict | None = None
+        self._mono_offset: float | None = None  # local_mono - pi_mono
         # per-camera latest-wins: name -> (jpeg bytes, capture_local_mono)
         self._latest: dict = {}
 
         # observability (mirrors the deprecated source's honest-counters idiom)
         self.frames_seen = 0
         self.refused_conns = 0
-        self.error: Optional[str] = None
+        self.error: str | None = None
         self.connected = False
         self._accepted_once = False
 
@@ -146,32 +159,34 @@ class StreamListener:
         srv = socket.socket()
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind((self.host, self.port))
-        srv.listen(2)                    # backlog >1 so extras can be REFUSED, not ignored
-        srv.settimeout(0.5)              # bounded accept so close() is honored
+        srv.listen(2)  # backlog >1 so extras can be REFUSED, not ignored
+        srv.settimeout(0.5)  # bounded accept so close() is honored
         self._srv = srv
         self.port = srv.getsockname()[1]
-        self._thread = threading.Thread(target=self._run, name="policy-stream-rx",
-                                        daemon=True)
+        self._thread = threading.Thread(target=self._run, name="policy-stream-rx", daemon=True)
         self._thread.start()
-        logger.info("[STREAM-RX] armed on %s:%d for serial=%s (window %.0fs)",
-                    self.host, self.port, self.expected_serial, self.arm_window_s)
+        logger.info(
+            "[STREAM-RX] armed on %s:%d for serial=%s (window %.0fs)",
+            self.host,
+            self.port,
+            self.expected_serial,
+            self.arm_window_s,
+        )
         return self.host, self.port
 
     def close(self) -> None:
         self._stop.set()
         for s in (self._conn, self._srv):
             if s is not None:
-                try:
+                with contextlib.suppress(OSError):
                     s.close()
-                except OSError:
-                    pass
         if self._thread is not None:
             self._thread.join(timeout=3.0)
         with self._lock:
             self.connected = False
 
     # ---- consumer seam (parity with the deprecated ZmqCameraSource) ----
-    def frames_b64(self, view_keys: list) -> Optional[dict]:
+    def frames_b64(self, view_keys: list) -> dict | None:
         """base64 JPEG per requested view, or None if ANY view is missing or
         stale — the caller then falls back rather than sending a partial obs."""
         now = time.monotonic()
@@ -202,7 +217,8 @@ class StreamListener:
                 "frames_seen": self.frames_seen,
                 "refused_conns": self.refused_conns,
                 "error": self.error,
-                "host": self.host, "port": self.port,
+                "host": self.host,
+                "port": self.port,
             }
 
     # ---- internals -----------------------------------------------------
@@ -228,7 +244,7 @@ class StreamListener:
                 return
             try:
                 conn, addr = self._srv.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 return  # closed under us
@@ -241,8 +257,7 @@ class StreamListener:
 
         # From here on, EXACTLY this one connection: refuse any others loudly
         # instead of leaving them in the backlog looking half-open.
-        refuser = threading.Thread(target=self._refuse_extras, daemon=True,
-                                   name="policy-stream-refuse")
+        refuser = threading.Thread(target=self._refuse_extras, daemon=True, name="policy-stream-refuse")
         refuser.start()
 
         # Blob 0 must be a valid preamble from the paired robot, else drop.
@@ -267,7 +282,7 @@ class StreamListener:
         while not self._stop.is_set():
             try:
                 extra, addr = self._srv.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 return
@@ -276,7 +291,7 @@ class StreamListener:
             logger.warning("[STREAM-RX] refused second connection from %s", addr)
             extra.close()
 
-    def _read_blob(self, conn: socket.socket) -> Optional[bytes]:
+    def _read_blob(self, conn: socket.socket) -> bytes | None:
         head = self._read_n(conn, 4)
         if head is None:
             return None
@@ -288,16 +303,16 @@ class StreamListener:
             return None
         return self._read_n(conn, length)
 
-    def _read_n(self, conn: socket.socket, n: int) -> Optional[bytes]:
+    def _read_n(self, conn: socket.socket, n: int) -> bytes | None:
         buf = b""
         while len(buf) < n and not self._stop.is_set():
             try:
                 chunk = conn.recv(n - len(buf))
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 return None
-            if not chunk:      # orderly close
+            if not chunk:  # orderly close
                 return None
             buf += chunk
         return buf if len(buf) == n else None
@@ -319,8 +334,10 @@ class StreamListener:
         if serial != self.expected_serial:
             # The serial gate: a first, weak filter (the serial is NOT secret).
             with self._lock:
-                self.error = (f"serial mismatch: stream says {serial!r}, session "
-                              f"is paired with {self.expected_serial!r} — dropped")
+                self.error = (
+                    f"serial mismatch: stream says {serial!r}, session "
+                    f"is paired with {self.expected_serial!r} — dropped"
+                )
             logger.warning("[STREAM-RX] %s", self.error)
             return False
 
@@ -335,9 +352,11 @@ class StreamListener:
                         self.error = "no sink token in preamble (NORI_STREAM_REQUIRE_TOKEN=1) — dropped"
                     logger.warning("[STREAM-RX] %s", self.error)
                     return False
-                logger.warning("[STREAM-RX] preamble carries no sink token — accepting on "
-                               "serial ONLY (transition; update the robot streamer to echo "
-                               "preamble['token'], then set NORI_STREAM_REQUIRE_TOKEN=1)")
+                logger.warning(
+                    "[STREAM-RX] preamble carries no sink token — accepting on "
+                    "serial ONLY (transition; update the robot streamer to echo "
+                    "preamble['token'], then set NORI_STREAM_REQUIRE_TOKEN=1)"
+                )
             elif not secrets.compare_digest(tok, self.expected_token):
                 with self._lock:
                     self.error = "sink token mismatch — dropped (forged stream?)"
@@ -353,12 +372,18 @@ class StreamListener:
         if self.calibration:
             self._persist_calibration()
         else:
-            logger.warning("[STREAM-RX] preamble carries NO calibration — the "
-                           "robot could not read robot.json; units work stays blocked")
+            logger.warning(
+                "[STREAM-RX] preamble carries NO calibration — the "
+                "robot could not read robot.json; units work stays blocked"
+            )
         # Forward-compat rule: unknown preamble fields are ignored.
-        logger.info("[STREAM-RX] preamble ok: serial=%s cameras=%s fps=%s calib=%s",
-                    serial, meta.get("cameras"), meta.get("fps"),
-                    "yes" if self.calibration else "none")
+        logger.info(
+            "[STREAM-RX] preamble ok: serial=%s cameras=%s fps=%s calib=%s",
+            serial,
+            meta.get("cameras"),
+            meta.get("fps"),
+            "yes" if self.calibration else "none",
+        )
         return True
 
     def _persist_calibration(self) -> None:
@@ -372,9 +397,9 @@ class StreamListener:
             logger.warning("[STREAM-RX] could not persist calibration (%s)", e)
 
     def _take_frame(self, blob: bytes) -> None:
-        nl = blob.find(b"\n")            # wire: b"<name> <mono_ts>\n" + jpeg
+        nl = blob.find(b"\n")  # wire: b"<name> <mono_ts>\n" + jpeg
         if nl < 0:
-            return                        # not a frame; ignore (forward-compat)
+            return  # not a frame; ignore (forward-compat)
         try:
             name_b, ts_b = blob[:nl].split(b" ", 1)
             name = name_b.decode("ascii", "replace")
@@ -383,5 +408,5 @@ class StreamListener:
             return
         cap_local = cap_pi_mono + (self._mono_offset or 0.0)
         with self._lock:
-            self._latest[name] = (blob[nl + 1:], cap_local)
+            self._latest[name] = (blob[nl + 1 :], cap_local)
             self.frames_seen += 1

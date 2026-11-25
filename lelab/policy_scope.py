@@ -39,10 +39,10 @@ class ScopeError(ValueError):
 
 @dataclass
 class ResolvedScope:
-    image_keys: list[str]          # full dataset keys, e.g. "observation.images.overhead"
-    state_indices: list[int]       # columns to keep from observation.state
+    image_keys: list[str]  # full dataset keys, e.g. "observation.images.overhead"
+    state_indices: list[int]  # columns to keep from observation.state
     state_joints: list[str]
-    action_indices: list[int]      # columns to keep from action
+    action_indices: list[int]  # columns to keep from action
     action_joints: list[str]
     dropped_image_keys: list[str] = field(default_factory=list)
 
@@ -57,7 +57,7 @@ class ResolvedScope:
 
 
 def _short_cam(key: str) -> str:
-    """"observation.images.left_wrist" -> "left_wrist"; passthrough otherwise."""
+    """ "observation.images.left_wrist" -> "left_wrist"; passthrough otherwise."""
     return key.rsplit(".", 1)[-1] if "." in key else key
 
 
@@ -115,8 +115,7 @@ def resolve_scope(
             key = _match_camera(req, image_keys_available)
             if key is None:
                 raise ScopeError(
-                    f"camera {req!r} not in dataset (have: "
-                    f"{[_short_cam(k) for k in image_keys_available]})"
+                    f"camera {req!r} not in dataset (have: {[_short_cam(k) for k in image_keys_available]})"
                 )
             if key not in resolved_keys:
                 resolved_keys.append(key)
@@ -131,14 +130,9 @@ def resolve_scope(
     state_sel = [(i, n) for i, n in enumerate(state_names) if keep(n)]
     action_sel = [(i, n) for i, n in enumerate(action_names) if keep(n)]
     if not action_sel:
-        raise ScopeError(
-            f"actuators {actuators!r} match no action joints "
-            f"(have: {action_names})"
-        )
+        raise ScopeError(f"actuators {actuators!r} match no action joints (have: {action_names})")
     if not state_sel:
-        raise ScopeError(
-            f"actuators {actuators!r} match no state joints (have: {state_names})"
-        )
+        raise ScopeError(f"actuators {actuators!r} match no state joints (have: {state_names})")
 
     return ResolvedScope(
         image_keys=resolved_keys,
@@ -320,9 +314,7 @@ def _slice_list_column(arr, indices: list[int]):
     rows = arr.to_pylist()
     sliced = [None if r is None else [r[i] for i in indices] for r in rows]
     out_type = (
-        pa.list_(value_type, len(indices))
-        if pa.types.is_fixed_size_list(typ)
-        else pa.list_(value_type)
+        pa.list_(value_type, len(indices)) if pa.types.is_fixed_size_list(typ) else pa.list_(value_type)
     )
     return pa.array(sliced, type=out_type)
 
@@ -400,7 +392,8 @@ def run_scope_from_dir(ds_dir, out_dir, scope_json, root_out_path) -> str:
     with open(f"{ds_dir}/meta/info.json") as f:
         feats = _json.load(f).get("features") or {}
     image_keys = [
-        k for k, v in feats.items()
+        k
+        for k, v in feats.items()
         if isinstance(v, dict) and str(v.get("dtype", "")).startswith(("video", "image"))
     ]
     resolved = resolve_scope(

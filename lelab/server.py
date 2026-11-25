@@ -38,7 +38,6 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from . import datasets as dataset_browser
-from .local_aspire import local_agent
 
 # Import our custom calibration functionality
 from .calibrate import CalibrationRequest, calibration_manager
@@ -49,6 +48,7 @@ from .jobs import (
     JobTarget,
     job_registry,
 )
+from .local_aspire import local_agent
 from .nori_client import ManifestError, NoriBackendError, NoriClient  # NORI: cloud API client
 from .nori_leader_setup import (
     DEFAULT_CALIBRATION_ID as DEFAULT_LEADER_CALIBRATION_ID,

@@ -533,6 +533,19 @@ class CloudRollout:
                         self._queue.append(a)
                 self.refills += 1
                 self.chunks_received += 1
+                # Release the single-flight guard in the SAME critical section that
+                # publishes the chunk, not in the `finally` below. The refill work
+                # is done by this point, and leaving the flag set for even one
+                # scheduler yield loses a trigger: a serve() that crosses the
+                # watermark in that window sees `_inflight` still True, skips the
+                # trigger, and -- because nothing re-checks until the NEXT tick --
+                # the refill it should have started simply never happens. At 30 Hz
+                # that costs one stutter gap; in a test that serves once and then
+                # waits, it hangs until the timeout (two of these have been failing
+                # in CI since at least 2026-09-01, where pytest's log capture makes
+                # the logger.info below slow enough to widen the window reliably).
+                # The `finally` still clears it, which is what the error paths need.
+                self._inflight = False
                 if self._warming_since is not None:
                     logger.info("[CLOUD-ROLLOUT] endpoint back — resuming after %.0fs",
                                 time.monotonic() - self._warming_since)

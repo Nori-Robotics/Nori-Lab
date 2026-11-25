@@ -90,8 +90,11 @@ class NoriClient:
     no-op'ing, so wiring gaps are loud.
     """
 
-    def __init__(self, jwt: str | None = None, base_url: str = NORI_BACKEND_URL):
+    def __init__(self, jwt: str | None = None, base_url: str = NORI_BACKEND_URL, *,
+                 aspire_tasks: str = f"{API}/aspire/tasks", socket_path: str | None = None):
         self.base_url = base_url.rstrip("/")
+        self.aspire_tasks = aspire_tasks
+        self.socket_path = socket_path
         self.jwt = jwt
 
     # -- low-level -----------------------------------------------------------------
@@ -116,11 +119,15 @@ class NoriClient:
         """Issue a request and return parsed JSON, raising NoriBackendError on non-2xx."""
         url = f"{self.base_url}{path}"
         try:
-            with httpx.Client(timeout=timeout or DEFAULT_TIMEOUT) as client:
+            transport = {"transport": httpx.HTTPTransport(uds=self.socket_path)} if self.socket_path else {}
+            with httpx.Client(timeout=timeout or DEFAULT_TIMEOUT, **transport) as client:
                 resp = client.request(
                     method, url, json=json, params=params, headers=self._headers()
                 )
         except httpx.RequestError as exc:
+            if self.socket_path:
+                detail = "Lost contact with the local policy agent. Check the LeLab terminal."
+                raise NoriBackendError(detail, status_code=503, detail=detail) from exc
             # Network-level failure (backend down, DNS, timeout). Surface as a 502-ish.
             raise NoriBackendError(
                 f"Could not reach Nori-Backend at {url}: {exc}", status_code=502
@@ -544,25 +551,25 @@ class NoriClient:
 
     def aspire_start_task(self, body: dict[str, Any]) -> dict[str, Any]:
         """POST /aspire/tasks -> 202 {task_id, status}; 409 {error: robot_busy} when the robot has a task."""
-        return self._request("POST", f"{API}/aspire/tasks", json=body)
+        return self._request("POST", self.aspire_tasks, json=body)
 
     def aspire_get_task(self, task_id: str) -> dict[str, Any]:
-        return self._request("GET", f"{API}/aspire/tasks/{task_id}")
+        return self._request("GET", f"{self.aspire_tasks}/{task_id}")
 
     def aspire_task_events(self, task_id: str, since: int = 0) -> list[dict[str, Any]]:
         """The task's events from `since` as JSON (the page polls; no SSE through the proxy)."""
-        return self._request("GET", f"{API}/aspire/tasks/{task_id}/events", params={"since": since, "follow": "false"})
+        return self._request("GET", f"{self.aspire_tasks}/{task_id}/events", params={"since": since, "follow": "false"})
 
     def aspire_answer(self, task_id: str, text: str) -> dict[str, Any]:
-        return self._request("POST", f"{API}/aspire/tasks/{task_id}/answer", json={"text": text})
+        return self._request("POST", f"{self.aspire_tasks}/{task_id}/answer", json={"text": text})
 
     def aspire_comment(self, task_id: str, text: str) -> dict[str, Any]:
         """Context or a correction for a running task, any time; the agent reads it on its next step."""
-        return self._request("POST", f"{API}/aspire/tasks/{task_id}/comment", json={"text": text})
+        return self._request("POST", f"{self.aspire_tasks}/{task_id}/comment", json={"text": text})
 
     def aspire_cancel(self, task_id: str, reason: str) -> dict[str, Any]:
         """The executor stops the robot first, then the task ends `cancelled`."""
-        return self._request("POST", f"{API}/aspire/tasks/{task_id}/cancel", json={"reason": reason})
+        return self._request("POST", f"{self.aspire_tasks}/{task_id}/cancel", json={"reason": reason})
 
     def aspire_robot_notes(self, robot: str) -> dict[str, Any]:
         """What the agent has learned on this robot (its memory), with promotable + lint."""
@@ -575,7 +582,7 @@ class NoriClient:
 
     def aspire_presence(self, task_id: str) -> dict[str, Any]:
         """The Agent page's heartbeat: a presence-supervised task is cancelled when it stops."""
-        return self._request("POST", f"{API}/aspire/tasks/{task_id}/presence")
+        return self._request("POST", f"{self.aspire_tasks}/{task_id}/presence")
 
     def get_library(self) -> dict[str, Any]:
         """GET /library — the My Stuff aggregate: promoted datasets joined to

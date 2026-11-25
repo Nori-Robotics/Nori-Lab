@@ -38,6 +38,7 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from . import datasets as dataset_browser
+from .local_aspire import local_agent
 
 # Import our custom calibration functionality
 from .calibrate import CalibrationRequest, calibration_manager
@@ -2002,48 +2003,60 @@ class NoriAspireCancelBody(BaseModel):
     reason: str = ""
 
 
+def _aspire_task_client(request: Request, task_id: str | None = None) -> NoriClient:
+    cloud = _nori_client(request)
+    # Hosted UUIDs remain accessible while new tasks use the local worker.
+    if task_id is not None and not task_id.startswith("t-"):
+        return cloud
+    if os.environ.get("NORI_LOCAL_AGENT_ROOT"):
+        return _nori_proxy(lambda: local_agent.client(cloud))
+    if task_id is not None:
+        raise HTTPException(404, "This task belongs to the local agent.")
+    return cloud
+
+
 @app.post("/nori/aspire/tasks", status_code=202)
 def nori_aspire_start(body: NoriAspireStartBody, request: Request):
-    """Queue an ASPIRE task on a paired robot; the hosted worker runs it."""
-    client = _nori_client(request)
+    """Queue an ASPIRE task on a paired robot; the configured worker runs it."""
+    client = _aspire_task_client(request)
     return _nori_proxy(lambda: client.aspire_start_task(body.model_dump(exclude_none=True)))
 
 
 @app.get("/nori/aspire/tasks/{task_id}")
 def nori_aspire_task(task_id: str, request: Request):
-    client = _nori_client(request)
+    client = _aspire_task_client(request, task_id)
     return _nori_proxy(lambda: client.aspire_get_task(task_id))
 
 
 @app.get("/nori/aspire/tasks/{task_id}/events")
 def nori_aspire_events(task_id: str, request: Request, since: int = 0):
     """The task's events from `since`, as JSON (the page polls about once a second)."""
-    client = _nori_client(request)
+    client = _aspire_task_client(request, task_id)
     return _nori_proxy(lambda: client.aspire_task_events(task_id, since))
 
 
 @app.post("/nori/aspire/tasks/{task_id}/answer")
 def nori_aspire_answer(task_id: str, body: NoriAspireTextBody, request: Request):
-    client = _nori_client(request)
+    client = _aspire_task_client(request, task_id)
     return _nori_proxy(lambda: client.aspire_answer(task_id, body.text))
 
 
 @app.post("/nori/aspire/tasks/{task_id}/comment", status_code=202)
 def nori_aspire_comment(task_id: str, body: NoriAspireTextBody, request: Request):
-    client = _nori_client(request)
+    client = _aspire_task_client(request, task_id)
     return _nori_proxy(lambda: client.aspire_comment(task_id, body.text))
 
 
 @app.post("/nori/aspire/tasks/{task_id}/cancel", status_code=202)
 def nori_aspire_cancel(task_id: str, body: NoriAspireCancelBody, request: Request):
     """Stop: the executor zeroes motion and E-STOPs the robot before the task ends."""
-    client = _nori_client(request)
+    client = _aspire_task_client(request, task_id)
     return _nori_proxy(lambda: client.aspire_cancel(task_id, body.reason))
 
 
 @app.post("/nori/aspire/tasks/{task_id}/presence")
 def nori_aspire_presence(task_id: str, request: Request):
-    client = _nori_client(request)
+    client = _aspire_task_client(request, task_id)
     return _nori_proxy(lambda: client.aspire_presence(task_id))
 
 
@@ -3144,6 +3157,8 @@ def startup_event():
 async def shutdown_event():
     """Clean up resources when FastAPI shuts down"""
     logger.info("🔄 FastAPI shutting down, cleaning up...")
+
+    local_agent.close()
 
     # Stop any active recording - handled by recording module cleanup
 

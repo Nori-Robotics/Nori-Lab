@@ -325,6 +325,11 @@ const ModelPage = () => {
   const runTraj = useCallback((api: ViewerApi) => {
     const q = new URLSearchParams(window.location.search);
     const speed = Number(q.get("speed") ?? 3) || 3;
+    // NOTE: /wb_traj.json is served from frontend/dist/, where it is TRACKED,
+    // but frontend/.gitignore keeps public/wb_traj.json untracked -- so a clean
+    // `npm run build` DELETES it and this default 404s. If you rebuild dist,
+    // restore it (`git checkout -- frontend/dist/wb_traj.json`) or keep a local
+    // copy in frontend/public/. Pass ?src=... to point elsewhere.
     const src = q.get("src") ?? "/wb_traj.json";
     // Visual-only: the solved lift schedule tops out at 0.66 m, which reads
     // as an implausible full-mast stretch in the viewer. Lower arm AND board

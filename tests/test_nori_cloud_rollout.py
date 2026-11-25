@@ -20,6 +20,15 @@ def _chunk(n, dof=6, base=0.0):
     return [[base + i + j * 0.01 for j in range(dof)] for i in range(n)]
 
 
+def _refilled(roll):
+    # A refill puts its chunk in the queue BEFORE it clears `inflight` (the
+    # `finally` in _refill), and serve() starts no new refill while one is in
+    # flight. Waiting on the queue alone lets a slow runner (CI) cross the
+    # watermark inside that gap, so the next refill never starts.
+    st = roll.status()
+    return st["queue"] > 0 and not st["inflight"]
+
+
 def _wait(pred, timeout=2.0):
     end = time.time() + timeout
     while time.time() < end:
@@ -155,7 +164,7 @@ def test_replace_on_refill_jumps_to_fresh_plan():
 
     roll = _make(caller, watermark=8, max_queue=24, replace_on_refill=True)
     roll.serve(["i"], [0.0] * 6)
-    assert _wait(lambda: roll.status()["queue"] > 0)  # refill 1 (base 0)
+    assert _wait(lambda: _refilled(roll))  # refill 1 (base 0)
     while roll.status()["queue"] > roll.watermark:
         roll.serve(["i"], [0.0] * 6)
     roll.serve(["i"], [0.0] * 6)  # crosses watermark -> refill 2 (base 100)
@@ -175,7 +184,7 @@ def test_append_mode_keeps_stale_tail():
 
     roll = _make(caller, watermark=8, max_queue=90, replace_on_refill=False)
     roll.serve(["i"], [0.0] * 6)
-    assert _wait(lambda: roll.status()["queue"] > 0)
+    assert _wait(lambda: _refilled(roll))
     while roll.status()["queue"] > roll.watermark:
         roll.serve(["i"], [0.0] * 6)
     roll.serve(["i"], [0.0] * 6)  # refill 2 appended behind the stale tail

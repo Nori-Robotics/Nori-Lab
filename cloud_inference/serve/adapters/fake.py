@@ -21,16 +21,22 @@ class FakeAdapter:
         pass
 
     def meta(self) -> dict:
-        return {"kind": "fake", "chunk_hz": 15.0, "horizon": self.HORIZON,
-                "dof": self.DOF, "cameras": ["wrist", "third_person"],
-                "max_images": 2, "source": self._source,
-                "supports_point": False, "supports_rtc": False}
+        return {
+            "kind": "fake",
+            "chunk_hz": 15.0,
+            "horizon": self.HORIZON,
+            "dof": self.DOF,
+            "cameras": ["wrist", "third_person"],
+            "max_images": 2,
+            "source": self._source,
+            "supports_point": False,
+            "supports_rtc": False,
+        }
 
     def act(self, *, images, state, instruction, num_steps, extras):
         if len(state) != self.DOF:
             raise HTTPException(status_code=422, detail=f"state must be {self.DOF}-dim")
         base = np.asarray(state, dtype=np.float32)
         chunk = np.stack([base + 0.1 * (i + 1) for i in range(self.HORIZON)])
-        rtc_note = ({"skipped": "unsupported for policy kind fake"}
-                    if extras.get("rtc") is not None else None)
+        rtc_note = {"skipped": "unsupported for policy kind fake"} if extras.get("rtc") is not None else None
         return chunk.astype(np.float32), {"rtc": rtc_note}

@@ -20,11 +20,11 @@ To connect to a robot you need the credentials we provision. A real robot's room
 Supabase Realtime channel gated by RLS, so you also sign the `supabase` client in as the robot's
 **paired account** — pairing is a one-time step in the Nori app using the **pair code on the box**:
 
-| Value | What it's for |
-|---|---|
-| `SUPABASE_URL`, `SUPABASE_ANON_KEY` | The reference signaling transport. Public values; safe in a client bundle. |
-| `ROOM` | Which robot you're connecting to (its serial). |
-| Signed-in Supabase session | Authenticates you to the private room via **RLS** — only the robot's paired account is admitted; everyone else is refused at join. **No room token** (the legacy HMAC token is retired). Open dev rooms (`nori-dev`) are public and need no sign-in. |
+| Value                               | What it's for                                                                                                                                                                                                                                        |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_URL`, `SUPABASE_ANON_KEY` | The reference signaling transport. Public values; safe in a client bundle.                                                                                                                                                                           |
+| `ROOM`                              | Which robot you're connecting to (its serial).                                                                                                                                                                                                       |
+| Signed-in Supabase session          | Authenticates you to the private room via **RLS** — only the robot's paired account is admitted; everyone else is refused at join. **No room token** (the legacy HMAC token is retired). Open dev rooms (`nori-dev`) are public and need no sign-in. |
 
 TURN relay credentials are **not** issued by default. You only need them on strict networks — see
 [Connectivity](/sdk/connectivity).
@@ -33,7 +33,7 @@ TURN relay credentials are **not** issued by default. You only need them on stri
 
 Pairing links a robot to your Nori account — the account RLS then admits to the robot's private
 room. You'd normally do this once in the Nori app, but you can do it entirely over the API, using
-the **pair code printed on the robot's box**. The pair code is used *here and only here* — never by
+the **pair code printed on the robot's box**. The pair code is used _here and only here_ — never by
 the SDK at connect time.
 
 ```bash

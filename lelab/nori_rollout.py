@@ -37,14 +37,12 @@ import os
 import secrets
 import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import nori_cam_zmq as camzmq
-from . import policy_stream_rx as streamrx
-from . import nori_cloud_rollout as cloudmod
+from . import nori_cam_zmq as camzmq, nori_cloud_rollout as cloudmod, policy_stream_rx as streamrx
 from .utils import config
 
 logger = logging.getLogger(__name__)
@@ -72,6 +70,7 @@ def _detect_host() -> str:
     if env:
         return env
     import socket as _socket
+
     sk = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
     try:
         sk.connect(("10.255.255.255", 1))
@@ -108,8 +107,8 @@ def stream_open(body: StreamOpenBody):
         if _stream is not None:
             _stream.close()
         lst = streamrx.StreamListener(
-            serial, port=body.port or int(os.environ.get("NORI_STREAM_PORT", "0")),
-            expected_token=token)
+            serial, port=body.port or int(os.environ.get("NORI_STREAM_PORT", "0")), expected_token=token
+        )
         lst.open()  # binds all interfaces; the token — not the bind — is the auth
         _stream = lst
     return {"host": _detect_host(), "port": lst.port, "token": token}
@@ -129,8 +128,9 @@ def stream_close():
 @router.get("/stream/status")
 def stream_status():
     st = _stream
-    return st.status() if st is not None else {
-        "armed": False, "connected": False, "preamble_received": False}
+    return st.status() if st is not None else {"armed": False, "connected": False, "preamble_received": False}
+
+
 _session: dict[str, Any] = {}  # ref, policy, pre, post, device, joints, image_shapes
 
 # Local policy classes that are language-conditioned: /load requires an
@@ -273,6 +273,7 @@ def _load_bundle(
     instruction: str | None = None,
 ) -> dict[str, Any]:
     import torch
+
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 
@@ -295,17 +296,18 @@ def _load_bundle(
     if cfg.type in _LANGUAGE_POLICY_TYPES and not task:
         raise HTTPException(
             status_code=422,
-            detail=(f"a local {cfg.type} policy is language-conditioned — "
-                    "provide an instruction (natural-language task)"))
+            detail=(
+                f"a local {cfg.type} policy is language-conditioned — "
+                "provide an instruction (natural-language task)"
+            ),
+        )
     # Apply inference-time execution overrides BEFORE building the policy so the
     # action queue / temporal ensembler are constructed from the chosen values.
     execution = _apply_act_execution(cfg, temporal_ensemble_coeff, n_action_steps)
     policy_cls = get_policy_class(cfg.type)
     policy = policy_cls.from_pretrained(str(bundle), config=cfg)
 
-    device = "mps" if torch.backends.mps.is_available() else (
-        "cuda" if torch.cuda.is_available() else "cpu"
-    )
+    device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
     policy.to(device)
     policy.eval()
     policy.reset()
@@ -371,10 +373,7 @@ def _load_bundle(
         state_joints = list(scope.get("state_joints") or [])
         action_joints = list(scope.get("action_joints") or [])
         session_joints = set(joints)
-        missing = [
-            j for j in dict.fromkeys(state_joints + action_joints)
-            if j not in session_joints
-        ]
+        missing = [j for j in dict.fromkeys(state_joints + action_joints) if j not in session_joints]
         if missing:
             raise HTTPException(
                 status_code=422,
@@ -386,14 +385,18 @@ def _load_bundle(
         if state_dim is not None and len(state_joints) != state_dim:
             raise HTTPException(
                 status_code=422,
-                detail=(f"bundle scope inconsistent: {len(state_joints)} state_joints "
-                        f"vs policy state dim {state_dim}."),
+                detail=(
+                    f"bundle scope inconsistent: {len(state_joints)} state_joints "
+                    f"vs policy state dim {state_dim}."
+                ),
             )
         if action_dim is not None and len(action_joints) != action_dim:
             raise HTTPException(
                 status_code=422,
-                detail=(f"bundle scope inconsistent: {len(action_joints)} action_joints "
-                        f"vs policy action dim {action_dim}."),
+                detail=(
+                    f"bundle scope inconsistent: {len(action_joints)} action_joints "
+                    f"vs policy action dim {action_dim}."
+                ),
             )
     else:
         state_joints = list(joints)
@@ -420,7 +423,7 @@ def _load_bundle(
         "pre": pre,
         "post": post,
         "device": device,
-        "joints": state_joints,          # order for the observation.state vector
+        "joints": state_joints,  # order for the observation.state vector
         "action_joints": action_joints,  # order for the returned action dict
         "scoped": scope is not None,
         "image_shapes": image_shapes,
@@ -544,15 +547,21 @@ def _cloud_load(body: LoadBody) -> dict:
     if not endpoint:
         raise HTTPException(
             status_code=503,
-            detail=("cloud inference not configured — set NORI_INFER_URL"
-                    + (f" or NORI_INFER_URL_{requested_kind.upper()}" if requested_kind else "")))
+            detail=(
+                "cloud inference not configured — set NORI_INFER_URL"
+                + (f" or NORI_INFER_URL_{requested_kind.upper()}" if requested_kind else "")
+            ),
+        )
     if not token:
-        raise HTTPException(status_code=503,
-                            detail="cloud inference token missing — set NORI_INFER_TOKEN or ~/.nori_infer_token")
+        raise HTTPException(
+            status_code=503,
+            detail="cloud inference token missing — set NORI_INFER_TOKEN or ~/.nori_infer_token",
+        )
     instruction = (body.instruction or "").strip()
     if not instruction:
-        raise HTTPException(status_code=422,
-                            detail="a cloud VLA needs an instruction (natural-language task)")
+        raise HTTPException(
+            status_code=422, detail="a cloud VLA needs an instruction (natural-language task)"
+        )
     fps = body.fps if (body.fps and body.fps > 0) else _env_fps()
     arm = (body.arm or _env_arm()).strip().lower()
     # Fail fast on an unreachable endpoint; a not-yet-"ready" Space is fine (this
@@ -562,8 +571,9 @@ def _cloud_load(body: LoadBody) -> dict:
     try:
         health = cloudmod.health_check(endpoint)
     except Exception as e:
-        raise HTTPException(status_code=502,
-                            detail=f"cloud endpoint {endpoint} unreachable: {type(e).__name__}: {e}")
+        raise HTTPException(
+            status_code=502, detail=f"cloud endpoint {endpoint} unreachable: {type(e).__name__}: {e}"
+        ) from e
     # Per-policy chunk semantics from the endpoint's /health meta (step-5 server).
     # A legacy single-model server has no meta -> molmoact2 semantics, unchanged.
     meta = health.get("meta") or {}
@@ -571,9 +581,12 @@ def _cloud_load(body: LoadBody) -> dict:
     if body.policy_kind and endpoint_kind != body.policy_kind.strip().lower():
         raise HTTPException(
             status_code=422,
-            detail=(f"endpoint {endpoint} serves policy kind {endpoint_kind!r}, "
-                    f"but this load requested {body.policy_kind!r} — check NORI_INFER_URL"
-                    + (f"_{requested_kind.upper()}" if requested_kind else "")))
+            detail=(
+                f"endpoint {endpoint} serves policy kind {endpoint_kind!r}, "
+                f"but this load requested {body.policy_kind!r} — check NORI_INFER_URL"
+                + (f"_{requested_kind.upper()}" if requested_kind else "")
+            ),
+        )
     # chunk_hz: the rate the chunk was AUTHORED at. meta wins; molmoact2 default
     # otherwise. pi05/groot endpoints MUST carry meta (their server always does).
     meta_chunk_hz = float(meta.get("chunk_hz") or 0.0) or cloudmod.MOLMOACT2_CHUNK_HZ
@@ -598,10 +611,13 @@ def _cloud_load(body: LoadBody) -> dict:
     if not nori_convention and not is_molmoact2:
         raise HTTPException(
             status_code=422,
-            detail=(f"endpoint serves {endpoint_kind!r} but declares no joint order "
-                    f"(meta.joints). A Nori finetune emits its DATASET's joint order, "
-                    f"which cannot be inferred — set NORI_JOINT_NAMES on the endpoint "
-                    f"to that checkpoint's observation.state names, in order."))
+            detail=(
+                f"endpoint serves {endpoint_kind!r} but declares no joint order "
+                f"(meta.joints). A Nori finetune emits its DATASET's joint order, "
+                f"which cannot be inferred — set NORI_JOINT_NAMES on the endpoint "
+                f"to that checkpoint's observation.state names, in order."
+            ),
+        )
     bounds = cloudmod.MOLMOACT2_BOUNDS if (is_molmoact2 and not nori_convention) else None
 
     # Lane shape (joint mapping):
@@ -616,20 +632,29 @@ def _cloud_load(body: LoadBody) -> dict:
         if missing_declared:
             raise HTTPException(
                 status_code=422,
-                detail=(f"endpoint declares joint(s) {missing_declared} that this "
-                        f"session does not have. Session joints: {sorted(body.joints)}."))
+                detail=(
+                    f"endpoint declares joint(s) {missing_declared} that this "
+                    f"session does not have. Session joints: {sorted(body.joints)}."
+                ),
+            )
         if dof and dof != len(declared):
             raise HTTPException(
                 status_code=422,
-                detail=(f"endpoint declares {len(declared)} joint names but an action "
-                        f"dim of {dof} — the checkpoint and NORI_JOINT_NAMES disagree."))
+                detail=(
+                    f"endpoint declares {len(declared)} joint names but an action "
+                    f"dim of {dof} — the checkpoint and NORI_JOINT_NAMES disagree."
+                ),
+            )
         sides = {j.split("_arm_")[0] for j in declared if "_arm_" in j}
         lane_arm = "both" if len(sides) > 1 else (sides.pop() if sides else arm)
         if arm not in (lane_arm, "both") and len(sides or {lane_arm}) == 1:
             raise HTTPException(
                 status_code=422,
-                detail=(f"this checkpoint drives the {lane_arm!r} arm (declared joints); "
-                        f"the request asked for {arm!r}"))
+                detail=(
+                    f"this checkpoint drives the {lane_arm!r} arm (declared joints); "
+                    f"the request asked for {arm!r}"
+                ),
+            )
         arm = lane_arm
         lane_arms = [lane_arm]
         per_arm_keys: dict[str, list[str]] = {lane_arm: list(declared)}
@@ -640,7 +665,7 @@ def _cloud_load(body: LoadBody) -> dict:
             try:
                 per_arm_keys[a] = cloudmod.arm_keys(a)
             except ValueError as e:
-                raise HTTPException(status_code=422, detail=str(e))
+                raise HTTPException(status_code=422, detail=str(e)) from e
     # Validate the keys exist in the live session so a bimanual/single-arm or
     # left/right mismatch fails at /load, not silently mid-rollout.
     have = set(body.joints)
@@ -648,8 +673,10 @@ def _cloud_load(body: LoadBody) -> dict:
     if missing:
         raise HTTPException(
             status_code=422,
-            detail=(f"cloud VLA drives the {arm!r} arm(s) but the session is missing "
-                    f"joint(s) {missing}. Session joints: {sorted(body.joints)}."),
+            detail=(
+                f"cloud VLA drives the {arm!r} arm(s) but the session is missing "
+                f"joint(s) {missing}. Session joints: {sorted(body.joints)}."
+            ),
         )
     # Views. A Nori-finetune checkpoint names its camera FEATURE KEYS in meta —
     # those ARE the contract (it was trained on exactly those views, in that
@@ -659,18 +686,25 @@ def _cloud_load(body: LoadBody) -> dict:
     # views list can't scope per lane, so explicit views are refused.
     explicit_views = body.views or _env_views()
     meta_cams = [c for c in (meta.get("cameras") or []) if isinstance(c, str)]
-    meta_cam_keys = (meta_cams if meta_cams and all(
-        c.startswith("observation.images.") for c in meta_cams) else None)
+    meta_cam_keys = (
+        meta_cams if meta_cams and all(c.startswith("observation.images.") for c in meta_cams) else None
+    )
     if nori_convention:
-        views = explicit_views or meta_cam_keys or cloudmod.default_cloud_views(
-            arm if arm in ("left", "right") else "left")
+        views = (
+            explicit_views
+            or meta_cam_keys
+            or cloudmod.default_cloud_views(arm if arm in ("left", "right") else "left")
+        )
         lane_views = {lane_arms[0]: list(views)}
     elif arm == "both":
         if explicit_views:
             raise HTTPException(
                 status_code=422,
-                detail=("views cannot be set with arm='both' (they are per-arm: "
-                        "each lane sees its own wrist + overhead) — omit views"))
+                detail=(
+                    "views cannot be set with arm='both' (they are per-arm: "
+                    "each lane sees its own wrist + overhead) — omit views"
+                ),
+            )
         lane_views = {a: cloudmod.default_cloud_views(a) for a in lane_arms}
     else:
         views = explicit_views or cloudmod.default_cloud_views(arm)
@@ -690,8 +724,11 @@ def _cloud_load(body: LoadBody) -> dict:
     if nori_convention and (body.instruction_left or body.instruction_right):
         raise HTTPException(
             status_code=422,
-            detail=("this checkpoint plans both arms from one instruction — use "
-                    "the shared instruction, not instruction_left/right"))
+            detail=(
+                "this checkpoint plans both arms from one instruction — use "
+                "the shared instruction, not instruction_left/right"
+            ),
+        )
 
     def _instr(a: str) -> str:
         if a == "both":
@@ -710,8 +747,7 @@ def _cloud_load(body: LoadBody) -> dict:
         # Units calibration is the MolmoAct2 ZERO-SHOT nori<->SO-101 affine. A
         # model that declares Nori joints was trained in our space and needs no
         # conversion — applying it would corrupt every action.
-        calib = (cloudmod.load_calibration(a)
-                 if (is_molmoact2 and not nori_convention) else None)
+        calib = cloudmod.load_calibration(a) if (is_molmoact2 and not nori_convention) else None
         roll = cloudmod.CloudRollout(
             endpoint=endpoint,
             token=token,
@@ -725,42 +761,66 @@ def _cloud_load(body: LoadBody) -> dict:
             # motion, so serving one per tick at 15fps halves the speed. NORI_INFER_STRIDE
             # forces a value (1 = the old one-action-per-tick behaviour).
             fps=float(fps),
-            chunk_hz=(meta_chunk_hz
-                      if not os.environ.get("NORI_INFER_STRIDE")
-                      else float(fps) * cloudmod._env_int("NORI_INFER_STRIDE", 1)),
+            chunk_hz=(
+                meta_chunk_hz
+                if not os.environ.get("NORI_INFER_STRIDE")
+                else float(fps) * cloudmod._env_int("NORI_INFER_STRIDE", 1)
+            ),
             bounds=bounds,
             calib=calib,
         )
-        lanes.append({"arm": a, "roll": roll, "views": list(lane_views[a]),
-                      "arm_keys": per_arm_keys[a], "calibrated": calib is not None})
+        lanes.append(
+            {
+                "arm": a,
+                "roll": roll,
+                "views": list(lane_views[a]),
+                "arm_keys": per_arm_keys[a],
+                "calibrated": calib is not None,
+            }
+        )
     roll0 = lanes[0]["roll"]
-    logger.info("[CLOUD-ROLLOUT] chunk stride=%d (fps=%s, chunk authored at %sHz) -- "
-                "queue holds %.2fs of motion; the refill round-trip must fit inside that",
-                roll0.stride, fps, roll0.chunk_hz, roll0.max_queue / (roll0.chunk_hz or 1))
+    logger.info(
+        "[CLOUD-ROLLOUT] chunk stride=%d (fps=%s, chunk authored at %sHz) -- "
+        "queue holds %.2fs of motion; the refill round-trip must fit inside that",
+        roll0.stride,
+        fps,
+        roll0.chunk_hz,
+        roll0.max_queue / (roll0.chunk_hz or 1),
+    )
     with _lock:
-        _close_cam()   # release any previous session's camera subscriber
+        _close_cam()  # release any previous session's camera subscriber
         _session.clear()
-        _session.update({
-            "mode": "cloud",
-            "ref": body.ref,
-            "lanes": lanes,
-            "policy_kind": endpoint_kind,
-            "joints": list(body.joints),
-            "arm": arm,
-            "views": union_views,   # union across lanes (camera source + UI)
-            "fps": fps,
-            "instruction": instruction,
-            # Full-quality per-camera frames straight off the Pi's capture layer
-            # (the source RECORDING uses). None -> browser composite crops.
-            "cam": camzmq.build_source(list(union_views)),
-        })
+        _session.update(
+            {
+                "mode": "cloud",
+                "ref": body.ref,
+                "lanes": lanes,
+                "policy_kind": endpoint_kind,
+                "joints": list(body.joints),
+                "arm": arm,
+                "views": union_views,  # union across lanes (camera source + UI)
+                "fps": fps,
+                "instruction": instruction,
+                # Full-quality per-camera frames straight off the Pi's capture layer
+                # (the source RECORDING uses). None -> browser composite crops.
+                "cam": camzmq.build_source(list(union_views)),
+            }
+        )
     for ln in lanes:
-        logger.info("[ROLLOUT] cloud load %s -> %s (arm=%s, views=%s, fps=%d, calib=%s, "
-                    "queue: wm=%d max=%d replace=%s, endpoint=%s)",
-                    body.ref, endpoint, ln["arm"], ln["views"], fps,
-                    "on" if ln["calibrated"] else "off",
-                    ln["roll"].watermark, ln["roll"].max_queue,
-                    ln["roll"].replace_on_refill, health.get("status"))
+        logger.info(
+            "[ROLLOUT] cloud load %s -> %s (arm=%s, views=%s, fps=%d, calib=%s, "
+            "queue: wm=%d max=%d replace=%s, endpoint=%s)",
+            body.ref,
+            endpoint,
+            ln["arm"],
+            ln["views"],
+            fps,
+            "on" if ln["calibrated"] else "off",
+            ln["roll"].watermark,
+            ln["roll"].max_queue,
+            ln["roll"].replace_on_refill,
+            health.get("status"),
+        )
     return {
         "ref": body.ref,
         "provider": "cloud",
@@ -786,10 +846,11 @@ def rollout_load(body: LoadBody):
     if body.provider == "cloud":
         return _cloud_load(body)
     with _lock:
-        _close_cam()   # release any previous session's camera subscriber
+        _close_cam()  # release any previous session's camera subscriber
         _session.clear()
         sess = _load_bundle(
-            body.ref, body.joints,
+            body.ref,
+            body.joints,
             temporal_ensemble_coeff=body.temporal_ensemble_coeff,
             n_action_steps=body.n_action_steps,
             fps=body.fps,
@@ -798,17 +859,24 @@ def rollout_load(body: LoadBody):
         cap_src = _read_capture_source(Path(config.NORI_POLICY_CACHE) / body.ref)
         use_stream = _resolve_use_stream(body.use_stream, cap_src)
         if use_stream and cap_src != "raw_bundle":
-            logger.warning("[ROLLOUT] use_stream FORCED on a %s-provenance policy — "
-                           "its training frames were composite; expect a domain gap",
-                           cap_src or "unstamped")
+            logger.warning(
+                "[ROLLOUT] use_stream FORCED on a %s-provenance policy — "
+                "its training frames were composite; expect a domain gap",
+                cap_src or "unstamped",
+            )
         sess["use_stream"] = use_stream
         sess["frame_source"] = None
         _session.update(sess)
-        logger.info("[ROLLOUT] loaded %s on %s (%d joints, images: %s, exec: %s, "
-                    "frames: %s [capture_source=%s])",
-                    body.ref, sess["device"], len(body.joints),
-                    list(sess["image_shapes"]), sess["execution"],
-                    "stream-preferred" if use_stream else "composite", cap_src)
+        logger.info(
+            "[ROLLOUT] loaded %s on %s (%d joints, images: %s, exec: %s, frames: %s [capture_source=%s])",
+            body.ref,
+            sess["device"],
+            len(body.joints),
+            list(sess["image_shapes"]),
+            sess["execution"],
+            "stream-preferred" if use_stream else "composite",
+            cap_src,
+        )
         return {
             "ref": body.ref,
             "device": sess["device"],
@@ -846,7 +914,7 @@ def _dump_frames(images: list[str], views: list[str]) -> None:
     try:
         d = Path(out).expanduser()
         d.mkdir(parents=True, exist_ok=True)
-        for key, b64 in zip(views, images):
+        for key, b64 in zip(views, images, strict=True):
             raw = b64.split(",", 1)[1] if b64.lstrip().startswith("data:") else b64
             short = key.replace("observation.images.", "")
             (d / f"t{tick:05d}_{short}.jpg").write_bytes(base64.b64decode(raw))
@@ -861,7 +929,7 @@ def _cloud_act(body: ActBody) -> dict:
     refill), and merges the per-arm actions into one command. Single-arm = one
     lane; arm='both' = two."""
     lanes: list[dict] = _session["lanes"]
-    views: list[str] = _session["views"]   # union across lanes (frame gathering)
+    views: list[str] = _session["views"]  # union across lanes (frame gathering)
     # Prefer FULL-QUALITY per-camera frames from the Pi's capture layer (the same
     # source the recorder/training data uses). Fall back to the browser's crops of
     # the ABR-degraded composite when that source isn't configured/reachable, or
@@ -898,14 +966,15 @@ def _cloud_act(body: ActBody) -> dict:
             logger.warning(
                 "[ROLLOUT] observation source is the DEPRECATED browser composite"
                 + (" (stream went stale/disconnected)" if prev_src == "stream" else "")
-                + " — full-quality path: arm /stream/open and start the robot's policy stream")
+                + " — full-quality path: arm /stream/open and start the robot's policy stream"
+            )
     # NORI_INFER_DUMP_FRAMES=<dir>: write the images we ACTUALLY send, so the
     # policy's input can be inspected rather than reasoned about. A whole day of
     # this spike was spent theorising about frame quality without once looking at
     # a frame. Off unless the env var is set; writes every DUMP_EVERY-th tick so a
     # run yields a handful of files, not thousands.
     _dump_frames(images, views)
-    imgs_by_key = dict(zip(views, images))
+    imgs_by_key = dict(zip(views, images, strict=True))
     # Serve every lane each tick: each buffers its own observation (its wrist +
     # overhead), pops its next action, and refills independently (concurrent
     # daemon threads; the endpoint serves one session per arm). While ANY lane
@@ -926,8 +995,9 @@ def _cloud_act(body: ActBody) -> dict:
             # buffer empty AND last refill failed -> 503 so the browser's failure
             # watchdog stops the rollout (non-2xx counts toward its 5-strike halt).
             # One dead lane halts BOTH arms — a half-driven bimanual task is unsafe.
-            raise HTTPException(status_code=503,
-                                detail=f"cloud inference unavailable ({ln['arm']} arm): {e}")
+            raise HTTPException(
+                status_code=503, detail=f"cloud inference unavailable ({ln['arm']} arm): {e}"
+            ) from e
         queues.append(int(out.get("queue") or 0))
         if out.get("action") is None:
             warming = True
@@ -948,8 +1018,8 @@ def rollout_act(body: ActBody):
         if _session.get("mode") == "cloud":
             return _cloud_act(body)
         policy = _session["policy"]
-        joints = _session["joints"]                                   # state vector order
-        action_joints = _session.get("action_joints") or joints       # action dict order
+        joints = _session["joints"]  # state vector order
+        action_joints = _session.get("action_joints") or joints  # action dict order
         device = _session["device"]
 
         images_b64 = _local_images(body)
@@ -985,13 +1055,20 @@ def rollout_act(body: ActBody):
         _act_dbg_counter += 1
         if _act_dbg_counter % 15 == 0:
             cur = [float(body.state.get(j, 0.0)) for j in action_joints]
-            dmax = max((abs(a - c) for a, c in zip(vec, cur)), default=0.0)
+            # strict=False deliberately: len(vec) != len(action_joints) is a real
+            # possibility and gets its own HTTPException a few lines below. This
+            # is a 1-in-15-tick debug log; it must not pre-empt that error.
+            dmax = max((abs(a - c) for a, c in zip(vec, cur, strict=False)), default=0.0)
             jmax = action_joints[max(range(len(vec)), key=lambda i: abs(vec[i] - cur[i]))] if vec else "-"
-            cams = {k.split(".")[-1]: round(float(obs[view_map.get(k, k)].mean().item()), 3)
-                    for k in _session["image_shapes"]}
+            cams = {
+                k.split(".")[-1]: round(float(obs[view_map.get(k, k)].mean().item()), 3)
+                for k in _session["image_shapes"]
+            }
             logger.info(
                 "[ROLLOUT-DBG] action max_delta=%.3f @%s (~0 => policy commanding NO motion) | cam means=%s (~0 => black feed)",
-                dmax, jmax, cams,
+                dmax,
+                jmax,
+                cams,
             )
         if len(vec) != len(action_joints):
             raise HTTPException(
@@ -999,7 +1076,7 @@ def rollout_act(body: ActBody):
                 detail=f"policy produced {len(vec)} outputs for {len(action_joints)} action joints",
             )
         # Only the scoped joints are commanded; the daemon holds the rest.
-        return {"action": {j: v for j, v in zip(action_joints, vec)}}
+        return {"action": dict(zip(action_joints, vec, strict=True))}
 
 
 def _local_images(body: "ActBody") -> dict:
@@ -1016,9 +1093,11 @@ def _local_images(body: "ActBody") -> dict:
             _session["frame_source"] = "stream"
             return stream_imgs
         if _session.get("frame_source") != "composite":
-            logger.warning("[ROLLOUT] local policy wanted STREAM frames but the "
-                           "stream is %s — falling back to the deprecated composite",
-                           "stale/incomplete" if st is not None else "not armed")
+            logger.warning(
+                "[ROLLOUT] local policy wanted STREAM frames but the "
+                "stream is %s — falling back to the deprecated composite",
+                "stale/incomplete" if st is not None else "not armed",
+            )
     missing = [k for k in keys if k not in body.images]
     if missing:
         raise HTTPException(
@@ -1040,14 +1119,13 @@ def _close_cam() -> None:
             cam.close()
         except Exception:
             logger.warning("[ROLLOUT] camera source close failed", exc_info=True)
-    for ln in (_session.get("lanes") or []):
+    for ln in _session.get("lanes") or []:
         roll = ln.get("roll")
         if roll is not None and hasattr(roll, "close"):
             try:
                 roll.close()
             except Exception:
-                logger.warning("[ROLLOUT] cloud client close failed (%s arm)",
-                               ln.get("arm"), exc_info=True)
+                logger.warning("[ROLLOUT] cloud client close failed (%s arm)", ln.get("arm"), exc_info=True)
 
 
 @router.post("/unload")
@@ -1081,8 +1159,11 @@ def rollout_status():
                 "image_keys": list(_session["views"]),
                 # single lane keeps the historical shape; arm="both" reports
                 # one status per arm so a starving lane is visible in the field.
-                "cloud": (lanes[0]["roll"].status() if len(lanes) == 1
-                          else {ln["arm"]: ln["roll"].status() for ln in lanes}),
+                "cloud": (
+                    lanes[0]["roll"].status()
+                    if len(lanes) == 1
+                    else {ln["arm"]: ln["roll"].status() for ln in lanes}
+                ),
                 # Which frame path the policy is actually being fed, so a silent
                 # fallback to the degraded composite is visible in the field.
                 "frame_source": _session.get("frame_source", "unknown"),

@@ -75,8 +75,14 @@ class NoriCloudJobRunner:
     # recorded on the LeLab job record but not forwarded (the backend forces or
     # ignores it). dataset_ref is omitted when None (=> backend uses latest upload).
     _HONORED_KEYS = (
-        "policy_type", "steps", "batch_size", "num_workers",
-        "seed", "policy_use_amp", "log_freq", "policy_name",
+        "policy_type",
+        "steps",
+        "batch_size",
+        "num_workers",
+        "seed",
+        "policy_use_amp",
+        "log_freq",
+        "policy_name",
     )
 
     def _dispatch_body(self, config: TrainingRequest) -> dict:
@@ -118,9 +124,7 @@ class NoriCloudJobRunner:
         if not self._job_uuid:
             raise RuntimeError(f"Nori dispatch returned no internal_job_uuid: {resp}")
 
-        self._poll_thread = threading.Thread(
-            target=self._poll_loop, name=f"nori-job-{job_id}", daemon=True
-        )
+        self._poll_thread = threading.Thread(target=self._poll_loop, name=f"nori-job-{job_id}", daemon=True)
         self._poll_thread.start()
 
     def _poll_loop(self) -> None:

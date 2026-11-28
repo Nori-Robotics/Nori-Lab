@@ -10,15 +10,15 @@ import { VrSession, DEFAULT_BINDINGS } from "@nori/sdk/vr";
 
 if (await VrSession.isSupported()) {
   const session = new VrSession({
-    teleop,                     // a started RemoteTeleop
-    videoEl: video,             // same element the robot stream is attached to
+    teleop, // a started RemoteTeleop
+    videoEl: video, // same element the robot stream is attached to
     onLog: (m) => console.log(m),
     onEnd: () => console.log("VR ended"),
   });
   // feed telemetry/currents in for the in-VR HUD + haptics:
   //   teleop options onTelemetry -> session.setTelemetry(t)
   //   teleop options onCurrents  -> session.setCurrents(c)
-  await session.start();        // enters immersive-vr
+  await session.start(); // enters immersive-vr
 }
 ```
 

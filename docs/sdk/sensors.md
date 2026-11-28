@@ -59,10 +59,10 @@ and an unanswered request raises `RobotUnreachable` rather than returning a stat
 
 ## Limits and data shape
 
-| Setting | Range | Meaning |
-|---|---:|---|
-| LiDAR rate | 0–10 Hz | Upper bound; the source topic may publish more slowly. |
-| IMU rate | 0–50 Hz | Upper bound; the source topic may publish more slowly. |
+| Setting      |    Range | Meaning                                                  |
+| ------------ | -------: | -------------------------------------------------------- |
+| LiDAR rate   |  0–10 Hz | Upper bound; the source topic may publish more slowly.   |
+| IMU rate     |  0–50 Hz | Upper bound; the source topic may publish more slowly.   |
 | LiDAR points | 16–1,440 | Maximum readings in each delivered scan. Default is 360. |
 
 When a native scan exceeds `lidarMaxPoints`, the gateway takes readings at a uniform integer

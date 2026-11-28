@@ -66,8 +66,11 @@ class PatchPolicyDataset(Dataset):
             frames = item[camera_key(camera)].to(torch.float32)  # (T, 3, H, W) in [0,1]
             if frames.shape[-2:] != (cfg.image_size, cfg.image_size):
                 frames = F.interpolate(
-                    frames, size=(cfg.image_size, cfg.image_size),
-                    mode="bilinear", align_corners=False, antialias=True,
+                    frames,
+                    size=(cfg.image_size, cfg.image_size),
+                    mode="bilinear",
+                    align_corners=False,
+                    antialias=True,
                 )
             images[camera] = frames
 

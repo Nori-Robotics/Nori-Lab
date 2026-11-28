@@ -60,19 +60,27 @@ class LocalAspire:
             if not self.verified or self.verified[0] != identity or self.verified[1] <= time.monotonic():
                 profile = cloud.get_customer()
                 if not email or (profile.get("email") or "").strip().casefold() != email:
-                    raise HTTPException(403, "Sign in with the Nori account configured in ~/.config/nori/sdk.env.")
+                    raise HTTPException(
+                        403, "Sign in with the Nori account configured in ~/.config/nori/sdk.env."
+                    )
                 self.verified = (identity, time.monotonic() + 60)
             if starting:
                 self._start(env)
                 self.operator_email = email
-            return NoriClient(jwt=self.token, base_url="http://localhost", aspire_tasks="/tasks",
-                              socket_path=self.socket_path)
+            return NoriClient(
+                jwt=self.token,
+                base_url="http://localhost",
+                aspire_tasks="/tasks",
+                socket_path=self.socket_path,
+            )
 
     def _start(self, env):
         root = Path(env["NORI_LOCAL_AGENT_ROOT"]).expanduser().resolve()
         python = Path(env.get("NORI_LOCAL_AGENT_PYTHON") or root / "sim/.venv-mujoco/bin/python").expanduser()
         if not (root / "synthesis/aspire_service/server.py").is_file() or not python.is_file():
-            raise HTTPException(503, "Check NORI_LOCAL_AGENT_ROOT and NORI_LOCAL_AGENT_PYTHON in LeLab's .env.")
+            raise HTTPException(
+                503, "Check NORI_LOCAL_AGENT_ROOT and NORI_LOCAL_AGENT_PYTHON in LeLab's .env."
+            )
         self.directory = tempfile.TemporaryDirectory(prefix="lelab-agent-")
         self.socket_path = str(Path(self.directory.name) / "worker.sock")
         self.token = secrets.token_urlsafe(32)
@@ -80,7 +88,9 @@ class LocalAspire:
         try:
             self.process = subprocess.Popen(
                 [str(python), "-m", "synthesis.aspire_service.server", "--lelab-socket", self.socket_path],
-                cwd=root, env=env, stdin=subprocess.PIPE,
+                cwd=root,
+                env=env,
+                stdin=subprocess.PIPE,
             )
             deadline = time.monotonic() + 10
             while self.process.poll() is None and time.monotonic() < deadline:
@@ -91,7 +101,9 @@ class LocalAspire:
             self._stop()
             raise HTTPException(503, f"Could not launch the local agent: {exc}") from exc
         self._stop()
-        raise HTTPException(503, "The local agent did not start. See the LeLab terminal for the worker error.")
+        raise HTTPException(
+            503, "The local agent did not start. See the LeLab terminal for the worker error."
+        )
 
 
 local_agent = LocalAspire()

@@ -15,14 +15,18 @@ VIEWS = ["observation.images.left_wrist", "observation.images.overhead"]
 
 # ---- the provenance rule (pure) --------------------------------------------
 
-@pytest.mark.parametrize("requested,cap_src,expect", [
-    (None, "raw_bundle", True),    # auto: trained on full-quality -> stream
-    (None, "browser", False),      # auto: trained on composite -> composite
-    (None, None, False),           # unstamped (every pre-stamp bundle) -> today's behavior
-    (True, "browser", True),       # explicit override wins (warned at load)
-    (True, None, True),
-    (False, "raw_bundle", False),  # explicit opt-out wins
-])
+
+@pytest.mark.parametrize(
+    "requested,cap_src,expect",
+    [
+        (None, "raw_bundle", True),  # auto: trained on full-quality -> stream
+        (None, "browser", False),  # auto: trained on composite -> composite
+        (None, None, False),  # unstamped (every pre-stamp bundle) -> today's behavior
+        (True, "browser", True),  # explicit override wins (warned at load)
+        (True, None, True),
+        (False, "raw_bundle", False),  # explicit opt-out wins
+    ],
+)
 def test_resolve_use_stream(requested, cap_src, expect):
     assert nr._resolve_use_stream(requested, cap_src) is expect
 
@@ -33,13 +37,14 @@ def test_read_capture_source(tmp_path):
     (tmp_path / "nori_meta.json").write_text(json.dumps({"capture_source": "browser"}))
     assert nr._read_capture_source(tmp_path) == "browser"
     (tmp_path / "nori_meta.json").write_text(json.dumps({"capture_source": "??"}))
-    assert nr._read_capture_source(tmp_path) is None      # unknown value = unstamped
+    assert nr._read_capture_source(tmp_path) is None  # unknown value = unstamped
     (tmp_path / "nori_meta.json").write_text("not json")
-    assert nr._read_capture_source(tmp_path) is None      # unreadable = unstamped
+    assert nr._read_capture_source(tmp_path) is None  # unreadable = unstamped
     assert nr._read_capture_source(tmp_path / "nope") is None
 
 
 # ---- the frame selector -----------------------------------------------------
+
 
 class StubStream:
     def __init__(self, imgs):
@@ -55,7 +60,7 @@ class StubStream:
 @pytest.fixture
 def local_session():
     nr._session.clear()
-    nr._session.update({"ref": "t", "image_shapes": {v: (3, 240, 320) for v in VIEWS}})
+    nr._session.update({"ref": "t", "image_shapes": dict.fromkeys(VIEWS, (3, 240, 320))})
     yield
     nr._session.clear()
 
@@ -64,8 +69,8 @@ def body(images):
     return nr.ActBody(state={}, images=images)
 
 
-COMPOSITE = {v: "Q09NUE9TSVRF" for v in VIEWS}
-STREAMED = {v: "U1RSRUFN" for v in VIEWS}
+COMPOSITE = dict.fromkeys(VIEWS, "Q09NUE9TSVRF")
+STREAMED = dict.fromkeys(VIEWS, "U1RSRUFN")
 
 
 def test_stream_preferred_when_opted_in(local_session, monkeypatch):
@@ -88,14 +93,15 @@ def test_composite_when_not_opted_in_even_if_stream_live(local_session, monkeypa
 
 def test_stale_stream_falls_back_with_one_warning(local_session, monkeypatch, caplog):
     import logging
+
     nr._session["use_stream"] = True
-    monkeypatch.setattr(nr, "_stream", StubStream(None))   # armed but stale
+    monkeypatch.setattr(nr, "_stream", StubStream(None))  # armed but stale
     with caplog.at_level(logging.WARNING):
         got1 = nr._local_images(body(COMPOSITE))
         got2 = nr._local_images(body(COMPOSITE))
     assert got1 == COMPOSITE and got2 == COMPOSITE
     warns = [r for r in caplog.records if "falling back" in r.message]
-    assert len(warns) == 1                                  # transition only, not per tick
+    assert len(warns) == 1  # transition only, not per tick
 
 
 def test_stream_wanted_but_never_armed(local_session, monkeypatch):
@@ -108,7 +114,7 @@ def test_missing_composite_view_still_422(local_session, monkeypatch):
     nr._session["use_stream"] = False
     monkeypatch.setattr(nr, "_stream", None)
     with pytest.raises(HTTPException) as e:
-        nr._local_images(body({VIEWS[0]: "x"}))             # overhead missing
+        nr._local_images(body({VIEWS[0]: "x"}))  # overhead missing
     assert e.value.status_code == 422
 
 
@@ -116,7 +122,7 @@ def test_recovery_back_to_stream(local_session, monkeypatch):
     nr._session["use_stream"] = True
     stub = StubStream(None)
     monkeypatch.setattr(nr, "_stream", stub)
-    assert nr._local_images(body(COMPOSITE)) == COMPOSITE   # stale -> composite
-    stub.imgs = STREAMED                                    # frames return
-    assert nr._local_images(body(COMPOSITE)) == STREAMED    # picked up again
+    assert nr._local_images(body(COMPOSITE)) == COMPOSITE  # stale -> composite
+    stub.imgs = STREAMED  # frames return
+    assert nr._local_images(body(COMPOSITE)) == STREAMED  # picked up again
     assert nr._session["frame_source"] == "stream"

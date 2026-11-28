@@ -199,7 +199,7 @@ const Home = () => {
         </FadeIn>
         <FadeIn delay={140}>
           <p className="mt-3 max-w-2xl text-pretty text-[15px] leading-relaxed text-muted-foreground">
-            This is the official Nori Lab app: everything you need to drive, program, and teach your robot lives here. 
+            This is the official Nori Lab app: everything you need to drive, program, and teach your robot lives here.
             Get started below.
           </p>
         </FadeIn>

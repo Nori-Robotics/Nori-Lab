@@ -40,17 +40,24 @@ def _wait(pred, timeout=2.0):
 
 def _make(caller, **kw):
     return cr.CloudRollout(
-        endpoint="http://x", token="t", instruction="pick up the cup",
-        action_keys=JOINTS, caller=caller, **kw,
+        endpoint="http://x",
+        token="t",
+        instruction="pick up the cup",
+        action_keys=JOINTS,
+        caller=caller,
+        **kw,
     )
 
 
 def test_arm_keys_match_model_order():
     # Nori keys, ordered to the model's canonical output order (NOT alphabetical).
     assert cr.arm_keys("left") == [
-        "left_arm_shoulder_pan.pos", "left_arm_shoulder_lift.pos",
-        "left_arm_elbow_flex.pos", "left_arm_wrist_flex.pos",
-        "left_arm_wrist_roll.pos", "left_arm_gripper.pos",
+        "left_arm_shoulder_pan.pos",
+        "left_arm_shoulder_lift.pos",
+        "left_arm_elbow_flex.pos",
+        "left_arm_wrist_flex.pos",
+        "left_arm_wrist_roll.pos",
+        "left_arm_gripper.pos",
     ]
     assert cr.arm_keys("RIGHT")[0] == "right_arm_shoulder_pan.pos"
     assert all(k.startswith("right_arm_") for k in cr.arm_keys("right"))
@@ -61,25 +68,35 @@ def test_arm_keys_match_model_order():
 def test_action_maps_by_name_in_model_order():
     # The 6-vector must land on the right named joints in the model's order.
     keys = cr.arm_keys("left")
-    roll = cr.CloudRollout(endpoint="http://x", token="t", instruction="go",
-                           action_keys=keys, caller=lambda i, s: [[1, 2, 3, 4, 5, 6]] * 5)
+    roll = cr.CloudRollout(
+        endpoint="http://x",
+        token="t",
+        instruction="go",
+        action_keys=keys,
+        caller=lambda i, s: [[1, 2, 3, 4, 5, 6]] * 5,
+    )
     roll.serve(["img"], [0.0] * 6)
     assert _wait(lambda: roll.status()["queue"] > 0)
     act = roll.serve(["img"], [0.0] * 6)["action"]
-    assert act["left_arm_shoulder_pan.pos"] == 1.0   # model dim 0
-    assert act["left_arm_gripper.pos"] == 6.0         # model dim 5
+    assert act["left_arm_shoulder_pan.pos"] == 1.0  # model dim 0
+    assert act["left_arm_gripper.pos"] == 6.0  # model dim 5
 
 
 def test_bounds_clamp_and_counter():
     keys = cr.arm_keys("left")
     bounds = [(-10.0, 10.0)] * 6
-    roll = cr.CloudRollout(endpoint="http://x", token="t", instruction="go",
-                           action_keys=keys, bounds=bounds,
-                           caller=lambda i, s: [[999, -999, 0, 0, 0, 0]] * 5)
+    roll = cr.CloudRollout(
+        endpoint="http://x",
+        token="t",
+        instruction="go",
+        action_keys=keys,
+        bounds=bounds,
+        caller=lambda i, s: [[999, -999, 0, 0, 0, 0]] * 5,
+    )
     roll.serve(["img"], [0.0] * 6)
     assert _wait(lambda: roll.status()["queue"] > 0)
     act = roll.serve(["img"], [0.0] * 6)["action"]
-    assert act["left_arm_shoulder_pan.pos"] == 10.0    # clipped to hi
+    assert act["left_arm_shoulder_pan.pos"] == 10.0  # clipped to hi
     assert act["left_arm_shoulder_lift.pos"] == -10.0  # clipped to lo
     assert roll.status()["clamps"] >= 1
 
@@ -241,18 +258,29 @@ CALIB = {"A": [2.0, 1.18, 1.5, 1.2, 1.0, 0.54], "B": [-16.8, 158.7, 23.7, 64.6, 
 
 
 def test_calibration_round_trip():
-    r = cr.CloudRollout(endpoint="http://x", token="t", instruction="go",
-                        action_keys=cr.arm_keys("left"), calib=CALIB, caller=lambda i, s: [[0]*6])
+    r = cr.CloudRollout(
+        endpoint="http://x",
+        token="t",
+        instruction="go",
+        action_keys=cr.arm_keys("left"),
+        calib=CALIB,
+        caller=lambda i, s: [[0] * 6],
+    )
     x = [5.0, -97.0, 50.0, 10.0, -2.0, 40.0]
     back = r._cal_inverse(r._cal_forward(x))
-    assert all(abs(a - b) < 1e-6 for a, b in zip(back, x))
+    assert all(abs(a - b) < 1e-6 for a, b in zip(back, x, strict=True))
 
 
 def test_serve_inverse_calibrates_action():
     # model returns 45 for shoulder_lift -> Nori (45 - 158.7)/1.18
-    r = cr.CloudRollout(endpoint="http://x", token="t", instruction="go",
-                        action_keys=cr.arm_keys("left"), calib=CALIB,
-                        caller=lambda i, s: [[0, 45.0, 0, 0, 0, 0]] * 4)
+    r = cr.CloudRollout(
+        endpoint="http://x",
+        token="t",
+        instruction="go",
+        action_keys=cr.arm_keys("left"),
+        calib=CALIB,
+        caller=lambda i, s: [[0, 45.0, 0, 0, 0, 0]] * 4,
+    )
     r.serve(["i"], [0.0] * 6)
     assert _wait(lambda: roll_q(r))
     act = r.serve(["i"], [0.0] * 6)["action"]
@@ -266,11 +294,17 @@ def test_forward_calibrates_state_sent():
         sent["s"] = s
         return [[0, 45.0, 0, 0, 0, 0]] * 4
 
-    r = cr.CloudRollout(endpoint="http://x", token="t", instruction="go",
-                        action_keys=cr.arm_keys("left"), calib=CALIB, caller=cap)
+    r = cr.CloudRollout(
+        endpoint="http://x",
+        token="t",
+        instruction="go",
+        action_keys=cr.arm_keys("left"),
+        calib=CALIB,
+        caller=cap,
+    )
     r.serve(["i"], [0.0, -97.0, 0, 0, 0, 0])
     assert _wait(lambda: "s" in sent)
-    assert abs(sent["s"][1] - (1.18 * -97.0 + 158.7)) < 1e-3   # forward: A*s+B
+    assert abs(sent["s"][1] - (1.18 * -97.0 + 158.7)) < 1e-3  # forward: A*s+B
 
 
 def test_load_calibration_roundtrips(tmp_path, monkeypatch):

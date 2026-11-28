@@ -15,11 +15,11 @@ domain gap is a finetune (see cloud_inference/FINETUNE_PLAN.md).
     python cloud_inference/derive_calibration.py --dataset move_red_left --arm left
     # writes ~/.nori_joint_calib.json ; then: export NORI_INFER_CALIB=~/.nori_joint_calib.json
 """
+
 import argparse
 import glob
 import importlib.util
 import json
-import os
 import urllib.request
 from pathlib import Path
 
@@ -28,7 +28,10 @@ import pyarrow.parquet as pq
 
 _HERE = Path(__file__).resolve().parent
 _spec = importlib.util.spec_from_file_location("ncr", _HERE.parent / "lelab" / "nori_cloud_rollout.py")
-cr = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(cr)
+if _spec is None or _spec.loader is None:
+    raise SystemExit("cannot import lelab/nori_cloud_rollout.py")
+cr = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(cr)
 
 NORM_STATS_URL = "https://huggingface.co/allenai/MolmoAct2-SO100_101/raw/main/norm_stats.json"
 
@@ -45,15 +48,20 @@ def main() -> int:
     ap.add_argument("--dataset", required=True, help="repo_id or path of a reference capture")
     ap.add_argument("--arm", default="left", choices=["left", "right"])
     ap.add_argument("--out", default=str(Path.home() / ".nori_joint_calib.json"))
-    ap.add_argument("--min-range", type=float, default=15.0,
-                    help="deg; joints whose Nori q01..q99 span is below this use offset-only")
+    ap.add_argument(
+        "--min-range",
+        type=float,
+        default=15.0,
+        help="deg; joints whose Nori q01..q99 span is below this use offset-only",
+    )
     args = ap.parse_args()
 
     keys = cr.arm_keys(args.arm)
     short = [k.replace(args.arm + "_arm_", "").replace(".pos", "") for k in keys]
 
     # model per-joint state stats (names == model order)
-    with urllib.request.urlopen(NORM_STATS_URL, timeout=30) as r:
+    # B310: NORM_STATS_URL is a hard-coded https constant in this file.
+    with urllib.request.urlopen(NORM_STATS_URL, timeout=30) as r:  # nosec B310
         ss = json.load(r)["metadata_by_tag"]["so100_so101_molmoact2"]["state_stats"]
     m_q01, m_q99, m_q50 = np.array(ss["q01"]), np.array(ss["q99"]), np.array(ss["q50"])
 
@@ -86,8 +94,10 @@ def main() -> int:
     print(f"calibration for arm={args.arm} from {args.dataset} ({len(nori)} frames):")
     print(f"  {'joint':<14}{'nori q01..q99':>20}{'model q01..q99':>20}{'A':>8}{'B':>9}  mode")
     for j in range(6):
-        print(f"  {short[j]:<14}{f'{n_q01[j]:.1f}..{n_q99[j]:.1f}':>20}"
-              f"{f'{m_q01[j]:.1f}..{m_q99[j]:.1f}':>20}{A[j]:>8.2f}{B[j]:>9.1f}  {mode[j]}")
+        print(
+            f"  {short[j]:<14}{f'{n_q01[j]:.1f}..{n_q99[j]:.1f}':>20}"
+            f"{f'{m_q01[j]:.1f}..{m_q99[j]:.1f}':>20}{A[j]:>8.2f}{B[j]:>9.1f}  {mode[j]}"
+        )
 
     out = {
         "arm": args.arm,

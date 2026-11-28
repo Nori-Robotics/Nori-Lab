@@ -29,7 +29,9 @@ if (!started.ok || !started.goalId) {
   throw new Error(started.error ?? "navigation was refused");
 }
 
-const result = await teleop.awaitNavigation(started.goalId, { timeoutMs: 120_000 });
+const result = await teleop.awaitNavigation(started.goalId, {
+  timeoutMs: 120_000,
+});
 if (result.unreachable) {
   // The robot never answered. It may still be driving — see "Unreachable" below.
   console.warn("lost contact while navigating:", result.error);
@@ -40,15 +42,15 @@ if (result.unreachable) {
 
 The methods return `Promise<NavigationStatus>`:
 
-| Method | Meaning |
-|---|---|
-| `listWaypoints()` | List destinations for the active map. |
-| `rememberWaypoint(name)` | Save the current localized pose. Reusing a name replaces it. |
-| `deleteWaypoint(name)` | Delete a destination. Refused while a goal is active. |
-| `navigateToWaypoint(name)` | Start one map-matched Nav2 goal and return its `goalId`. |
-| `cancelNavigation(goalId?)` | Cancel this SDK session's active goal, optionally matching its ID. |
-| `getNavigationStatus()` | Request the current robot-side snapshot. |
-| `latestNavigationStatus()` | Read the latest cached reply or unsolicited update. |
+| Method                              | Meaning                                                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `listWaypoints()`                   | List destinations for the active map.                                                            |
+| `rememberWaypoint(name)`            | Save the current localized pose. Reusing a name replaces it.                                     |
+| `deleteWaypoint(name)`              | Delete a destination. Refused while a goal is active.                                            |
+| `navigateToWaypoint(name)`          | Start one map-matched Nav2 goal and return its `goalId`.                                         |
+| `cancelNavigation(goalId?)`         | Cancel this SDK session's active goal, optionally matching its ID.                               |
+| `getNavigationStatus()`             | Request the current robot-side snapshot.                                                         |
+| `latestNavigationStatus()`          | Read the latest cached reply or unsolicited update.                                              |
 | `awaitNavigation(goalId, options?)` | Wait for a terminal update without polling. Resolves `unreachable` if the timeout expires first. |
 
 Set `onNavigationStatus` in `RemoteTeleopOptions` to receive progress snapshots. The useful
@@ -64,7 +66,7 @@ channel was closed, or the session was torn down.
 
 `unreachable` is not a robot state. It means the robot's state is **unknown**, and a lost reply
 is not a lost command — a `navigateToWaypoint()` that resolves `unreachable` may be driving
-right now. On such a status `state` and `active` are the last values the *robot* reported,
+right now. On such a status `state` and `active` are the last values the _robot_ reported,
 carried forward and therefore stale; when the client has heard nothing at all they fall back to
 `unavailable` / `false`, which is an absence of information rather than an observation.
 
@@ -115,7 +117,7 @@ except RobotUnreachable as lost:
 ```
 
 This matches `record()` and `policy_stream()`, which already raise on a reply timeout. A
-*refusal* (`ok=False`) is still returned, not raised.
+_refusal_ (`ok=False`) is still returned, not raised.
 :::
 
 ## Delivery and ownership

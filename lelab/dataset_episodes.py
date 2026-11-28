@@ -47,9 +47,13 @@ def _dataset_dir(repo_id: str) -> Path:
 def _video_keys(d: Path) -> list[str]:
     """All video feature keys, in info.json order (observation.images.<role>)."""
     import json
+
     info = json.loads((d / "meta" / "info.json").read_text())
-    return [k for k, feat in (info.get("features") or {}).items()
-            if isinstance(feat, dict) and feat.get("dtype") == "video"]
+    return [
+        k
+        for k, feat in (info.get("features") or {}).items()
+        if isinstance(feat, dict) and feat.get("dtype") == "video"
+    ]
 
 
 def _first_video_key(d: Path) -> str | None:
@@ -75,8 +79,9 @@ def _resolve_vkey(d: Path, camera: str | None) -> str:
 
 
 def _episodes_table(d: Path):
-    import pyarrow.parquet as pq
     import pyarrow as pa
+    import pyarrow.parquet as pq
+
     files = sorted((d / "meta" / "episodes").rglob("*.parquet"))
     if not files:
         raise HTTPException(status_code=422, detail="dataset has no episode metadata")
@@ -125,7 +130,6 @@ def _extract_clip(d: Path, repo_id: str, idx: int, camera: str | None = None) ->
     if sidecar.is_file():
         return sidecar
     t = _episodes_table(d)
-    cols = t.column_names
     row = None
     for i in range(t.num_rows):
         if int(t.column("episode_index")[i].as_py()) == idx:
@@ -150,6 +154,7 @@ def _extract_clip(d: Path, repo_id: str, idx: int, camera: str | None = None) ->
         return dst
 
     import json
+
     fps = int(round(float(json.loads((d / "meta" / "info.json").read_text()).get("fps") or 30)))
     tmp = dst.with_suffix(".part")
     inp = av.open(str(src))
@@ -255,11 +260,11 @@ class DeleteEpisodesBody(BaseModel):
 def delete_episodes_route(repo_id: str, body: DeleteEpisodesBody):
     """Drop the given episodes from the dataset in place (re-indexed, stats
     recomputed by lerobot). Returns the new episode count."""
-    d = _dataset_dir(repo_id)
+    _dataset_dir(repo_id)
     if not body.indices:
         raise HTTPException(status_code=422, detail="no episodes selected")
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.datasets.dataset_tools import delete_episodes
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     root = _lerobot_cache_root()
     ds = LeRobotDataset(repo_id, root=root / repo_id)
@@ -278,12 +283,12 @@ def delete_episodes_route(repo_id: str, body: DeleteEpisodesBody):
     except Exception as e:
         shutil.rmtree(tmp_path, ignore_errors=True)
         logger.exception("[EPISODES] delete failed for %s", repo_id)
-        raise HTTPException(status_code=500, detail=f"delete failed: {e}")
+        raise HTTPException(status_code=500, detail=f"delete failed: {e}") from e
 
     backup = root / f"_{repo_id}.replacing"
     shutil.rmtree(backup, ignore_errors=True)
-    (root / repo_id).rename(backup)          # move original aside
-    tmp_path.rename(root / repo_id)          # swap edited in
+    (root / repo_id).rename(backup)  # move original aside
+    tmp_path.rename(root / repo_id)  # swap edited in
     shutil.rmtree(backup, ignore_errors=True)  # drop original
     shutil.rmtree(_CLIP_CACHE / repo_id, ignore_errors=True)  # invalidate clip cache
     shutil.rmtree(_THUMB_CACHE / repo_id, ignore_errors=True)  # and thumbnail cache

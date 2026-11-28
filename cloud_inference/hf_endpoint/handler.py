@@ -31,9 +31,7 @@ class EndpointHandler:
         # (this repo ships only the handler, not the weights). bf16 fits <16GB.
         self.processor = AutoProcessor.from_pretrained(REPO_ID, trust_remote_code=True)
         self.model = (
-            AutoModelForImageTextToText.from_pretrained(
-                REPO_ID, trust_remote_code=True, dtype=torch.bfloat16
-            )
+            AutoModelForImageTextToText.from_pretrained(REPO_ID, trust_remote_code=True, dtype=torch.bfloat16)
             .to("cuda")
             .eval()
         )

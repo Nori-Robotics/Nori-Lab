@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import uuid
 import os
 import re
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Literal
 
@@ -90,8 +90,14 @@ class NoriClient:
     no-op'ing, so wiring gaps are loud.
     """
 
-    def __init__(self, jwt: str | None = None, base_url: str = NORI_BACKEND_URL, *,
-                 aspire_tasks: str = f"{API}/aspire/tasks", socket_path: str | None = None):
+    def __init__(
+        self,
+        jwt: str | None = None,
+        base_url: str = NORI_BACKEND_URL,
+        *,
+        aspire_tasks: str = f"{API}/aspire/tasks",
+        socket_path: str | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.aspire_tasks = aspire_tasks
         self.socket_path = socket_path
@@ -121,17 +127,13 @@ class NoriClient:
         try:
             transport = {"transport": httpx.HTTPTransport(uds=self.socket_path)} if self.socket_path else {}
             with httpx.Client(timeout=timeout or DEFAULT_TIMEOUT, **transport) as client:
-                resp = client.request(
-                    method, url, json=json, params=params, headers=self._headers()
-                )
+                resp = client.request(method, url, json=json, params=params, headers=self._headers())
         except httpx.RequestError as exc:
             if self.socket_path:
                 detail = "Lost contact with the local policy agent. Check the LeLab terminal."
                 raise NoriBackendError(detail, status_code=503, detail=detail) from exc
             # Network-level failure (backend down, DNS, timeout). Surface as a 502-ish.
-            raise NoriBackendError(
-                f"Could not reach Nori-Backend at {url}: {exc}", status_code=502
-            ) from exc
+            raise NoriBackendError(f"Could not reach Nori-Backend at {url}: {exc}", status_code=502) from exc
 
         if resp.is_success:
             if resp.status_code == 204 or not resp.content:
@@ -250,9 +252,7 @@ class NoriClient:
         """PATCH /marketplace/policies/{ref} — set/clear an own policy's title.
         Backend PII-scans the title (422 on disallowed content) and 404s on a
         non-own ref. Returns the updated detail view."""
-        return self._request(
-            "PATCH", f"{API}/marketplace/policies/{ref}", json={"title": title}
-        )
+        return self._request("PATCH", f"{API}/marketplace/policies/{ref}", json={"title": title})
 
     def publish_policy(self, ref: str, title: str, description: str | None = None) -> dict[str, Any]:
         """POST /marketplace/policies/{ref}/publish — request community
@@ -261,7 +261,8 @@ class NoriClient:
         for the outcome. 403 without publish_public consent, 409 for an
         already-active listing / in-flight deletion / pre-bundle legacy job."""
         return self._request(
-            "POST", f"{API}/marketplace/policies/{ref}/publish",
+            "POST",
+            f"{API}/marketplace/policies/{ref}/publish",
             json={"title": title, "description": description},
         )
 
@@ -277,7 +278,8 @@ class NoriClient:
         that auto-publishes after re-homing + the format gate. 403 without
         publish_public consent, 409 if already published."""
         return self._request(
-            "POST", f"{API}/marketplace/datasets/{upload_ref}/publish",
+            "POST",
+            f"{API}/marketplace/datasets/{upload_ref}/publish",
             json={"title": title, "description": description},
         )
 
@@ -335,9 +337,7 @@ class NoriClient:
                         size += len(chunk)
             os.replace(tmp_path, final_path)
         except httpx.RequestError as exc:
-            raise NoriBackendError(
-                f"Could not reach Nori-Backend at {url}: {exc}", status_code=502
-            ) from exc
+            raise NoriBackendError(f"Could not reach Nori-Backend at {url}: {exc}", status_code=502) from exc
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
@@ -367,9 +367,7 @@ class NoriClient:
         manifest = self.get_policy_manifest(ref)
         entries = manifest.get("files") or []
         if not entries:
-            raise NoriBackendError(
-                f"policy {ref} manifest is empty", status_code=502, detail=manifest
-            )
+            raise NoriBackendError(f"policy {ref} manifest is empty", status_code=502, detail=manifest)
 
         os.makedirs(dest_dir, exist_ok=True)
         installed: list[dict[str, Any]] = []
@@ -378,9 +376,7 @@ class NoriClient:
         for entry in entries:
             name = entry.get("name") or ""
             if not _safe_bundle_name(name):
-                raise NoriBackendError(
-                    f"manifest contains unsafe file name {name!r}", status_code=502
-                )
+                raise NoriBackendError(f"manifest contains unsafe file name {name!r}", status_code=502)
             final_path = os.path.join(dest_dir, name)
             tmp_path = f"{final_path}.part"
             url = f"{self.base_url}{API}/marketplace/policies/{ref}/files/{name}"
@@ -438,9 +434,7 @@ class NoriClient:
                 model_path = final_path
 
         if model_path is None:
-            raise NoriBackendError(
-                f"policy {ref} bundle has no model.safetensors", status_code=502
-            )
+            raise NoriBackendError(f"policy {ref} bundle has no model.safetensors", status_code=502)
         total = sum(f["size_bytes"] for f in installed)
         return {"ref": ref, "path": model_path, "size_bytes": total, "files": installed}
 
@@ -466,9 +460,7 @@ class NoriClient:
     def rename_dataset_upload(self, session_id: str, label: str) -> dict[str, Any]:
         """PATCH /datasets/upload/{session_id} — set the owner-private label
         shown in pickers and My Stuff. 404 on a non-own session."""
-        return self._request(
-            "PATCH", f"{API}/datasets/upload/{session_id}", json={"label": label}
-        )
+        return self._request("PATCH", f"{API}/datasets/upload/{session_id}", json={"label": label})
 
     def delete_dataset(self, session_id: str, also_unpublish: bool = False) -> dict[str, Any]:
         """DELETE /datasets/{session_id} — permanently remove a dataset (its HF
@@ -480,15 +472,11 @@ class NoriClient:
     def rename_training_job(self, job_id: str, title: str | None) -> dict[str, Any]:
         """PATCH /training/jobs/{job_id}/name — name a policy at any lifecycle
         stage (backend PII-scans; None clears)."""
-        return self._request(
-            "PATCH", f"{API}/training/jobs/{job_id}/name", json={"title": title}
-        )
+        return self._request("PATCH", f"{API}/training/jobs/{job_id}/name", json={"title": title})
 
     def set_dataset_lock(self, session_id: str, locked: bool) -> dict[str, Any]:
         """POST /datasets/{session_id}/lock — lock/unlock a dataset."""
-        return self._request(
-            "POST", f"{API}/datasets/{session_id}/lock", json={"locked": locked}
-        )
+        return self._request("POST", f"{API}/datasets/{session_id}/lock", json={"locked": locked})
 
     def delete_policy(self, job_id: str, also_unpublish: bool = False) -> dict[str, Any]:
         """DELETE /library/policies/{job_id} — remove a policy (checkpoint +
@@ -503,9 +491,7 @@ class NoriClient:
 
     def set_policy_lock(self, job_id: str, locked: bool) -> dict[str, Any]:
         """POST /library/policies/{job_id}/lock — lock/unlock a policy."""
-        return self._request(
-            "POST", f"{API}/library/policies/{job_id}/lock", json={"locked": locked}
-        )
+        return self._request("POST", f"{API}/library/policies/{job_id}/lock", json={"locked": locked})
 
     # ---- Sound clips (the soundboard library) ----------------------------
     # Upload is two-step like datasets/policies: the BROWSER PUTs its file straight
@@ -520,7 +506,8 @@ class NoriClient:
     def start_sound_upload(self, filename: str, name: str | None = None) -> dict[str, Any]:
         """POST /sounds/upload/start — returns {sound_id, put_url, max_bytes}."""
         return self._request(
-            "POST", f"{API}/sounds/upload/start",
+            "POST",
+            f"{API}/sounds/upload/start",
             json={"filename": filename, "name": name},
         )
 
@@ -528,15 +515,19 @@ class NoriClient:
         """POST /sounds/upload/{id}/finalize — convert + measure the uploaded bytes.
         Slower than a normal call (it transcodes), so it gets a longer timeout."""
         import httpx as _httpx
+
         return self._request(
-            "POST", f"{API}/sounds/upload/{sound_id}/finalize",
+            "POST",
+            f"{API}/sounds/upload/{sound_id}/finalize",
             timeout=_httpx.Timeout(120.0),
         )
 
     def get_sound_url(self, sound_id: str, original: bool = False) -> dict[str, Any]:
         """GET /sounds/{id}/url — short-TTL link for preview or download."""
         return self._request(
-            "GET", f"{API}/sounds/{sound_id}/url", params={"original": original},
+            "GET",
+            f"{API}/sounds/{sound_id}/url",
+            params={"original": original},
         )
 
     def rename_sound(self, sound_id: str, name: str) -> dict[str, Any]:
@@ -558,7 +549,9 @@ class NoriClient:
 
     def aspire_task_events(self, task_id: str, since: int = 0) -> list[dict[str, Any]]:
         """The task's events from `since` as JSON (the page polls; no SSE through the proxy)."""
-        return self._request("GET", f"{self.aspire_tasks}/{task_id}/events", params={"since": since, "follow": "false"})
+        return self._request(
+            "GET", f"{self.aspire_tasks}/{task_id}/events", params={"since": since, "follow": "false"}
+        )
 
     def aspire_answer(self, task_id: str, text: str) -> dict[str, Any]:
         return self._request("POST", f"{self.aspire_tasks}/{task_id}/answer", json={"text": text})
@@ -578,7 +571,12 @@ class NoriClient:
     def aspire_note_action(self, robot: str, topic: str, title: str, body: dict[str, Any]) -> dict[str, Any]:
         """Retract, edit or promote one entry of the robot's memory."""
         from urllib.parse import quote
-        return self._request("POST", f"{API}/aspire/robots/{robot}/notes/entries/{quote(topic, safe='')}/{quote(title, safe='')}", json=body)
+
+        return self._request(
+            "POST",
+            f"{API}/aspire/robots/{robot}/notes/entries/{quote(topic, safe='')}/{quote(title, safe='')}",
+            json=body,
+        )
 
     def aspire_presence(self, task_id: str) -> dict[str, Any]:
         """The Agent page's heartbeat: a presence-supervised task is cancelled when it stops."""
@@ -611,7 +609,8 @@ class NoriClient:
         own folder: the delete is immediate and the caller must re-list afterwards
         (remaining indices shift down)."""
         return self._request(
-            "POST", f"{API}/library/recordings/{session_id}/delete-episodes",
+            "POST",
+            f"{API}/library/recordings/{session_id}/delete-episodes",
             json={"episode_indices": episode_indices},
         )
 
@@ -620,7 +619,8 @@ class NoriClient:
         operator's per-episode annotation on a raw recording ("" clears). Stored
         in the bundle's HF prefix, so it travels into assembly."""
         return self._request(
-            "PATCH", f"{API}/library/recordings/{session_id}/episode/{index}/name",
+            "PATCH",
+            f"{API}/library/recordings/{session_id}/episode/{index}/name",
             json={"name": name},
         )
 
@@ -629,7 +629,8 @@ class NoriClient:
         per-episode annotation on an ASSEMBLED dataset ("" clears). Sidecar-only
         (display/curation metadata; the training data is untouched)."""
         return self._request(
-            "PATCH", f"{API}/datasets/{session_id}/episodes/{index}/name",
+            "PATCH",
+            f"{API}/datasets/{session_id}/episodes/{index}/name",
             json={"name": name},
         )
 
@@ -650,12 +651,16 @@ class NoriClient:
         """POST /datasets/assemble — enqueue an assembly of the given recordings into
         a NEW dataset or APPEND them to an existing one. Returns {assembly_job_id,
         status}; poll get_assembly_job."""
-        return self._request("POST", f"{API}/datasets/assemble", json={
-            "sources": sources,
-            "mode": mode,
-            "target_dataset_session_id": target_dataset_session_id,
-            "name": name,
-        })
+        return self._request(
+            "POST",
+            f"{API}/datasets/assemble",
+            json={
+                "sources": sources,
+                "mode": mode,
+                "target_dataset_session_id": target_dataset_session_id,
+                "name": name,
+            },
+        )
 
     def get_assembly_job(self, assembly_job_id: str) -> dict[str, Any]:
         """GET /datasets/assemble/{id} — poll one assembly job
@@ -686,15 +691,14 @@ class NoriClient:
     def delete_dataset_session(self, dataset_session_id: str, session_key: str) -> dict[str, Any]:
         """DELETE /datasets/{id}/sessions/{session_key} — bulk-delete a session's
         episodes (enqueues a reindex-safe rebuild). Returns {assembly_job_id, status}."""
-        return self._request(
-            "DELETE", f"{API}/datasets/{dataset_session_id}/sessions/{session_key}"
-        )
+        return self._request("DELETE", f"{API}/datasets/{dataset_session_id}/sessions/{session_key}")
 
     def delete_dataset_episodes(self, dataset_session_id: str, episode_indices: list[int]) -> dict[str, Any]:
         """POST /datasets/{id}/delete-episodes — delete individual episodes by index
         (enqueues a reindex-safe rebuild). Returns {assembly_job_id, status}."""
         return self._request(
-            "POST", f"{API}/datasets/{dataset_session_id}/delete-episodes",
+            "POST",
+            f"{API}/datasets/{dataset_session_id}/delete-episodes",
             json={"episode_indices": episode_indices},
         )
 
@@ -722,9 +726,7 @@ class NoriClient:
         params: dict[str, Any] = {"since": since}
         if tail is not None:
             params["tail"] = tail
-        return self._request(
-            "GET", f"{API}/training/jobs/{job_id}/logs", params=params
-        )
+        return self._request("GET", f"{API}/training/jobs/{job_id}/logs", params=params)
 
     def get_dataset_features(self, dataset_ref: str | None = None) -> dict[str, Any]:
         """GET /training/dataset-features[?dataset_ref=] — cameras/arms recorded
@@ -760,17 +762,13 @@ class NoriClient:
             body["kind"] = kind
         return self._request("POST", f"{API}/datasets/upload/start", json=body)
 
-    def finalize_dataset_upload(
-        self, session_id: str, commit_message: str | None = None
-    ) -> dict[str, Any]:
+    def finalize_dataset_upload(self, session_id: str, commit_message: str | None = None) -> dict[str, Any]:
         """POST /datasets/upload/{session_id}/finalize.
 
         On HEAD-miss returns 422 {reason, missing: [paths]} (NoriBackendError.detail).
         """
         body = {"commit_message": commit_message} if commit_message is not None else None
-        return self._request(
-            "POST", f"{API}/datasets/upload/{session_id}/finalize", json=body
-        )
+        return self._request("POST", f"{API}/datasets/upload/{session_id}/finalize", json=body)
 
     def get_dataset_upload(self, session_id: str) -> dict[str, Any]:
         """GET /datasets/upload/{session_id} — poll during FINALIZING."""
@@ -793,23 +791,17 @@ class NoriClient:
         instruction/title); policy_class is auto-detected from the weights.
         Returns {upload_id, put_url, expires_in}.
         """
-        return self._request(
-            "POST", f"{API}/marketplace/policies/upload/start", json=meta
-        )
+        return self._request("POST", f"{API}/marketplace/policies/upload/start", json=meta)
 
     def finalize_policy_upload(self, upload_id: str) -> dict[str, Any]:
         """POST /marketplace/policies/upload/{id}/finalize — verify the uploaded
         bytes + enqueue gating/promotion. Returns {upload_id, status}."""
-        return self._request(
-            "POST", f"{API}/marketplace/policies/upload/{upload_id}/finalize"
-        )
+        return self._request("POST", f"{API}/marketplace/policies/upload/{upload_id}/finalize")
 
     def get_policy_upload(self, upload_id: str) -> dict[str, Any]:
         """GET /marketplace/policies/upload/{id} — poll upload/gating/promotion
         (status, result_job_id, failure_reason)."""
-        return self._request(
-            "GET", f"{API}/marketplace/policies/upload/{upload_id}"
-        )
+        return self._request("GET", f"{API}/marketplace/policies/upload/{upload_id}")
 
     def _put_file(self, put_url: str, file_path: str) -> None:
         """PUT one file to its presigned S3 URL. S3 rejects the upload without the
@@ -823,9 +815,7 @@ class NoriClient:
                         headers={"x-amz-server-side-encryption": "AES256"},
                     )
             except httpx.RequestError as exc:
-                raise NoriBackendError(
-                    f"S3 PUT failed for {file_path}: {exc}", status_code=502
-                ) from exc
+                raise NoriBackendError(f"S3 PUT failed for {file_path}: {exc}", status_code=502) from exc
         if not resp.is_success:
             raise NoriBackendError(
                 f"S3 PUT for {file_path} -> {resp.status_code}: {resp.text[:200]}",
@@ -854,16 +844,12 @@ class NoriClient:
             own.sort(key=lambda s: s.get("label") != label)  # stable: same-label first
             ours = sorted((e["path"], int(e["size"])) for e in manifest)
             root = Path(local_path)
-            newest_mtime = max(
-                (p.stat().st_mtime for p in root.rglob("*") if p.is_file()), default=0.0
-            )
+            newest_mtime = max((p.stat().st_mtime for p in root.rglob("*") if p.is_file()), default=0.0)
             for s in own[:8]:  # bounded: one GET per candidate
                 row = self.get_dataset_upload(s["session_id"])
                 if row.get("status") != "PROMOTED":
                     continue
-                theirs = sorted(
-                    (e["path"], int(e["size"])) for e in (row.get("manifest") or [])
-                )
+                theirs = sorted((e["path"], int(e["size"])) for e in (row.get("manifest") or []))
                 if theirs != ours:
                     continue
                 finalized = row.get("finalized_at") or row.get("created_at") or ""
@@ -913,7 +899,8 @@ class NoriClient:
             if existing is not None:
                 logger.info(
                     "upload of %s skipped — identical to promoted session %s",
-                    local_path, existing.get("id"),
+                    local_path,
+                    existing.get("id"),
                 )
                 return {**existing, "deduplicated": True}
 
@@ -927,9 +914,7 @@ class NoriClient:
             for rel in paths:
                 url = put_urls.get(rel)
                 if not url:
-                    raise NoriBackendError(
-                        f"No presigned URL returned for {rel!r}", status_code=500
-                    )
+                    raise NoriBackendError(f"No presigned URL returned for {rel!r}", status_code=500)
                 self._put_file(url, str(root / rel))
 
         put_paths([entry["path"] for entry in manifest])
@@ -954,8 +939,7 @@ class NoriClient:
             if status in UPLOAD_TERMINAL_STATES:
                 if status != UPLOAD_SUCCESS_STATE:
                     raise NoriBackendError(
-                        f"Upload {session_id} ended in {status}: "
-                        f"{session.get('failure_reason')}",
+                        f"Upload {session_id} ended in {status}: {session.get('failure_reason')}",
                         status_code=502,
                         detail=session,
                     )
@@ -1161,9 +1145,7 @@ class NoriClient:
                     if chunk:
                         yield chunk
         except httpx.RequestError as exc:
-            raise NoriBackendError(
-                f"Could not reach Nori-Backend at {url}: {exc}", status_code=502
-            ) from exc
+            raise NoriBackendError(f"Could not reach Nori-Backend at {url}: {exc}", status_code=502) from exc
 
 
 # -- dataset manifest helpers (module-level so they're unit-testable w/o a client) -----
@@ -1178,9 +1160,7 @@ def build_manifest(local_path: str) -> list[dict[str, Any]]:
     manifest: list[dict[str, Any]] = []
     for p in sorted(root.rglob("*")):
         if p.is_file():
-            manifest.append(
-                {"path": p.relative_to(root).as_posix(), "size": p.stat().st_size}
-            )
+            manifest.append({"path": p.relative_to(root).as_posix(), "size": p.stat().st_size})
     return manifest
 
 
@@ -1202,8 +1182,7 @@ def validate_manifest(manifest: list[dict[str, Any]]) -> None:
         ext = Path(rel).suffix.lower()
         if ext not in UPLOAD_ALLOWED_EXTENSIONS:
             raise ManifestError(
-                f"Disallowed file type {ext!r} ({rel}); allowed: "
-                f"{sorted(UPLOAD_ALLOWED_EXTENSIONS)}"
+                f"Disallowed file type {ext!r} ({rel}); allowed: {sorted(UPLOAD_ALLOWED_EXTENSIONS)}"
             )
         if size > UPLOAD_MAX_FILE_BYTES:
             raise ManifestError(f"{rel} is {size} bytes (> {UPLOAD_MAX_FILE_BYTES} limit).")

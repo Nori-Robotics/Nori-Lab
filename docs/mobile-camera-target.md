@@ -30,18 +30,18 @@ Stored profiles are operator assertions, not metrology certificates. Repeat the 
 
 Important fields:
 
-| Field | Meaning |
-|---|---|
-| `target_id` | Identifier for that display run |
-| `camera_role` | `front` or `overhead`, as selected by the operator |
-| `inner_corners` | Actual inner intersections across/down for that display run; use these for `--size`, not square counts |
-| `square_size_m` | Actual square edge after rounding to whole backing pixels; use this for fitting and pose estimation |
-| `requested_square_size_m` | Operator's requested edge before pixel rounding |
-| `pattern_size_m` | Dimensions of the black-and-white pattern |
-| `outer_size_m` | Pattern plus uninterrupted white border |
-| `render` | Square size and complete canvas size in backing pixels |
-| `screen` | Operator-verified CSS-pixels/mm scale, verification time/method, and browser mapping; no phone identity required |
-| `status` | Always `target_only_camera_calibration_not_performed` |
+| Field                     | Meaning                                                                                                          |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `target_id`               | Identifier for that display run                                                                                  |
+| `camera_role`             | `front` or `overhead`, as selected by the operator                                                               |
+| `inner_corners`           | Actual inner intersections across/down for that display run; use these for `--size`, not square counts           |
+| `square_size_m`           | Actual square edge after rounding to whole backing pixels; use this for fitting and pose estimation              |
+| `requested_square_size_m` | Operator's requested edge before pixel rounding                                                                  |
+| `pattern_size_m`          | Dimensions of the black-and-white pattern                                                                        |
+| `outer_size_m`            | Pattern plus uninterrupted white border                                                                          |
+| `render`                  | Square size and complete canvas size in backing pixels                                                           |
+| `screen`                  | Operator-verified CSS-pixels/mm scale, verification time/method, and browser mapping; no phone identity required |
+| `status`                  | Always `target_only_camera_calibration_not_performed`                                                            |
 
 There is no phone-model selection or device lookup. Every screen starts with the same generic line length and must pass both ruler checks. Actual square size depends on the **operator-verified** scale and whole-pixel rounding; the initial line length is not a physical measurement. Previously saved ruler-verified profiles remain usable when the browser mapping still matches, but legacy phone-model labels are discarded. The phone is a display target, not an external pose reference, and its inertial sensors are not used.
 

@@ -1,26 +1,26 @@
 # Action completion
 
 Tag an absolute move with an `action_id` and the daemon reports its lifecycle back — so a script
-can await what *actually* happened instead of guessing from telemetry.
+can await what _actually_ happened instead of guessing from telemetry.
 
 The lifecycle: `accepted` → `active` → `done` | `clamped` | `blocked` | `timeout`.
 
 ```ts
 const id = teleop.nextActionId();
-teleop.sendAction({ "right_arm_shoulder_pan.pos": 30 }, id);   // tag the frame(s)
+teleop.sendAction({ "right_arm_shoulder_pan.pos": 30 }, id); // tag the frame(s)
 const status = await teleop.awaitAction(id, { timeoutMs: 5000 });
 // status.state: "done" | "clamped" | "blocked" | "timeout" (+ status.reason for blocked/timeout)
 ```
 
 ## The surface
 
-| Call | What it does |
-|---|---|
-| `nextActionId()` | Mint an id. |
-| `sendAction(targets, id)` | Send an absolute move, tagged. |
-| `awaitAction(id, opts)` | Resolve when the daemon reports a terminal state. |
-| `actionStatus(id)` | The latest status seen, in any state. The executor uses it to detect whether the daemon is participating at all. |
-| `onActionStatus` | Streams every transition — useful for logging. |
+| Call                      | What it does                                                                                                     |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `nextActionId()`          | Mint an id.                                                                                                      |
+| `sendAction(targets, id)` | Send an absolute move, tagged.                                                                                   |
+| `awaitAction(id, opts)`   | Resolve when the daemon reports a terminal state.                                                                |
+| `actionStatus(id)`        | The latest status seen, in any state. The executor uses it to detect whether the daemon is participating at all. |
+| `onActionStatus`          | Streams every transition — useful for logging.                                                                   |
 
 `awaitAction` **self-resolves to a synthetic `timeout`** if the daemon predates this feature, so it
 never hangs.

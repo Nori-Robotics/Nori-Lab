@@ -38,7 +38,6 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from . import datasets as dataset_browser
-from .local_aspire import local_agent
 
 # Import our custom calibration functionality
 from .calibrate import CalibrationRequest, calibration_manager
@@ -49,6 +48,7 @@ from .jobs import (
     JobTarget,
     job_registry,
 )
+from .local_aspire import local_agent
 from .nori_client import ManifestError, NoriBackendError, NoriClient  # NORI: cloud API client
 from .nori_leader_setup import (
     DEFAULT_CALIBRATION_ID as DEFAULT_LEADER_CALIBRATION_ID,
@@ -203,18 +203,19 @@ app.include_router(_episodes_router)
 # change — needed for e.g. the desktop (Tauri) wrapper if its webview origin
 # isn't localhost:8000, or the phone-camera HTTPS flow (https://<laptop-ip>:8000).
 _ALLOWED_ORIGINS = {
-    "http://localhost:8000", "http://127.0.0.1:8000",   # served UI (prod)
-    "http://localhost:8080", "http://127.0.0.1:8080",   # lelab --dev (Vite)
-    "https://localhost:8000", "https://127.0.0.1:8000", # manual HTTPS runs
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",  # served UI (prod)
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",  # lelab --dev (Vite)
+    "https://localhost:8000",
+    "https://127.0.0.1:8000",  # manual HTTPS runs
     # The HOSTED first-party UI driving a local backend (the deployed-page flow the
     # 2026-07-22 gate accidentally broke): lab.norirobotics.com fetches localhost:8000
     # for config/status the moment a session ends (the live session rides a WebSocket,
     # which this http middleware never sees — that's why only disconnect broke).
     "https://lab.norirobotics.com",
 }
-_ALLOWED_ORIGINS |= {
-    o.strip() for o in os.environ.get("NORI_EXTRA_ORIGINS", "").split(",") if o.strip()
-}
+_ALLOWED_ORIGINS |= {o.strip() for o in os.environ.get("NORI_EXTRA_ORIGINS", "").split(",") if o.strip()}
 
 
 @app.middleware("http")
@@ -223,8 +224,10 @@ async def _local_origin_gate(request: Request, call_next):
     if origin is not None and origin not in _ALLOWED_ORIGINS:
         return JSONResponse(
             status_code=403,
-            content={"detail": "cross-origin request refused — lelab only serves "
-                               "its own local UI (see NORI_EXTRA_ORIGINS)"},
+            content={
+                "detail": "cross-origin request refused — lelab only serves "
+                "its own local UI (see NORI_EXTRA_ORIGINS)"
+            },
         )
     # Backstop for ORIGIN-STRIPPING edge cases: a request stamped cross-site with no
     # (or an unlisted) Origin is refused. An ALLOWLISTED origin defers to the primary check
@@ -247,11 +250,12 @@ async def _local_origin_gate(request: Request, call_next):
     # too. Legit same-origin GETs are `same-origin`; the hosted UI and Vite dev carry an
     # allowlisted Origin (exempted below); curl/SDKs send no Sec-Fetch-Site and fall
     # through; user-typed nav is `none`. OPTIONS (preflight) stays exempt.
-    if (request.method != "OPTIONS"
-            and request.headers.get("sec-fetch-site") in ("cross-site", "same-site")
-            and origin not in _ALLOWED_ORIGINS):
-        return JSONResponse(status_code=403,
-                            content={"detail": "cross-site request refused"})
+    if (
+        request.method != "OPTIONS"
+        and request.headers.get("sec-fetch-site") in ("cross-site", "same-site")
+        and origin not in _ALLOWED_ORIGINS
+    ):
+        return JSONResponse(status_code=403, content={"detail": "cross-site request refused"})
     return await call_next(request)
 
 
@@ -580,7 +584,7 @@ is at +30, so jog it negative to center"). It is proprioceptive only.
 VISION: you may be given a single still photo — often a COMPOSITE of several camera tiles. Use it to
 locate things and choose directions. If a "Camera layout" is given, trust it for which tile is which
 camera/arm and act on the CORRECT side. IMPORTANT: a wrist camera is mounted ON its arm, so its image
-left/right is EGOCENTRIC and is NOT the robot's left/right — judge the robot's left vs right from the OVERHEAD 
+left/right is EGOCENTRIC and is NOT the robot's left/right — judge the robot's left vs right from the OVERHEAD
 or FRONT scene tiles, not from a wrist tile. FRONT scene tile is generally most useful for navigation. If NO layout is
 given, do not assume which tile is which — state your assumption in a // comment and prefer
 reversible moves. It is one frame, not a live view and not depth — estimate coarsely, never assume
@@ -731,10 +735,13 @@ def _llm_prepare(body: NoriLlmGenerateBody):
     # an image block ahead of the text; without it the request is plain text as before.
     content: list = [{"type": "text", "text": user}]
     if body.image_b64:
-        content.insert(0, {
-            "type": "image",
-            "source": {"type": "base64", "media_type": "image/jpeg", "data": body.image_b64},
-        })
+        content.insert(
+            0,
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/jpeg", "data": body.image_b64},
+            },
+        )
     return model, content
 
 
@@ -754,9 +761,7 @@ def nori_llm_generate(body: NoriLlmGenerateBody, request: Request):
             new_run=True,
         )
     )
-    text = "".join(
-        b.get("text", "") for b in result.get("content", []) if b.get("type") == "text"
-    )
+    text = "".join(b.get("text", "") for b in result.get("content", []) if b.get("type") == "text")
     return {"code": _strip_code_fences(text)}
 
 
@@ -819,18 +824,30 @@ def nori_policy_run(body: NoriPolicyRunBody):
 
     payload = json.dumps({k: v for k, v in body.model_dump().items() if v is not None}).encode()
     req = urllib.request.Request(
-        f"{NORI_POLICY_RUNNER_URL}/policy/run", data=payload,
-        headers={"Content-Type": "application/json"}, method="POST",
+        f"{NORI_POLICY_RUNNER_URL}/policy/run",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
     )
 
     def gen():
         try:
-            with urllib.request.urlopen(req, timeout=600) as r:
-                for line in r:  # NDJSON, line-by-line as the runner flushes it
-                    yield line
+            # B310: URL is f"{NORI_POLICY_RUNNER_URL}/policy/run";
+            # NORI_POLICY_RUNNER_URL is operator env (default 127.0.0.1:8771),
+            # not request data, so the scheme cannot be attacker-chosen.
+            with urllib.request.urlopen(req, timeout=600) as r:  # nosec B310
+                yield from r
         except Exception as exc:  # noqa: BLE001 -- runner down / network: emit a terminal result line
-            yield (json.dumps({"type": "result", "ok": False,
-                               "error": f"policy runner unreachable ({NORI_POLICY_RUNNER_URL}): {exc}"}) + "\n").encode()
+            yield (
+                json.dumps(
+                    {
+                        "type": "result",
+                        "ok": False,
+                        "error": f"policy runner unreachable ({NORI_POLICY_RUNNER_URL}): {exc}",
+                    }
+                )
+                + "\n"
+            ).encode()
 
     return StreamingResponse(gen(), media_type="application/x-ndjson; charset=utf-8")
 
@@ -839,12 +856,16 @@ def nori_policy_run(body: NoriPolicyRunBody):
 def nori_policy_stop(body: dict):
     """Forward E-STOP (by run_id) to the runner."""
     import urllib.request
+
     try:
         r = urllib.request.Request(
-            f"{NORI_POLICY_RUNNER_URL}/policy/stop", data=json.dumps(body or {}).encode(),
-            headers={"Content-Type": "application/json"}, method="POST",
+            f"{NORI_POLICY_RUNNER_URL}/policy/stop",
+            data=json.dumps(body or {}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
         )
-        with urllib.request.urlopen(r, timeout=10) as resp:
+        # B310: see /nori/policy/run: operator-configured base URL.
+        with urllib.request.urlopen(r, timeout=10) as resp:  # nosec B310
             return json.loads(resp.read())
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=502, content={"ok": False, "error": str(exc)})
@@ -853,14 +874,19 @@ def nori_policy_stop(body: dict):
 @app.get("/nori/skills")
 def nori_skills(prompt: str = ""):
     """Trigger-matched skill library text for the Python/primitives codegen (skill-library-first)."""
-    import urllib.request
     import urllib.parse
+    import urllib.request
+
     try:
         url = f"{NORI_POLICY_RUNNER_URL}/skills?prompt={urllib.parse.quote(prompt)}"
-        with urllib.request.urlopen(url, timeout=10) as resp:
+        # B310: operator-configured base URL; the only caller-supplied
+        # part is `prompt`, and it goes through urllib.parse.quote above.
+        with urllib.request.urlopen(url, timeout=10) as resp:  # nosec B310
             return json.loads(resp.read())
     except Exception as exc:  # noqa: BLE001 -- skills are best-effort grounding, never a dependency
-        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc), "text": "", "names": []})
+        return JSONResponse(
+            status_code=502, content={"ok": False, "error": str(exc), "text": "", "names": []}
+        )
 
 
 # ---- Agentic vision loop (Tier-1.5) ------------------------------------------
@@ -1118,9 +1144,7 @@ def nori_llm_agent(body: NoriLlmAgentBody, request: Request):
     if body.camera_layout:
         grounding.append(f"Camera layout (which composite tile is which): {body.camera_layout}")
     if body.robot_state:
-        grounding.append(
-            "Current robot state (proprioceptive, normalized): " + json.dumps(body.robot_state)
-        )
+        grounding.append("Current robot state (proprioceptive, normalized): " + json.dumps(body.robot_state))
     if body.pose_summary:
         # Keep this line text identical to promptAssembly.ts buildAgentSystem (hosted mirror).
         grounding.append(
@@ -1200,9 +1224,7 @@ def nori_depth(body: NoriDepthBody, request: Request):
     Same auth posture as /nori/llm/agent — customer JWT forwarded, fails closed. The browser
     folds the grid into the look tool_result as text (AgentSession.doLook)."""
     nori = _nori_client(request)
-    return _nori_proxy(
-        lambda: nori.depth(image_b64=body.image_b64, grid_w=body.grid_w, grid_h=body.grid_h)
-    )
+    return _nori_proxy(lambda: nori.depth(image_b64=body.image_b64, grid_w=body.grid_w, grid_h=body.grid_h))
 
 
 def nori_jwt(request: Request) -> str | None:
@@ -1543,8 +1565,9 @@ class NoriAssembleBody(BaseModel):
 def nori_assemble_dataset(body: NoriAssembleBody, request: Request):
     """Enqueue assembling recordings into a new dataset or appending to an existing one."""
     client = _nori_client(request)
-    return _nori_proxy(lambda: client.assemble_dataset(
-        body.sources, body.mode, body.target_dataset_session_id, body.name))
+    return _nori_proxy(
+        lambda: client.assemble_dataset(body.sources, body.mode, body.target_dataset_session_id, body.name)
+    )
 
 
 @app.get("/nori/datasets/assemblies/active")
@@ -1652,8 +1675,9 @@ def nori_start_dataset_upload(body: NoriDatasetUploadStartBody, request: Request
     """Open a browser-native dataset/recording upload session (per-file presigned PUTs)."""
     client = _nori_client(request)
     manifest = [e.model_dump() for e in body.manifest]
-    return _nori_proxy(lambda: client.start_dataset_upload(
-        manifest, body.commit_message, body.label, body.kind))
+    return _nori_proxy(
+        lambda: client.start_dataset_upload(manifest, body.commit_message, body.label, body.kind)
+    )
 
 
 @app.post("/nori/datasets/upload/{session_id}/finalize")
@@ -1730,7 +1754,6 @@ class NoriPublishBody(BaseModel):
     description: str | None = None
 
 
-
 @app.post("/nori/marketplace/policies/{ref}/publish")
 def nori_publish_policy(ref: str, body: NoriPublishBody, request: Request):
     client = _nori_client(request)
@@ -1800,13 +1823,15 @@ def nori_list_local_policies():
                 sz = f.stat().st_size
                 files.append({"name": f.name, "size_bytes": sz})
                 total += sz
-        out.append({
-            "ref": d.name,
-            "path": str(d),
-            "files": files,
-            "size_bytes": total,
-            "runnable": (d / "model.safetensors").is_file(),
-        })
+        out.append(
+            {
+                "ref": d.name,
+                "path": str(d),
+                "files": files,
+                "size_bytes": total,
+                "runnable": (d / "model.safetensors").is_file(),
+            }
+        )
     return out
 
 
@@ -2074,9 +2099,13 @@ def nori_aspire_robot_notes(robot: str, request: Request):
 
 
 @app.post("/nori/aspire/robots/{robot}/notes/entries/{topic}/{title}")
-def nori_aspire_note_action(robot: str, topic: str, title: str, body: NoriAspireEntryActionBody, request: Request):
+def nori_aspire_note_action(
+    robot: str, topic: str, title: str, body: NoriAspireEntryActionBody, request: Request
+):
     client = _nori_client(request)
-    return _nori_proxy(lambda: client.aspire_note_action(robot, topic, title, body.model_dump(exclude_none=True)))
+    return _nori_proxy(
+        lambda: client.aspire_note_action(robot, topic, title, body.model_dump(exclude_none=True))
+    )
 
 
 @app.get("/nori/library")
@@ -2110,8 +2139,7 @@ class NoriDeleteEpisodesBody(BaseModel):
 
 
 @app.post("/nori/library/recordings/{session_id}/delete-episodes")
-def nori_delete_recording_episodes(session_id: str, body: NoriDeleteEpisodesBody,
-                                   request: Request):
+def nori_delete_recording_episodes(session_id: str, body: NoriDeleteEpisodesBody, request: Request):
     """Delete whole takes from a raw recording (immediate — no rebuild job)."""
     client = _nori_client(request)
     return _nori_proxy(lambda: client.delete_recording_episodes(session_id, body.episode_indices))
@@ -2122,16 +2150,14 @@ class NoriEpisodeNameBody(BaseModel):
 
 
 @app.patch("/nori/library/recordings/{session_id}/episode/{index}/name")
-def nori_name_recording_episode(session_id: str, index: int, body: NoriEpisodeNameBody,
-                                request: Request):
+def nori_name_recording_episode(session_id: str, index: int, body: NoriEpisodeNameBody, request: Request):
     """Name/annotate one raw-recording episode ("" clears)."""
     client = _nori_client(request)
     return _nori_proxy(lambda: client.name_recording_episode(session_id, index, body.name))
 
 
 @app.patch("/nori/datasets/{session_id}/episodes/{index}/name")
-def nori_name_dataset_episode(session_id: str, index: int, body: NoriEpisodeNameBody,
-                              request: Request):
+def nori_name_dataset_episode(session_id: str, index: int, body: NoriEpisodeNameBody, request: Request):
     """Name/annotate one episode of an assembled cloud dataset ("" clears)."""
     client = _nori_client(request)
     return _nori_proxy(lambda: client.name_dataset_episode(session_id, index, body.name))
@@ -2153,7 +2179,6 @@ def nori_training_estimate_params(request: Request):
     setup allowance, tier max duration, pause/resume capability flag)."""
     client = _nori_client(request)
     return _nori_proxy(client.get_estimate_params)
-
 
 
 @app.get("/nori/training/jobs")
@@ -2197,9 +2222,7 @@ class NoriPairBody(BaseModel):
 @app.post("/nori/customers/me/pair")
 def nori_pair_robot(body: NoriPairBody, request: Request):
     client = _nori_client(request)
-    return _nori_proxy(
-        lambda: client.pair_robot(body.robot_serial_number, body.pair_code, body.nickname)
-    )
+    return _nori_proxy(lambda: client.pair_robot(body.robot_serial_number, body.pair_code, body.nickname))
 
 
 class NoriUnpairBody(BaseModel):
@@ -2244,6 +2267,7 @@ def nori_billing_summary(request: Request):
     client = _nori_client(request)
     return _nori_proxy(client.get_billing_summary)
 
+
 @app.get("/nori/consents")
 def nori_list_consents(request: Request):
     client = _nori_client(request)
@@ -2260,9 +2284,7 @@ class NoriConsentBody(BaseModel):
 def nori_grant_consent(body: NoriConsentBody, request: Request):
     client = _nori_client(request)
     return _nori_proxy(
-        lambda: client.grant_consent(
-            body.consent_type, body.policy_version, body.scope_dataset_repo
-        )
+        lambda: client.grant_consent(body.consent_type, body.policy_version, body.scope_dataset_repo)
     )
 
 

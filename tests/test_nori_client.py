@@ -81,9 +81,7 @@ class TestDownloadPolicyBundle:
     def test_hash_mismatch_refuses_install(self, tmp_path, monkeypatch):
         bad = self._manifest()
         bad[0]["sha256"] = "0" * 64
-        _mock_backend(
-            bad, {"model.safetensors": MODEL_BYTES, "config.json": CONFIG_BYTES}, monkeypatch
-        )
+        _mock_backend(bad, {"model.safetensors": MODEL_BYTES, "config.json": CONFIG_BYTES}, monkeypatch)
         with pytest.raises(NoriBackendError, match="integrity failure"):
             NoriClient(jwt="j").download_policy_bundle(REF, str(tmp_path))
         assert not (tmp_path / "model.safetensors").exists()
@@ -92,9 +90,7 @@ class TestDownloadPolicyBundle:
     def test_size_mismatch_refuses_install(self, tmp_path, monkeypatch):
         bad = self._manifest()
         bad[1]["size_bytes"] = 1
-        _mock_backend(
-            bad, {"model.safetensors": MODEL_BYTES, "config.json": CONFIG_BYTES}, monkeypatch
-        )
+        _mock_backend(bad, {"model.safetensors": MODEL_BYTES, "config.json": CONFIG_BYTES}, monkeypatch)
         with pytest.raises(NoriBackendError, match="size mismatch"):
             NoriClient(jwt="j").download_policy_bundle(REF, str(tmp_path))
         assert not (tmp_path / "config.json").exists()
@@ -138,9 +134,11 @@ class TestDownloadPolicyBundle:
 
 # ---- charge idempotency (turn_key) -------------------------------------------
 
+
 def test_charge_auto_generates_turn_key():
     import uuid as _uuid
     from unittest.mock import MagicMock
+
     from lelab.nori_client import NoriClient
 
     c = NoriClient(jwt="x", base_url="https://backend.example")
@@ -155,10 +153,12 @@ def test_charge_auto_generates_turn_key():
 
 def test_charge_explicit_turn_key_passes_through():
     from unittest.mock import MagicMock
+
     from lelab.nori_client import NoriClient
 
     c = NoriClient(jwt="x", base_url="https://backend.example")
     c._request = MagicMock(return_value={})
-    c.charge_agent_usage(model="m", input_tokens=1, output_tokens=1,
-                         turn_key="11111111-2222-3333-4444-555555555555")
+    c.charge_agent_usage(
+        model="m", input_tokens=1, output_tokens=1, turn_key="11111111-2222-3333-4444-555555555555"
+    )
     assert c._request.call_args.kwargs["json"]["turn_key"] == "11111111-2222-3333-4444-555555555555"

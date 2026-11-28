@@ -5,7 +5,7 @@
 Two very different causes — check them in this order.
 
 **The robot is waiting for consent.** This is by design and is not a bug. Robots gate their room
-microphone behind a **local accept prompt**: a person *at the robot* must accept before an operator
+microphone behind a **local accept prompt**: a person _at the robot_ must accept before an operator
 can hear the room. Until someone accepts, you get silence.
 
 If nobody is standing next to the robot, nobody can accept, and you will hear nothing forever.

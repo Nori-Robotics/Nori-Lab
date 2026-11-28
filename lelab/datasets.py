@@ -59,16 +59,13 @@ def ensure_local_dataset(repo_id: str) -> Path:
     if _is_dataset_dir(local):
         return local
     from huggingface_hub import snapshot_download
+
     try:
         snapshot_download(repo_id=repo_id, repo_type="dataset", local_dir=str(local))
     except HfHubHTTPError as exc:
-        raise ValueError(
-            f"HF dataset '{repo_id}' not found or not accessible with your HF login."
-        ) from exc
+        raise ValueError(f"HF dataset '{repo_id}' not found or not accessible with your HF login.") from exc
     if not _is_dataset_dir(local):
-        raise ValueError(
-            f"HF repo '{repo_id}' is not a LeRobot dataset (no meta/info.json)."
-        )
+        raise ValueError(f"HF repo '{repo_id}' is not a LeRobot dataset (no meta/info.json).")
     return local
 
 

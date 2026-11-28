@@ -56,7 +56,6 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from typing import Optional
 from pydantic import BaseModel
 
 from .datasets import _lerobot_cache_root
@@ -118,7 +117,7 @@ class CaptureStartBody(BaseModel):
     # Full camera grid ({cols,rows,tiles}) so the exporter can crop the composite
     # into per-camera views. None on single-camera / layout-unknown sessions
     # (exporter then keeps the whole frame as observation.images.remote).
-    layout: Optional[CameraLayoutModel] = None
+    layout: CameraLayoutModel | None = None
     video_mime: str = ""
 
 
@@ -130,10 +129,13 @@ def capture_start(body: CaptureStartBody):
         raise HTTPException(
             status_code=403,
             detail="browser capture is deprecated and disabled (NORI_BROWSER_CAPTURE=0) — "
-                   "record on the robot instead (raw-bundle recorder, full quality)")
-    logger.warning("[CAPTURE] DEPRECATED browser capture started — the raw-bundle "
-                   "recorder is the recording path (composite-quality frames, "
-                   "approximated action labels; see STREAM_INTEGRATION_PLAN §5b)")
+            "record on the robot instead (raw-bundle recorder, full quality)",
+        )
+    logger.warning(
+        "[CAPTURE] DEPRECATED browser capture started — the raw-bundle "
+        "recorder is the recording path (composite-quality frames, "
+        "approximated action labels; see STREAM_INTEGRATION_PLAN §5b)"
+    )
     capture_id = uuid.uuid4().hex
     d = _captures_root() / capture_id
     d.mkdir(parents=True, exist_ok=False)
@@ -182,9 +184,7 @@ def _dataset_info(d: Path) -> dict | None:
         "frames": info.get("total_frames", 0),
         "fps": info.get("fps"),
         "robot_type": info.get("robot_type"),
-        "modified_at": time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(info_path.stat().st_mtime)
-        ),
+        "modified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(info_path.stat().st_mtime)),
         # Appendable = it's one of our capture datasets, i.e. it has at least one
         # camera feature. Recognizes BOTH the legacy single-composite
         # (observation.images.remote) AND the current per-camera format
@@ -315,10 +315,10 @@ async def capture_video_chunk(capture_id: str, episode_index: int, request: Requ
 # ---------------------------------------------------------------- finish/export
 class FinishBody(BaseModel):
     fps: int = 15
-    name: str = ""       # NEW dataset: explicit name (used verbatim), or "" for
-                         # the timestamped default stem
+    name: str = ""  # NEW dataset: explicit name (used verbatim), or "" for
+    # the timestamped default stem
     append_to: str = ""  # or: append episodes to this existing cache dataset
-                         # (mutually exclusive with name; grid runs at ITS fps)
+    # (mutually exclusive with name; grid runs at ITS fps)
 
 
 @router.post("/{capture_id}/finish")

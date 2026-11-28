@@ -10,16 +10,16 @@ audio call) **without robot hardware**, using the mock robot in the `NoriTeleop`
 
 ## What you can and can't test without hardware
 
-| Feature | Testable now? | Notes |
-|---|---|---|
-| Remote teleop GUI (telemetry panel, keybind legend, mode toggle) | ✅ | Panels render; `loop_hz`/currents/safety stay blank/stale without the C++ daemon. |
-| WebRTC video | ✅ | Mock robot sends a moving-ball test pattern. |
-| VR immersive session + **recenter** (double-tap right stick) | ✅ | Needs a headset + a live session (mock robot is enough). |
-| **Robot → operator audio** (you hear the room) | ✅ | Mock robot sends a 440 Hz test tone (`--audio --audio-test`). |
-| **Operator → robot audio** (you speak into the robot) | ❌ (gated) | Robot offers no operator-audio uplink m-line yet (Pi **M3b**). Your mic is captured + your "you" dot lights, but a **"mic local-only"** badge shows — nothing is transmitted. |
-| Operator camera (M6) | ✅ build, dark by default | Behind the `nori_m6_video` flag; self-view works, uplink gated (Pi **M6**). |
-| Live telemetry (`loop_hz`, grip-force currents, safety, watchdog) | ⚠️ | Needs the C++ `nori_core_agent` daemon on `:7777`. Without it the control channel still opens (control shows "active") but no telemetry flows. |
-| 3D robot cubes (C6) | ❌ | Not built — needs joint positions in the telemetry schema. |
+| Feature                                                           | Testable now?             | Notes                                                                                                                                                                         |
+| ----------------------------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Remote teleop GUI (telemetry panel, keybind legend, mode toggle)  | ✅                        | Panels render; `loop_hz`/currents/safety stay blank/stale without the C++ daemon.                                                                                             |
+| WebRTC video                                                      | ✅                        | Mock robot sends a moving-ball test pattern.                                                                                                                                  |
+| VR immersive session + **recenter** (double-tap right stick)      | ✅                        | Needs a headset + a live session (mock robot is enough).                                                                                                                      |
+| **Robot → operator audio** (you hear the room)                    | ✅                        | Mock robot sends a 440 Hz test tone (`--audio --audio-test`).                                                                                                                 |
+| **Operator → robot audio** (you speak into the robot)             | ❌ (gated)                | Robot offers no operator-audio uplink m-line yet (Pi **M3b**). Your mic is captured + your "you" dot lights, but a **"mic local-only"** badge shows — nothing is transmitted. |
+| Operator camera (M6)                                              | ✅ build, dark by default | Behind the `nori_m6_video` flag; self-view works, uplink gated (Pi **M6**).                                                                                                   |
+| Live telemetry (`loop_hz`, grip-force currents, safety, watchdog) | ⚠️                        | Needs the C++ `nori_core_agent` daemon on `:7777`. Without it the control channel still opens (control shows "active") but no telemetry flows.                                |
+| 3D robot cubes (C6)                                               | ❌                        | Not built — needs joint positions in the telemetry schema.                                                                                                                    |
 
 ---
 
@@ -98,7 +98,8 @@ it in a relaunch loop if you want reconnect-friendly behavior.
      appears — correct: your mic is hot locally but there's no uplink to the robot yet.
 5. **M6 camera (optional):** in the browser console:
    ```js
-   localStorage.setItem("nori_m6_video", "1"); location.reload();
+   localStorage.setItem("nori_m6_video", "1");
+   location.reload();
    ```
    A **Camera on** button appears → self-view thumbnail over the video. (Uplink still gated.)
 

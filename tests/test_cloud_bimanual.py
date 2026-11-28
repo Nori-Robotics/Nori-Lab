@@ -7,10 +7,11 @@ from fastapi import HTTPException
 
 import lelab.nori_rollout as rollout
 
-JOINTS_12 = [f"{a}_arm_{j}.pos"
-             for a in ("left", "right")
-             for j in ("shoulder_pan", "shoulder_lift", "elbow_flex",
-                       "wrist_flex", "wrist_roll", "gripper")]
+JOINTS_12 = [
+    f"{a}_arm_{j}.pos"
+    for a in ("left", "right")
+    for j in ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
+]
 LEFT_KEYS = [k for k in JOINTS_12 if k.startswith("left_")]
 RIGHT_KEYS = [k for k in JOINTS_12 if k.startswith("right_")]
 L_WRIST, R_WRIST = "observation.images.left_wrist", "observation.images.right_wrist"
@@ -26,8 +27,7 @@ class _FakeRollout:
         self.max_queue = kw.get("max_queue", 1)
         self.replace_on_refill = kw.get("replace_on_refill", True)
         self.serve_calls: list = []
-        self.serve_result = {"action": {k: 0.5 for k in kw["action_keys"]},
-                             "queue": 3, "warming": False}
+        self.serve_result = {"action": dict.fromkeys(kw["action_keys"], 0.5), "queue": 3, "warming": False}
         self.serve_error: Exception | None = None
         self.closed = 0
 
@@ -57,10 +57,12 @@ def env(monkeypatch):
         return {"A": [1.0] * 6, "B": [0.0] * 6, "arm": arm}
 
     monkeypatch.setattr(rollout.cloudmod, "load_calibration", fake_calib)
-    monkeypatch.setattr(rollout.cloudmod, "arm_keys",
-                        lambda arm: LEFT_KEYS if arm == "left" else RIGHT_KEYS)
-    monkeypatch.setattr(rollout.cloudmod, "default_cloud_views",
-                        lambda arm="left": [f"observation.images.{arm}_wrist", OVERHEAD])
+    monkeypatch.setattr(rollout.cloudmod, "arm_keys", lambda arm: LEFT_KEYS if arm == "left" else RIGHT_KEYS)
+    monkeypatch.setattr(
+        rollout.cloudmod,
+        "default_cloud_views",
+        lambda arm="left": [f"observation.images.{arm}_wrist", OVERHEAD],
+    )
 
     def fake_ctor(**kw):
         r = _FakeRollout(**kw)
@@ -137,15 +139,24 @@ def test_refuses_finetune_that_declares_no_joint_order(env):
 # Our assembled datasets order joints ALPHABETICALLY within each arm, which is
 # NOT MolmoAct2's canonical order — the exact scramble this contract prevents.
 
-DS_RIGHT = [f"right_arm_{j}.pos" for j in
-            ("elbow_flex", "gripper", "shoulder_lift", "shoulder_pan",
-             "wrist_flex", "wrist_roll")]
+DS_RIGHT = [
+    f"right_arm_{j}.pos"
+    for j in ("elbow_flex", "gripper", "shoulder_lift", "shoulder_pan", "wrist_flex", "wrist_roll")
+]
 DS_LEFT = [k.replace("right_", "left_") for k in DS_RIGHT]
 
-PI05_META = {"status": "ready",
-             "meta": {"kind": "pi05", "chunk_hz": 15, "horizon": 50, "dof": 12,
-                      "state_dim": 12, "joints": DS_LEFT + DS_RIGHT,
-                      "cameras": [L_WRIST, R_WRIST, OVERHEAD]}}
+PI05_META = {
+    "status": "ready",
+    "meta": {
+        "kind": "pi05",
+        "chunk_hz": 15,
+        "horizon": 50,
+        "dof": 12,
+        "state_dim": 12,
+        "joints": DS_LEFT + DS_RIGHT,
+        "cameras": [L_WRIST, R_WRIST, OVERHEAD],
+    },
+}
 
 
 def test_declared_joints_are_used_verbatim_not_molmoact2_order(env):
@@ -169,9 +180,16 @@ def test_declared_joints_are_used_verbatim_not_molmoact2_order(env):
 def test_single_arm_finetune_drives_its_declared_arm(env):
     # 6 declared right-arm joints => ONE lane on the right arm. (The old
     # dual-lane split would have run a right-arm model on the left arm.)
-    env["health"] = {"status": "ready",
-                     "meta": {"kind": "pi05", "chunk_hz": 15, "dof": 6,
-                              "joints": DS_RIGHT, "cameras": [R_WRIST, OVERHEAD]}}
+    env["health"] = {
+        "status": "ready",
+        "meta": {
+            "kind": "pi05",
+            "chunk_hz": 15,
+            "dof": 6,
+            "joints": DS_RIGHT,
+            "cameras": [R_WRIST, OVERHEAD],
+        },
+    }
     out = rollout._cloud_load(_body(arm="right", policy_kind="pi05"))
     lanes = rollout._session["lanes"]
     assert len(lanes) == 1 and lanes[0]["arm"] == "right"
@@ -181,28 +199,36 @@ def test_single_arm_finetune_drives_its_declared_arm(env):
 
 
 def test_single_arm_finetune_refuses_the_wrong_arm(env):
-    env["health"] = {"status": "ready",
-                     "meta": {"kind": "pi05", "chunk_hz": 15, "dof": 6,
-                              "joints": DS_RIGHT, "cameras": []}}
+    env["health"] = {
+        "status": "ready",
+        "meta": {"kind": "pi05", "chunk_hz": 15, "dof": 6, "joints": DS_RIGHT, "cameras": []},
+    }
     with pytest.raises(HTTPException) as e:
         rollout._cloud_load(_body(arm="left", policy_kind="pi05"))
     assert e.value.status_code == 422 and "right" in e.value.detail
 
 
 def test_declared_joints_must_exist_in_the_session(env):
-    env["health"] = {"status": "ready",
-                     "meta": {"kind": "pi05", "chunk_hz": 15, "dof": 6,
-                              "joints": ["third_arm_gripper.pos"] + DS_RIGHT[1:],
-                              "cameras": []}}
+    env["health"] = {
+        "status": "ready",
+        "meta": {
+            "kind": "pi05",
+            "chunk_hz": 15,
+            "dof": 6,
+            "joints": ["third_arm_gripper.pos"] + DS_RIGHT[1:],
+            "cameras": [],
+        },
+    }
     with pytest.raises(HTTPException) as e:
         rollout._cloud_load(_body(policy_kind="pi05"))
     assert e.value.status_code == 422 and "third_arm_gripper.pos" in e.value.detail
 
 
 def test_declared_joints_must_match_the_action_dim(env):
-    env["health"] = {"status": "ready",
-                     "meta": {"kind": "pi05", "chunk_hz": 15, "dof": 12,
-                              "joints": DS_RIGHT, "cameras": []}}
+    env["health"] = {
+        "status": "ready",
+        "meta": {"kind": "pi05", "chunk_hz": 15, "dof": 12, "joints": DS_RIGHT, "cameras": []},
+    }
     with pytest.raises(HTTPException) as e:
         rollout._cloud_load(_body(policy_kind="pi05"))
     assert e.value.status_code == 422 and "disagree" in e.value.detail
@@ -212,9 +238,16 @@ def test_finetuned_molmoact2_skips_the_zero_shot_conventions(env):
     # BLOCKER 2: a FINETUNED molmoact2 still reports kind="molmoact2", but it
     # learned OUR joint space — the units calibration and model-space bounds
     # would corrupt it. Declaring joints is what distinguishes the two.
-    env["health"] = {"status": "ready",
-                     "meta": {"kind": "molmoact2", "chunk_hz": 15, "dof": 6,
-                              "joints": DS_RIGHT, "cameras": [R_WRIST, OVERHEAD]}}
+    env["health"] = {
+        "status": "ready",
+        "meta": {
+            "kind": "molmoact2",
+            "chunk_hz": 15,
+            "dof": 6,
+            "joints": DS_RIGHT,
+            "cameras": [R_WRIST, OVERHEAD],
+        },
+    }
     rollout._cloud_load(_body(arm="right", ref="cloud:molmoact2-ft"))
     r = env["rollouts"][0]
     assert r.kw["calib"] is None and r.kw["bounds"] is None
@@ -242,7 +275,7 @@ def test_finetune_act_serves_state_in_declared_order(env):
     env["health"] = PI05_META
     rollout._cloud_load(_body(policy_kind="pi05"))
     out = _act()
-    (imgs, state), = env["rollouts"][0].serve_calls
+    ((imgs, state),) = env["rollouts"][0].serve_calls
     assert len(imgs) == 3 and len(state) == 12
     assert out["action"] is not None and len(out["action"]) == 12
 
@@ -264,21 +297,24 @@ def test_kind_scoped_endpoint_env(env, monkeypatch):
 
 def test_both_requires_both_arms_joints(env):
     with pytest.raises(HTTPException) as e:
-        rollout._cloud_load(_body(joints=LEFT_KEYS))   # right arm missing
+        rollout._cloud_load(_body(joints=LEFT_KEYS))  # right arm missing
     assert e.value.status_code == 422 and "right_arm" in e.value.detail
 
 
 def _act(images=None):
-    return rollout._cloud_act(rollout.ActBody(
-        state={k: 0.1 * i for i, k in enumerate(JOINTS_12)},
-        images=images or {L_WRIST: "imgL", OVERHEAD: "imgO", R_WRIST: "imgR"}))
+    return rollout._cloud_act(
+        rollout.ActBody(
+            state={k: 0.1 * i for i, k in enumerate(JOINTS_12)},
+            images=images or {L_WRIST: "imgL", OVERHEAD: "imgO", R_WRIST: "imgR"},
+        )
+    )
 
 
 def test_act_slices_views_and_state_per_lane_and_merges(env):
     rollout._cloud_load(_body())
     left, right = env["rollouts"]
-    left.serve_result = {"action": {k: 1.0 for k in LEFT_KEYS}, "queue": 4, "warming": False}
-    right.serve_result = {"action": {k: 2.0 for k in RIGHT_KEYS}, "queue": 2, "warming": False}
+    left.serve_result = {"action": dict.fromkeys(LEFT_KEYS, 1.0), "queue": 4, "warming": False}
+    right.serve_result = {"action": dict.fromkeys(RIGHT_KEYS, 2.0), "queue": 2, "warming": False}
     out = _act()
     # each lane saw ITS wrist + overhead, in ITS order
     assert left.serve_calls[0][0] == ["imgL", "imgO"]

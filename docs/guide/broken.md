@@ -7,25 +7,25 @@ Anything about power, cabling or leader arms is written for the **Nori L2**. On 
 [A3](/guide/a3), use it as background only and [get in touch](/guide/getting-help).
 :::
 
-| Symptom | Likely cause | Go to |
-|---|---|---|
-| Session stuck at `connecting`, never reaches `connected` | Strict network — needs a TURN relay | [Remote](/guide/remote#connection-trouble) |
-| Connected, but no video | Room mismatch, or the encoder is paused | [Remote](/guide/remote#connection-trouble) |
-| Video is low-res / low-fps | Working as intended — it's the robot's power budget | [Cameras](/guide/video#video-quality) |
-| Camera fps falls off over a long session | Thermal throttling, not power. Needs cooling | [Cameras](/guide/video) |
-| A camera vanishes mid-session | USB current cap on the Pi | [Power](/guide/l2#brownouts) |
-| App can't see a leader arm | Charge-only cable, or a hub swallowing it | [Leader arms](/guide/l2#leader-arm-troubleshooting) |
-| An arm moves the wrong joint / wrong direction | Motor IDs, or stale calibration | [Leader arms](/guide/l2#leader-arm-troubleshooting) |
-| "Enter VR" is disabled | Not a secure context (needs HTTPS) | [VR](/guide/vr#when-it-goes-wrong) |
-| No audio after joining a call | Autoplay policy, or the robot-side consent prompt | [Audio](/guide/audio) |
-| Robot's speaker disconnects mid-clip | Brownout — the clip was too loud | [Power](/guide/l2#brownouts) |
-| One joint stopped, the rest still work | A **stall**. Working as designed | [Safety states](/guide/safety-states) |
-| Everything stopped and won't restart | Something is **latched** — E-STOP, or motor protection | [Safety states](/guide/safety-states) |
-| The robot latched itself, nobody touched it | Over-temp or over-current motor protection | [Safety states](/guide/safety-states) |
-| A joint went limp and won't re-engage | Its torque was cut to save the motor. Needs `reset_latch` | [Safety states](/guide/safety-states) |
-| A motor shows red or amber in the app | Hardware fault vs. not answering the bus — different fixes | [Safety states](/guide/safety-states#motor-faults) |
-| The computer is on but every motor is dead | The physical E-stop is engaged | [Safety states](/guide/safety-states) |
-| Desktop app opens to a blank window | Backend didn't come up on `:8000` | [Install](/guide/install#when-it-goes-wrong) |
+| Symptom                                                  | Likely cause                                               | Go to                                               |
+| -------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------- |
+| Session stuck at `connecting`, never reaches `connected` | Strict network — needs a TURN relay                        | [Remote](/guide/remote#connection-trouble)          |
+| Connected, but no video                                  | Room mismatch, or the encoder is paused                    | [Remote](/guide/remote#connection-trouble)          |
+| Video is low-res / low-fps                               | Working as intended — it's the robot's power budget        | [Cameras](/guide/video#video-quality)               |
+| Camera fps falls off over a long session                 | Thermal throttling, not power. Needs cooling               | [Cameras](/guide/video)                             |
+| A camera vanishes mid-session                            | USB current cap on the Pi                                  | [Power](/guide/l2#brownouts)                        |
+| App can't see a leader arm                               | Charge-only cable, or a hub swallowing it                  | [Leader arms](/guide/l2#leader-arm-troubleshooting) |
+| An arm moves the wrong joint / wrong direction           | Motor IDs, or stale calibration                            | [Leader arms](/guide/l2#leader-arm-troubleshooting) |
+| "Enter VR" is disabled                                   | Not a secure context (needs HTTPS)                         | [VR](/guide/vr#when-it-goes-wrong)                  |
+| No audio after joining a call                            | Autoplay policy, or the robot-side consent prompt          | [Audio](/guide/audio)                               |
+| Robot's speaker disconnects mid-clip                     | Brownout — the clip was too loud                           | [Power](/guide/l2#brownouts)                        |
+| One joint stopped, the rest still work                   | A **stall**. Working as designed                           | [Safety states](/guide/safety-states)               |
+| Everything stopped and won't restart                     | Something is **latched** — E-STOP, or motor protection     | [Safety states](/guide/safety-states)               |
+| The robot latched itself, nobody touched it              | Over-temp or over-current motor protection                 | [Safety states](/guide/safety-states)               |
+| A joint went limp and won't re-engage                    | Its torque was cut to save the motor. Needs `reset_latch`  | [Safety states](/guide/safety-states)               |
+| A motor shows red or amber in the app                    | Hardware fault vs. not answering the bus — different fixes | [Safety states](/guide/safety-states#motor-faults)  |
+| The computer is on but every motor is dead               | The physical E-stop is engaged                             | [Safety states](/guide/safety-states)               |
+| Desktop app opens to a blank window                      | Backend didn't come up on `:8000`                          | [Install](/guide/install#when-it-goes-wrong)        |
 
 ## Before you dig in
 

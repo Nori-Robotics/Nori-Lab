@@ -26,7 +26,6 @@ CHUNK SEMANTICS DIFFER FROM MOLMOACT2 — the client must read meta():
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 import numpy as np
 from fastapi import HTTPException
@@ -44,18 +43,19 @@ MAX_IMAGES = 6
 class Pi05Adapter:
     def __init__(self, model_path: str):
         self._probe_path = model_path
-        self._source: Optional[str] = None
+        self._source: str | None = None
         self._policy = None
         self._pre = None
         self._post = None
-        self._device = None
+        self._device: str | None = None
         self._image_keys: list[str] = []
-        self._state_dim: Optional[int] = None
-        self._action_dim: Optional[int] = None
+        self._state_dim: int | None = None
+        self._action_dim: int | None = None
         self._horizon: int = 50
 
     def load(self) -> None:
         import torch
+
         from lerobot.configs.policies import PreTrainedConfig
         from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 
@@ -79,13 +79,14 @@ class Pi05Adapter:
         dev = {"device_processor": {"device": self._device}}
         try:
             self._pre, self._post = make_pre_post_processors(
-                cfg, pretrained_path=self._source,
-                preprocessor_overrides=dev, postprocessor_overrides=dev)
+                cfg, pretrained_path=self._source, preprocessor_overrides=dev, postprocessor_overrides=dev
+            )
         except Exception as e:
             raise RuntimeError(
                 f"no fitted pre/post processors in {self._source} ({e}) — a pi05 "
                 f"checkpoint without stats cannot serve (Gate B: use a finetune, "
-                f"not pi05_base)") from e
+                f"not pi05_base)"
+            ) from e
 
         # Feature contract from the checkpoint itself, not assumptions.
         for key, feat in (cfg.input_features or {}).items():
@@ -98,15 +99,26 @@ class Pi05Adapter:
                 self._action_dim = feat.shape[0]
         self._horizon = int(getattr(cfg, "n_action_steps", 50) or 50)
         self._policy = policy
-        print(f"[pi05] cameras={self._image_keys} state_dim={self._state_dim} "
-              f"action_dim={self._action_dim} horizon={self._horizon}", flush=True)
+        print(
+            f"[pi05] cameras={self._image_keys} state_dim={self._state_dim} "
+            f"action_dim={self._action_dim} horizon={self._horizon}",
+            flush=True,
+        )
 
     def meta(self) -> dict:
-        return {"kind": "pi05", "chunk_hz": CHUNK_HZ, "horizon": self._horizon,
-                "dof": self._action_dim, "state_dim": self._state_dim,
-                "cameras": list(self._image_keys), "max_images": MAX_IMAGES,
-                "source": self._source, "joints": declared_joints(), "supports_point": False,
-                "supports_rtc": False}
+        return {
+            "kind": "pi05",
+            "chunk_hz": CHUNK_HZ,
+            "horizon": self._horizon,
+            "dof": self._action_dim,
+            "state_dim": self._state_dim,
+            "cameras": list(self._image_keys),
+            "max_images": MAX_IMAGES,
+            "source": self._source,
+            "joints": declared_joints(),
+            "supports_point": False,
+            "supports_rtc": False,
+        }
 
     def act(self, *, images, state, instruction, num_steps, extras):
         import torch
@@ -115,9 +127,9 @@ class Pi05Adapter:
             raise HTTPException(
                 status_code=422,
                 detail=f"pi05 checkpoint expects exactly {len(self._image_keys)} "
-                       f"images in this order: {self._image_keys} (got {len(images)})")
-        rtc_note = ({"skipped": "unsupported for policy kind pi05"}
-                    if extras.get("rtc") is not None else None)
+                f"images in this order: {self._image_keys} (got {len(images)})",
+            )
+        rtc_note = {"skipped": "unsupported for policy kind pi05"} if extras.get("rtc") is not None else None
 
         # State: robot scale in, processors normalize + pad (max_state_dim 32).
         st = np.zeros((self._state_dim or len(state),), dtype=np.float32)
@@ -127,14 +139,15 @@ class Pi05Adapter:
             "observation.state": torch.from_numpy(st).unsqueeze(0).to(self._device),
             "task": [instruction],
         }
-        for key, img in zip(self._image_keys, images):
+        # strict=False: see the groot adapter -- same view-count trade-off.
+        for key, img in zip(self._image_keys, images, strict=False):
             # HxWx3 uint8 -> 1x3xHxW float in [0,1] (lerobot image convention).
             t = torch.from_numpy(np.ascontiguousarray(img)).permute(2, 0, 1)
             obs[key] = (t.float() / 255.0).unsqueeze(0).to(self._device)
 
         try:
             with torch.no_grad():
-                self._policy.reset()          # fresh chunk per /act observation
+                self._policy.reset()  # fresh chunk per /act observation
                 processed = self._pre(obs)
                 chunk = []
                 for _ in range(self._horizon):  # 1 forward + horizon-1 queue pops
@@ -146,5 +159,5 @@ class Pi05Adapter:
             raise HTTPException(status_code=507, detail=f"CUDA OOM: {e}") from e
         acts = np.stack(chunk).astype(np.float32)
         if self._action_dim and acts.shape[-1] > self._action_dim:
-            acts = acts[..., : self._action_dim]   # strip pad dims if post kept them
+            acts = acts[..., : self._action_dim]  # strip pad dims if post kept them
         return acts, {"rtc": rtc_note}

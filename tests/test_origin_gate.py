@@ -63,8 +63,7 @@ def test_same_site_no_origin_refused(client):
 def test_same_site_with_allowlisted_origin_passes(client):
     # Vite dev (localhost:8080 -> localhost:8000) is same-site but carries an
     # ALLOWLISTED Origin -> primary check vouches, backstop exempts it. Must pass.
-    r = client.post(TARGET, headers={"Origin": "http://localhost:8080",
-                                     "Sec-Fetch-Site": "same-site"})
+    r = client.post(TARGET, headers={"Origin": "http://localhost:8080", "Sec-Fetch-Site": "same-site"})
     assert r.status_code == 200
     assert r.json() == {"unloaded": None}
 
@@ -77,8 +76,7 @@ def test_same_origin_no_origin_passes(client):
 
 
 def test_allowed_origins_pass(client):
-    for origin in ("http://localhost:8000", "http://127.0.0.1:8000",
-                   "http://localhost:8080"):
+    for origin in ("http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:8080"):
         r = client.post(TARGET, headers={"Origin": origin})
         assert r.status_code == 200, origin
         assert r.json() == {"unloaded": None}
@@ -92,18 +90,21 @@ def test_hosted_ui_origin_passes(client):
     # Sec-Fetch-Site MUST be in the test: real browsers stamp hosted->localhost as
     # cross-site (it IS cross-site), and the backstop's first cut refused every such
     # mutation even with an allowlisted Origin ("Provision account failed").
-    r = client.post(TARGET, headers={"Origin": "https://lab.norirobotics.com",
-                                     "Sec-Fetch-Site": "cross-site"})
+    r = client.post(
+        TARGET, headers={"Origin": "https://lab.norirobotics.com", "Sec-Fetch-Site": "cross-site"}
+    )
     assert r.status_code == 200
     # CORS layer must grant the read too (the browser enforces from the header).
     assert r.headers.get("access-control-allow-origin") == "https://lab.norirobotics.com"
 
 
 def test_hosted_ui_lookalikes_refused(client):
-    for origin in ("http://lab.norirobotics.com",          # plaintext downgrade
-                   "https://lab.norirobotics.com.evil.io", # suffix trick
-                   "https://evil-lab.norirobotics.com.attacker.example",
-                   "https://labnorirobotics.com"):
+    for origin in (
+        "http://lab.norirobotics.com",  # plaintext downgrade
+        "https://lab.norirobotics.com.evil.io",  # suffix trick
+        "https://evil-lab.norirobotics.com.attacker.example",
+        "https://labnorirobotics.com",
+    ):
         r = client.post(TARGET, headers={"Origin": origin})
         assert r.status_code == 403, origin
 
@@ -121,8 +122,7 @@ def test_cross_site_sec_fetch_backstop(client):
     assert r.status_code == 403
     # An UNLISTED origin + cross-site stays refused too (the exemption is only
     # for allowlisted origins, where the primary check already vouched).
-    r = client.post(TARGET, headers={"Origin": "https://evil.example",
-                                     "Sec-Fetch-Site": "cross-site"})
+    r = client.post(TARGET, headers={"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"})
     assert r.status_code == 403
     # A cross-site GET without Origin is ALSO refused (pentest V7): browsers omit
     # Origin on <img>/<script> subresource GETs, and some GET endpoints have
@@ -133,16 +133,18 @@ def test_cross_site_sec_fetch_backstop(client):
 
 
 def test_same_origin_sec_fetch_passes(client):
-    r = client.post(TARGET, headers={"Sec-Fetch-Site": "same-origin",
-                                     "Origin": "http://localhost:8000"})
+    r = client.post(TARGET, headers={"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost:8000"})
     assert r.status_code == 200
 
 
 def test_preflight_from_foreign_origin_dies(client):
-    r = client.options(TARGET, headers={
-        "Origin": "https://evil.example",
-        "Access-Control-Request-Method": "POST",
-    })
+    r = client.options(
+        TARGET,
+        headers={
+            "Origin": "https://evil.example",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
     # CORSMiddleware is OUTERMOST (added last), so a foreign preflight dies
     # there with 400 before the gate can 403 it — refused either way. What
     # matters: no approval header ever goes out.
@@ -151,9 +153,12 @@ def test_preflight_from_foreign_origin_dies(client):
 
 
 def test_preflight_from_allowed_origin_gets_cors(client):
-    r = client.options(TARGET, headers={
-        "Origin": "http://localhost:8080",
-        "Access-Control-Request-Method": "POST",
-    })
+    r = client.options(
+        TARGET,
+        headers={
+            "Origin": "http://localhost:8080",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
     assert r.status_code == 200
     assert r.headers.get("access-control-allow-origin") == "http://localhost:8080"

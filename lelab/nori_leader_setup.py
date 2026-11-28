@@ -7,6 +7,7 @@ agent; it prepares and validates the two local leader arms used by Nori L2.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import glob
 import json
 import logging
@@ -17,9 +18,10 @@ import threading
 import time
 import tty
 import uuid
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Literal
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +159,7 @@ class PortIdentity:
         return asdict(self)
 
     @classmethod
-    def from_json(cls, payload: dict[str, Any]) -> "PortIdentity":
+    def from_json(cls, payload: dict[str, Any]) -> PortIdentity:
         return cls(
             device=str(payload.get("device") or payload.get("open_path") or ""),
             stable_path=payload.get("stable_path"),
@@ -228,7 +230,7 @@ class SCSBus:
         self.timeout = timeout
         self.ser = None
 
-    def __enter__(self) -> "SCSBus":
+    def __enter__(self) -> SCSBus:
         self.open()
         return self
 
@@ -258,10 +260,8 @@ class SCSBus:
             raise RuntimeError("serial port is not open")
         body = [motor_id, len(params) + 2, instruction, *params]
         packet = HEADER + bytes([*body, _checksum(body)])
-        try:
+        with contextlib.suppress(Exception):
             self.ser.reset_input_buffer()
-        except Exception:
-            pass
         self.ser.write(packet)
         if not expect_status:
             return None
@@ -469,7 +469,9 @@ def load_leader_ports() -> dict[LeaderSide, PortIdentity]:
 
 def save_ports_from_paths(left_port: str, right_port: str | None = None) -> dict[str, Any]:
     left = PortIdentity(device=left_port, stable_path=_by_id_for_device(left_port))
-    right = PortIdentity(device=right_port or left_port, stable_path=_by_id_for_device(right_port or left_port))
+    right = PortIdentity(
+        device=right_port or left_port, stable_path=_by_id_for_device(right_port or left_port)
+    )
     return {"success": True, "ports": save_leader_ports(left, right)}
 
 
@@ -990,10 +992,10 @@ class ManualSession:
         self.mins = {motor_id: self.center[motor_id] for motor_id in range_ids}
         self.maxes = {motor_id: self.center[motor_id] for motor_id in range_ids}
         self.last_positions = {motor_id: self.center[motor_id] for motor_id in range_ids}
-        self.unwrapped = {motor_id: 0 for motor_id in range_ids}
-        self.min_deltas = {motor_id: 0 for motor_id in range_ids}
-        self.max_deltas = {motor_id: 0 for motor_id in range_ids}
-        self.wraps = {motor_id: False for motor_id in range_ids}
+        self.unwrapped = dict.fromkeys(range_ids, 0)
+        self.min_deltas = dict.fromkeys(range_ids, 0)
+        self.max_deltas = dict.fromkeys(range_ids, 0)
+        self.wraps = dict.fromkeys(range_ids, False)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -1017,11 +1019,21 @@ class ManualCalibrationManager:
         self._lock = threading.Lock()
         self._session: ManualSession | None = None
 
-    def start(self, side: LeaderSide, calibration_id: str = DEFAULT_CALIBRATION_ID, port: str | None = None) -> dict[str, Any]:
+    def start(
+        self, side: LeaderSide, calibration_id: str = DEFAULT_CALIBRATION_ID, port: str | None = None
+    ) -> dict[str, Any]:
         with self._lock:
             if self._session and self._session.active:
-                return {"success": False, "message": "Manual calibration already active", "session": self._session.to_json()}
-            port_identity = load_leader_ports()[side] if port is None else PortIdentity(device=port, stable_path=_by_id_for_device(port))
+                return {
+                    "success": False,
+                    "message": "Manual calibration already active",
+                    "session": self._session.to_json(),
+                }
+            port_identity = (
+                load_leader_ports()[side]
+                if port is None
+                else PortIdentity(device=port, stable_path=_by_id_for_device(port))
+            )
             ids = leader_ids(side)
             with _BUS_LOCK, SCSBus(port_identity.open_path) as bus:
                 hits = [motor_id for motor_id in ids if bus.ping(motor_id)]
@@ -1098,8 +1110,12 @@ class ManualCalibrationManager:
             if abs(int(pos) - int(last)) > STS3215_RESOLUTION // 2:
                 session.wraps[motor_id] = True
             session.unwrapped[motor_id] = session.unwrapped.get(motor_id, 0) + _wrap_delta(pos, last)
-            session.min_deltas[motor_id] = min(session.min_deltas.get(motor_id, 0), session.unwrapped[motor_id])
-            session.max_deltas[motor_id] = max(session.max_deltas.get(motor_id, 0), session.unwrapped[motor_id])
+            session.min_deltas[motor_id] = min(
+                session.min_deltas.get(motor_id, 0), session.unwrapped[motor_id]
+            )
+            session.max_deltas[motor_id] = max(
+                session.max_deltas.get(motor_id, 0), session.unwrapped[motor_id]
+            )
             session.last_positions[motor_id] = int(pos)
 
     def finish(self) -> dict[str, Any]:
@@ -1139,7 +1155,10 @@ class ManualCalibrationManager:
 
     def status(self) -> dict[str, Any]:
         with self._lock:
-            return {"active": bool(self._session and self._session.active), "session": self._session.to_json() if self._session else None}
+            return {
+                "active": bool(self._session and self._session.active),
+                "session": self._session.to_json() if self._session else None,
+            }
 
     def _require_session(self) -> ManualSession:
         if not self._session or not self._session.active:
@@ -1153,8 +1172,8 @@ manual_manager = ManualCalibrationManager()
 def _side_motor_table(side: LeaderSide):
     from lerobot.motors import Motor, MotorNormMode
 
-    mode_m100 = getattr(MotorNormMode, "RANGE_M100_100")
-    mode_0100 = getattr(MotorNormMode, "RANGE_0_100")
+    mode_m100 = MotorNormMode.RANGE_M100_100
+    mode_0100 = MotorNormMode.RANGE_0_100
     table = {}
     for joint, motor_id, norm_mode, _circular in leader_joint_specs(side):
         table[joint] = Motor(motor_id, "sts3215", mode_0100 if norm_mode == "0_100" else mode_m100)
@@ -1167,7 +1186,9 @@ def _make_feetech_bus(side: LeaderSide, port: str):
     return FeetechMotorsBus(port=port, motors=_side_motor_table(side))
 
 
-def _auto_result_to_side_payload(side: LeaderSide, port_identity: PortIdentity, result: Any) -> dict[str, Any]:
+def _auto_result_to_side_payload(
+    side: LeaderSide, port_identity: PortIdentity, result: Any
+) -> dict[str, Any]:
     motors: dict[str, dict[str, Any]] = {}
     for joint, motor_id, norm_mode, circular in leader_joint_specs(side):
         cal = result.calibration[joint]
@@ -1203,7 +1224,11 @@ def run_powered_auto_calibration(
 ) -> dict[str, Any]:
     from .so101_auto_calibration import run_so101_auto_calibration
 
-    port_identity = load_leader_ports()[side] if port is None else PortIdentity(device=port, stable_path=_by_id_for_device(port))
+    port_identity = (
+        load_leader_ports()[side]
+        if port is None
+        else PortIdentity(device=port, stable_path=_by_id_for_device(port))
+    )
     bus = _make_feetech_bus(side, port_identity.open_path)
     bus.connect(handshake=False)
     try:
@@ -1251,7 +1276,11 @@ class AutoCalibrationManager:
     ) -> dict[str, Any]:
         with self._lock:
             if self.status.active:
-                return {"success": False, "message": "Auto calibration already active", "status": asdict(self.status)}
+                return {
+                    "success": False,
+                    "message": "Auto calibration already active",
+                    "status": asdict(self.status),
+                }
             self._stop.clear()
             self.status = AutoCalibrationStatus(
                 active=True,
@@ -1311,7 +1340,9 @@ class AutoCalibrationManager:
             with self._lock:
                 self.status.active = False
                 self.status.status = "error" if not self._stop.is_set() else "cancelled"
-                self.status.message = "Auto calibration stopped" if self._stop.is_set() else "Auto calibration failed"
+                self.status.message = (
+                    "Auto calibration stopped" if self._stop.is_set() else "Auto calibration failed"
+                )
                 self.status.error = str(exc) if not self._stop.is_set() else None
 
     def stop(self) -> dict[str, Any]:
@@ -1329,8 +1360,7 @@ class AutoCalibrationManager:
         with self._lock:
             active = self.status.active
             positions_by_side = {
-                side: dict(positions)
-                for side, positions in self.status.current_positions.items()
+                side: dict(positions) for side, positions in self.status.current_positions.items()
             }
         # Only serve the auto worker's readings while a calibration session is
         # actively running (it owns the bus then, so the shared live reader must
@@ -1346,9 +1376,7 @@ class AutoCalibrationManager:
                 continue
             joint_ids = expected_joint_ids(side)  # type: ignore[arg-type]
             side_positions[side] = {
-                joint_ids[joint]: int(position)
-                for joint, position in positions.items()
-                if joint in joint_ids
+                joint_ids[joint]: int(position) for joint, position in positions.items() if joint in joint_ids
             }
         try:
             calibration = load_leader_calibration(calibration_id)
@@ -1458,9 +1486,9 @@ class SharedLivePositionManager:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._buses: dict[str, SCSBus] = {}          # open_path -> open bus
+        self._buses: dict[str, SCSBus] = {}  # open_path -> open bus
         self._port_sides: dict[str, tuple[LeaderSide, ...]] = {}  # open_path -> sides it serves
-        self._port_retry_at: dict[str, float] = {}   # open_path -> next (re)open attempt
+        self._port_retry_at: dict[str, float] = {}  # open_path -> next (re)open attempt
         self._calibration_id: str | None = None
         self._calibration: dict[str, Any] = {}
         self._warnings: list[str] = []
@@ -1591,7 +1619,9 @@ class SharedLivePositionManager:
         saved = load_leader_ports()
         return {"left": saved["left"].open_path, "right": saved["right"].open_path}
 
-    def read(self, *, port: str | None = None, calibration_id: str = DEFAULT_CALIBRATION_ID) -> dict[str, Any]:
+    def read(
+        self, *, port: str | None = None, calibration_id: str = DEFAULT_CALIBRATION_ID
+    ) -> dict[str, Any]:
         side_ports = self._resolve_side_ports(port)
         with self._lock:
             port_positions: dict[str, dict[int, int]] = {}
@@ -1638,8 +1668,7 @@ class SharedLivePositionManager:
             # Side mapping happens HERE, not on the wire: each side shows its own
             # port's readings.
             side_positions = {
-                side: port_positions.get(open_path, {})
-                for side, open_path in side_ports.items()
+                side: port_positions.get(open_path, {}) for side, open_path in side_ports.items()
             }
             # Calibration observes BEFORE single-arm collapsing: a right-side
             # manual session in the single-arm setup still needs the arm's data.
@@ -1835,7 +1864,11 @@ def _command_plan(_args: argparse.Namespace) -> None:
 
 
 def _command_ports(args: argparse.Namespace) -> None:
-    _json_print(auto_save_detected_ports() if args.save else {"success": True, "probes": probe_leader_ports(include_all=args.all)})
+    _json_print(
+        auto_save_detected_ports()
+        if args.save
+        else {"success": True, "probes": probe_leader_ports(include_all=args.all)}
+    )
 
 
 def _command_set_id(args: argparse.Namespace) -> None:

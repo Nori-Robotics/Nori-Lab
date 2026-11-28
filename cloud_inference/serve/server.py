@@ -37,7 +37,6 @@ import secrets
 import threading
 import time
 from collections import deque
-from typing import Any, Optional
 
 import numpy as np
 from fastapi import FastAPI, Header, HTTPException
@@ -85,19 +84,21 @@ MAX_NUM_STEPS = int(os.environ.get("NORI_INFER_MAX_NUM_STEPS", "100"))
 # token could otherwise pour unbounded GPU spend, or a single huge/decompression-
 # bomb image could OOM the box. Defaults are generous vs a real rollout (~15 Hz,
 # 640x480 JPEGs ~70-270 KB base64) so nothing legitimate is clipped.
-MAX_IMAGE_B64 = int(os.environ.get("NORI_INFER_MAX_IMAGE_B64", str(3 * 1024 * 1024)))   # per-image
+MAX_IMAGE_B64 = int(os.environ.get("NORI_INFER_MAX_IMAGE_B64", str(3 * 1024 * 1024)))  # per-image
 MAX_IMAGE_PIXELS = int(os.environ.get("NORI_INFER_MAX_IMAGE_PIXELS", str(4096 * 4096)))  # decompress-bomb
-MAX_STATE_LEN = int(os.environ.get("NORI_INFER_MAX_STATE_LEN", "512"))                    # DOF vector
-RATE_MAX = int(os.environ.get("NORI_INFER_RATE_MAX", "60"))          # requests per window, per caller
-RATE_WINDOW_S = float(os.environ.get("NORI_INFER_RATE_WINDOW_S", "2.0"))  # -> 30 req/s sustained (2x a 15Hz loop)
+MAX_STATE_LEN = int(os.environ.get("NORI_INFER_MAX_STATE_LEN", "512"))  # DOF vector
+RATE_MAX = int(os.environ.get("NORI_INFER_RATE_MAX", "60"))  # requests per window, per caller
+RATE_WINDOW_S = float(
+    os.environ.get("NORI_INFER_RATE_WINDOW_S", "2.0")
+)  # -> 30 req/s sustained (2x a 15Hz loop)
 # Inference Endpoints mount the endpoint's model repo here (no boot download);
 # adapters fall back to their Hub default when absent (Space / bare GPU box).
 MODEL_PATH = os.environ.get("MODEL_PATH", "/repository")
 
 app = FastAPI(title=f"nori-serve-{MODEL_KIND}")
-_adapter = None                       # set by the background load
-_load_error: Optional[str] = None
-_lock = threading.Lock()              # single GPU: serialize inference
+_adapter = None  # set by the background load
+_load_error: str | None = None
+_lock = threading.Lock()  # single GPU: serialize inference
 
 
 def _make_adapter():
@@ -105,15 +106,19 @@ def _make_adapter():
     unused kind's heavy deps are never touched."""
     if MODEL_KIND == "molmoact2":
         from adapters.molmoact2 import MolmoAct2Adapter
+
         return MolmoAct2Adapter(MODEL_PATH)
     if MODEL_KIND == "pi05":
         from adapters.pi05 import Pi05Adapter
+
         return Pi05Adapter(MODEL_PATH)
     if MODEL_KIND == "groot":
         from adapters.groot import GrootAdapter
+
         return GrootAdapter(MODEL_PATH)
     if MODEL_KIND == "fake":
         from adapters.fake import FakeAdapter  # tests/CI only — no GPU deps
+
         return FakeAdapter(MODEL_PATH)
     raise RuntimeError(f"unknown MODEL_KIND {MODEL_KIND!r}")
 
@@ -139,13 +144,16 @@ def _startup() -> None:
     if not AUTH_TOKEN and not GRANT_PUBLIC_KEY:
         raise RuntimeError("configure NORI_INFER_TOKEN or NORI_GRANT_PUBLIC_KEY")
     if GRANT_PUBLIC_KEY and not SERVE_POLICY_REF:
-        print("[serve] WARNING: NORI_GRANT_PUBLIC_KEY set without NORI_SERVE_POLICY_REF "
-              "— grants are verified for signature/expiry but NOT bound to this "
-              "policy (any customer's valid grant is accepted). Set the ref.", flush=True)
+        print(
+            "[serve] WARNING: NORI_GRANT_PUBLIC_KEY set without NORI_SERVE_POLICY_REF "
+            "— grants are verified for signature/expiry but NOT bound to this "
+            "policy (any customer's valid grant is accepted). Set the ref.",
+            flush=True,
+        )
     threading.Thread(target=_load, name=f"{MODEL_KIND}-load", daemon=True).start()
 
 
-def _verify_grant(tok: str) -> Optional[dict]:
+def _verify_grant(tok: str) -> dict | None:
     """Verify an ES256 inference grant. Returns the claims on success, None on any
     failure (bad sig / wrong domain / policy mismatch / expired). Standalone — no
     backend import; the endpoint holds only the public key (verify, never mint)."""
@@ -153,6 +161,7 @@ def _verify_grant(tok: str) -> Optional[dict]:
         return None
     try:
         import jwt as pyjwt
+
         claims = pyjwt.decode(tok, GRANT_PUBLIC_KEY, algorithms=["ES256"])
     except Exception:
         return None  # signature invalid, expired (pyjwt enforces exp), or malformed
@@ -166,14 +175,15 @@ def _verify_grant(tok: str) -> Optional[dict]:
     return claims
 
 
-def _require_auth(x_nori_token: Optional[str], authorization: Optional[str]) -> str:
+def _require_auth(x_nori_token: str | None, authorization: str | None) -> str:
     """Authorize an /act call and RETURN the caller identity (for per-caller rate
     limiting): "cust:<id>" from a scoped grant, or "static" for the shared token.
     Prefers a scoped ES256 grant (V4); falls back to the static shared token during
     the transition (until NORI_INFER_REQUIRE_GRANT=1). Checked before any model
     work; constant-time on the static path."""
-    bearer = (authorization[7:].strip()
-              if authorization and authorization.lower().startswith("bearer ") else None)
+    bearer = (
+        authorization[7:].strip() if authorization and authorization.lower().startswith("bearer ") else None
+    )
     presented = x_nori_token or bearer
 
     # 1) Preferred: a valid scoped grant.
@@ -221,8 +231,7 @@ def _decode(b64: str) -> np.ndarray:
     # allocating the pixel buffer — PIL exposes size without decoding the raster.
     w, h = img.size
     if w * h > MAX_IMAGE_PIXELS:
-        raise HTTPException(status_code=413,
-                            detail=f"image {w}x{h} exceeds the {MAX_IMAGE_PIXELS}px cap")
+        raise HTTPException(status_code=413, detail=f"image {w}x{h} exceeds the {MAX_IMAGE_PIXELS}px cap")
     return np.asarray(img.convert("RGB"))
 
 
@@ -233,7 +242,7 @@ def _status() -> dict:
         "status": "ready" if ready else ("error" if _load_error else "loading"),
         "error": _load_error,
         "kind": MODEL_KIND,
-        "meta": _adapter.meta() if ready else None,
+        "meta": _adapter.meta() if _adapter is not None else None,
     }
 
 
@@ -265,24 +274,25 @@ class ActRequest(BaseModel):
     # MolmoAct2-only knobs — other adapters ignore/report them (see extras).
     enable_cuda_graph: bool = True
     enable_grad: bool = False
-    rtc: Optional[dict] = None
+    rtc: dict | None = None
 
 
 class ActResponse(BaseModel):
     actions: list[list[float]]
-    compute_ms: Optional[float] = None
-    rtc: Optional[dict] = None
+    compute_ms: float | None = None
+    rtc: dict | None = None
     # Per-policy chunk semantics so the client NEVER assumes another model's
     # constants (chunk_hz/horizon/dof/cameras). Additive — old clients that
     # read only `actions` are unaffected.
-    meta: Optional[dict] = None
+    meta: dict | None = None
 
 
 @app.post("/act", response_model=ActResponse)
-def act(req: ActRequest, authorization: Optional[str] = Header(None),
-        x_nori_token: Optional[str] = Header(None)) -> ActResponse:
+def act(
+    req: ActRequest, authorization: str | None = Header(None), x_nori_token: str | None = Header(None)
+) -> ActResponse:
     caller = _require_auth(x_nori_token, authorization)
-    _rate_check(caller)                          # V11: per-caller GPU-spend ceiling
+    _rate_check(caller)  # V11: per-caller GPU-spend ceiling
     if _adapter is None:
         detail = f"model load failed: {_load_error}" if _load_error else "model not loaded yet"
         raise HTTPException(status_code=503, detail=detail)
@@ -295,8 +305,9 @@ def act(req: ActRequest, authorization: Optional[str] = Header(None),
         raise HTTPException(status_code=422, detail=f"state length {len(req.state)} exceeds {MAX_STATE_LEN}")
     for b in req.images:
         if len(b) > MAX_IMAGE_B64:
-            raise HTTPException(status_code=413,
-                                detail=f"an image ({len(b)} b64 chars) exceeds the {MAX_IMAGE_B64} cap")
+            raise HTTPException(
+                status_code=413, detail=f"an image ({len(b)} b64 chars) exceeds the {MAX_IMAGE_B64} cap"
+            )
     images = [_decode(b) for b in req.images]
     state = np.asarray(req.state, dtype=np.float32)
     num_steps = max(1, min(int(req.num_steps), MAX_NUM_STEPS))
@@ -304,26 +315,34 @@ def act(req: ActRequest, authorization: Optional[str] = Header(None),
     with _lock:
         try:
             actions, extra = _adapter.act(
-                images=images, state=state, instruction=req.instruction,
+                images=images,
+                state=state,
+                instruction=req.instruction,
                 num_steps=num_steps,
-                extras={"enable_cuda_graph": req.enable_cuda_graph,
-                        "enable_grad": req.enable_grad, "rtc": req.rtc},
+                extras={
+                    "enable_cuda_graph": req.enable_cuda_graph,
+                    "enable_grad": req.enable_grad,
+                    "rtc": req.rtc,
+                },
             )
         except HTTPException:
             raise
         except MemoryError as e:
-            raise HTTPException(status_code=507, detail=str(e))
+            raise HTTPException(status_code=507, detail=str(e)) from e
         except Exception as e:
             # Adapters raise HTTPException for contract errors; anything else is
             # a real inference failure worth a 500 with the class name.
-            raise HTTPException(status_code=500,
-                                detail=f"inference failed: {type(e).__name__}: {e}")
+            raise HTTPException(status_code=500, detail=f"inference failed: {type(e).__name__}: {e}") from e
     compute_ms = (time.perf_counter() - t0) * 1000.0
     acts = np.asarray(actions, dtype=np.float32)
     if acts.ndim == 3 and acts.shape[0] == 1:
         acts = acts[0]
-    return ActResponse(actions=acts.tolist(), compute_ms=round(compute_ms, 1),
-                       rtc=(extra or {}).get("rtc"), meta=_adapter.meta())
+    return ActResponse(
+        actions=acts.tolist(),
+        compute_ms=round(compute_ms, 1),
+        rtc=(extra or {}).get("rtc"),
+        meta=_adapter.meta(),
+    )
 
 
 class PointRequest(BaseModel):
@@ -333,8 +352,9 @@ class PointRequest(BaseModel):
 
 
 @app.post("/point")
-def point(req: PointRequest, authorization: Optional[str] = Header(None),
-          x_nori_token: Optional[str] = Header(None)) -> dict:
+def point(
+    req: PointRequest, authorization: str | None = Header(None), x_nori_token: str | None = Header(None)
+) -> dict:
     """Perception probe — only meaningful for adapters with a pointing-capable
     VLM backbone (MolmoAct2). Others 501 so the client can feature-detect."""
     _require_auth(x_nori_token, authorization)
@@ -342,8 +362,6 @@ def point(req: PointRequest, authorization: Optional[str] = Header(None),
         detail = f"model load failed: {_load_error}" if _load_error else "model not loaded yet"
         raise HTTPException(status_code=503, detail=detail)
     if not hasattr(_adapter, "point"):
-        raise HTTPException(status_code=501,
-                            detail=f"{MODEL_KIND} has no pointing backbone")
+        raise HTTPException(status_code=501, detail=f"{MODEL_KIND} has no pointing backbone")
     with _lock:
-        return _adapter.point(image=_decode(req.image), query=req.query,
-                              max_new_tokens=req.max_new_tokens)
+        return _adapter.point(image=_decode(req.image), query=req.query, max_new_tokens=req.max_new_tokens)

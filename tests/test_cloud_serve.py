@@ -27,7 +27,7 @@ def client(monkeypatch):
     for mod in ("server", "adapters", "adapters.base", "adapters.fake"):
         sys.modules.pop(mod, None)
     server = importlib.import_module("server")
-    with TestClient(server.app) as c:   # context manager runs startup (background load)
+    with TestClient(server.app) as c:  # context manager runs startup (background load)
         # fake adapter loads instantly, but don't race the thread
         for _ in range(200):
             if c.get("/ready").status_code == 200:
@@ -44,9 +44,11 @@ def _b64_image() -> str:
 
 
 def _act_body(**over):
-    body = {"images": [_b64_image(), _b64_image()],
-            "state": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
-            "instruction": "pick up the red cup"}
+    body = {
+        "images": [_b64_image(), _b64_image()],
+        "state": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
+        "instruction": "pick up the red cup",
+    }
     body.update(over)
     return body
 
@@ -78,40 +80,38 @@ def test_act_accepts_x_nori_token_primary(client):
 
 
 def test_act_accepts_bearer_transition(client):
-    r = client.post("/act", json=_act_body(),
-                    headers={"Authorization": f"Bearer {TOKEN}"})
+    r = client.post("/act", json=_act_body(), headers={"Authorization": f"Bearer {TOKEN}"})
     assert r.status_code == 200
 
 
 def test_act_bad_bearer_but_good_x_nori_token_passes(client):
     # The protected-endpoint reality: Authorization carries an HF token the app
     # can't verify — X-Nori-Token alone must be sufficient.
-    r = client.post("/act", json=_act_body(),
-                    headers={"Authorization": "Bearer hf_something_else",
-                             "X-Nori-Token": TOKEN})
+    r = client.post(
+        "/act", json=_act_body(), headers={"Authorization": "Bearer hf_something_else", "X-Nori-Token": TOKEN}
+    )
     assert r.status_code == 200
 
 
 def test_act_enforces_adapter_image_cap(client):
-    body = _act_body(images=[_b64_image()] * 3)   # fake caps max_images at 2
+    body = _act_body(images=[_b64_image()] * 3)  # fake caps max_images at 2
     r = client.post("/act", json=body, headers={"X-Nori-Token": TOKEN})
     assert r.status_code == 422
 
 
 def test_act_adapter_contract_error_maps_to_422(client):
-    r = client.post("/act", json=_act_body(state=[1.0, 2.0]),
-                    headers={"X-Nori-Token": TOKEN})
+    r = client.post("/act", json=_act_body(state=[1.0, 2.0]), headers={"X-Nori-Token": TOKEN})
     assert r.status_code == 422
 
 
 def test_rtc_reported_unsupported_not_silently_dropped(client):
-    r = client.post("/act", json=_act_body(rtc={"session": "s1", "delay": 2}),
-                    headers={"X-Nori-Token": TOKEN})
+    r = client.post(
+        "/act", json=_act_body(rtc={"session": "s1", "delay": 2}), headers={"X-Nori-Token": TOKEN}
+    )
     assert r.status_code == 200
     assert "unsupported" in (r.json()["rtc"] or {}).get("skipped", "")
 
 
 def test_point_501_without_pointing_backbone(client):
-    r = client.post("/point", json={"image": _b64_image(), "query": "cup"},
-                    headers={"X-Nori-Token": TOKEN})
+    r = client.post("/point", json={"image": _b64_image(), "query": "cup"}, headers={"X-Nori-Token": TOKEN})
     assert r.status_code == 501

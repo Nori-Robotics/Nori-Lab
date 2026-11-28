@@ -10,8 +10,8 @@ operator double-clicks an installer and the OS doesn't scare them off.
 
 > **Where step 4 starts from:** steps 1–3 are done. `desktop/build.sh` freezes the
 > Python backend and stages it into `desktop/tauri/resources/backend/`; `cargo tauri
-> build` then wraps it into an installer. This all works **locally on macOS arm64
-> today**. Your job is to run it *per-OS in CI* and *sign the output*. You are not
+build` then wraps it into an installer. This all works **locally on macOS arm64
+> today**. Your job is to run it _per-OS in CI_ and _sign the output_. You are not
 > expected to change how the app works.
 
 ---
@@ -60,23 +60,23 @@ name: desktop-release
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch: {}      # manual runs while iterating
+  workflow_dispatch: {} # manual runs while iterating
 
 jobs:
   build:
     strategy:
-      fail-fast: false       # one OS failing shouldn't kill the others
+      fail-fast: false # one OS failing shouldn't kill the others
       matrix:
         include:
-          - os: macos-14        # Apple silicon; use macos-13 for an x86_64 build
+          - os: macos-14 # Apple silicon; use macos-13 for an x86_64 build
           - os: windows-latest
-          - os: ubuntu-22.04    # oldest glibc you support — newer runners raise the floor
+          - os: ubuntu-22.04 # oldest glibc you support — newer runners raise the floor
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
-        with: { python-version: "3.13" }   # NOT 3.14 — no torch/lerobot wheels yet
+        with: { python-version: "3.13" } # NOT 3.14 — no torch/lerobot wheels yet
 
       - uses: actions/setup-node@v4
         with: { node-version: "20" }
@@ -99,7 +99,7 @@ jobs:
         shell: bash
         run: PYTHON=python3.13 ./desktop/build.sh
 
-      - name: Stage public .env into the bundle       # see step 5 dependency below
+      - name: Stage public .env into the bundle # see step 5 dependency below
         shell: bash
         run: cp desktop/env.public.example desktop/tauri/resources/backend/.env
         # ^ replace with the real public values via a repo/Actions variable, NOT a secret file
@@ -112,7 +112,7 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}     # app-specific password
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }} # app-specific password
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           # Windows signing (see §4)
           # (Tauri reads a signing cert via tauri.conf.json > bundle.windows, or sign post-build)
@@ -141,14 +141,15 @@ jobs:
 > It does **not** rely on Tauri auto-notarizing. The GitHub-Actions matrix in §2 is
 > aspirational and has not been run — for a real release today, follow `NOTARIZE.md`.
 
-**Why:** an unsigned/un-notarized `.dmg` triggers *"'Nori Lab' can't be opened because
-Apple cannot check it for malicious software"* — most operators will not know to
+**Why:** an unsigned/un-notarized `.dmg` triggers _"'Nori Lab' can't be opened because
+Apple cannot check it for malicious software"_ — most operators will not know to
 right-click→Open around it. Notarization removes that.
 
 **What to buy/get:**
+
 - **Apple Developer Program** membership — **$99/yr** (individual or org).
 - A **Developer ID Application** certificate (created in the Apple Developer portal or via
-  Xcode) — this is the "Developer ID", *not* the Mac App Store cert.
+  Xcode) — this is the "Developer ID", _not_ the Mac App Store cert.
 - An **app-specific password** for your Apple ID (appleid.apple.com → Sign-In & Security)
   for the notary service.
 
@@ -161,7 +162,7 @@ right-click→Open around it. Notarization removes that.
 | `APPLE_ID` / `APPLE_PASSWORD` | Apple ID + the app-specific password (notarization) |
 | `APPLE_TEAM_ID` | 10-char team id |
 
-In this *CI* path `tauri build` can sign and notarize when these are present — but that path
+In this _CI_ path `tauri build` can sign and notarize when these are present — but that path
 is unverified (see the banner above). The **implemented** path notarizes explicitly in
 `rebuild_all.sh` via `notarytool submit --wait` + `stapler staple`, keyed off `NOTARY_PROFILE`
 (keychain-stored credentials — `xcrun notarytool store-credentials`), not the
@@ -184,6 +185,7 @@ unsigned nested binaries.
 publisher". Signing (plus download reputation over time) removes it.
 
 **What to buy/get:**
+
 - An **Authenticode code-signing certificate**, ~**$100–400/yr** (Sectigo/DigiCert/etc.).
   - **OV** cert: cheaper, but SmartScreen reputation must build up over downloads.
   - **EV** cert: instant SmartScreen trust, but requires a hardware token / cloud HSM —
@@ -202,9 +204,10 @@ Windows box.
 
 No mandatory signing. `build.sh` + `cargo tauri build` already emits an AppImage
 (`"appimage"` target). To do:
+
 - [ ] Confirm the AppImage runs on a clean Ubuntu (and ideally one non-Ubuntu distro).
 - [ ] Optionally publish **SHA-256 checksums + a detached GPG signature** so users can verify.
-- [ ] Watch the **glibc floor**: build on the *oldest* distro you intend to support
+- [ ] Watch the **glibc floor**: build on the _oldest_ distro you intend to support
       (hence `ubuntu-22.04`, not `-latest`) — an AppImage built on newer glibc won't run on
       older systems.
 
@@ -218,16 +221,16 @@ No mandatory signing. `build.sh` + `cargo tauri build` already emits an AppImage
   pip re-resolved a CUDA torch — check for `nvidia_*` dirs in `resources/backend/`.
 - **Python 3.13, not 3.14.** 3.14 has no prebuilt torch/lerobot wheels. `build.sh` defaults
   to `python3.12`; pass `PYTHON=python3.13`. Whatever the runner has, keep it 3.12–3.13.
-- **Step 5 dependency — the `.env`.** A shipped bundle needs three *public* config values
+- **Step 5 dependency — the `.env`.** A shipped bundle needs three _public_ config values
   (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `NORI_BACKEND_URL`) staged as
   `resources/backend/.env` (loaded by `backend_entry.py::_load_adjacent_env`). CI must write
   that file before `tauri build` (see the matrix skeleton). **Source the values from an
-  Actions *variable*, not a secret file — they are public. NEVER put the Supabase
+  Actions _variable_, not a secret file — they are public. NEVER put the Supabase
   service-role key or `ANTHROPIC_API_KEY` in it** (see the secret-handling decision in
   `HANDOFF.md` §5). We're coordinating the exact values with the app owner — confirm before
   first release.
 - **Icons must exist.** `tauri.conf.json` references `icons/{32x32.png,128x128.png,
-  icon.icns,icon.ico}`. Generate from a source logo with `cargo tauri icon <logo.png>` if
+icon.icns,icon.ico}`. Generate from a source logo with `cargo tauri icon <logo.png>` if
   any are missing (some platform icon files are gitignored).
 - **Identifier / product name are set** — `com.nori.lelab` / "Nori Lab" in
   `tauri.conf.json`. Bump `version` there per release; the tag should match.

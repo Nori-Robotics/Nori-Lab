@@ -31,8 +31,12 @@ def publishers():
         s.bind(f"tcp://127.0.0.1:{port}")
         time.sleep(0.2)  # PUB drops until subscribers attach
         while not stop.is_set():
-            s.send(f"{name or role} {time.monotonic():.6f}\n".encode()
-                   + b"\xff\xd8\xff" + role.encode() + b"-frame")
+            s.send(
+                f"{name or role} {time.monotonic():.6f}\n".encode()
+                + b"\xff\xd8\xff"
+                + role.encode()
+                + b"-frame"
+            )
             time.sleep(0.05)
         s.close(0)
 

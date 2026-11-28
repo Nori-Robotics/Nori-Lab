@@ -33,7 +33,6 @@ checkpoints needs the NVIDIA Open Model License attribution review first.
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 import numpy as np
 from fastapi import HTTPException
@@ -57,18 +56,19 @@ FLASH_ATTN = os.environ.get("NORI_GROOT_FLASH_ATTN", "1") == "1"
 class GrootAdapter:
     def __init__(self, model_path: str):
         self._probe_path = model_path
-        self._source: Optional[str] = None
+        self._source: str | None = None
         self._policy = None
         self._pre = None
         self._post = None
-        self._device = None
+        self._device: str | None = None
         self._image_keys: list[str] = []
-        self._state_dim: Optional[int] = None
-        self._action_dim: Optional[int] = None
+        self._state_dim: int | None = None
+        self._action_dim: int | None = None
         self._horizon: int = 40
 
     def load(self) -> None:
         import torch
+
         from lerobot.configs.policies import PreTrainedConfig
         from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 
@@ -82,8 +82,10 @@ class GrootAdapter:
         try:
             cfg = PreTrainedConfig.from_pretrained(self._source)
         except Exception:
-            print(f"[groot] no lerobot policy config at {self._source} — "
-                  f"loading as a raw N1.7 checkpoint", flush=True)
+            print(
+                f"[groot] no lerobot policy config at {self._source} — loading as a raw N1.7 checkpoint",
+                flush=True,
+            )
         if cfg is not None and cfg.type != "groot":
             raise RuntimeError(f"checkpoint is policy type {cfg.type!r}, expected groot")
 
@@ -92,9 +94,12 @@ class GrootAdapter:
             try:
                 import flash_attn  # noqa: F401
             except Exception as e:
-                print(f"[groot] WARNING: flash_attn import failed ({e}) — serving "
-                      f"with EAGER attention (measured ~13.5s/chunk on L4; fine "
-                      f"for smoke, unusable for a live control loop)", flush=True)
+                print(
+                    f"[groot] WARNING: flash_attn import failed ({e}) — serving "
+                    f"with EAGER attention (measured ~13.5s/chunk on L4; fine "
+                    f"for smoke, unusable for a live control loop)",
+                    flush=True,
+                )
                 use_flash = False
         if cfg is not None:
             cfg.use_flash_attention = use_flash
@@ -102,9 +107,11 @@ class GrootAdapter:
         policy_cls = get_policy_class("groot")
         # For a raw checkpoint (cfg None) from_pretrained builds the default
         # config itself and applies kwargs onto it (hasattr-guarded upstream).
-        policy = (policy_cls.from_pretrained(self._source, config=cfg)
-                  if cfg is not None else
-                  policy_cls.from_pretrained(self._source, use_flash_attention=use_flash))
+        policy = (
+            policy_cls.from_pretrained(self._source, config=cfg)
+            if cfg is not None
+            else policy_cls.from_pretrained(self._source, use_flash_attention=use_flash)
+        )
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
         policy.to(self._device)
         policy.eval()
@@ -117,12 +124,12 @@ class GrootAdapter:
         dev = {"device_processor": {"device": self._device}}
         if cfg is not None:
             self._pre, self._post = make_pre_post_processors(
-                cfg, pretrained_path=self._source,
-                preprocessor_overrides=dev, postprocessor_overrides=dev)
+                cfg, pretrained_path=self._source, preprocessor_overrides=dev, postprocessor_overrides=dev
+            )
         else:
             self._pre, self._post = make_pre_post_processors(
-                policy.config,
-                preprocessor_overrides=dev, postprocessor_overrides=dev)
+                policy.config, preprocessor_overrides=dev, postprocessor_overrides=dev
+            )
 
         conf = policy.config
         for key, feat in (conf.input_features or {}).items():
@@ -135,15 +142,26 @@ class GrootAdapter:
                 self._action_dim = feat.shape[0]
         self._horizon = int(getattr(conf, "n_action_steps", 40) or 40)
         self._policy = policy
-        print(f"[groot] cameras={self._image_keys} state_dim={self._state_dim} "
-              f"action_dim={self._action_dim} horizon={self._horizon}", flush=True)
+        print(
+            f"[groot] cameras={self._image_keys} state_dim={self._state_dim} "
+            f"action_dim={self._action_dim} horizon={self._horizon}",
+            flush=True,
+        )
 
     def meta(self) -> dict:
-        return {"kind": "groot", "chunk_hz": CHUNK_HZ, "horizon": self._horizon,
-                "dof": self._action_dim, "state_dim": self._state_dim,
-                "cameras": list(self._image_keys), "max_images": MAX_IMAGES,
-                "source": self._source, "joints": declared_joints(), "supports_point": False,
-                "supports_rtc": False}
+        return {
+            "kind": "groot",
+            "chunk_hz": CHUNK_HZ,
+            "horizon": self._horizon,
+            "dof": self._action_dim,
+            "state_dim": self._state_dim,
+            "cameras": list(self._image_keys),
+            "max_images": MAX_IMAGES,
+            "source": self._source,
+            "joints": declared_joints(),
+            "supports_point": False,
+            "supports_rtc": False,
+        }
 
     def act(self, *, images, state, instruction, num_steps, extras):
         import torch
@@ -153,30 +171,34 @@ class GrootAdapter:
             raise HTTPException(
                 status_code=422,
                 detail=f"groot checkpoint expects exactly {n_expected} "
-                       f"images in this order: {self._image_keys} (got {len(images)})")
-        rtc_note = ({"skipped": "unsupported for policy kind groot"}
-                    if extras.get("rtc") is not None else None)
+                f"images in this order: {self._image_keys} (got {len(images)})",
+            )
+        rtc_note = {"skipped": "unsupported for policy kind groot"} if extras.get("rtc") is not None else None
 
         st = np.asarray(state, dtype=np.float32)
         if self._state_dim and st.shape[0] != self._state_dim:
             # The groot preprocessor pads to its 132-dim table internally, but a
             # FINETUNE's declared dim is a hard contract — reject mismatches.
             raise HTTPException(
-                status_code=422,
-                detail=f"state must have {self._state_dim} dims (got {st.shape[0]})")
+                status_code=422, detail=f"state must have {self._state_dim} dims (got {st.shape[0]})"
+            )
         obs: dict = {
             "observation.state": torch.from_numpy(st).unsqueeze(0).to(self._device),
             "task": [instruction],
         }
         keys = self._image_keys or ["observation.images.camera"]
-        for key, img in zip(keys, images):
+        # strict=False keeps the existing contract: a client that sends fewer
+        # images than the policy declares views runs with the views it did send
+        # rather than getting a 500. A 422 here would be better than either, but
+        # that is an API change, not a lint fix.
+        for key, img in zip(keys, images, strict=False):
             # HxWx3 uint8 -> 1x3xHxW float in [0,1] (lerobot image convention).
             t = torch.from_numpy(np.ascontiguousarray(img)).permute(2, 0, 1)
             obs[key] = (t.float() / 255.0).unsqueeze(0).to(self._device)
 
         try:
             with torch.no_grad():
-                self._policy.reset()          # fresh chunk per /act observation
+                self._policy.reset()  # fresh chunk per /act observation
                 processed = self._pre(obs)
                 chunk = []
                 for _ in range(self._horizon):  # 1 forward + horizon-1 queue pops
@@ -188,5 +210,5 @@ class GrootAdapter:
             raise HTTPException(status_code=507, detail=f"CUDA OOM: {e}") from e
         acts = np.stack(chunk).astype(np.float32)
         if self._action_dim and acts.shape[-1] > self._action_dim:
-            acts = acts[..., : self._action_dim]   # strip pad dims if post kept them
+            acts = acts[..., : self._action_dim]  # strip pad dims if post kept them
         return acts, {"rtc": rtc_note}

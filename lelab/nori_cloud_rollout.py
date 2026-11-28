@@ -38,17 +38,18 @@
 # daemon-side safety layer still applies — the only robot-bound artifact is the
 # same {type:"control", action:{...}} frame teleop.sendAction() produces.
 
+import contextlib
 import json
 import logging
 import os
 import threading
 import time
-import uuid
 import urllib.error
 import urllib.request
+import uuid
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -119,17 +120,22 @@ class CloudRolloutError(RuntimeError):
 # (metadata_by_tag.so100_so101_molmoact2.action_stats.names). control_mode is
 # "absolute joint pose" (degrees), so an action IS a target pose, not a delta.
 MOLMOACT2_JOINTS = [
-    "shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper",
+    "shoulder_pan",
+    "shoulder_lift",
+    "elbow_flex",
+    "wrist_flex",
+    "wrist_roll",
+    "gripper",
 ]
 # Per-joint (min, max) from the same norm_stats action_stats — a COARSE reject-
 # absurd guard only (the robot daemon still applies the tight physical clamp).
 MOLMOACT2_BOUNDS = [
-    (-122.61, 179.21),   # shoulder_pan
-    (-270.0, 219.64),    # shoulder_lift
-    (-269.21, 195.38),   # elbow_flex
-    (-125.77, 178.95),   # wrist_flex
-    (-269.91, 269.82),   # wrist_roll
-    (-31.57, 119.41),    # gripper
+    (-122.61, 179.21),  # shoulder_pan
+    (-270.0, 219.64),  # shoulder_lift
+    (-269.21, 195.38),  # elbow_flex
+    (-125.77, 178.95),  # wrist_flex
+    (-269.91, 269.82),  # wrist_roll
+    (-31.57, 119.41),  # gripper
 ]
 
 
@@ -164,7 +170,7 @@ def default_cloud_views(arm: str = "left") -> list[str]:
 DEFAULT_CLOUD_VIEWS = default_cloud_views("left")
 
 
-def load_calibration(arm: str) -> Optional[dict]:
+def load_calibration(arm: str) -> dict | None:
     """Optional per-joint affine that reconciles Nori's joint convention with the
     SO-100/101 convention MolmoAct2 was trained on. Applied FORWARD to the state
     (state_model = A*state_nori + B) and INVERSE to the action (action_nori =
@@ -189,13 +195,17 @@ def load_calibration(arm: str) -> Optional[dict]:
         # A hand-derived file, when present, still wins (it can carry measured
         # asymmetric gains, e.g. the wrist_roll behaviour tuning).
         from .nori_units import load_composed_calibration
+
         cal = load_composed_calibration(arm)
         if cal is None:
-            logger.warning("[CLOUD-ROLLOUT] NO units calibration (no %s; no shipped "
-                           "convention o streamed robot.json) — state/actions pass "
-                           "through RAW; expect a wrong first pose. Run "
-                           "cloud_inference/derive_calibration.py, or produce the "
-                           "convention once with cloud_inference/extract_convention.py.", p)
+            logger.warning(
+                "[CLOUD-ROLLOUT] NO units calibration (no %s; no shipped "
+                "convention o streamed robot.json) — state/actions pass "
+                "through RAW; expect a wrong first pose. Run "
+                "cloud_inference/derive_calibration.py, or produce the "
+                "convention once with cloud_inference/extract_convention.py.",
+                p,
+            )
         return cal
     try:
         d = json.loads(p.read_text())
@@ -242,7 +252,7 @@ def arm_keys(arm: str) -> list[str]:
     return [f"{a}_arm_{j}.pos" for j in MOLMOACT2_JOINTS]
 
 
-def infer_token(kind: Optional[str] = None) -> Optional[str]:
+def infer_token(kind: str | None = None) -> str | None:
     """Bearer token for /act. Per-kind env (NORI_INFER_TOKEN_PI05, …) wins so
     endpoints with different tokens can coexist; then the shared file (matches
     ~/.nori_infer_token written by the Space deploy), then the shared env — the
@@ -259,7 +269,7 @@ def infer_token(kind: Optional[str] = None) -> Optional[str]:
     return os.environ.get("NORI_INFER_TOKEN")
 
 
-def infer_url(kind: Optional[str] = None) -> Optional[str]:
+def infer_url(kind: str | None = None) -> str | None:
     """Base URL of the cloud inference server. Swap this to move HF -> AWS/Modal.
     One endpoint per model kind (INFERENCE_ENDPOINT_PLAN §B.4): a per-kind env
     (NORI_INFER_URL_PI05, NORI_INFER_URL_GROOT, …) wins over the shared
@@ -294,14 +304,14 @@ class CloudRollout:
         # (watermark=1 -> refill only when the plan is spent, from a FRESH
         # observation) expressible. Without this the stride sizing silently
         # overrode the caller.
-        watermark: Optional[int] = None,
+        watermark: int | None = None,
         max_queue: int = MAX_QUEUE,
         replace_on_refill: bool = True,
         fps: float = 0.0,
         chunk_hz: float = MOLMOACT2_CHUNK_HZ,
-        bounds: Optional[list[tuple[float, float]]] = None,
-        calib: Optional[dict] = None,
-        caller: Optional[Callable[[list[str], list[float]], list[list[float]]]] = None,
+        bounds: list[tuple[float, float]] | None = None,
+        calib: dict | None = None,
+        caller: Callable[[list[str], list[float]], list[list[float]]] | None = None,
     ):
         self.endpoint = endpoint.rstrip("/")
         self.token = token
@@ -341,8 +351,9 @@ class CloudRollout:
         # NORI_INFER_STRIDE=1 restores the old slow-but-smooth behaviour.
         self.fps = float(fps) if fps and fps > 0 else 0.0
         self.chunk_hz = float(chunk_hz) if chunk_hz and chunk_hz > 0 else 0.0
-        self.stride = (max(1, int(round(self.chunk_hz / self.fps)))
-                       if self.fps > 0 and self.chunk_hz > 0 else 1)
+        self.stride = (
+            max(1, int(round(self.chunk_hz / self.fps))) if self.fps > 0 and self.chunk_hz > 0 else 1
+        )
         if self.stride > 1:
             # At stride N the buffer is measured in TIME, not actions, and a chunk
             # is only ~1s long. Truncating it (the old MAX_QUEUE=24, chosen when one
@@ -357,9 +368,9 @@ class CloudRollout:
         self._queue: deque[list[float]] = deque()
         self._lock = threading.Lock()
         self._inflight = False
-        self._pending_obs: Optional[tuple[list[str], list[float]]] = None
-        self._error: Optional[str] = None
-        self._warming_since: Optional[float] = None
+        self._pending_obs: tuple[list[str], list[float]] | None = None
+        self._error: str | None = None
+        self._warming_since: float | None = None
         self._http = None  # lazily-built, REUSED httpx.Client (see _client)
         # RTC. Opt-in (NORI_INFER_RTC=1) because it costs ~+524ms of server compute:
         # it needs autograd and the CUDA-graph path off. Viable only now that the
@@ -367,10 +378,10 @@ class CloudRollout:
         # chunk covers); at the old 731ms it did not fit.
         self.rtc_enabled = _env_bool("NORI_INFER_RTC", False)
         self._rtc_session = uuid.uuid4().hex[:16]
-        self._rtc_pending: Optional[dict] = None   # set per-refill, read by _http_act
-        self._chunk_len = 0        # length of the chunk currently draining
-        self._rtt_s = 0.0          # EWMA of measured refill round-trip
-        self.rtc_last: Optional[dict] = None       # server's report, for status()
+        self._rtc_pending: dict | None = None  # set per-refill, read by _http_act
+        self._chunk_len = 0  # length of the chunk currently draining
+        self._rtt_s = 0.0  # EWMA of measured refill round-trip
+        self.rtc_last: dict | None = None  # server's report, for status()
         # observability
         self.refills = 0
         self.chunks_received = 0
@@ -410,20 +421,30 @@ class CloudRollout:
         if trigger:
             threading.Thread(target=self._refill, name="cloud-refill", daemon=True).start()
         if action is not None:
-            model_action = self._clamp(action)    # model-space bounds (guard) first
+            model_action = self._clamp(action)  # model-space bounds (guard) first
             action = self._cal_inverse(model_action)  # then model -> Nori convention
             self._trace(state, model_action, action)
             # Name-based map: action[i] is action_keys[i], which is built in the
             # model's canonical joint order (arm_keys) — so the RIGHT joint gets
             # the RIGHT value regardless of Nori's alphabetical telemetry sort.
-            return {"action": dict(zip(self.action_keys, action)), "queue": qlen, "warming": False}
+            # strict=False: a chunk whose width disagrees with action_keys is
+            # silently truncated, as it always has been. Flipping this to True
+            # would turn an endpoint contract breach into a ValueError inside
+            # the control loop -- arguably right, but a behaviour change that
+            # belongs in its own commit, not a lint sweep.
+            return {
+                "action": dict(zip(self.action_keys, action, strict=False)),
+                "queue": qlen,
+                "warming": False,
+            }
         if err:
             raise CloudRolloutError(err)
         with self._lock:
             waking = self._warming_since
         if waking is not None and (time.monotonic() - waking) > WARMING_GRACE_S:
             raise CloudRolloutError(
-                f"endpoint still not serving after {WARMING_GRACE_S:.0f}s — treating as down")
+                f"endpoint still not serving after {WARMING_GRACE_S:.0f}s — treating as down"
+            )
         return {"action": None, "queue": qlen, "warming": True}
 
     def _trace(self, state_nori, model_action, action_nori) -> None:
@@ -454,7 +475,10 @@ class CloudRollout:
         """Nori state -> model convention (A*s + B)."""
         if not self.calib:
             return state
-        return [a * s + b for s, a, b in zip(state, self.calib["A"], self.calib["B"])]
+        # strict=False preserves today's behaviour: a calibration shorter than
+        # the state vector drops the trailing joints instead of raising. See
+        # the note in serve() -- same trade-off, same reason it stays for now.
+        return [a * s + b for s, a, b in zip(state, self.calib["A"], self.calib["B"], strict=False)]
 
     def _cal_inverse(self, action: list[float]) -> list[float]:
         """Model action -> Nori convention ((a - B)/A).
@@ -466,14 +490,19 @@ class CloudRollout:
             return action
         A = self.calib.get("A_inverse", self.calib["A"])
         B = self.calib.get("B_inverse", self.calib["B"])
-        return [(v - b) / a for v, a, b in zip(action, A, B)]
+        # strict=False: see _cal_forward.
+        return [(v - b) / a for v, a, b in zip(action, A, B, strict=False)]
 
     def _clamp(self, action: list[float]) -> list[float]:
         if not self.bounds:
             return action
         out = []
         clipped = False
-        for v, (lo, hi) in zip(action, self.bounds):
+        # strict=False: a bounds list shorter than the action leaves the trailing
+        # joints UNCLAMPED. That is the pre-existing behaviour and the most
+        # worrying of these three; bounds comes from module constants today, so
+        # the mismatch cannot happen in practice.
+        for v, (lo, hi) in zip(action, self.bounds, strict=False):
             cv = lo if v < lo else (hi if v > hi else v)
             clipped = clipped or (cv != v)
             out.append(cv)
@@ -504,8 +533,7 @@ class CloudRollout:
                 consumed = max(0, self._chunk_len - remaining)
                 hz = self.chunk_hz or MOLMOACT2_CHUNK_HZ
                 delay = int(round((self._rtt_s or 0.4) * hz))
-                self._rtc_pending = {"session": self._rtc_session,
-                                     "consumed": consumed, "delay": delay}
+                self._rtc_pending = {"session": self._rtc_session, "consumed": consumed, "delay": delay}
             _t0 = time.monotonic()
             chunk = self._call(images, state)
             rtt = time.monotonic() - _t0
@@ -547,13 +575,18 @@ class CloudRollout:
                 # The `finally` still clears it, which is what the error paths need.
                 self._inflight = False
                 if self._warming_since is not None:
-                    logger.info("[CLOUD-ROLLOUT] endpoint back — resuming after %.0fs",
-                                time.monotonic() - self._warming_since)
+                    logger.info(
+                        "[CLOUD-ROLLOUT] endpoint back — resuming after %.0fs",
+                        time.monotonic() - self._warming_since,
+                    )
                     self._warming_since = None
                 self._error = None
             logger.info(
                 "[CLOUD-ROLLOUT] refill %s%d actions (queue=%d, refills=%d)",
-                "=" if self.replace_on_refill else "+", len(fresh), len(self._queue), self.refills,
+                "=" if self.replace_on_refill else "+",
+                len(fresh),
+                len(self._queue),
+                self.refills,
             )
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
             # Classify at the REFILL boundary, not only inside _http_act: a 503 or a
@@ -569,16 +602,23 @@ class CloudRollout:
                 with self._lock:
                     if self._warming_since is None:
                         self._warming_since = time.monotonic()
-                        logger.info("[CLOUD-ROLLOUT] endpoint waking (%s) — holding the "
-                                    "rollout while it loads (up to %.0fs)", e, WARMING_GRACE_S)
+                        logger.info(
+                            "[CLOUD-ROLLOUT] endpoint waking (%s) — holding the "
+                            "rollout while it loads (up to %.0fs)",
+                            e,
+                            WARMING_GRACE_S,
+                        )
                     self._error = None
         except CloudEndpointWaking as e:
             # Transient: hold the rollout in "warming" instead of failing it.
             with self._lock:
                 if self._warming_since is None:
                     self._warming_since = time.monotonic()
-                    logger.info("[CLOUD-ROLLOUT] %s — holding the rollout while it loads "
-                                "(up to %.0fs)", e, WARMING_GRACE_S)
+                    logger.info(
+                        "[CLOUD-ROLLOUT] %s — holding the rollout while it loads (up to %.0fs)",
+                        e,
+                        WARMING_GRACE_S,
+                    )
                 self._error = None
         except Exception as e:  # keep the loop alive; surface via serve()/status
             logger.warning("[CLOUD-ROLLOUT] refill failed: %s", e)
@@ -612,8 +652,9 @@ class CloudRollout:
 
             self._http = httpx.Client(
                 timeout=httpx.Timeout(ACT_TIMEOUT, connect=CONNECT_TIMEOUT),
-                limits=httpx.Limits(max_connections=4, max_keepalive_connections=4,
-                                    keepalive_expiry=KEEPALIVE_EXPIRY_S),
+                limits=httpx.Limits(
+                    max_connections=4, max_keepalive_connections=4, keepalive_expiry=KEEPALIVE_EXPIRY_S
+                ),
                 # Send BOTH auth headers (INFERENCE_ENDPOINT_PLAN step 3):
                 # X-Nori-Token is the app-level credential the server checks
                 # first; Authorization stays for the Space-transition server. On
@@ -621,20 +662,19 @@ class CloudRollout:
                 # in Authorization — set NORI_INFER_HF_TOKEN and it rides there
                 # (the app still authenticates via X-Nori-Token). Host-agnostic:
                 # NORI_INFER_URL stays the only switch.
-                headers={"Content-Type": "application/json",
-                         "Authorization": "Bearer " + (
-                             os.environ.get("NORI_INFER_HF_TOKEN") or self.token),
-                         "X-Nori-Token": self.token},
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer " + (os.environ.get("NORI_INFER_HF_TOKEN") or self.token),
+                    "X-Nori-Token": self.token,
+                },
             )
         return self._http
 
     def close(self) -> None:
         """Release the pooled connection. Safe to call twice."""
         if self._http is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._http.close()
-            except Exception:
-                pass
             self._http = None
 
     def _http_act(self, images: list[str], state: list[float]) -> list[list[float]]:
@@ -716,7 +756,9 @@ def health_check(endpoint: str, timeout: float = HEALTH_TIMEOUT) -> dict:
     Inference Endpoint 401s headerless requests at the EDGE before they reach
     the server (the 2026-07-23 'unreachable: 401' load failure) — so send the
     same dual headers the /act client uses."""
-    req = urllib.request.Request(f"{endpoint.rstrip('/')}/health",
-                                 headers=_edge_auth_headers())
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    req = urllib.request.Request(f"{endpoint.rstrip('/')}/health", headers=_edge_auth_headers())
+    # B310: `endpoint` reaches here only from infer_url(), which reads
+    # NORI_INFER_URL[_KIND] from the environment. A /load body picks WHICH env
+    # var is consulted, never the URL itself.
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310
         return json.load(r)

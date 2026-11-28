@@ -16,11 +16,11 @@ namespace** (`{hf_user}/{project-slug}`), plus its local cache directory.
 This mapping is deliberate — it means a project needs **no new backend
 tables and no new storage system**:
 
-- A LeRobot dataset is already an episode collection; a *recording session*
+- A LeRobot dataset is already an episode collection; a _recording session_
   is just `record(..., resume=True)` appending episodes to it
   (`lelab/record.py` already supports `resume`).
 - "View my projects" is already answerable by `lelab/datasets.py:
-  list_all_datasets()` (local cache + personal-Hub listing, merged with
+list_all_datasets()` (local cache + personal-Hub listing, merged with
   `source: local|hub|both`).
 - "Back up to my HF" is the existing `handle_upload_dataset` →
   `dataset.push_to_hub()` with the user's own token (`hf-auth` flow).
@@ -43,10 +43,14 @@ What's genuinely new is a small local metadata ledger + three UI surfaces.
       "task": "Pick up the mug and place it on the rack",
       "created_at": "2026-07-13T21:04:00Z",
       "sessions": [
-        {"started_at": "…", "ended_at": "…", "episodes_added": 12}
+        { "started_at": "…", "ended_at": "…", "episodes_added": 12 }
       ],
       "last_hub_push_at": "…",
-      "last_nori_upload": {"session_id": "…", "finalized_at": "…", "episode_count": 30}
+      "last_nori_upload": {
+        "session_id": "…",
+        "finalized_at": "…",
+        "episode_count": 30
+      }
     }
   ]
 }
@@ -70,7 +74,7 @@ Two surfaces, split by what the user is doing:
 - **Everything else — create/browse projects, session history, HF backup,
   Nori upload, train handoff — is a new page: `/nori/projects`.** The
   project lifecycle would bury a live-driving screen if crammed into
-  remote, and the training page is the *consumer* of projects, not their
+  remote, and the training page is the _consumer_ of projects, not their
   home (it gets a **picker**, not management UI).
 
 Rejected: reusing the legacy `/recording` page (wrong visual language, no
@@ -87,7 +91,7 @@ on `/nori/remote` is hidden (same `LELAB_ONLY_PREFIXES` posture).
 
 ### 2a. Recording data path (why this needs care)
 
-What the remote page *displays* is the WebRTC composite — compressed,
+What the remote page _displays_ is the WebRTC composite — compressed,
 latest-wins, sized for human eyes. Training data must instead come from
 the raw sources, and there is already a proven pattern for this:
 `NoriTelop/examples/xlerobot/9_phase2_vr_record.py` builds a
@@ -115,8 +119,8 @@ afterwards) removes that constraint and is the v2 path.
 ### 3a. `/nori/projects` — hub
 
 - **Empty state**: one centered card — "Create your first project": fields
-  *Project name* (slugified into `{hf_user}/{slug}`; shows the resulting
-  repo id live) and *Task description* (becomes recording `single_task`).
+  _Project name_ (slugified into `{hf_user}/{slug}`; shows the resulting
+  repo id live) and _Task description_ (becomes recording `single_task`).
   If HF auth is missing, the create form shows the paste-token step inline
   first (reuses `hf-auth/login`).
 - **Project cards** (grid, marketplace visual language): title, repo id,
@@ -154,7 +158,7 @@ same network as your robot" hint):
 
 - Arriving via `?project=slug` pre-selects the project; the dropdown also
   allows picking/creating one in place, so a user who starts driving and
-  *then* decides to record never has to leave the page.
+  _then_ decides to record never has to leave the page.
 - Start/save/discard mirror the episode controls recording users already
   know from LeRobot (`exit_early` / `rerecord_episode` semantics).
 - The episode counter and elapsed time render next to the live video so
@@ -162,12 +166,12 @@ same network as your robot" hint):
 - **End session** writes the ledger entry (episodes added, duration) and
   offers a one-click "Back to project →".
 
-### 3c. `/nori/training` — dataset-source picker  **[BUILT 2026-07-13]**
+### 3c. `/nori/training` — dataset-source picker **[BUILT 2026-07-13]**
 
 One panel, three sources the user toggles between (GitHub was considered
 and rejected as a dataset source: LeRobot datasets are HF-native
 parquet+video, GitHub/LFS is the wrong home; GitHub may return later for
-policy *code*, a different card):
+policy _code_, a different card):
 
 - **Nori cloud** (default) — datasets in the customer's Nori account
   (promoted uploads → backend `dataset_ref`; "Latest upload" default).
@@ -197,6 +201,7 @@ upgrade below layers ON TOP of the Nori-cloud tab once projects exist:
 ### Phase A — no backend changes (ships alone)
 
 Frontend (`frontend/src/nori/`):
+
 - `pages/projects.tsx` (hub + detail via route param), route entries in
   `App.tsx` (`/nori/projects`, `/nori/projects/:slug`), home-page card,
   nav link in `NoriLayout`.
@@ -206,6 +211,7 @@ Frontend (`frontend/src/nori/`):
   input kept).
 
 LeLab (`lelab/`):
+
 - **`capture.py` (new)** — the recording engine: ZMQ camera + telemetry
   subscriber building a `LeRobotDataset` in the local cache (ported from
   the `9_phase2_vr_record.py` pattern; same module style as `record.py`:

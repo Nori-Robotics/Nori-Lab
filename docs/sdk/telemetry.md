@@ -8,27 +8,29 @@ const teleop = new RemoteTeleop({
   /* ...options as usual... */
   onTelemetry: (t) => {
     if (t.safety !== "ok") console.warn("robot stopped:", t.safety);
-    if (t.batteryPercent !== null && t.batteryPercent < 15) console.warn("low battery");
-    for (const [motor, fault] of Object.entries(t.motorFaults)) console.error(motor, fault);
+    if (t.batteryPercent !== null && t.batteryPercent < 15)
+      console.warn("low battery");
+    for (const [motor, fault] of Object.entries(t.motorFaults))
+      console.error(motor, fault);
   },
 });
 ```
 
 ## The fields
 
-| Field | Type | Meaning |
-|---|---|---|
-| `loopHz` | `number` | The daemon's measured control-loop rate. ~50 on a healthy robot. |
-| `safety` | `SafetyState` | `"ok"` / `"safe_hold"` / `"latched"`. See [the safety contract](/sdk/safety). |
-| `watchdog` | `WatchdogState` | `"ok"` / `"warn"` / `"stop"` — how your control stream is doing. |
-| `tempC` | `number` | The **Pi's** temperature, not a motor's. Motor heat surfaces via `motorFaults` and the over-temp latch. |
-| `active` | `boolean` | Whether the control data channel is open — i.e. whether jog/commands go anywhere. Also delivered on its own via `onControlActive`. |
-| `linkMode` | `"lan" \| "wan" \| null` | The *measured* ICE path. `null` until the candidate pair resolves. This is what picks the watchdog profile — it isn't something you declare. |
-| `state` | `Record<string, number>` | The lerobot-native pose dict. See [Joint state](#joint-state). |
-| `currents` | `Record<string, number>` | Per-motor current. **Raw units** — see [Currents](#currents). |
-| `videoNet` | `VideoNetState \| null` | The adaptive-bitrate loop's link verdict. See [Video](/sdk/video). |
-| `batteryPercent` | `number \| null` | Pack state-of-charge. See [Battery](#battery). |
-| `motorFaults` | `Record<string, string>` | Per-motor hardware faults. See [Motor faults](#motor-faults). |
+| Field            | Type                     | Meaning                                                                                                                                      |
+| ---------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loopHz`         | `number`                 | The daemon's measured control-loop rate. ~50 on a healthy robot.                                                                             |
+| `safety`         | `SafetyState`            | `"ok"` / `"safe_hold"` / `"latched"`. See [the safety contract](/sdk/safety).                                                                |
+| `watchdog`       | `WatchdogState`          | `"ok"` / `"warn"` / `"stop"` — how your control stream is doing.                                                                             |
+| `tempC`          | `number`                 | The **Pi's** temperature, not a motor's. Motor heat surfaces via `motorFaults` and the over-temp latch.                                      |
+| `active`         | `boolean`                | Whether the control data channel is open — i.e. whether jog/commands go anywhere. Also delivered on its own via `onControlActive`.           |
+| `linkMode`       | `"lan" \| "wan" \| null` | The _measured_ ICE path. `null` until the candidate pair resolves. This is what picks the watchdog profile — it isn't something you declare. |
+| `state`          | `Record<string, number>` | The lerobot-native pose dict. See [Joint state](#joint-state).                                                                               |
+| `currents`       | `Record<string, number>` | Per-motor current. **Raw units** — see [Currents](#currents).                                                                                |
+| `videoNet`       | `VideoNetState \| null`  | The adaptive-bitrate loop's link verdict. See [Video](/sdk/video).                                                                           |
+| `batteryPercent` | `number \| null`         | Pack state-of-charge. See [Battery](#battery).                                                                                               |
+| `motorFaults`    | `Record<string, string>` | Per-motor hardware faults. See [Motor faults](#motor-faults).                                                                                |
 
 ## Joint state {#joint-state}
 
@@ -60,7 +62,7 @@ Convert with the exported helper rather than a magic number of your own:
 ```ts
 import { currentMa, CURRENT_MA_PER_LSB, CURRENT_FULL_LSB } from "@nori/sdk";
 
-const ma = currentMa(t.currents["right_arm_gripper"]);   // LSB -> mA
+const ma = currentMa(t.currents["right_arm_gripper"]); // LSB -> mA
 ```
 
 `CURRENT_FULL_LSB` is the value that maps to a full grip-force bar. It's a **display**

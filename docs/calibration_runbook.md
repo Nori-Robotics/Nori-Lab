@@ -3,7 +3,7 @@
 **Goal of this session:** verify the new FK gripper-position grounding on real hardware, smoke-test
 the depth grid, and collect the data for the **overhead-camera homography** — the 3×3 matrix that
 converts overhead-camera pixels into real robot-frame millimetres on the workspace plane. Once we
-have it, the agent can be told "object at pixel (u,v) = (x 340, y −120) mm" in the *same frame* as
+have it, the agent can be told "object at pixel (u,v) = (x 340, y −120) mm" in the _same frame_ as
 its gripper position line, and plan motions by subtraction instead of guessing from the image.
 
 **Branch:** everything here needs LeLab running from `agent-pose-grounding` (commit `937a77f` or
@@ -12,9 +12,10 @@ later). Run `lelab --dev`, sign in, connect the robot on the Remote page first.
 **You will need:** the robot (A3 or L2), a tape measure, masking tape (to mark spots), ~45 min.
 
 **What already exists (context):**
+
 - Every agent turn and every `get_state` result now carries a line like
   `left gripper ≈ (x 312, y 140, z 905) mm — robot frame: origin on the floor under the base
-  center, +x forward, +y robot-left, +z up. Approximate FK from joint telemetry…`
+center, +x forward, +y robot-left, +z up. Approximate FK from joint telemetry…`
 - Every `look` result carries a relative-depth grid (Depth Anything V2 on the backend) — ordinal
   near/far per frame, not metres.
 - This runbook produces the third piece: metric pixel→mm for the overhead camera.
@@ -43,12 +44,12 @@ without hardware**. Your measurements confirm or refute them.
 
 **Interpret:**
 
-| Observation | Meaning | Action |
-|---|---|---|
-| All within ~30 mm | FK good | proceed |
-| Off by a roughly *constant ratio* (e.g. everything ~1.5× too far) on A3 | the normalized≈degrees unit assumption is wrong for the A3 gateway | record the ratio at 3 poses, report — one-line fix on our side |
-| **y has the wrong sign** when you pan the arm (L2: pan the arm to the robot's left → reported y should go **positive**) | pan sign flip needed in `fk.ts` | report — one-line fix |
-| z wrong by exactly the lift height | lift sign/zero issue | note the lift.pos value from get_state alongside |
+| Observation                                                                                                             | Meaning                                                            | Action                                                         |
+| ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------- |
+| All within ~30 mm                                                                                                       | FK good                                                            | proceed                                                        |
+| Off by a roughly _constant ratio_ (e.g. everything ~1.5× too far) on A3                                                 | the normalized≈degrees unit assumption is wrong for the A3 gateway | record the ratio at 3 poses, report — one-line fix on our side |
+| **y has the wrong sign** when you pan the arm (L2: pan the arm to the robot's left → reported y should go **positive**) | pan sign flip needed in `fk.ts`                                    | report — one-line fix                                          |
+| z wrong by exactly the lift height                                                                                      | lift sign/zero issue                                               | note the lift.pos value from get_state alongside               |
 
 **Do not proceed to Part 3 until x/y are trustworthy** — the homography uses FK as ground truth.
 (Part 2 doesn't depend on FK; you can do it regardless.)
@@ -60,7 +61,7 @@ without hardware**. Your measurements confirm or refute them.
 1. Place one object ~20 cm from the front camera and another ~1.5 m away, both visible.
 2. Agent goal:
    `look at the front camera, then the overhead camera. Using the depth grids, say which visible
-   object is nearest and which is farthest, then call done.`
+object is nearest and which is farthest, then call done.`
 3. Check in the transcript:
    - The reply references the depth grid (values near 1.00 for the close object's region).
    - Its near/far ordering matches reality.
@@ -88,12 +89,12 @@ without hardware**. Your measurements confirm or refute them.
 
 1. Stick a small tape cross on the plane at the spot.
 2. **Teleop** the gripper so its TIP touches the cross (close the gripper first — the tip is
-   better-defined closed). Get it touching, not hovering: the FK point must be *on* the plane.
+   better-defined closed). Get it touching, not hovering: the FK point must be _on_ the plane.
 3. **Record the FK (x, y):** on the Agent page run the get_state goal from Part 1 (or read the
    gripper line from the latest turn's context if a run is open). Write down x and y in mm for
    the arm you're using. Ignore z.
 4. **Capture the overhead frame:** agent goal `look at the overhead camera, then call done`.
-   Right-click the thumbnail in the transcript → *Save Image As…* → `point_N.jpg`.
+   Right-click the thumbnail in the transcript → _Save Image As…_ → `point_N.jpg`.
    ⚠️ Move the arm as little as possible between step 3 and step 4 — ideally not at all
    (the look doesn't move it; just don't teleop in between).
 5. **Read the pixel (u, v)** of the gripper tip / tape cross in that image. Two options:
@@ -184,13 +185,13 @@ print("wrote overhead_homography.json")
 
 **Acceptance:**
 
-| Holdout error | Verdict |
-|---|---|
-| < 15 mm | excellent — ship it |
-| 15–30 mm | usable; likely imprecise clicking or the tip wasn't quite on the plane — fine for guiding motion, redo later if we need grasp-grade accuracy |
-| > 30 mm | something's off — most often: a point recorded after the base shifted, wrong arm's FK line, or a (u,v) typo. Check the worst point first; re-collect just that one |
+| Holdout error | Verdict                                                                                                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| < 15 mm       | excellent — ship it                                                                                                                                                |
+| 15–30 mm      | usable; likely imprecise clicking or the tip wasn't quite on the plane — fine for guiding motion, redo later if we need grasp-grade accuracy                       |
+| > 30 mm       | something's off — most often: a point recorded after the base shifted, wrong arm's FK line, or a (u,v) typo. Check the worst point first; re-collect just that one |
 
-If a *fit* point has a wildly larger error than the others, it's a bad data row — fix or drop it
+If a _fit_ point has a wildly larger error than the others, it's a bad data row — fix or drop it
 and re-run (you still need ≥4 fit points).
 
 ---
@@ -198,6 +199,7 @@ and re-run (you still need ≥4 fit points).
 ## Part 5 — Hand off
 
 Send back (Slack or drop in the repo):
+
 1. Part 1 FK table: 3 poses × (reported xyz, measured xyz), robot model, and the lift.pos values.
 2. Part 2: does the model's near/far match reality (y/n + one screenshot), and the `/nori/depth` `ms`.
 3. `calibration_points.json`, `overhead_homography.json`, the solver's printed errors, and the six `point_N.jpg` images.

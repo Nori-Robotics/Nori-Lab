@@ -749,8 +749,12 @@ class SO101AutoCalibrator:
         def is_ccw_first(motor: str) -> bool:
             return ccw_first.get(motor, False) if isinstance(ccw_first, dict) else bool(ccw_first)
 
-        first_velocity = {motor: (-velocity_limit if is_ccw_first(motor) else velocity_limit) for motor in motors}
-        second_velocity = {motor: (velocity_limit if is_ccw_first(motor) else -velocity_limit) for motor in motors}
+        first_velocity = {
+            motor: (-velocity_limit if is_ccw_first(motor) else velocity_limit) for motor in motors
+        }
+        second_velocity = {
+            motor: (velocity_limit if is_ccw_first(motor) else -velocity_limit) for motor in motors
+        }
 
         first_reasons, first_pos = self._run_direction_until_stall(
             motors,
@@ -1181,7 +1185,11 @@ class SO101AutoCalibrator:
         move_order = motors if motors else default_order
         angle_steps = int(angle_deg / 360.0 * FULL_TURN)
         for motor in move_order:
-            if all_mins is not None and all_maxes is not None and (motor not in all_mins or motor not in all_maxes):
+            if (
+                all_mins is not None
+                and all_maxes is not None
+                and (motor not in all_mins or motor not in all_maxes)
+            ):
                 continue
             try:
                 present = self.read("Present_Position", motor, normalize=False)
@@ -1265,7 +1273,9 @@ class SO101AutoCalibrator:
                 logger.warning("Error setting parameters on %s: %s", motor_label(motor), e)
                 param_set_ok = False
             if not param_set_ok:
-                logger.warning("Parameter verification had anomalies on %s; forcing continuation", motor_label(motor))
+                logger.warning(
+                    "Parameter verification had anomalies on %s; forcing continuation", motor_label(motor)
+                )
 
 
 def run_so101_auto_calibration(

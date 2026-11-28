@@ -4,10 +4,10 @@ Structured world-state — separate from the video track (human eyes) and from a
 still.
 
 `perceive()` returns the latest **structured** detections from the daemon's on-Pi perception
-process, so a *running* program can react to what the robot sees.
+process, so a _running_ program can react to what the robot sees.
 
 ```ts
-const world = teleop.perceive();               // PerceptionView | null (null = no frame yet)
+const world = teleop.perceive(); // PerceptionView | null (null = no frame yet)
 const cup = world?.objects.find((o) => o.label === "cup");
 if (cup?.xyz && (teleop.perceptionAgeMs() ?? Infinity) < 500) {
   // cup.xyz is [x,y,z] in robot-base meters; cup.bbox is normalized [x,y,w,h]. Both optional —

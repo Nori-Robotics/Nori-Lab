@@ -80,11 +80,7 @@ def _pids_listening_on(port: int) -> list[int]:
     for proc in psutil.process_iter(["pid"]):
         try:
             for conn in proc.net_connections(kind="inet"):
-                if (
-                    conn.status == psutil.CONN_LISTEN
-                    and conn.laddr
-                    and conn.laddr.port == port
-                ):
+                if conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.port == port:
                     pids.append(proc.pid)
                     break
         except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
@@ -121,13 +117,19 @@ def _reclaim_port(port: int, label: str) -> None:
                 "previous LeLab run:\n     %s\n"
                 "   Refusing to kill it. Stop that process or free the port, then "
                 "retry (to inspect: `lsof -nP -iTCP:%d -sTCP:LISTEN`).",
-                port, label, pid, cmdline, port,
+                port,
+                label,
+                pid,
+                cmdline,
+                port,
             )
             sys.exit(1)
 
         logger.warning(
             "♻️  Port %d (%s) still held by a previous run (PID %d) — stopping it...",
-            port, label, pid,
+            port,
+            label,
+            pid,
         )
         # Kill the whole tree: a uvicorn --reload parent's worker child is the
         # one actually holding the socket, so terminating just the parent leaves
@@ -152,7 +154,9 @@ def _reclaim_port(port: int, label: str) -> None:
     logger.error(
         "❌ Port %d (%s) is still in use after cleanup — a process may be "
         "respawning it. Inspect with `lsof -nP -iTCP:%d -sTCP:LISTEN`.",
-        port, label, port,
+        port,
+        label,
+        port,
     )
     sys.exit(1)
 

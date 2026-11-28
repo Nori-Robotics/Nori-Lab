@@ -25,6 +25,7 @@ class Cfg:
 
 # ---- 1. execution overrides -------------------------------------------------
 
+
 def test_smolvla_default_horizon_is_half_chunk(monkeypatch):
     monkeypatch.delenv("NORI_SMOLVLA_ACTION_STEPS", raising=False)
     cfg = Cfg("smolvla")
@@ -39,7 +40,7 @@ def test_smolvla_request_override_and_clamp():
     cfg = Cfg("smolvla")
     assert nr._apply_act_execution(cfg, None, 999)["n_action_steps"] == 50  # clamp to chunk
     cfg = Cfg("smolvla")
-    assert nr._apply_act_execution(cfg, None, 0)["n_action_steps"] == 1     # floor
+    assert nr._apply_act_execution(cfg, None, 0)["n_action_steps"] == 1  # floor
 
 
 def test_smolvla_env_default(monkeypatch):
@@ -51,25 +52,26 @@ def test_smolvla_env_default(monkeypatch):
 def test_smolvla_ignores_temporal_ensemble():
     cfg = Cfg("smolvla")
     eff = nr._apply_act_execution(cfg, 0.01, None)
-    assert eff["temporal_ensemble_coeff"] is None       # ACT-only knob dropped
-    assert eff["n_action_steps"] == 25                  # horizon still applied
+    assert eff["temporal_ensemble_coeff"] is None  # ACT-only knob dropped
+    assert eff["n_action_steps"] == 25  # horizon still applied
 
 
 def test_act_branch_unchanged():
     cfg = Cfg("act", chunk=100)
     eff = nr._apply_act_execution(cfg, 0.01, 30)
     assert eff["temporal_ensemble_coeff"] == 0.01
-    assert eff["n_action_steps"] == 1                   # ensembling forces 1
+    assert eff["n_action_steps"] == 1  # ensembling forces 1
 
 
 def test_other_policies_still_noop():
     cfg = Cfg("diffusion", chunk=16, n_action_steps=8)
     eff = nr._apply_act_execution(cfg, None, 4)
-    assert cfg.n_action_steps == 8                      # untouched
+    assert cfg.n_action_steps == 8  # untouched
     assert eff["n_action_steps"] == 8
 
 
 # ---- 2. per-tick task injection ---------------------------------------------
+
 
 class SpyPre:
     """Stands in for the fitted preprocessor; records the batch it was given."""
@@ -104,11 +106,20 @@ _JPEG = (
 
 def _run_act(session, task):
     spy = SpyPre()
-    session.update({
-        "ref": "t", "policy": FakePolicy(), "pre": spy, "post": lambda a: a,
-        "device": "cpu", "joints": ["j1"], "action_joints": ["j1"],
-        "image_shapes": {VIEW: (3, 1, 1)}, "use_stream": False, "task": task,
-    })
+    session.update(
+        {
+            "ref": "t",
+            "policy": FakePolicy(),
+            "pre": spy,
+            "post": lambda a: a,
+            "device": "cpu",
+            "joints": ["j1"],
+            "action_joints": ["j1"],
+            "image_shapes": {VIEW: (3, 1, 1)},
+            "use_stream": False,
+            "task": task,
+        }
+    )
     out = nr.rollout_act(nr.ActBody(state={"j1": 0.0}, images={VIEW: _JPEG}))
     assert out["action"] == {"j1": 0.0}
     return spy.seen
@@ -131,16 +142,26 @@ def test_language_policy_types_registry():
 
 # ---- 3. slot-view translation (rename_map-trained bundles) ------------------
 
+
 def test_slot_translation_feeds_policy_slot_keys(session):
     """Client sends fleet-named frames; the policy batch gets slot names."""
     spy = SpyPre()
     fleet = "observation.images.overhead"
-    session.update({
-        "ref": "t", "policy": FakePolicy(), "pre": spy, "post": lambda a: a,
-        "device": "cpu", "joints": ["j1"], "action_joints": ["j1"],
-        "image_shapes": {fleet: (3, 1, 1)}, "use_stream": False, "task": "x",
-        "view_translation": {fleet: "observation.images.camera1"},
-    })
+    session.update(
+        {
+            "ref": "t",
+            "policy": FakePolicy(),
+            "pre": spy,
+            "post": lambda a: a,
+            "device": "cpu",
+            "joints": ["j1"],
+            "action_joints": ["j1"],
+            "image_shapes": {fleet: (3, 1, 1)},
+            "use_stream": False,
+            "task": "x",
+            "view_translation": {fleet: "observation.images.camera1"},
+        }
+    )
     nr.rollout_act(nr.ActBody(state={"j1": 0.0}, images={fleet: _JPEG}))
     assert "observation.images.camera1" in spy.seen
     assert fleet not in spy.seen

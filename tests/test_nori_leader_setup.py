@@ -740,7 +740,7 @@ def test_auto_save_preserves_other_side_when_one_arm_silent(
     result = leader.auto_save_detected_ports()
     assert result["success"] is True
     saved = leader.load_leader_ports()
-    assert saved["left"].open_path == "/dev/ttyUSB0"   # preserved, NOT clobbered
+    assert saved["left"].open_path == "/dev/ttyUSB0"  # preserved, NOT clobbered
     assert saved["right"].open_path == "/dev/ttyUSB1"
 
 

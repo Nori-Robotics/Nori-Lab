@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { HarnessSettings } from "./HarnessSettings";
 import { DEFAULT_SETTINGS, loadGoal, loadSettings, modelSpeeds, parseTableZ, saveGoal, taskFields } from "./settings";
 
 describe("agent settings", () => {
@@ -100,5 +103,16 @@ describe("model-built harnesses", () => {
       expect(taskFields(settings).constraints).not.toHaveProperty("saved_harness");
       expect(() => taskFields(DEFAULT_SETTINGS, saved)).toThrow();
     } finally { vi.unstubAllGlobals(); }
+  });
+});
+
+it("keeps the Codex runtime separate from its billable model and preserves the task budget", () => {
+  const settings = { ...DEFAULT_SETTINGS, model: "gpt-6.2-astra", harness: "codex", llmCalls: 17 } as const;
+  const html = renderToStaticMarkup(createElement(HarnessSettings, { settings, selected: "", tune: vi.fn(), onSelect: vi.fn() }));
+  expect(html).toMatch(/<option value="codex\/gpt-6.2-astra" selected="">GPT-6.2 Astra \(Codex\)<\/option>/);
+  expect(html).toContain("GPT-6.2 Sol (Codex)");
+  expect(taskFields(settings)).toMatchObject({
+    budget: { llm_calls: 17 },
+    constraints: { model: "gpt-6.2-astra", harness: "codex", primitives: "codex" },
   });
 });

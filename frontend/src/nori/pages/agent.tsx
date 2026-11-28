@@ -100,7 +100,7 @@ export function isAtBottom(el: { scrollHeight: number; scrollTop: number; client
 
 function settingsLine(s: Record<string, unknown>): string {
   const n = (v: unknown, unit = "") => (v == null ? "?" : `${String(v)}${unit}`);
-  return `speed ${n(s.speed_factor)} · table ${n(s.table_z, " m")} · depth ${n(s.depth_model)} · map ${s.world_session ? "on" : "off"} · base ${s.allow_base ? "on" : "off"} · recording ${s.record_episode ? "on" : "off"}` + (s.harness === "authored" ? " · model-built tools" : s.primitives ? ` · primitives ${String(s.primitives)}` : "")
+  return `speed ${n(s.speed_factor)} · table ${n(s.table_z, " m")} · depth ${n(s.depth_model)} · map ${s.world_session ? "on" : "off"} · base ${s.allow_base ? "on" : "off"} · recording ${s.record_episode ? "on" : "off"}` + (s.harness === "codex" ? " · Codex workspace" : s.harness === "authored" ? " · model-built tools" : s.primitives ? ` · primitives ${String(s.primitives)}` : "")
     + (s.reasoning_effort ? ` · reasoning ${String(s.reasoning_effort)}` : "")
     + (s.model_speed ? ` · model speed ${String(s.model_speed)}` : "");
 }

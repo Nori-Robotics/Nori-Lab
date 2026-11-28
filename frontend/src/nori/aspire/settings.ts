@@ -44,7 +44,7 @@ export interface AgentSettings {
   model: (typeof MODELS)[number]["id"];
   effort: (typeof EFFORTS)[number];
   modelSpeed: ModelSpeed;
-  harness: "nori" | "authored";
+  harness: "nori" | "authored" | "codex";
   speed: number;
   llmCalls: number;
   seconds: number;
@@ -78,7 +78,7 @@ export function loadSettings(): AgentSettings {
     const primitives = PRIMITIVES.some((p) => p.id === s.primitives) ? s.primitives : DEFAULT_SETTINGS.primitives;
     const model = MODELS.find((m) => m.id === s.model)?.id ?? DEFAULT_SETTINGS.model;
     const effort = EFFORTS.includes(s.effort) ? s.effort : DEFAULT_SETTINGS.effort;
-    const harness = s.harness === "authored" ? "authored" : "nori";
+    const harness = s.harness === "codex" && model.startsWith("gpt-") ? "codex" : s.harness === "authored" ? "authored" : "nori";
     const modelSpeed = modelSpeeds(model).includes(s.modelSpeed) ? s.modelSpeed : DEFAULT_SETTINGS.modelSpeed;
     return { ...s, primitives, model, effort, modelSpeed, harness, speed: clamp(Number(s.speed) || DEFAULT_SETTINGS.speed, SPEED) };
   } catch { return DEFAULT_SETTINGS; }
@@ -110,7 +110,7 @@ export function taskFields(s: AgentSettings, saved?: HarnessSnapshot): Pick<Star
       speed_factor: clamp(s.speed, SPEED), ...depth, show_thinking: s.showThinking,
       model: s.model, reasoning_effort: s.effort, model_speed: s.modelSpeed, harness: s.harness,
       // Older workers validate primitives before opening the robot but ignore the harness field.
-      primitives: s.harness === "authored" ? "authored" : s.primitives,
+      primitives: s.harness === "nori" ? s.primitives : s.harness,
       ...(saved ? { saved_harness: saved } : {}),
       ...(typeof table === "number" ? { table_z: table } : {}),
       ...(s.continueS > 0 ? { continue_s: clamp(Math.round(s.continueS), CONTINUE_S) } : {}),

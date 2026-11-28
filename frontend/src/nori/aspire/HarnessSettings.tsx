@@ -15,6 +15,7 @@ interface Props {
 
 export function HarnessSettings({ settings, tune, owner, selected, onSelect }: Props) {
   const provider = MODELS.find((m) => m.id === settings.model)!.provider;
+  const models = MODELS.filter((model) => model.provider === provider);
   const speeds = modelSpeeds(settings.model);
   const [saved, setSaved] = useState<SavedHarness[]>([]);
   const [storageError, setStorageError] = useState(false);
@@ -37,9 +38,11 @@ export function HarnessSettings({ settings, tune, owner, selected, onSelect }: P
     };
   }, [owner, settings.model]);
 
-  function chooseModel(model: AgentSettings["model"]) {
+  function chooseModel(model: AgentSettings["model"], codex = false) {
     onSelect("");
-    tune({ model, modelSpeed: modelSpeeds(model).includes(settings.modelSpeed) ? settings.modelSpeed : "standard" });
+    const harness = codex ? "codex" : settings.harness === "codex" ? "nori" : settings.harness;
+    const modelSpeed = modelSpeeds(model).includes(settings.modelSpeed) ? settings.modelSpeed : "standard";
+    tune({ model, harness, modelSpeed });
   }
 
   return (
@@ -51,9 +54,11 @@ export function HarnessSettings({ settings, tune, owner, selected, onSelect }: P
         </select>
       </label>
       <label className={labelStyle}>model
-        <select className={selectStyle} value={settings.model}
-          onChange={(e) => chooseModel(e.target.value as AgentSettings["model"])}>
-          {MODELS.filter((m) => m.provider === provider).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+        <select className={selectStyle} value={settings.harness === "codex" ? `codex/${settings.model}` : settings.model}
+          onChange={(e) => chooseModel(e.target.value.replace(/^codex\//, "") as AgentSettings["model"], e.target.value.startsWith("codex/"))}>
+          {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          {provider === "OpenAI" && models.map((m) =>
+            <option key={m.id} value={`codex/${m.id}`}>{m.label} (Codex)</option>)}
         </select>
       </label>
       <label className={labelStyle}>reasoning effort
@@ -69,13 +74,13 @@ export function HarnessSettings({ settings, tune, owner, selected, onSelect }: P
           {speeds.map((speed) => <option key={speed} value={speed}>{speed[0].toUpperCase() + speed.slice(1)}</option>)}
         </select>
       </label>
-      <label className={labelStyle}>harness
+      {settings.harness !== "codex" && <label className={labelStyle}>harness
         <select className={selectStyle} value={settings.harness}
           onChange={(e) => { onSelect(""); tune({ harness: e.target.value as AgentSettings["harness"] }); }}>
           <option value="nori">Nori primitives</option>
           <option value="authored">Model-built tools</option>
         </select>
-      </label>
+      </label>}
       {settings.harness === "nori" ? (
         <label className={labelStyle} title="Position adds target-based tools such as move_to and locate_object. Jog uses timed movements.">primitives
           <select className={selectStyle} value={settings.primitives}
@@ -83,7 +88,7 @@ export function HarnessSettings({ settings, tune, owner, selected, onSelect }: P
             {PRIMITIVES.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
           </select>
         </label>
-      ) : (
+      ) : settings.harness === "authored" && (
         <label className={labelStyle}>local harness
           <select className={selectStyle} value={selected} onChange={(e) => onSelect(e.target.value)}>
             <option value="">Build a new harness</option>

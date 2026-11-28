@@ -25,6 +25,21 @@ describe("toRows", () => {
     expect(rows[2]).toMatchObject({ text: "homed the left arm to the high-side pose (12.5 s)" });
   });
 
+  it("shows workspace definitions and calls in order with the underlying robot operation", () => {
+    const helper = { name: "look", file: "/work/helpers.py", line: 3 };
+    const rows = toRows("inspect", [
+      ev(0, "workspace_helper", { ...helper, kind: "defined", source: "def look(side): ..." }),
+      ev(1, "workspace_helper", { ...helper, kind: "called", arguments: { side: "left" } }),
+      ev(2, "step_start", { tool: "read_joints" }),
+      ev(3, "step", { tool: "read_joints", status: "ok" }),
+    ]);
+    expect(rows.slice(1)).toMatchObject([
+      { tool: "define_helper", result: "def look(side): ..." },
+      { tool: "call_helper", args: { arguments: { side: "left" } } },
+      { tool: "read_joints", pending: false },
+    ]);
+  });
+
   it("shows refusals, questions with their answers, safety trips and the end", () => {
     const rows = toRows("x", [
       ev(0, "step_start", { tool: "lift", args: { height: 0.9 } }),

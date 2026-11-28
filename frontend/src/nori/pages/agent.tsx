@@ -62,7 +62,7 @@ type Row =
 // start_check/started/home/safety/record… — and that is exactly what the logs card shows: how the worker
 // got to the robot (claim → credentials → session → arming → table) and why it did not, when it did not.
 const TRANSCRIPT_TYPES = new Set([
-  "thought", "think", "say", "episode_started", "episode_done", "record_warning", "step_start", "step", "frame", "needs_input", "answered", "comment", "instruction_done", "waiting", "continued", "verdict", "advice", "done", "failed", "cancelled",
+  "thought", "think", "say", "episode_started", "episode_done", "record_warning", "workspace_helper", "step_start", "step", "frame", "needs_input", "answered", "comment", "instruction_done", "waiting", "continued", "verdict", "advice", "done", "failed", "cancelled",
 ]);
 
 /** One log line per non-transcript event: `HH:MM:SS type key=value …`, the payload compacted so an unknown
@@ -177,6 +177,16 @@ export function toRows(instruction: string, events: TaskEvent[]): Row[] {
         break;
       }
       case "record_warning": rows.push({ kind: "safety", text: `recording problem (${str(e.kind)}): ${str(e.detail)}` }); break;
+      case "workspace_helper": {
+        if (e.kind === "limit") {
+          rows.push({ kind: "info", text: "Workspace helper trace limit reached (500 events)." });
+        } else {
+          rows.push({ kind: "call", tool: e.kind === "defined" ? "define_helper" : "call_helper",
+            args: { name: str(e.name), ...(e.kind === "called" ? { arguments: e.arguments } : {}), location: `${str(e.file)}:${e.line}` },
+            pending: false, status: "ok", result: str(e.source ?? "", 3000) });
+        }
+        break;
+      }
       case "step_start":
         pending.push(rows.length);
         rows.push({ kind: "call", tool: str(e.tool), args: (e.args as Record<string, unknown>) ?? {}, pending: true });
